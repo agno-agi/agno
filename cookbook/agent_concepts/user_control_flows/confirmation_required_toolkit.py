@@ -14,14 +14,11 @@ Some practical applications:
 Run `pip install openai httpx rich agno` to install dependencies.
 """
 
-
-from agno.tools.yfinance import YFinanceTools
-from agno.utils import pprint
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
-
-
+from agno.tools.yfinance import YFinanceTools
+from agno.utils import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),

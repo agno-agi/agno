@@ -22,11 +22,11 @@ import httpx
 from agno.agent import Agent
 from agno.tools import tool
 from agno.utils import pprint
-
 from rich.console import Console
 from rich.prompt import Prompt
 
 console = Console()
+
 
 @tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
@@ -79,13 +79,13 @@ agent = Agent(
 # - "What are the top 3 HN stories right now?"
 # - "Show me the most recent story from Hacker News"
 # - "Get the top 5 stories (you can try accepting and declining the confirmation)"
-response = agent.run(
-    "What are the top 2 hackernews stories?"
-)
+response = agent.run("What are the top 2 hackernews stories?")
 if response.is_paused:
     for tool in response.tools:
         # Ask for confirmation
-        console.print(f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation.")
+        console.print(
+            f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+        )
         message = (
             Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
             .strip()

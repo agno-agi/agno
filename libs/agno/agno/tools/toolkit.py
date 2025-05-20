@@ -2,7 +2,7 @@ from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools.function import Function
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 
 
 class Toolkit:
@@ -40,7 +40,7 @@ class Toolkit:
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
         self.requires_confirmation_tools: Optional[list[str]] = requires_confirmation_tools
-        
+
         self._check_tools_filters(
             available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
         )
@@ -77,7 +77,9 @@ class Toolkit:
         if self.requires_confirmation_tools:
             missing_requires_confirmation = set(self.requires_confirmation_tools) - set(available_tools)
             if missing_requires_confirmation:
-                log_warning(f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}")
+                log_warning(
+                    f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}"
+                )
 
     def _register_tools(self) -> None:
         """Register all tools."""
@@ -101,11 +103,11 @@ class Toolkit:
                 return
             if self.exclude_tools is not None and tool_name in self.exclude_tools:
                 return
-            
+
             requires_confirmation = False
             if self.requires_confirmation_tools is not None and tool_name in self.requires_confirmation_tools:
                 requires_confirmation = True
-            
+
             f = Function(
                 name=tool_name,
                 entrypoint=function,

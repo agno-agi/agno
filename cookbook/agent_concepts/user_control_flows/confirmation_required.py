@@ -16,11 +16,11 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 import json
 
-from agno.utils import pprint
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.utils import pprint
 
 
 @tool(requires_confirmation=True)
@@ -65,7 +65,9 @@ if agent.is_paused:  # Or agent.run_response.is_paused
         # We update the tools in place
         tool.confirmed = user_input == "y"
 
-    run_response = agent.continue_run()  # or agent.continue_run(run_response=agent.run_response)
+    run_response = (
+        agent.continue_run()
+    )  # or agent.continue_run(run_response=agent.run_response)
     pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow

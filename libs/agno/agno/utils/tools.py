@@ -88,11 +88,11 @@ def remove_function_calls_from_string(
 def get_function_call_for_tool_execution(
     tool_execution: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
-) -> FunctionCall:
+) -> Optional[FunctionCall]:
     import json
 
     _tool_call_id = tool_execution.tool_call_id
-    _tool_call_function_name = tool_execution.tool_name
+    _tool_call_function_name = tool_execution.tool_name or ""
     _tool_call_function_arguments_str = json.dumps(tool_execution.tool_args)
     return get_function_call(
         name=_tool_call_function_name,

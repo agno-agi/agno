@@ -617,13 +617,13 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -705,13 +705,13 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -1046,13 +1046,13 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -1146,13 +1146,13 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -1413,11 +1413,12 @@ class Agent:
         self,
         run_response: Optional[RunResponse] = None,
         *,
-        stream: Optional[bool] = None,
+        stream: Literal[False] = False,
         stream_intermediate_steps: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> RunResponse: ...
 
     @overload
@@ -1425,11 +1426,12 @@ class Agent:
         self,
         run_response: Optional[RunResponse] = None,
         *,
-        stream: Optional[bool] = None,
+        stream: Literal[True] = True,
         stream_intermediate_steps: bool = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunResponse]: ...
 
     def continue_run(
@@ -1441,13 +1443,26 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
         """Continue a previous run."""
 
         # Initialize the Agent
         self.initialize_agent()
 
-        # TODO: We need to set knowledge filters on the run response to maintain them for continue
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
         if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
@@ -1512,18 +1527,19 @@ class Agent:
             session_id=session_id,
             user_id=user_id,
             async_mode=False,
-            # knowledge_filters=effective_filters,
+            knowledge_filters=effective_filters,
         )
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
-            messages = run_response.messages
+            messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         else:
+            self.run_response = cast(RunResponse, self.run_response)
             # We are continuing from a previous run
             run_response = self.run_response
-            messages = self.run_response.messages
+            messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
         # Extract original user message from messages and remove from messages
@@ -1548,7 +1564,9 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
         for attempt in range(num_attempts):
-            log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
+            run_response = cast(RunResponse, run_response)
+
+            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
             # Prepare run messages
             run_messages: RunMessages = self.get_continue_run_messages(
@@ -1648,13 +1666,13 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -1751,13 +1769,13 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -1807,6 +1825,7 @@ class Agent:
                 event=RunEvent.run_completed,
                 run_response=run_response,
             )
+
     async def acontinue_run(
         self,
         run_response: Optional[RunResponse] = None,
@@ -1816,13 +1835,26 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Continue a previous run."""
 
         # Initialize the Agent
         self.initialize_agent()
 
-        # TODO: We need to set knowledge filters on the run response to maintain them for continue
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
 
         # Agentic filters are enabled
         if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
@@ -1887,18 +1919,19 @@ class Agent:
             session_id=session_id,
             user_id=user_id,
             async_mode=False,
-            # knowledge_filters=effective_filters,
+            knowledge_filters=effective_filters,
         )
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
-            messages = run_response.messages
+            messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         else:
             # We are continuing from a previous run
+            self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
-            messages = self.run_response.messages
+            messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
         # Extract original user message from messages and remove from messages
@@ -1923,7 +1956,9 @@ class Agent:
         last_exception = None
         num_attempts = retries + 1
         for attempt in range(num_attempts):
-            log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
+            run_response = cast(RunResponse, run_response)
+
+            log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
             # Prepare run messages
             run_messages: RunMessages = self.get_continue_run_messages(
@@ -2021,13 +2056,13 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -2125,13 +2160,13 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools):
+        if any(tc.requires_confirmation for tc in run_response.tools or []):
             # Save session to storage
             self.write_to_storage(user_id=user_id, session_id=session_id)
             # Log Agent Run
             self._log_agent_run(user_id=user_id, session_id=session_id)
 
-            log_debug(f"Agent Run Paused: {self.run_response.run_id}", center=True, symbol="*")
+            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
             # Save output to file if save_response_to_file is set
             self.save_run_response_to_file(message=message, session_id=session_id)
@@ -2184,9 +2219,9 @@ class Agent:
 
     def _handle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
-        for _t in run_response.tools:
+        for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 for func_name, func in self._functions_for_model.items():
                     if func_name == _t.tool_name:
                         func.requires_confirmation = False
@@ -2202,7 +2237,10 @@ class Agent:
                         function_call=function_call,
                         function_call_results=function_call_results,
                     ):
-                        if call_result.event == ModelResponseEvent.tool_call_completed.value:
+                        if (
+                            call_result.event == ModelResponseEvent.tool_call_completed.value
+                            and call_result.tool_executions
+                        ):
                             tool_execution = call_result.tool_executions[0]
                             _t.result = tool_execution.result
                             _t.tool_call_error = tool_execution.tool_call_error
@@ -2216,13 +2254,13 @@ class Agent:
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
     ) -> Iterator[RunResponse]:
         self.model = cast(Model, self.model)
-        for _t in run_response.tools:
+        for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 for func_name, func in self._functions_for_model.items():
                     if func_name == _t.tool_name:
                         func.requires_confirmation = False
-                        
+
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Execute the tool
@@ -2242,7 +2280,10 @@ class Agent:
                                 session_id=session_id,
                                 created_at=call_result.created_at,
                             )
-                        if call_result.event == ModelResponseEvent.tool_call_completed.value:
+                        if (
+                            call_result.event == ModelResponseEvent.tool_call_completed.value
+                            and call_result.tool_executions
+                        ):
                             tool_execution = call_result.tool_executions[0]
                             _t.result = tool_execution.result
                             _t.tool_call_error = tool_execution.tool_call_error
@@ -2259,9 +2300,9 @@ class Agent:
 
     async def _ahandle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
-        for _t in run_response.tools:
+        for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 for func_name, func in self._functions_for_model.items():
                     if func_name == _t.tool_name:
                         func.requires_confirmation = False
@@ -2278,13 +2319,16 @@ class Agent:
                         function_calls=[function_call],
                         function_call_results=function_call_results,
                     ):
-                        if call_result.event == ModelResponseEvent.tool_call_completed.value:
+                        if (
+                            call_result.event == ModelResponseEvent.tool_call_completed.value
+                            and call_result.tool_executions
+                        ):
                             tool_execution = call_result.tool_executions[0]
                             _t.result = tool_execution.result
                             _t.tool_call_error = tool_execution.tool_call_error
                     if len(function_call_results) > 0:
                         run_messages.messages.extend(function_call_results)
-                
+
                     _t.requires_confirmation = False
                 else:
                     raise ValueError(f"Tool {_t.tool_name} requires confirmation, cannot continue run")
@@ -2293,13 +2337,13 @@ class Agent:
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
     ) -> AsyncIterator[RunResponse]:
         self.model = cast(Model, self.model)
-        for _t in run_response.tools:
+        for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
-            if _t.requires_confirmation is not None and _t.requires_confirmation is True:
+            if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 for func_name, func in self._functions_for_model.items():
                     if func_name == _t.tool_name:
                         func.requires_confirmation = False
-                        
+
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Execute the tool
@@ -2319,7 +2363,10 @@ class Agent:
                                 session_id=session_id,
                                 created_at=call_result.created_at,
                             )
-                        if call_result.event == ModelResponseEvent.tool_call_completed.value:
+                        if (
+                            call_result.event == ModelResponseEvent.tool_call_completed.value
+                            and call_result.tool_executions
+                        ):
                             tool_execution = call_result.tool_executions[0]
                             _t.result = tool_execution.result
                             _t.tool_call_error = tool_execution.tool_call_error
@@ -2337,7 +2384,7 @@ class Agent:
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
         # Format tool calls if they exist
-        if model_response.tool_calls:
+        if model_response.tool_executions:
             run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
 
         # Handle structured outputs
@@ -2374,9 +2421,9 @@ class Agent:
 
             # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
             for tool_call in model_response.tool_executions:
-                tool_name = tool_call.tool_name
+                tool_name = tool_call.tool_name or ""
                 if tool_name.lower() in ["think", "analyze"]:
-                    tool_args = tool_call.tool_args
+                    tool_args = tool_call.tool_args or {}
                     self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
         # Update the run_response audio with the model response audio
@@ -2796,7 +2843,7 @@ class Agent:
                     run_response.tools.extend(tool_executions_list)
 
                 # Format tool calls whenever new ones are added during streaming
-                run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif (
             model_response_chunk.event == ModelResponseEvent.tool_call_started.value
@@ -2835,7 +2882,7 @@ class Agent:
                     }
                     # Process tool calls
                     for tool_call_dict in tool_executions_list:
-                        tool_call_id = tool_call_dict.tool_call_id
+                        tool_call_id = tool_call_dict.tool_call_id or ""
                         index = tool_call_index_map.get(tool_call_id)
                         if index is not None:
                             run_response.tools[index] = tool_call_dict
@@ -2844,9 +2891,9 @@ class Agent:
 
                 # Only iterate through new tool calls
                 for tool_call in tool_executions_list:
-                    tool_name = tool_call.tool_name
+                    tool_name = tool_call.tool_name or ""
                     if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.tool_args
+                        tool_args = tool_call.tool_args or {}
 
                         reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
@@ -4207,10 +4254,9 @@ class Agent:
 
     def get_continue_run_messages(
         self,
-        *,
-        message: Union[str, List, Dict, Message],
-        messages: Sequence[Union[Dict, Message]],
         session_id: str,
+        message: Optional[Message] = None,
+        messages: Optional[List[Message]] = None,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
             - system_message: The system message for this run
@@ -4225,6 +4271,8 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
 
         # 1. Add system message to run_messages
+        if messages is None:
+            messages = []
         for m in messages:
             if m.role == self.system_message_role:
                 run_messages.system_message = m
@@ -4304,8 +4352,8 @@ class Agent:
             run_messages.messages.append(user_message)
 
         # 5. Add messages to run_messages if provided
-        if len(messages) > 0:
-            for _m in messages:
+        if len(messages or []) > 0:
+            for _m in messages or []:
                 if isinstance(_m, Message):
                     run_messages.messages.append(_m)
                     if run_messages.extra_messages is None:
@@ -6014,13 +6062,14 @@ class Agent:
                     if isinstance(resp, RunResponse):
                         if resp.is_paused:
                             tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                            for tool_call in self.run_response.tools:
-                                if tool_call.requires_confirmation:
-                                    args_str = ""
-                                    for arg, value in tool_call.tool_args.items():
-                                        args_str += f"{arg}={value}, "
-                                    args_str = args_str.rstrip(", ")
-                                    tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+                            if self.run_response is not None and self.run_response.tools is not None:
+                                for tool_call in self.run_response.tools:
+                                    if tool_call.requires_confirmation:
+                                        args_str = ""
+                                        for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                                            args_str += f"{arg}={value}, "
+                                        args_str = args_str.rstrip(", ")
+                                        tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
 
                             # Create panel for response
                             response_panel = create_panel(
@@ -6113,8 +6162,8 @@ class Agent:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
-                        for tool_call in self.run_response.formatted_tool_calls:
-                            tool_calls_content.append(f"• {tool_call}\n")
+                        for formatted_tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {formatted_tool_call}\n")
 
                         tool_calls_panel = create_panel(
                             content=tool_calls_content.plain.rstrip(),
@@ -6217,10 +6266,10 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.is_paused:
                     tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                    for tool_call in run_response.tools:
+                    for tool_call in run_response.tools or []:
                         if tool_call.requires_confirmation:
                             args_str = ""
-                            for arg, value in tool_call.tool_args.items():
+                            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
                                 args_str += f"{arg}={value}, "
                             args_str = args_str.rstrip(", ")
                             tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
@@ -6284,8 +6333,8 @@ class Agent:
                 if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
-                    for tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                    for formatted_tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {formatted_tool_call}\n")
 
                     tool_calls_panel = create_panel(
                         content=tool_calls_content.plain.rstrip(),
@@ -6456,13 +6505,14 @@ class Agent:
                     if isinstance(resp, RunResponse):
                         if resp.is_paused:
                             tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                            for tool_call in self.run_response.tools:
-                                if tool_call.requires_confirmation:
-                                    args_str = ""
-                                    for arg, value in tool_call.tool_args.items():
-                                        args_str += f"{arg}={value}, "
-                                    args_str = args_str.rstrip(", ")
-                                    tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+                            if self.run_response is not None and self.run_response.tools is not None:
+                                for tool_call in self.run_response.tools:
+                                    if tool_call.requires_confirmation:
+                                        args_str = ""
+                                        for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                                            args_str += f"{arg}={value}, "
+                                        args_str = args_str.rstrip(", ")
+                                        tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
 
                             # Create panel for response
                             response_panel = create_panel(
@@ -6556,8 +6606,8 @@ class Agent:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
-                        for tool_call in self.run_response.formatted_tool_calls:
-                            tool_calls_content.append(f"• {tool_call}\n")
+                        for formatted_tool_call in self.run_response.formatted_tool_calls:
+                            tool_calls_content.append(f"• {formatted_tool_call}\n")
 
                         tool_calls_panel = create_panel(
                             content=tool_calls_content.plain.rstrip(),
@@ -6658,10 +6708,10 @@ class Agent:
 
                 if isinstance(run_response, RunResponse) and run_response.is_paused:
                     tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                    for tool_call in run_response.tools:
+                    for tool_call in run_response.tools or []:
                         if tool_call.requires_confirmation:
                             args_str = ""
-                            for arg, value in tool_call.tool_args.items():
+                            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
                                 args_str += f"{arg}={value}, "
                             args_str = args_str.rstrip(", ")
                             tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
@@ -6724,8 +6774,8 @@ class Agent:
 
                 if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     tool_calls_content = Text()
-                    for tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {tool_call}\n")
+                    for formatted_tool_call in run_response.formatted_tool_calls:
+                        tool_calls_content.append(f"• {formatted_tool_call}\n")
 
                     tool_calls_panel = create_panel(
                         content=tool_calls_content.plain.rstrip(),

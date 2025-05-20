@@ -114,7 +114,7 @@ class RunResponse:
         if self.event == RunEvent.run_paused:
             return True
         return False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v

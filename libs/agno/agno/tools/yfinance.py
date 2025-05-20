@@ -39,7 +39,6 @@ class YFinanceTools(Toolkit):
         enable_all: bool = False,
         **kwargs,
     ):
-        
         tools = []
         if stock_price or enable_all:
             tools.append(self.get_current_stock_price)
@@ -61,7 +60,6 @@ class YFinanceTools(Toolkit):
             tools.append(self.get_historical_stock_prices)
 
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)
-
 
     def get_current_stock_price(self, symbol: str) -> str:
         """

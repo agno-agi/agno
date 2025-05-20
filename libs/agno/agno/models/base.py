@@ -437,8 +437,7 @@ class Model(ABC):
                         ModelResponseEvent.tool_call_completed.value,
                     ]:
                         if function_call_response.content:
-                            for tool_execution in function_call_response.tool_executions:
-                                model_response.content += tool_execution.result
+                            model_response.content += function_call_response.content  # type: ignore
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -990,10 +989,13 @@ class Model(ABC):
         tool_execution: ToolExecution,
         functions: Optional[Dict[str, Function]] = None,
     ) -> FunctionCall:
-        return get_function_call_for_tool_execution(
+        function_call = get_function_call_for_tool_execution(
             tool_execution=tool_execution,
             functions=functions,
         )
+        if function_call is None:
+            raise ValueError("Function call not found")
+        return function_call
 
     def get_function_calls_to_run(
         self,
@@ -1064,9 +1066,9 @@ class Model(ABC):
         )
 
         # Run function calls sequentially
-        function_execution_result = FunctionExecutionResult(status="failure")
+        function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
         try:
-            function_execution_result: FunctionExecutionResult = function_call.execute()
+            function_execution_result = function_call.execute()
         except AgentRunException as a_exc:
             # Update additional messages from function call
             _handle_agent_exception(a_exc, additional_messages)
@@ -1105,7 +1107,7 @@ class Model(ABC):
                     tool_name=function_call_result.tool_name,
                     tool_args=function_call_result.tool_args,
                     tool_call_error=function_call_result.tool_call_error,
-                    result=function_call_result.content,
+                    result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=function_call_result.metrics,
                 )
@@ -1298,7 +1300,7 @@ class Model(ABC):
                         tool_name=function_call_result.tool_name,
                         tool_args=function_call_result.tool_args,
                         tool_call_error=function_call_result.tool_call_error,
-                        result=function_call_result.content,
+                        result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
                         metrics=function_call_result.metrics,
                     )

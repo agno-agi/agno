@@ -11,11 +11,11 @@ The user can then either approve or reject the tool call and the agent should co
 
 import json
 
-from agno.utils import pprint
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.utils import pprint
 
 
 def get_top_hackernews_stories(num_stories: int) -> str:
@@ -55,13 +55,16 @@ def send_email(to: str, subject: str, body: str) -> str:
     """
     return f"Email sent to {to} with subject {subject} and body {body}"
 
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories, send_email],
     markdown=True,
 )
 
-run_response = agent.run("Fetch the top 2 hackernews stories and email them to john@doe.com.")
+run_response = agent.run(
+    "Fetch the top 2 hackernews stories and email them to john@doe.com."
+)
 if run_response.is_paused:  # Or agent.run_response.is_paused
     for tool in run_response.tools:
         if tool.requires_confirmation:
@@ -71,7 +74,9 @@ if run_response.is_paused:  # Or agent.run_response.is_paused
             # We update the tools in place
             tool.confirmed = user_input == "y"
         else:
-            print(f"Tool name {tool.tool_name} was completed in {tool.metrics.time:.2f} seconds.")
+            print(
+                f"Tool name {tool.tool_name} was completed in {tool.metrics.time:.2f} seconds."
+            )
 
     run_response = agent.continue_run()
     pprint.pprint_run_response(run_response)

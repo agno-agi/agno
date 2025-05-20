@@ -56,19 +56,23 @@ agent = Agent(
     markdown=True,
 )
 
+
 async def main():
-    async for run_response in await agent.arun("Fetch the top 2 hackernews stories", stream=True):
+    async for run_response in await agent.arun(
+        "Fetch the top 2 hackernews stories", stream=True
+    ):
         if run_response.is_paused:
             for tool in run_response.tools:
                 print(f"Tool name {tool.tool_name} requires confirmation.")
                 print("Tool args: ", tool.tool_args)
                 user_input = input("Do you want to proceed? (y/n)")
                 tool.confirmed = user_input == "y"
-            run_response = await agent.acontinue_run(run_response=run_response, stream=True)
+            run_response = await agent.acontinue_run(
+                run_response=run_response, stream=True
+            )
             async for resp in run_response:
                 print(resp.content, end="")
-                
-    
+
     # Or for simple debug flow
     # await agent.aprint_response("Fetch the top 2 hackernews stories", stream=True)
 
