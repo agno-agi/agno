@@ -9,15 +9,15 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.app.settings import APIAppSettings
-from agno.app.simple_fastapi.async_router import get_async_router
-from agno.app.simple_fastapi.sync_router import get_sync_router
+from agno.app.fastapi.async_router import get_async_router
+from agno.app.fastapi.sync_router import get_sync_router
 from agno.app.utils import generate_id
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
 
 
-class SimpleFastAPI:
+class FastAPIApp:
     def __init__(
         self,
         agent: Optional[Agent] = None,

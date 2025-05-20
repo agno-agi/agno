@@ -1,13 +1,11 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.simple_fastapi.app import SimpleFastAPI
-from agno.app.simple_fastapi.serve import serve_fastapi_app
-from agno.memory import memory
+from agno.app.fastapi.app import FastAPIApp
+from agno.app.fastapi.serve import serve_fastapi_app
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
@@ -15,7 +13,6 @@ from agno.tools.youtube import YouTubeTools
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
 
 memory = Memory(db=memory_db)
-
 
 StudyBuddy = Agent(
     name="StudyBuddy",
@@ -87,9 +84,9 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = SimpleFastAPI(
+app = FastAPIApp(
     agent=StudyBuddy,
 ).get_app()
 
 if __name__ == "__main__":
-    serve_fastapi_app("studyfriend:app", port=8001, reload=True)
+    serve_fastapi_app("study_friend:app", port=8001, reload=True)
