@@ -3499,7 +3499,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:
@@ -3562,7 +3565,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:
