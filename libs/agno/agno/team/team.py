@@ -6836,19 +6836,25 @@ class Team:
             "description": self.description,
             "storage": self.storage.__class__.__name__ if self.storage is not None else None,
             # "tools": [tool.to_dict() for tool in self.tools] if self.tools is not None else None,
-            "memory": {
-                "name": self.memory.__class__.__name__,
-                "model": {
-                    "name": self.memory.model.name,
-                    "model": self.memory.model.id,
-                    "provider": self.memory.model.provider,
+            "memory": (
+                {
+                    "name": self.memory.__class__.__name__,
+                    "model": {
+                        "name": self.memory.model.name,
+                        "model": self.memory.model.id,
+                        "provider": self.memory.model.provider,
+                    }
+                    if self.memory.model
+                    else {
+                        "name": self.model.name,
+                        "model": self.model.id,
+                        "provider": self.model.provider,
+                    },
+                    "db": self.memory.db.__dict__() if self.memory.db else None,
                 }
-                if self.memory.model is not None
-                else None,
-                "db": self.memory.db.__dict__() if self.memory.db is not None else None,
-            }
-            if self.memory is not None
-            else None,
+                if self.memory and self.memory.db
+                else None
+            ),
         }
         payload = {k: v for k, v in payload.items() if v is not None}
         return payload

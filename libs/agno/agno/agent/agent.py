@@ -5959,19 +5959,25 @@ class Agent:
         payload = {
             "instructions": self.instructions if self.instructions is not None else [],
             "tools": tools,
-            "memory": {
-                "name": self.memory.__class__.__name__,
-                "model": {
-                    "name": self.memory.model.name,
-                    "model": self.memory.model.id,
-                    "provider": self.memory.model.provider,
+            "memory": (
+                {
+                    "name": self.memory.__class__.__name__,
+                    "model": {
+                        "name": self.memory.model.name,
+                        "model": self.memory.model.id,
+                        "provider": self.memory.model.provider,
+                    }
+                    if self.memory.model
+                    else {
+                        "name": self.model.name,
+                        "model": self.model.id,
+                        "provider": self.model.provider,
+                    },
+                    "db": self.memory.db.__dict__() if self.memory.db else None,
                 }
-                if self.memory.model is not None
-                else None,
-                "db": self.memory.db.__dict__() if self.memory.db is not None else None,
-            }
-            if self.memory is not None
-            else None,
+                if self.memory and self.memory.db
+                else None
+            ),
             "storage": {
                 "name": self.storage.__class__.__name__,
             }
