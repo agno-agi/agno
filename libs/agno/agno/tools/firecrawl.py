@@ -6,7 +6,7 @@ from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
-    from firecrawl import FirecrawlApp
+    from firecrawl import FirecrawlApp, ScrapeOptions
 except ImportError:
     raise ImportError("`firecrawl-py` not installed. Please install using `pip install firecrawl-py`")
 
@@ -30,6 +30,7 @@ class FirecrawlTools(Toolkit):
         limit (int): The maximum number of pages to crawl.
         scrape (bool): Whether to scrape the website.
         crawl (bool): Whether to crawl the website.
+        mapping (bool): Whether to map the website.
         api_url (Optional[str]): The API URL to use for the Firecrawl app.
     """
 
@@ -69,17 +70,11 @@ class FirecrawlTools(Toolkit):
             self.register(self.map_website)
 
     def scrape_website(self, url: str) -> str:
-        """Use this function to Scrapes a website using Firecrawl.
+        """Use this function to scrape a website using Firecrawl.
 
         Args:
             url (str): The URL to scrape.
-
-        Returns:
-            The results of the scraping.
         """
-        if url is None:
-            return "No URL provided"
-
         params = {}
         if self.formats:
             params["formats"] = self.formats
@@ -97,30 +92,23 @@ class FirecrawlTools(Toolkit):
         Returns:
             The results of the crawling.
         """
-        if url is None:
-            return "No URL provided"
-
         params: Dict[str, Any] = {}
         if self.limit or limit:
             params["limit"] = self.limit or limit
-            if self.formats:
-                params["scrapeOptions"] = {"formats": self.formats}
-                params["pollInterval"] = 30
+        if self.formats:
+            params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
+
+        params["poll_interval"] = 30
 
         crawl_result = self.app.crawl_url(url, **params)
         return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
-    
+
     def map_website(self, url: str) -> str:
         """Use this function to Map a website using Firecrawl.
 
         Args:
             url (str): The URL to map.
 
-        Returns:
-            The results of the mapping.
         """
-        if url is None:
-            return "No URL provided"
-
         map_result = self.app.map_url(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
