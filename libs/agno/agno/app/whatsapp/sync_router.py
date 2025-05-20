@@ -1,6 +1,6 @@
 import base64
 from os import getenv
-from typing import Optional
+from typing import Optional, cast
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -48,7 +48,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         """Handle incoming WhatsApp messages"""
         try:
             # Get raw payload for signature validation
-            payload = request.body()
+            payload = cast(bytes, request.body())
             signature = request.headers.get("X-Hub-Signature-256")
 
             # Validate webhook signature
@@ -56,7 +56,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                 log_warning("Invalid webhook signature")
                 raise HTTPException(status_code=403, detail="Invalid signature")
 
-            body = request.json()
+            body = cast(dict, request.json())
 
             # Validate webhook data
             if body.get("object") != "whatsapp_business_account":
@@ -111,7 +111,7 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
             else:
                 return
 
-            phone_number = message["from"]
+            phone_number = message.get("from", "")
             log_debug(f"Processing message from {phone_number}: {message_text}")
 
             # Generate and send response

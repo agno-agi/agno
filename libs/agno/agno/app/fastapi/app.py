@@ -8,9 +8,9 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.app.settings import APIAppSettings
 from agno.app.fastapi.async_router import get_async_router
 from agno.app.fastapi.sync_router import get_sync_router
+from agno.app.settings import APIAppSettings
 from agno.app.utils import generate_id
 from agno.team.team import Team
 
