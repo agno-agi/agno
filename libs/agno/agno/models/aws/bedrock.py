@@ -16,8 +16,7 @@ try:
     from boto3.session import Session
     from botocore.exceptions import ClientError
 except ImportError:
-    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
-    raise
+    raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
 @dataclass
