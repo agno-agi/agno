@@ -634,10 +634,6 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
 
-        thread = threading.Thread(target=self._register_agent)
-        thread.start()
-
-
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
@@ -661,6 +657,7 @@ class Agent:
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         return run_response
+
     def _run_stream(
         self,
         run_response: RunResponse,
@@ -878,6 +875,10 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Register Agent
+        thread = threading.Thread(target=self._register_agent)
+        thread.start()
+
         for attempt in range(num_attempts):
             try:
                 # Create a new run_response for this attempt
@@ -998,7 +999,7 @@ class Agent:
 
         # 1. Prepare the Agent for the run
         self.model = cast(Model, self.model)
-                # 1. Reason about the task if reasoning is enabled
+        # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
 
         # Get the index of the last "user" message in messages_for_run
@@ -1032,9 +1033,6 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
-
-        # Register Agent
-        asyncio.create_task(self._aregister_agent())
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
@@ -1250,6 +1248,9 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Register Agent
+        asyncio.create_task(self._aregister_agent())
 
         for attempt in range(num_attempts):
             try:

@@ -15,11 +15,11 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
+from agno.app.playground.async_router import get_async_playground_router
+from agno.app.playground.sync_router import get_sync_playground_router
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
-from agno.app.playground.async_router import get_async_playground_router
 from agno.playground.settings import PlaygroundSettings
-from agno.app.playground.sync_router import get_sync_playground_router
 from agno.team.team import Team
 from agno.utils.log import log_debug, logger
 from agno.workflow.workflow import Workflow
