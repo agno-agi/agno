@@ -63,7 +63,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
         log_info(f"Processing event: {event}")
         if event.get("type")=="message":
             if event.get("bot_id"):
-                pass
+                log_info("bot event")
             else:
                 user=None
                 message_text=event.get("text")
@@ -74,8 +74,5 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                     response = await agent.arun(message_text,user_id=user if user else None)
                 elif team:
                     response = await team.arun(message_text,user_id=user if user else None)
-        try:
-            SlackTools().send_message(channel=channel_id if channel_id else None,text=response.content)
-        except Exception:
-            pass
+                SlackTools().send_message(channel=channel_id if channel_id else None,text=response.content)
     return router

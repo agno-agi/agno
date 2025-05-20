@@ -70,8 +70,6 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     response = agent.arun(message_text,user_id=user if user else None)
                 elif team:
                     response = team.arun(message_text,user_id=user if user else None)
-        try:
-            SlackTools().send_message(channel=channel_id if channel_id else None,text=response.content)
-        except Exception:
-            pass
+                SlackTools().send_message(channel=channel_id if channel_id else None,text=response.content)
+
     return router
