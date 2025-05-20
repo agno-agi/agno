@@ -5,9 +5,9 @@ from surrealdb import AsyncSurrealDB, SurrealDB
 
 from agno.document import Document
 from agno.embedder import Embedder
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
-from agno.utils.log import log_debug, log_info, logger
 
 
 class SurrealVectorDb(VectorDb):
@@ -102,6 +102,7 @@ class SurrealVectorDb(VectorDb):
         # Embedder for embedding the document contents
         if embedder is None:
             from agno.embedder.openai import OpenAIEmbedder
+
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
@@ -168,12 +169,12 @@ class SurrealVectorDb(VectorDb):
             log_debug(f"Creating collection: {self.collection}")
             with self.connect():
                 query = self.CREATE_TABLE_QUERY.format(
-                        collection=self.collection,
-                        distance=self.distance,
-                        dimensions=self.dimensions,
-                        efc=self.efc,
-                        m=self.m
-                    )
+                    collection=self.collection,
+                    distance=self.distance,
+                    dimensions=self.dimensions,
+                    efc=self.efc,
+                    m=self.m,
+                )
                 self.sync_client.query(query)
 
     def doc_exists(self, document: Document) -> bool:
@@ -181,8 +182,7 @@ class SurrealVectorDb(VectorDb):
         log_debug(f"Checking if document exists: {document.content}")
         with self.connect():
             result = self.sync_client.query(
-                self.DOC_EXISTS_QUERY.format(collection=self.collection),
-                {"content": document.content}
+                self.DOC_EXISTS_QUERY.format(collection=self.collection), {"content": document.content}
             )
             return bool(self._extract_result(result))
 
@@ -190,10 +190,7 @@ class SurrealVectorDb(VectorDb):
         """Check if a document exists by its name"""
         log_debug(f"Checking if document exists: {name}")
         with self.connect():
-            result = self.sync_client.query(
-                self.NAME_EXISTS_QUERY.format(collection=self.collection),
-                {"name": name}
-            )
+            result = self.sync_client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
             return bool(self._extract_result(result))
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -228,14 +225,10 @@ class SurrealVectorDb(VectorDb):
 
             filter_condition = self._build_filter_condition(filters)
             query = self.SEARCH_QUERY.format(
-                    collection=self.collection,
-                    limit=limit,
-                    filter_condition=filter_condition,
-                    ef=self.search_ef
-                )
+                collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
+            )
             response = self.sync_client.query(
-                query,
-                {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding}
+                query, {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding}
             )
             log_debug(f"Search response: {response}")
 
@@ -245,10 +238,10 @@ class SurrealVectorDb(VectorDb):
             for item in items:
                 if isinstance(item, dict):
                     doc = Document(
-                        content=item.get('content'),
-                        embedding=item.get('embedding'),
-                        meta_data=item.get('meta_data', {}),
-                        embedder=self.embedder
+                        content=item.get("content"),
+                        embedding=item.get("embedding"),
+                        meta_data=item.get("meta_data", {}),
+                        embedder=self.embedder,
                     )
                     documents.append(doc)
             log_debug(f"Found {len(documents)} documents")
@@ -276,7 +269,7 @@ class SurrealVectorDb(VectorDb):
 
     def _extract_result(self, query_result: List[Dict[str, Any]]) -> List[Any]:
         """Extract the actual result from SurrealDB query response"""
-        return query_result[0].get('result', [])
+        return query_result[0].get("result", [])
 
     # Asynchronous methods
     async def async_create(self) -> None:
@@ -289,7 +282,7 @@ class SurrealVectorDb(VectorDb):
                     distance=self.distance,
                     dimensions=self.dimensions,
                     efc=self.efc,
-                    m=self.m
+                    m=self.m,
                 )
             )
 
@@ -297,8 +290,7 @@ class SurrealVectorDb(VectorDb):
         """Check if a document exists by its content asynchronously"""
         async with self.async_connect():
             response = await self.async_client.query(
-                self.DOC_EXISTS_QUERY.format(collection=self.collection),
-                {"content": document.content}
+                self.DOC_EXISTS_QUERY.format(collection=self.collection), {"content": document.content}
             )
             return bool(self._extract_result(response))
 
@@ -306,8 +298,7 @@ class SurrealVectorDb(VectorDb):
         """Check if a document exists by its name asynchronously"""
         async with self.async_connect():
             response = await self.async_client.query(
-                self.NAME_EXISTS_QUERY.format(collection=self.collection),
-                {"name": name}
+                self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name}
             )
             return bool(self._extract_result(response))
 
@@ -333,7 +324,9 @@ class SurrealVectorDb(VectorDb):
                 log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
                 await self.async_client.query(self.UPSERT_QUERY.format(collection=self.collection), data)
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """Search for similar documents asynchronously"""
         async with self.async_connect():
             query_embedding = self.embedder.get_embedding(query)
@@ -344,12 +337,9 @@ class SurrealVectorDb(VectorDb):
             filter_condition = self._build_filter_condition(filters)
             response = await self.async_client.query(
                 self.SEARCH_QUERY.format(
-                    collection=self.collection,
-                    limit=limit,
-                    filter_condition=filter_condition,
-                    ef=self.search_ef
+                    collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
                 ),
-                {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding}
+                {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding},
             )
 
             documents = []
@@ -357,10 +347,10 @@ class SurrealVectorDb(VectorDb):
             for item in items:
                 if isinstance(item, dict):
                     doc = Document(
-                        content=item.get('content'),
-                        embedding=item.get('embedding'),
-                        meta_data=item.get('meta_data', {}),
-                        embedder=self.embedder
+                        content=item.get("content"),
+                        embedding=item.get("embedding"),
+                        meta_data=item.get("meta_data", {}),
+                        embedder=self.embedder,
                     )
                     documents.append(doc)
             log_debug(f"Found {len(documents)} documents asynchronously")

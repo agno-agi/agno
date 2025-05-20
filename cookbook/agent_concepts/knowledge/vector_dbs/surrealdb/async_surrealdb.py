@@ -1,3 +1,6 @@
+# Run SurrealDB in a container before running this script
+# docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start --user root --pass root
+
 import asyncio
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
