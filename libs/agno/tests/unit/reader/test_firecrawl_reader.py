@@ -57,7 +57,7 @@ def test_scrape_basic(mock_scrape_response):
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=None)
+        mock_app.scrape_url.assert_called_once_with("https://example.com")
 
 
 def test_scrape_with_api_key_and_params():
@@ -75,7 +75,7 @@ def test_scrape_with_api_key_and_params():
 
         # Verify FirecrawlApp was called with correct parameters
         MockFirecrawlApp.assert_called_once_with(api_key=api_key)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=params)
+        mock_app.scrape_url.assert_called_once_with("https://example.com", **params)
 
 
 def test_scrape_empty_response():
@@ -167,7 +167,7 @@ def test_crawl_basic(mock_crawl_response):
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
-        mock_app.crawl_url.assert_called_once_with("https://example.com", params=None)
+        mock_app.crawl_url.assert_called_once_with("https://example.com")
 
 
 def test_crawl_empty_response():

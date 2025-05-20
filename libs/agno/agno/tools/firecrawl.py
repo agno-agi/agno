@@ -1,12 +1,12 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
-    from firecrawl import FirecrawlApp
+    from firecrawl import FirecrawlApp, ScrapeOptions  # type: ignore[attr-defined]
 except ImportError:
     raise ImportError("`firecrawl-py` not installed. Please install using `pip install firecrawl-py`")
 
@@ -96,11 +96,17 @@ class FirecrawlTools(Toolkit):
         if url is None:
             return "No URL provided"
 
-        params: Dict[str, Any] = {}
-        if self.limit or limit:
-            params["limit"] = self.limit or limit
-            if self.formats:
-                params["scrapeOptions"] = {"formats": self.formats}
+        limit_value = limit if limit is not None else self.limit
 
-        crawl_result = self.app.crawl_url(url, params=params, poll_interval=30)
-        return json.dumps(crawl_result)
+        scrape_opts = None
+        if self.formats:
+            scrape_opts = ScrapeOptions(formats=self.formats)
+
+        crawl_result = self.app.crawl_url(
+            url,
+            limit=limit_value,
+            scrape_options=scrape_opts,
+            poll_interval=30,
+        )
+
+        return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
