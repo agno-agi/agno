@@ -7,7 +7,6 @@ reasoning_agent = Agent(
     reasoning=True,
     markdown=True,
     use_json_mode=True,
-    debug_mode=True,
 )
 reasoning_agent.print_response(
     "Give me steps to write a python script for fibonacci series",
