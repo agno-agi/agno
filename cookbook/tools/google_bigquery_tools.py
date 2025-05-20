@@ -7,9 +7,9 @@ export GOOGLE_CLOUD_LOCATION="your-location"
 Or you can set the following parameters in the BQTools class:
 
 BQTools(
-    "GOOGLE_CLOUD_PROJECT",
-    "GOOGLE_CLOUD_LOCATION",
-    "GOOGLE_CLOUD_DATASET",
+    project="<your-project-id>",
+    location="<your-location>",
+    dataset="<your-dataset>",
 )
 
 NOTE: Instruct the agent to prepend the table name with the project name and dataset name 
@@ -19,7 +19,7 @@ Describe the table schemas in instructions and use thinking tools for better res
 import os
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.tools.bigquery import BQTools
+from agno.tools.google_bigquery import GoogleBigQueryTools
 
 agent = Agent(
     instructions=[
@@ -27,9 +27,9 @@ agent = Agent(
         "Always prepend the table name with your_project_id.your_dataset_name when run_sql tool is invoked",
         ],
         
-    tools=[BQTools("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "DATASET_ID")],
+    tools=[GoogleBigQueryTools(dataset="your_dataset_name")],
     show_tool_calls=True,
-    model=Gemini(id="gemini-2.0-flash", vertexai=True, project_id="GOOGLE_CLOUD_PROJECT", location="GOOGLE_CLOUD_LOCATION"), 
+    model=Gemini(id="gemini-2.0-flash", vertexai=True), 
 )
 
 agent.print_response(

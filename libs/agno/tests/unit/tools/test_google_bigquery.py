@@ -3,19 +3,19 @@
 import pytest
 import json
 from unittest.mock import MagicMock, patch
-from agno.tools.bigquery import BQTools 
+from agno.tools.google_bigquery import GoogleBigQueryTools 
 
 
 @pytest.fixture
 def mock_bq_client():
     """Mock BigQuery Client used by BQTools."""
-    with patch("agno.tools.bigquery.bigquery.Client", autospec=True) as MockClientConstructor:
+    with patch("agno.tools.google_bigquery.bigquery.Client", autospec=True) as MockClientConstructor:
         yield MockClientConstructor.return_value
 
 @pytest.fixture
 def bq_tools_instance(mock_bq_client): # mock_bq_client is the instance mock from the fixture above
     """Fixture to instantiate BQTools with the mocked BigQuery client."""
-    tools = BQTools(
+    tools = GoogleBigQueryTools(
         project="test-project",
         dataset="test-dataset",
         # credentials will be None by default in BQTools, which is fine for the mocked client.

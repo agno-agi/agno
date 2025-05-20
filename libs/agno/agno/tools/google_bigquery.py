@@ -1,33 +1,40 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
- 
+
 try:
     from google.cloud import bigquery
 except ImportError:
     raise ImportError("`bigquery` not installed. Please install it with google-cloud-bigquery")
-class BQTools(Toolkit):
+
+class GoogleBigQueryTools(Toolkit):
     def __init__(
         self,
+        dataset: str,
         project: Optional[str] = None,
         location: Optional[str] = None,
-        dataset: Optional[str] = None,
         list_tables: Optional[bool] = True,
         describe_table: Optional[bool] = True,
         run_sql_query: Optional[bool] = True,
         credentials: Optional[Any] = None,
         **kwargs,
     ):
-        super().__init__(name="bq_tools", **kwargs)
+        super().__init__(name="google_bigquery_tools", **kwargs)
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
-        self.location = location or getenv("GOOGLE_CLOUD_LOCATION")  
-        self.dataset = dataset
+        self.location = location or getenv("GOOGLE_CLOUD_LOCATION")
         
+        if not self.project:
+            raise ValueError("project is required")
+        if not self.location:
+            raise ValueError("location is required")
+        
+        self.dataset = dataset
+
         # Initialize the BQ CLient
         self.client = bigquery.Client(project=self.project, credentials=credentials)
- 
+
         # Register functions in the toolkit
         if list_tables:
             self.register(self.list_tables)
@@ -35,7 +42,7 @@ class BQTools(Toolkit):
             self.register(self.describe_table)
         if run_sql_query:
             self.register(self.run_sql_query)
- 
+
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the dataset.
         Returns:
@@ -50,8 +57,8 @@ class BQTools(Toolkit):
         except Exception as e:
             logger.error(f"Error getting tables: {e}")
             return f"Error getting tables: {e}"
-        
-    
+
+
     def describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
         Args:
@@ -74,7 +81,7 @@ class BQTools(Toolkit):
         except Exception as e:
             logger.error(f"Error getting table schema: {e}")
             return f"Error getting table schema: {e}"
-        
+
     def run_sql_query(self, query: str) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
         Args:
@@ -89,7 +96,7 @@ class BQTools(Toolkit):
         except Exception as e:
             logger.error(f"Error running query: {e}")
             return f"Error running query: {e}"
- 
+
     def _run_sql(self, sql: str) -> str:
         """Internal function to run a sql query.
         Args:
