@@ -2,6 +2,7 @@ import json
 from os import getenv
 from typing import Any, Dict, Optional, Union
 
+from agno.agent import Agent
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -14,7 +15,7 @@ except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
 
-class Mem0Toolkit(Toolkit):
+class Mem0Tools(Toolkit):
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -79,15 +80,14 @@ class Mem0Toolkit(Toolkit):
 
     def add_memory(
         self,
-        messages: Any,
-        agent: Any = None,
+        agent: Agent,
+        content: Union[str, Dict[str, str]],
     ) -> str:
-        """Adds information to the memory for a specific user. Requires user_id.
+        """
+        Adds content to the memory.
+
         Args:
-            messages (Any): Data to add.
-            agent (Any): Agent object to extract user_id from session_state
-        Returns:
-            str: JSON string of the result from Mem0, or an error message.
+            content (str | dict): Content to add.
         """
         resolved_user_id = self._get_user_id("add_memory", agent=agent)
         # Early-return on missing user_id error
@@ -99,16 +99,11 @@ class Mem0Toolkit(Toolkit):
             log_debug(f"Adding memory for user_id: {resolved_user_id}, run_id: {run_id}")
 
             # Normalize messages into a list of {role, content} dicts
-            if isinstance(messages, list):
-                messages_list = messages
-            else:
-                # Convert message to string content; JSON-dump dicts
-                if isinstance(messages, dict):
-                    log_debug("Wrapping dict message into content string")
-                    content = json.dumps(messages)
-                else:
-                    content = str(messages)
-                messages_list = [{"role": "user", "content": content}]
+            # Convert message to string content; JSON-dump dicts
+            if isinstance(content, dict):
+                log_debug("Wrapping dict message into content string")
+                content = json.dumps(content)
+            messages_list = [{"role": "user", "content": content}]
 
             result = self.client.add(
                 messages_list,
@@ -122,15 +117,13 @@ class Mem0Toolkit(Toolkit):
 
     def search_memory(
         self,
+        agent: Agent,
         query: str,
-        agent: Any = None,
     ) -> str:
-        """Searches the memory for a specific user
+        """Searches the memory
+
         Args:
             query (str): The search query.
-            agent (Any): Agent object to extract user_id from session_state
-        Returns:
-            str: JSON string containing a list of relevant memories found, or an error message.
         """
         resolved_user_id = self._get_user_id("search_memory", agent=agent)
         # Early-return on missing user_id error
@@ -159,12 +152,9 @@ class Mem0Toolkit(Toolkit):
             log_error(f"Error searching memory: {e}")
             return f"Error searching memory: {e}"
 
-    def get_all_memories(self, agent: Any = None) -> str:
-        """Retrieves all memories for a specific user and session.
-        Args:
-            agent (Any): Agent object to extract user_id and session_id from session_state
-        Returns:
-            str: JSON string containing a list of all memories found, or an error message.
+    def get_all_memories(self, agent: Agent) -> str:
+        """
+        Retrieves all memories.
         """
         resolved_user_id = self._get_user_id("get_all_memories", agent=agent)
         # Early-return on missing user_id error
@@ -191,14 +181,9 @@ class Mem0Toolkit(Toolkit):
             log_error(f"Error getting all memories: {e}")
             return f"Error getting all memories: {e}"
 
-    def delete_all_memories(self, agent: Any = None) -> str:
-        """Deletes ALL memories associated with the specified user and session. Use with caution!
-
-        Args:
-            agent (Any): Agent object to extract user_id and session_id from session_state
-
-        Returns:
-            str: Confirmation message or error string.
+    def delete_all_memories(self, agent: Agent) -> str:
+        """
+        Deletes ALL memories. Use with caution!
         """
         resolved_user_id = self._get_user_id("delete_all_memories", agent=agent)
         # Early-return on missing user_id error with prefix

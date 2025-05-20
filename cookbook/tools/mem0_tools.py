@@ -1,19 +1,19 @@
 """
-This example demonstrates how to use the Mem0Toolkit class to interact with memories stored in Mem0.
+This example demonstrates how to use the Mem0Tools class to interact with memories stored in Mem0.
 """
 
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mem0 import Mem0Toolkit
+from agno.tools.mem0 import Mem0Tools
 
 USER_ID = "john_billings"
 SESSION_ID = "session1"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[Mem0Toolkit()],
+    tools=[Mem0Tools()],
     user_id=USER_ID,
     session_id=SESSION_ID,
     add_state_in_messages=True,

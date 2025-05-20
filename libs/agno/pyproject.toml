@@ -170,7 +170,8 @@ tools = [
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
-  "agno[zep]"
+  "agno[zep]",
+  "agno[mem0]"
 ]
 
 # All storage

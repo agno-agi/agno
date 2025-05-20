@@ -2,7 +2,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.mem0_toolkit import Mem0Toolkit
+from agno.tools.mem0 import Mem0Tools
 
 # Define a User ID for the session
 USER_ID = "john_billings"
@@ -10,7 +10,7 @@ SESSION_ID = "session1"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[Mem0Toolkit()],
+    tools=[Mem0Tools()],
     user_id=USER_ID,
     session_id=SESSION_ID,
     add_state_in_messages=True,
@@ -18,7 +18,7 @@ agent = Agent(
     instructions=dedent(
         """
         You are a helpful assistant interacting with user: {current_user_id}.
-        You MUST use the `Mem0Toolkit` which has gives you access to a bunch of tools to help you manage memories. The user's identifier is: {current_user_id}
+        You MUST use the `Mem0Tools` which has gives you access to a bunch of tools to help you manage memories. The user's identifier is: {current_user_id}
         """
     ),
     debug_mode=True,

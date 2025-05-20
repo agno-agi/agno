@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agno.tools.mem0 import Mem0Toolkit
+from agno.tools.mem0 import Mem0Tools
 
 MockMemory = MagicMock()
 MockMemoryClient = MagicMock()
@@ -72,7 +72,7 @@ def toolkit_config(monkeypatch):
     monkeypatch.delenv("MEM0_API_KEY", raising=False)  # raising=False avoids error if var doesn't exist
 
     # Toolkit initialized with config and default user_id
-    toolkit = Mem0Toolkit(config={}, user_id=None)
+    toolkit = Mem0Tools(config={}, user_id=None)
 
     return toolkit
 
@@ -83,7 +83,7 @@ def toolkit_api_key():
     MockMemoryClient.reset_mock()
     MockMemory.from_config.reset_mock()  # Also reset memory mock
     # Toolkit initialized with API key (uses MemoryClient)
-    return Mem0Toolkit(api_key="fake-api-key")  # No default user_id
+    return Mem0Tools(api_key="fake-api-key")  # No default user_id
 
 
 # --- Test Class ---
@@ -213,7 +213,7 @@ class TestMem0Toolkit:
 
     # -- Get Memory Tests --
     # The following tests for get_memory, update_memory, delete_memory, and get_memory_history
-    # have been removed as these methods are not implemented in Mem0Toolkit.
+    # have been removed as these methods are not implemented in Mem0Tools.
 
     # -- Get All Memories Tests --
     def test_get_all_memories_success(self, toolkit_api_key, mock_memory_client_instance):
