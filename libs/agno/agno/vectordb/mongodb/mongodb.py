@@ -35,8 +35,8 @@ class MongoDb(VectorDb):
         embedder: Optional[Embedder] = None,
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
-        wait_until_index_ready: Optional[float] = 3,
-        wait_after_insert: Optional[float] = 3,
+        wait_until_index_ready_in_seconds: Optional[float] = 3,
+        wait_after_insert_in_seconds: Optional[float] = 3,
         max_pool_size: int = 100,
         retry_writes: bool = True,
         client: Optional[MongoClient] = None,
@@ -54,8 +54,8 @@ class MongoDb(VectorDb):
             embedder (Embedder): Embedder instance for generating embeddings.
             distance_metric (str): Distance metric for similarity.
             overwrite (bool): Overwrite existing collection and index if True.
-            wait_until_index_ready (float): Time in seconds to wait until the index is ready.
-            wait_after_insert (float): Time in seconds to wait after inserting documents.
+            wait_until_index_ready_in_seconds (float): Time in seconds to wait until the index is ready.
+            wait_after_insert_in_seconds (float): Time in seconds to wait after inserting documents.
             max_pool_size (int): Maximum number of connections in the connection pool
             retry_writes (bool): Whether to retry write operations
             client (Optional[MongoClient]): An existing MongoClient instance.
@@ -82,8 +82,8 @@ class MongoDb(VectorDb):
         self.distance_metric = distance_metric
         self.connection_string = db_url
         self.overwrite = overwrite
-        self.wait_until_index_ready = wait_until_index_ready
-        self.wait_after_insert = wait_after_insert
+        self.wait_until_index_ready_in_seconds = wait_until_index_ready_in_seconds
+        self.wait_after_insert_in_seconds = wait_after_insert_in_seconds
         self.kwargs = kwargs
         self.kwargs.update(
             {
@@ -132,7 +132,6 @@ class MongoDb(VectorDb):
                     log_info(f"Using database: {self.database}")
 
                 except errors.ConnectionFailure as e:
-                    logger.error(f"Failed to connect to Azure Cosmos DB: {e}")
                     raise ConnectionError(f"Failed to connect to Azure Cosmos DB: {e}")
                 except Exception as e:
                     logger.error(f"An error occurred while connecting to Azure Cosmos DB: {e}")
@@ -187,7 +186,7 @@ class MongoDb(VectorDb):
             if not self._search_index_exists():
                 log_info(f"Search index '{self.collection_name}' does not exist. Creating it.")
                 self._create_search_index()
-                if self.wait_until_index_ready and not self.cosmos_compatibility:
+                if self.wait_until_index_ready_in_seconds and not self.cosmos_compatibility:
                     self._wait_for_index_ready()
             else:
                 log_info("Using existing vector search index.")
@@ -292,7 +291,7 @@ class MongoDb(VectorDb):
                     collection = self._get_collection()
                     collection.create_search_index(model=search_index_model)
 
-                    if self.wait_until_index_ready:
+                    if self.wait_until_index_ready_in_seconds:
                         self._wait_for_index_ready()
 
                     log_info(f"Search index '{index_name}' created successfully.")
@@ -410,7 +409,7 @@ class MongoDb(VectorDb):
 
                 logger.error(f"Traceback: {traceback.format_exc()}")
 
-            if time.time() - start_time > self.wait_until_index_ready:  # type: ignore
+            if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
                 raise TimeoutError("Timeout waiting for search index to become ready.")
             await asyncio.sleep(1)
 
@@ -432,7 +431,7 @@ class MongoDb(VectorDb):
             log_info(f"Creating collection '{self.collection_name}' asynchronously.")
             await self._async_db.create_collection(self.collection_name)  # type: ignore
             await self._create_search_index_async()
-            if self.wait_until_index_ready:
+            if self.wait_until_index_ready_in_seconds:
                 await self._wait_for_index_ready_async()
 
     def doc_exists(self, document: Document) -> bool:
@@ -488,8 +487,8 @@ class MongoDb(VectorDb):
             try:
                 collection.insert_many(prepared_docs, ordered=False)
                 log_info(f"Inserted {len(prepared_docs)} documents successfully.")
-                if self.wait_after_insert and self.wait_after_insert > 0:
-                    time.sleep(self.wait_after_insert)
+                if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
+                    time.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
                 logger.warning(f"Bulk write error while inserting documents: {e.details}")
             except Exception as e:
@@ -785,8 +784,8 @@ class MongoDb(VectorDb):
             try:
                 await collection.insert_many(prepared_docs, ordered=False)
                 log_info(f"Inserted {len(prepared_docs)} documents successfully.")
-                if self.wait_after_insert and self.wait_after_insert > 0:
-                    await asyncio.sleep(self.wait_after_insert)
+                if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
+                    await asyncio.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
                 logger.warning(f"Bulk write error while inserting documents: {e.details}")
             except Exception as e:
