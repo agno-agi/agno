@@ -376,6 +376,7 @@ module = [
   "weaviate.*",
   "webexpythonsdk.*",
   "wikipedia.*",
+  "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
   "zep_cloud.*"
