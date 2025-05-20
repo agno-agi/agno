@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.0"
+version = "1.5.1"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -48,6 +48,15 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
 
+# Models integration test dependencies
+integration-tests = [
+    "exa_py",
+    "duckduckgo-search",
+    "yfinance",
+    "sqlalchemy",
+    "Pillow",
+]
+
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]
@@ -93,6 +102,7 @@ browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
 confluence = ["atlassian-python-api"]
 zep = ["zep-cloud"]
+google_bigquery = ["google-cloud-bigquery"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -106,6 +116,7 @@ pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
+couchbase = ["couchbase"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
@@ -172,6 +183,7 @@ tools = [
   "agno[confluence]",
   "agno[zep]",
   "agno[mem0]"
+  "agno[google_bigquery]",
 ]
 
 # All storage
@@ -189,6 +201,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[couchbase]",
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]",
@@ -369,8 +382,11 @@ module = [
   "weaviate.*",
   "webexpythonsdk.*",
   "wikipedia.*",
+  "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "couchbase.*",
+  "acouchbase.*",
   "zep_cloud.*"
 ]
 ignore_missing_imports = true

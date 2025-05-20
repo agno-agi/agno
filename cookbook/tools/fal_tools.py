@@ -13,7 +13,6 @@ fal_agent = Agent(
         "Don't convert video URL to markdown or anything else.",
     ],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 
