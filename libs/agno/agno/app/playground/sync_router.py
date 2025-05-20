@@ -8,11 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Audio, Image, Video
-from agno.media import File as FileMedia
-from agno.memory.agent import AgentMemory
-from agno.memory.v2 import Memory
-from agno.playground.operator import (
+from agno.app.playground.operator import (
     format_tools,
     get_agent_by_id,
     get_session_title,
@@ -21,7 +17,7 @@ from agno.playground.operator import (
     get_team_by_id,
     get_workflow_by_id,
 )
-from agno.playground.schemas import (
+from agno.app.playground.schemas import (
     AgentGetResponse,
     AgentModel,
     AgentRenameRequest,
@@ -36,7 +32,11 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
-from agno.playground.utils import process_audio, process_document, process_image, process_video
+from agno.app.playground.utils import process_audio, process_document, process_image, process_video
+from agno.media import Audio, Image, Video
+from agno.media import File as FileMedia
+from agno.memory.agent import AgentMemory
+from agno.memory.v2 import Memory
 from agno.run.response import RunEvent
 from agno.run.team import TeamRunResponse
 from agno.storage.session.agent import AgentSession
@@ -120,20 +120,6 @@ def get_sync_playground_router(
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
 
-    # Generate IDs if they were not explicitly set on agents/teams/workflows
-    if agents:
-        for agent in agents:
-            if agent.agent_id is None:
-                agent.agent_id = str(uuid4())
-    if teams:
-        for team in teams:
-            if team.team_id is None:
-                team.team_id = str(uuid4())
-    if workflows:
-        for workflow in workflows:
-            if workflow.workflow_id is None:
-                workflow.workflow_id = str(uuid4())
-
     @playground_router.get("/status")
     def playground_status():
         return {"playground": "available"}
@@ -177,6 +163,12 @@ def get_sync_playground_router(
                             name=agent.memory.model.name,
                             model=agent.memory.model.id,
                             provider=agent.memory.model.provider,
+                        )
+                    else:
+                        memory_dict["model"] = AgentModel(
+                            name=name,
+                            model=model_id,
+                            provider=provider,
                         )
                     if agent.memory.db is not None:
                         memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
@@ -364,7 +356,7 @@ def get_sync_playground_router(
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
         agent_sessions: List[AgentSessionsResponse] = []
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             title = get_session_title(session)
             agent_sessions.append(
@@ -441,7 +433,7 @@ def get_sync_playground_router(
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             if session.session_id == session_id:
                 agent.delete_session(session_id)

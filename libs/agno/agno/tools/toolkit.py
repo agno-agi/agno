@@ -18,6 +18,8 @@ class Toolkit:
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
         auto_register: bool = True,
+        stop_after_tool_call_tools: Optional[List[str]] = None,
+        show_result_tools: Optional[List[str]] = None,
     ):
         """Initialize a new Toolkit.
 
@@ -32,12 +34,16 @@ class Toolkit:
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
             auto_register (bool): Whether to automatically register all methods in the class.
+            stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
+            show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
         """
         self.name: str = name
         self.tools: List[Callable] = tools
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
+        self.stop_after_tool_call_tools = stop_after_tool_call_tools or []
+        self.show_result_tools = show_result_tools or []
 
         self._check_tools_filters(
             available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
@@ -102,6 +108,8 @@ class Toolkit:
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,
+                stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
+                show_result=tool_name in self.show_result_tools,
             )
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name}")
