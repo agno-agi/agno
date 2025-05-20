@@ -2037,7 +2037,13 @@ class Agent:
                             f"Async tool {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
                             "Use agent.arun() or agent.aprint_response() instead to use this tool."
                         )
-            elif isinstance(tool, Callable) or isinstance(tool, Function):
+            elif isinstance(tool, Function):
+                if iscoroutinefunction(tool.entrypoint):
+                    raise Exception(
+                        f"Async function {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+            elif isinstance(tool, Callable):
                 if iscoroutinefunction(tool):
                     raise Exception(
                         f"Async function {tool.__name__} can't be used with synchronous agent.run() or agent.print_response(). "
