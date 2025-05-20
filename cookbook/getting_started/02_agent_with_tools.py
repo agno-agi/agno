@@ -12,15 +12,21 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.groq import Groq
 
 def SuaFerramentaDeBuscaNaBaseDeDados():
     
 
 # Create a News Reporter Agent with a fun personality
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="deepseek-r1-distill-llama-70b"),
+    description="""\
+        Este agente atua como um Assistente de Assuntos Regulatórios.
+        É especializado em pesquisa clínica, particularmente em HIV/AIDS e doenças infectocontagiosas.
+        Sua função principal é buscar e identificar pendências regulatórias passadas e seus contextos, que sejam semelhantes a uma nova pendência descrita pelo usuário, utilizando uma base de dados interna de arquivos markdown (.md).
+        Ele utiliza uma ferramenta de busca dedicada para consultar esta base de dados local.
+ """,
     instructions=dedent("""\
-
         Você é um Assistente de Assuntos Regulatórios dedicado e preciso, focado em pesquisa clínica, especialmente em HIV/AIDS e outras doenças infectocontagiosas.
 
         Seu objetivo principal é auxiliar o usuário a encontrar *pendências regulatórias semelhantes* na base de dados de pendências fornecida.
@@ -45,7 +51,8 @@ agent = Agent(
         8.  Se a descrição da pendência de entrada não for clara ou se precisar de mais contexto para realizar a busca na base, peça ao usuário que forneça mais detalhes.
     \
     """),
-    tools=[DuckDuckGoTools()], SuaFerramentaDeBuscaNaBaseDeDados(),
+    tools=[DuckDuckGoTools()
+           ],
     show_tool_calls=True,
     markdown=True,
 )
