@@ -13,17 +13,18 @@
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
-<div align="center">
-  <img src="https://img.shields.io/pypi/v/agno" alt="PyPI - Version">
-</div>
+## What is Agno?
 
-## Introduction
+[Agno](https://docs.agno.com) is a lightweight, high-performance library for building Agents.
 
-[Agno](https://docs.agno.com) is a lightweight library for building Agents with memory, knowledge, tools and reasoning.
+It helps you progressively build the 5 levels of Agentic Systems:
+- Level 1: Agents with tools and instructions.
+- Level 2: Agents with knowledge and storage.
+- Level 3: Agents with memory and reasoning.
+- Level 4: Teams of Agents with collaboration and coordination.
+- Level 5: Agentic Workflows with state and determinism.
 
-Developers use Agno to build Reasoning Agents, Multimodal Agents, Teams of Agents and Agentic Workflows. Agno also provides a beautiful UI to chat with your Agents, pre-built FastAPI routes to serve your Agents and tools to monitor and evaluate their performance.
-
-Here's an Agent that writes a report on a stock, reasoning through each step:
+Here's a Investment Research Agent that analyzes stocks, reasoning through each step:
 
 ```python reasoning_finance_agent.py
 from agno.agent import Agent
