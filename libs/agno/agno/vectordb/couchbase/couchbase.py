@@ -1,7 +1,7 @@
+import asyncio
 import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Union
-import asyncio
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -15,6 +15,20 @@ try:
 except ImportError:
     raise ImportError("`hashlib` not installed. Please install using `pip install hashlib`")
 try:
+    from acouchbase.bucket import AsyncBucket
+    from acouchbase.cluster import AsyncCluster
+    from acouchbase.collection import AsyncCollection
+    from acouchbase.management.search import (
+        ScopeSearchIndexManager as AsyncScopeSearchIndexManager,
+    )
+    from acouchbase.management.search import (
+        SearchIndex as AsyncSearchIndex,
+    )
+    from acouchbase.management.search import (
+        SearchIndexManager as AsyncSearchIndexManager,
+    )
+    from acouchbase.scope import AsyncScope
+    from couchbase.bucket import Bucket
     from couchbase.cluster import Cluster
     from couchbase.collection import Collection
     from couchbase.exceptions import (
@@ -27,20 +41,9 @@ try:
     from couchbase.n1ql import QueryScanConsistency
     from couchbase.options import ClusterOptions, QueryOptions, SearchOptions
     from couchbase.result import SearchResult
-    from couchbase.bucket import Bucket
     from couchbase.scope import Scope
     from couchbase.search import SearchRequest
     from couchbase.vector_search import VectorQuery, VectorSearch
-
-    from acouchbase.cluster import AsyncCluster
-    from acouchbase.bucket import AsyncBucket
-    from acouchbase.collection import AsyncCollection
-    from acouchbase.scope import AsyncScope
-    from acouchbase.management.search import (
-        ScopeSearchIndexManager as AsyncScopeSearchIndexManager,
-        SearchIndexManager as AsyncSearchIndexManager,
-        SearchIndex as AsyncSearchIndex,
-    )
 except ImportError:
     raise ImportError("`couchbase` not installed. Please install using `pip install couchbase`")
 

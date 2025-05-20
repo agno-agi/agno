@@ -1,7 +1,11 @@
-from unittest.mock import Mock, patch, AsyncMock
+import copy
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-import copy
+from acouchbase.bucket import AsyncBucket
+from acouchbase.cluster import AsyncCluster
+from acouchbase.collection import AsyncCollection
+from acouchbase.scope import AsyncScope
 from couchbase.auth import PasswordAuthenticator
 from couchbase.bucket import Bucket
 from couchbase.cluster import Cluster
@@ -18,11 +22,6 @@ from couchbase.scope import Scope
 
 from agno.document import Document
 from agno.vectordb.couchbase.couchbase import CouchbaseSearch, OpenAIEmbedder
-
-from acouchbase.cluster import AsyncCluster
-from acouchbase.bucket import AsyncBucket
-from acouchbase.collection import AsyncCollection
-from acouchbase.scope import AsyncScope
 
 
 @pytest.fixture
@@ -811,9 +810,11 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
     mock_search_row = Mock()
     mock_search_row.id = "test_id_scope_search"
     mock_search_row.score = 0.95
+
     # Patch rows to return an async iterator
     async def async_rows():
         yield mock_search_row
+
     mock_search_result_obj.rows = async_rows  # <-- Fix: assign the async generator function directly
     mock_scope_inst.search = Mock(return_value=mock_search_result_obj)
 
@@ -886,9 +887,11 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
     mock_search_row = Mock()
     mock_search_row.id = "test_id_cluster_search"
     mock_search_row.score = 0.90
+
     # Patch rows to return an async iterator
     async def async_rows():
         yield mock_search_row
+
     mock_search_result_obj.rows = async_rows  # <-- Fix: assign the async generator function directly
     mock_cluster_inst.search = Mock(return_value=mock_search_result_obj)
 
