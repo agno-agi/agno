@@ -7,10 +7,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from mem0 import (
-        Memory,  # type: ignore
-        MemoryClient,  # type: ignore
-    )
+    from mem0 import Memory, MemoryClient  # type: ignore
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
@@ -51,8 +48,13 @@ class Mem0Tools(Toolkit):
             log_error(f"Failed to initialize Mem0 client: {e}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
-    def _get_user_id(self, method_name: str, user_id: Optional[str] = None, agent: Any = None) -> str:
-        """Gets the user ID from kwargs, defaults, or session_state, returning an error message if none found."""
+    def _get_user_id(
+        self,
+        method_name: str,
+        user_id: Optional[str] = None,
+        agent: Optional[Agent] = None,
+    ) -> str:
+        """Resolve the user ID"""
         resolved_user_id = user_id or self.user_id
         if not resolved_user_id and agent is not None:
             try:
@@ -67,8 +69,8 @@ class Mem0Tools(Toolkit):
             return error_msg
         return resolved_user_id
 
-    def _get_run_id(self, agent: Any = None) -> Optional[str]:
-        """Extracts the current session_id (run_id) from agent session state"""
+    def _get_session_id(self, agent: Optional[Agent] = None) -> Optional[str]:
+        """Extract the current session identifier from *agent* if available."""
         try:
             if agent is not None:
                 session_state = getattr(agent, "session_state", None)
@@ -83,23 +85,19 @@ class Mem0Tools(Toolkit):
         agent: Agent,
         content: Union[str, Dict[str, str]],
     ) -> str:
-        """
-        Adds content to the memory.
-
+        """Add facts to the user's memory.
         Args:
-            content (str | dict): Content to add.
+            content: The facts that should be stored.
+        Returns:
+            str: JSON-encoded Mem0 response or an error message.
         """
         resolved_user_id = self._get_user_id("add_memory", agent=agent)
-        # Early-return on missing user_id error
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
             return resolved_user_id
         try:
-            # Extract run_id from agent session_state
-            run_id = self._get_run_id(agent)
-            log_debug(f"Adding memory for user_id: {resolved_user_id}, run_id: {run_id}")
+            session_id = self._get_session_id(agent)
+            log_debug(f"Adding memory for user_id: {resolved_user_id}, session_id: {session_id}")
 
-            # Normalize messages into a list of {role, content} dicts
-            # Convert message to string content; JSON-dump dicts
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
                 content = json.dumps(content)
@@ -108,7 +106,7 @@ class Mem0Tools(Toolkit):
             result = self.client.add(
                 messages_list,
                 user_id=resolved_user_id,
-                run_id=run_id,
+                run_id=session_id,
             )
             return json.dumps(result)
         except Exception as e:
@@ -120,17 +118,11 @@ class Mem0Tools(Toolkit):
         agent: Agent,
         query: str,
     ) -> str:
-        """Searches the memory
-
-        Args:
-            query (str): The search query.
-        """
+        """Semantic search for *query* across the user's stored memories."""
         resolved_user_id = self._get_user_id("search_memory", agent=agent)
-        # Early-return on missing user_id error
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
             return resolved_user_id
         try:
-            # Search across all sessions for user-level memories
             results = self.client.search(
                 query=query,
                 user_id=resolved_user_id,
@@ -153,15 +145,11 @@ class Mem0Tools(Toolkit):
             return f"Error searching memory: {e}"
 
     def get_all_memories(self, agent: Agent) -> str:
-        """
-        Retrieves all memories.
-        """
+        """Return **all** memories for the current user as a JSON string."""
         resolved_user_id = self._get_user_id("get_all_memories", agent=agent)
-        # Early-return on missing user_id error
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
             return resolved_user_id
         try:
-            # Retrieve all memories for the user across sessions
             results = self.client.get_all(
                 user_id=resolved_user_id,
             )
@@ -182,22 +170,18 @@ class Mem0Tools(Toolkit):
             return f"Error getting all memories: {e}"
 
     def delete_all_memories(self, agent: Agent) -> str:
-        """
-        Deletes ALL memories. Use with caution!
-        """
+        """Delete *all* memories associated with the current user and session."""
         resolved_user_id = self._get_user_id("delete_all_memories", agent=agent)
-        # Early-return on missing user_id error with prefix
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
             error_msg = resolved_user_id
             log_error(error_msg)
             return f"Error deleting all memories: {error_msg}"
         try:
-            # Extract run_id from agent session_state
-            run_id = self._get_run_id(agent)
-            log_debug(f"Attempting to delete ALL memories for user_id: {resolved_user_id}, run_id: {run_id}")
+            session_id = self._get_session_id(agent)
+            log_debug(f"Attempting to delete ALL memories for user_id: {resolved_user_id}, session_id: {session_id}")
 
-            self.client.delete_all(user_id=resolved_user_id, run_id=run_id)
-            return f"Successfully deleted all memories for user_id: {resolved_user_id}, run_id: {run_id}."
+            self.client.delete_all(user_id=resolved_user_id, run_id=session_id)
+            return f"Successfully deleted all memories for user_id: {resolved_user_id}, session_id: {session_id}."
         except Exception as e:
             log_error(f"Error deleting all memories: {e}")
             return f"Error deleting all memories: {e}"

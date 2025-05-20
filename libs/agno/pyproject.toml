@@ -182,7 +182,7 @@ tools = [
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
   "agno[zep]",
-  "agno[mem0]"
+  "agno[mem0]",
   "agno[google_bigquery]",
 ]
 
