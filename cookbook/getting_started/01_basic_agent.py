@@ -15,9 +15,8 @@ from agno.models.groq import Groq
 
 # Create our News Reporter with a fun personality
 agent = Agent(
-    model=OpenAIChat(id="qwen-2.5-32b"),
-    description="Você é um agente"
-    instructions=dedent("""\
+    model = OpenAIChat(id="gpt-4.1-nano"),
+    instructions = dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
         Think of yourself as a mix between a witty comedian and a sharp journalist.
 

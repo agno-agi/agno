@@ -4,6 +4,12 @@ from agno.knowledge.url import UrlKnowledge
 from agno.models.groq import Groq
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
 
 # Load Agno documentation in a knowledge base
 knowledge = UrlKnowledge(
