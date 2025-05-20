@@ -873,6 +873,7 @@ class Agent:
                 run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
                 run_response.model = self.model.id if self.model is not None else None
+                run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # for backward compatibility, set self.run_response
                 self.run_response = run_response
@@ -1241,6 +1242,7 @@ class Agent:
                 run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
 
                 run_response.model = self.model.id if self.model is not None else None
+                run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # for backward compatibility, set self.run_response
                 self.run_response = run_response
