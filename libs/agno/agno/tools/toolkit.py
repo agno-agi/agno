@@ -22,6 +22,8 @@ class Toolkit:
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
         auto_register: bool = True,
+        stop_after_tool_call_tools: Optional[List[str]] = None,
+        show_result_tools: Optional[List[str]] = None,
     ):
         """Initialize a new Toolkit.
 
