@@ -688,7 +688,6 @@ class Team:
                         _tools.append(
                             self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=False)
                         )
-                
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -1129,18 +1128,19 @@ class Team:
             if isinstance(self.memory, Memory) and self.enable_agentic_memory:
                 _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=True))
 
-            
             if self.knowledge is not None or self.retriever is not None:
                 if self.search_knowledge:
                     # Use async or sync search based on async_mode
                     if self.enable_agentic_knowledge_filters:
-                         _tools.append(
+                        _tools.append(
                             self.search_knowledge_base_with_agentic_filters_function(
                                 knowledge_filters=effective_filters, async_mode=True
                             )
                         )
                     else:
-                       _tools.append(self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True))
+                        _tools.append(
+                            self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True)
+                        )
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
