@@ -2,10 +2,11 @@
 # docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start --user root --pass root
 
 import asyncio
+
 from agno.agent import Agent
+from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.surrealdb import SurrealVectorDb
-from agno.embedder.openai import OpenAIEmbedder
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -15,16 +16,17 @@ SURREALDB_NAMESPACE = "test"
 SURREALDB_DATABASE = "test"
 
 surrealdb = SurrealVectorDb(
-        url=SURREALDB_URL,
-        username=SURREALDB_USER,
-        password=SURREALDB_PASSWORD,
-        namespace=SURREALDB_NAMESPACE,
-        database=SURREALDB_DATABASE,
-        collection="recipes",  # Collection name for storing documents
-        efc=150,  # HNSW construction time/accuracy trade-off
-        m=12,    # HNSW max number of connections per element
-        search_ef=40  # HNSW search time/accuracy trade-off
-    )
+    url=SURREALDB_URL,
+    username=SURREALDB_USER,
+    password=SURREALDB_PASSWORD,
+    namespace=SURREALDB_NAMESPACE,
+    database=SURREALDB_DATABASE,
+    collection="recipes",  # Collection name for storing documents
+    efc=150,  # HNSW construction time/accuracy trade-off
+    m=12,  # HNSW max number of connections per element
+    search_ef=40,  # HNSW search time/accuracy trade-off
+)
+
 
 async def async_demo():
     """Demonstrate asynchronous usage of SurrealVectorDb"""
@@ -37,7 +39,11 @@ async def async_demo():
     await knowledge_base.aload(recreate=True)
 
     agent = Agent(knowledge=knowledge_base, show_tool_calls=True, debug_mode=True)
-    await agent.aprint_response("What are the 3 categories of Thai SELECT is given to restaurants overseas?", markdown=True)
+    await agent.aprint_response(
+        "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
+        markdown=True,
+    )
+
 
 if __name__ == "__main__":
     # Run asynchronous demo

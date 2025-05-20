@@ -75,7 +75,9 @@ web_agent = Agent(
 
 team_with_knowledge = Team(
     name="Team with Knowledge",
-    members=[web_agent],  # If you omit the member, the leader will search the knowledge base itself.
+    members=[
+        web_agent
+    ],  # If you omit the member, the leader will search the knowledge base itself.
     model=OpenAIChat(id="gpt-4o"),
     knowledge=knowledge_base,
     show_members_responses=True,

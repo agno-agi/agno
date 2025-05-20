@@ -422,6 +422,7 @@ class MockAsyncSearchRow:
         self.id = id_val
         self.score = score_val
 
+
 class MockAsyncSearchIndex:
     def __init__(self, rows_data):
         # rows_data is a list of tuples (id_val, score_val)
@@ -435,7 +436,7 @@ class MockAsyncSearchIndex:
 @pytest.mark.asyncio
 async def test_async_get_doc_from_kv_not_found(couchbase_db: CouchbaseSearch):
     """Test _CouchbaseSearch__async_get_doc_from_kv returns an empty list
-       when the ID from search results is not found in the KV store."""
+    when the ID from search results is not found in the KV store."""
     non_existent_id = "this_id_should_not_exist_in_kv_integration_test"
 
     # Create a mock AsyncSearchIndex that simulates a search result
