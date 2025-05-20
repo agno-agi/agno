@@ -150,12 +150,12 @@ def couchbase_db(
 
     try:
         db.create()
-        
+
         # Create a secondary index on the name field
         index_query = f"CREATE INDEX idx_name ON `{db.collection_name}` (name)"
         db._scope.query(index_query).execute()
-        print(f"Created secondary index on name field: idx_name")
-        
+        print("Created secondary index on name field: idx_name")
+
         yield db
     finally:
         db.delete()
@@ -283,7 +283,7 @@ async def test_async_document_exists(couchbase_db: CouchbaseSearch, test_documen
     """Test async document existence checks."""
     # Insert one document
     await couchbase_db.async_insert([test_documents.copy()[0]])
-    await asyncio.sleep(5) # Allow time for eventual consistency
+    await asyncio.sleep(5)  # Allow time for eventual consistency
 
     # Check existence
     assert await couchbase_db.async_doc_exists(test_documents[0])
@@ -294,6 +294,7 @@ async def test_async_document_exists(couchbase_db: CouchbaseSearch, test_documen
     # Test async_id_exists
     # We need to calculate the ID as it's done in prepare_doc
     from hashlib import md5
+
     doc_id_0 = md5(test_documents[0].content.encode("utf-8")).hexdigest()
     doc_id_1 = md5(test_documents[1].content.encode("utf-8")).hexdigest()
     assert await couchbase_db.async_id_exists(doc_id_0)
@@ -306,14 +307,14 @@ async def test_async_upsert(couchbase_db: CouchbaseSearch, test_documents: list[
     # Initial async insert
     await couchbase_db.async_insert([test_documents.copy()[0]])
     await asyncio.sleep(5)  # Allow time for indexing
-    initial_count = couchbase_db.get_count() # get_count is sync
+    initial_count = couchbase_db.get_count()  # get_count is sync
 
     # Upsert same document with modified content (content is actually the same here for simplicity)
     # The main test is whether async_upsert runs without errors and maintains count.
     modified_doc = Document(
-        id=test_documents[0].id, # id is not used by upsert logic, content hash is
+        id=test_documents[0].id,  # id is not used by upsert logic, content hash is
         name=test_documents[0].name,
-        content=test_documents[0].content, # Keeping content same, so it should be an update of existing doc
+        content=test_documents[0].content,  # Keeping content same, so it should be an update of existing doc
         meta_data=test_documents[0].meta_data,
     )
     await couchbase_db.async_upsert([modified_doc])
@@ -325,7 +326,7 @@ async def test_async_upsert(couchbase_db: CouchbaseSearch, test_documents: list[
     # Search should find the document
     # Since async_upsert in the implementation calls the sync upsert, which then calls prepare_doc,
     # the embedding logic is handled. If async_upsert was fully async, we'd need to ensure embedding.
-    results = await couchbase_db.async_search(test_documents[0].content[:10], limit=1) # search by partial content
+    results = await couchbase_db.async_search(test_documents[0].content[:10], limit=1)  # search by partial content
     assert len(results) == 1
     assert results[0].name == test_documents[0].name
 
@@ -358,16 +359,18 @@ async def test_async_create_exists_drop(couchbase_db: CouchbaseSearch):
 
     # `async_create` gets the async collection and calls the fully async `_async_create_fts_index()`.
 
-    await couchbase_db.async_create() # This will attempt to get/create collection and create FTS index.
+    await couchbase_db.async_create()  # This will attempt to get/create collection and create FTS index.
     assert await couchbase_db.async_exists() is True
 
     # Clean up by calling the original sync delete to ensure the fixture's finally block has a consistent state.
-    couchbase_db.delete() # This is sync, part of the fixture's teardown logic is similar.
-    assert await couchbase_db.async_exists() is False # Should be false after sync delete too.
+    couchbase_db.delete()  # This is sync, part of the fixture's teardown logic is similar.
+    assert await couchbase_db.async_exists() is False  # Should be false after sync delete too.
 
 
 @pytest.mark.asyncio
-async def test_async_cluster_level_index(cluster_options: ClusterOptions, search_index: SearchIndex, embedder: OpenAIEmbedder, test_documents: list[Document]):
+async def test_async_cluster_level_index(
+    cluster_options: ClusterOptions, search_index: SearchIndex, embedder: OpenAIEmbedder, test_documents: list[Document]
+):
     """Test async operations with cluster-level index."""
     db = CouchbaseSearch(
         bucket_name="test_bucket",
@@ -388,24 +391,26 @@ async def test_async_cluster_level_index(cluster_options: ClusterOptions, search
 
         # Use a document that might align with index expectations (e.g., meta_data.type = "test")
         doc_to_insert = copy.deepcopy(test_documents[0])
-        doc_to_insert.name = "async_cluster_doc" # Give it a unique name for clarity
+        doc_to_insert.name = "async_cluster_doc"  # Give it a unique name for clarity
 
         await db.async_insert([doc_to_insert])
         await asyncio.sleep(5)  # Allow time for indexing
 
         # Verify count (optional, get_count is sync)
         # current_count = db.get_count()
-        # assert current_count >= 1 
+        # assert current_count >= 1
 
         # Verify search works
         results = await db.async_search(doc_to_insert.content[:15], limit=1)
         assert len(results) == 1
         assert results[0].name == doc_to_insert.name
-        assert results[0].id == md5(doc_to_insert.content.encode("utf-8")).hexdigest() # Check ID consistency
+        assert results[0].id == md5(doc_to_insert.content.encode("utf-8")).hexdigest()  # Check ID consistency
 
     finally:
         # Clean up the collection. The FTS index (if global) might persist,
         # but overwrite=True in constructor should handle it on next run.
-        if hasattr(db, '_async_collection') and db._async_collection is not None: # ensure db was initialized enough to have _async_collection
+        if (
+            hasattr(db, "_async_collection") and db._async_collection is not None
+        ):  # ensure db was initialized enough to have _async_collection
             if await db.async_exists():
                 await db.async_drop()
