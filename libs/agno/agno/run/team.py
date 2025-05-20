@@ -73,9 +73,12 @@ class TeamRunResponse:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
 
         if self.citations is not None:
-            _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            if isinstance(self.citations, Citations):
+                _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            else:
+                _dict["citations"] = self.citations
 
-        if isinstance(self.content, BaseModel):
+        if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         return _dict

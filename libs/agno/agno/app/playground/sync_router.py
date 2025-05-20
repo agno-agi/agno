@@ -1,18 +1,14 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.media import Audio, Image, Video
-from agno.media import File as FileMedia
-from agno.memory.agent import AgentMemory
-from agno.memory.v2 import Memory
-from agno.playground.operator import (
+from agno.app.playground.operator import (
     format_tools,
     get_agent_by_id,
     get_session_title,
@@ -21,7 +17,7 @@ from agno.playground.operator import (
     get_team_by_id,
     get_workflow_by_id,
 )
-from agno.playground.schemas import (
+from agno.app.playground.schemas import (
     AgentGetResponse,
     AgentModel,
     AgentRenameRequest,
@@ -36,7 +32,11 @@ from agno.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
-from agno.playground.utils import process_audio, process_document, process_image, process_video
+from agno.app.playground.utils import process_audio, process_document, process_image, process_video
+from agno.media import Audio, Image, Video
+from agno.media import File as FileMedia
+from agno.memory.agent import AgentMemory
+from agno.memory.v2 import Memory
 from agno.run.response import RunEvent
 from agno.run.team import TeamRunResponse
 from agno.storage.session.agent import AgentSession
@@ -47,7 +47,7 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-async def chat_response_streamer(
+def chat_response_streamer(
     agent: Agent,
     message: str,
     session_id: Optional[str] = None,
@@ -55,9 +55,9 @@ async def chat_response_streamer(
     images: Optional[List[Image]] = None,
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
-) -> AsyncGenerator:
+) -> Generator:
     try:
-        run_response = await agent.arun(
+        run_response = agent.run(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -67,7 +67,7 @@ async def chat_response_streamer(
             stream=True,
             stream_intermediate_steps=True,
         )
-        async for run_response_chunk in run_response:
+        for run_response_chunk in run_response:
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
@@ -79,7 +79,7 @@ async def chat_response_streamer(
         return
 
 
-async def team_chat_response_streamer(
+def team_chat_response_streamer(
     team: Team,
     message: str,
     session_id: Optional[str] = None,
@@ -88,9 +88,9 @@ async def team_chat_response_streamer(
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
     files: Optional[List[FileMedia]] = None,
-) -> AsyncGenerator:
+) -> Generator:
     try:
-        run_response = await team.arun(
+        run_response = team.run(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -101,7 +101,7 @@ async def team_chat_response_streamer(
             stream=True,
             stream_intermediate_steps=True,
         )
-        async for run_response_chunk in run_response:
+        for run_response_chunk in run_response:
             run_response_chunk = cast(TeamRunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
@@ -113,33 +113,18 @@ async def team_chat_response_streamer(
         return
 
 
-def get_async_playground_router(
+def get_sync_playground_router(
     agents: Optional[List[Agent]] = None,
     workflows: Optional[List[Workflow]] = None,
     teams: Optional[List[Team]] = None,
     active_app_id: Optional[str] = None,
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
-
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
 
-    # Generate IDs if they were not explicitly set on agents/teams/workflows
-    if agents:
-        for agent in agents:
-            if agent.agent_id is None:
-                agent.agent_id = str(uuid4())
-    if teams:
-        for team in teams:
-            if team.team_id is None:
-                team.team_id = str(uuid4())
-    if workflows:
-        for workflow in workflows:
-            if workflow.workflow_id is None:
-                workflow.workflow_id = str(uuid4())
-
     @playground_router.get("/status")
-    async def playground_status(app_id: Optional[str] = None):
+    def playground_status(app_id: Optional[str] = None):
         if app_id is None:
             return {"playground": "available"}
         else:
@@ -149,17 +134,18 @@ def get_async_playground_router(
                 raise HTTPException(status_code=404, detail="Playground not available")
 
     @playground_router.get("/agents", response_model=List[AgentGetResponse])
-    async def get_agents():
+    def get_agents():
         agent_list: List[AgentGetResponse] = []
         if agents is None:
             return agent_list
 
         for agent in agents:
+            # We can make up a session_id here because we aren't really using the tools
             agent_tools = agent.get_tools(session_id=str(uuid4()))
             formatted_tools = format_tools(agent_tools)
 
             name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
-            provider = agent.model.provider or agent.model.__class__.__name__ if agent.model else ""
+            provider = agent.model.provider or agent.model.__class__.__name__ if agent.model else None
             model_id = agent.model.id if agent.model else None
 
             # Create an agent_id if its not set on the agent
@@ -186,6 +172,12 @@ def get_async_playground_router(
                             name=agent.memory.model.name,
                             model=agent.memory.model.id,
                             provider=agent.memory.model.provider,
+                        )
+                    else:
+                        memory_dict["model"] = AgentModel(
+                            name=name,
+                            model=model_id,
+                            provider=provider,
                         )
                     if agent.memory.db is not None:
                         memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
@@ -217,7 +209,7 @@ def get_async_playground_router(
         return agent_list
 
     @playground_router.post("/agents/{agent_id}/runs")
-    async def create_agent_run(
+    def create_agent_run(
         agent_id: str,
         message: str = Form(...),
         stream: bool = Form(True),
@@ -226,7 +218,7 @@ def get_async_playground_router(
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
-        logger.debug(f"AgentRunRequest: {message} {session_id} {user_id} {agent_id}")
+        logger.debug(f"AgentRunRequest: {message} {agent_id} {stream} {monitor} {session_id} {user_id} {files}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -248,7 +240,6 @@ def get_async_playground_router(
 
         if files:
             for file in files:
-                logger.info(f"Processing file: {file.content_type}")
                 if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
                     try:
                         base64_image = process_image(file)
@@ -290,7 +281,7 @@ def get_async_playground_router(
                     if file.content_type == "application/pdf":
                         from agno.document.reader.pdf_reader import PDFReader
 
-                        contents = await file.read()
+                        contents = file.file.read()
                         pdf_file = BytesIO(contents)
                         pdf_file.name = file.filename
                         file_content = PDFReader().read(pdf_file)
@@ -299,7 +290,7 @@ def get_async_playground_router(
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
-                        contents = await file.read()
+                        contents = file.file.read()
                         csv_file = BytesIO(contents)
                         csv_file.name = file.filename
                         file_content = CSVReader().read(csv_file)
@@ -308,7 +299,7 @@ def get_async_playground_router(
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
-                        contents = await file.read()
+                        contents = file.file.read()
                         docx_file = BytesIO(contents)
                         docx_file.name = file.filename
                         file_content = DocxReader().read(docx_file)
@@ -317,17 +308,16 @@ def get_async_playground_router(
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
-                        contents = await file.read()
+                        contents = file.file.read()
                         text_file = BytesIO(contents)
                         text_file.name = file.filename
                         file_content = TextReader().read(text_file)
                         if agent.knowledge is not None:
                             agent.knowledge.load_documents(file_content)
-
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
 
-                        contents = await file.read()
+                        contents = file.file.read()
                         json_file = BytesIO(contents)
                         json_file.name = file.filename
                         file_content = JSONReader().read(json_file)
@@ -352,7 +342,7 @@ def get_async_playground_router(
         else:
             run_response = cast(
                 RunResponse,
-                await agent.arun(
+                agent.run(
                     message=message,
                     session_id=session_id,
                     user_id=user_id,
@@ -365,7 +355,7 @@ def get_async_playground_router(
             return run_response.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
-    async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -375,7 +365,7 @@ def get_async_playground_router(
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
         agent_sessions: List[AgentSessionsResponse] = []
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             title = get_session_title(session)
             agent_sessions.append(
@@ -389,7 +379,7 @@ def get_async_playground_router(
         return agent_sessions
 
     @playground_router.get("/agents/{agent_id}/sessions/{session_id}")
-    async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
@@ -398,7 +388,7 @@ def get_async_playground_router(
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
-        agent_session: Optional[AgentSession] = agent.storage.read(session_id, user_id)  # type: ignore
+        agent_session: Optional[AgentSession] = agent.storage.read(session_id)  # type: ignore
         if agent_session is None:
             return JSONResponse(status_code=404, content="Session not found.")
 
@@ -407,10 +397,8 @@ def get_async_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
                 if "content" in first_run:
                     agent_session_dict["runs"] = []
-
                     for run in runs:
                         first_user_message = None
                         for msg in run.get("messages", []):
@@ -425,10 +413,11 @@ def get_async_playground_router(
                                 "response": run,
                             }
                         )
+
         return agent_session_dict
 
     @playground_router.post("/agents/{agent_id}/sessions/{session_id}/rename")
-    async def rename_agent_session(agent_id: str, session_id: str, body: AgentRenameRequest):
+    def rename_agent_session(agent_id: str, session_id: str, body: AgentRenameRequest):
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             return JSONResponse(status_code=404, content=f"couldn't find agent with {agent_id}")
@@ -440,12 +429,12 @@ def get_async_playground_router(
         for session in all_agent_sessions:
             if session.session_id == session_id:
                 agent.rename_session(body.name, session_id=session_id)
-                return JSONResponse(content={"message": f"successfully renamed session {session.session_id}"})
+                return JSONResponse(content={"message": f"successfully renamed agent {agent.name}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
 
     @playground_router.delete("/agents/{agent_id}/sessions/{session_id}")
-    async def delete_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def delete_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             return JSONResponse(status_code=404, content="Agent not found.")
@@ -453,11 +442,11 @@ def get_async_playground_router(
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
 
-        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id)  # type: ignore
+        all_agent_sessions: List[AgentSession] = agent.storage.get_all_sessions(user_id=user_id, entity_id=agent_id)  # type: ignore
         for session in all_agent_sessions:
             if session.session_id == session_id:
                 agent.delete_session(session_id)
-                return JSONResponse(content={"message": f"successfully deleted session {session_id}"})
+                return JSONResponse(content={"message": f"successfully deleted agent {agent.name}"})
 
         return JSONResponse(status_code=404, content="Session not found.")
 
@@ -480,7 +469,7 @@ def get_async_playground_router(
             return []
 
     @playground_router.get("/workflows", response_model=List[WorkflowsGetResponse])
-    async def get_workflows():
+    def get_workflows():
         if workflows is None:
             return []
 
@@ -494,7 +483,7 @@ def get_async_playground_router(
         ]
 
     @playground_router.get("/workflows/{workflow_id}", response_model=WorkflowGetResponse)
-    async def get_workflow(workflow_id: str):
+    def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -508,19 +497,14 @@ def get_async_playground_router(
         )
 
     @playground_router.post("/workflows/{workflow_id}/runs")
-    async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
+    def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if body.session_id is not None:
-            logger.debug(f"Continuing session: {body.session_id}")
-        else:
-            logger.debug("Creating new session")
-
         # Create a new instance of this workflow
-        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
+        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
         new_workflow_instance.user_id = body.user_id
         new_workflow_instance.session_name = None
 
@@ -540,7 +524,7 @@ def get_async_playground_router(
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
-    async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
@@ -569,10 +553,8 @@ def get_async_playground_router(
             for session in all_workflow_sessions
         ]
 
-    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
-    async def get_workflow_session(
-        workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
-    ):
+    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
+    def get_workflow_session(workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
@@ -595,16 +577,21 @@ def get_async_playground_router(
         return workflow_session
 
     @playground_router.post("/workflows/{workflow_id}/sessions/{session_id}/rename")
-    async def rename_workflow_session(workflow_id: str, session_id: str, body: WorkflowRenameRequest):
+    def rename_workflow_session(
+        workflow_id: str,
+        session_id: str,
+        body: WorkflowRenameRequest,
+    ):
         workflow = get_workflow_by_id(workflow_id, workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
+
         workflow.session_id = session_id
         workflow.rename_session(body.name)
         return JSONResponse(content={"message": f"successfully renamed workflow {workflow.name}"})
 
     @playground_router.delete("/workflows/{workflow_id}/sessions/{session_id}")
-    async def delete_workflow_session(workflow_id: str, session_id: str):
+    def delete_workflow_session(workflow_id: str, session_id: str):
         workflow = get_workflow_by_id(workflow_id, workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -613,14 +600,14 @@ def get_async_playground_router(
         return JSONResponse(content={"message": f"successfully deleted workflow {workflow.name}"})
 
     @playground_router.get("/teams")
-    async def get_teams():
+    def get_teams():
         if teams is None:
             return []
 
         return [TeamGetResponse.from_team(team) for team in teams]
 
     @playground_router.get("/teams/{team_id}")
-    async def get_team(team_id: str):
+    def get_team(team_id: str):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -628,7 +615,7 @@ def get_async_playground_router(
         return TeamGetResponse.from_team(team)
 
     @playground_router.post("/teams/{team_id}/runs")
-    async def create_team_run(
+    def create_team_run(
         team_id: str,
         message: str = Form(...),
         stream: bool = Form(True),
@@ -721,7 +708,7 @@ def get_async_playground_router(
                 media_type="text/event-stream",
             )
         else:
-            run_response = await team.arun(
+            run_response = team.run(
                 message=message,
                 session_id=session_id,
                 user_id=user_id,
@@ -734,7 +721,7 @@ def get_async_playground_router(
             return run_response.to_dict()
 
     @playground_router.get("/teams/{team_id}/sessions", response_model=List[TeamSessionResponse])
-    async def get_all_team_sessions(team_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_all_team_sessions(team_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -761,7 +748,7 @@ def get_async_playground_router(
         return team_sessions
 
     @playground_router.get("/teams/{team_id}/sessions/{session_id}")
-    async def get_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def get_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -782,7 +769,6 @@ def get_async_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
                 if "content" in first_run:
                     team_session_dict["runs"] = []
                     for run in runs:
@@ -792,18 +778,17 @@ def get_async_playground_router(
                                 first_user_message = msg
                                 break
                         # Remove the memory from the response
-                        team_session_dict.pop("memory", None)
+                        run.pop("memory", None)
                         team_session_dict["runs"].append(
                             {
                                 "message": first_user_message,
                                 "response": run,
                             }
                         )
-
         return team_session_dict
 
     @playground_router.post("/teams/{team_id}/sessions/{session_id}/rename")
-    async def rename_team_session(team_id: str, session_id: str, body: TeamRenameRequest):
+    def rename_team_session(team_id: str, session_id: str, body: TeamRenameRequest):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -820,7 +805,7 @@ def get_async_playground_router(
         raise HTTPException(status_code=404, detail="Session not found")
 
     @playground_router.delete("/teams/{team_id}/sessions/{session_id}")
-    async def delete_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+    def delete_team_session(team_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
