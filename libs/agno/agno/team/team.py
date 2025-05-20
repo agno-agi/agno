@@ -7007,7 +7007,6 @@ class Team:
 
         from agno.api.team import TeamCreate, create_team
 
-        print(f"Registering team**********************************************************, {self.workflow_id}")
         try:
             create_team(
                 team=TeamCreate(
@@ -7047,6 +7046,14 @@ class Team:
             log_debug(f"Could not create team on platform: {e}")
 
     def to_platform_dict(self) -> Dict[str, Any]:
+        model = None
+        if self.model is not None:
+            model = {
+                "name": self.model.__class__.__name__,
+                "id": self.model.id,
+                "provider": self.model.provider,
+            }
+
         payload = {
             "members": [
                 {
@@ -7083,7 +7090,7 @@ class Team:
                 if member is not None
             ],
             "mode": self.mode,
-            "model": self.model.to_dict() if self.model is not None else None,
+            "model": model,
             "name": self.name,
             "instructions": self.instructions,
             "description": self.description,
@@ -7094,13 +7101,13 @@ class Team:
                     "name": self.memory.__class__.__name__,
                     "model": {
                         "name": self.memory.model.name,
-                        "model": self.memory.model.id,
+                        "id": self.memory.model.id,
                         "provider": self.memory.model.provider,
                     }
                     if self.memory.model
                     else {
                         "name": self.model.name,
-                        "model": self.model.id,
+                        "id": self.model.id,
                         "provider": self.model.provider,
                     },
                     "db": self.memory.db.__dict__() if self.memory.db else None,
