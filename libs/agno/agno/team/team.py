@@ -3,6 +3,7 @@ import json
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass, replace
 from os import getenv
+from textwrap import dedent
 from typing import (
     Any,
     AsyncIterator,
@@ -134,6 +135,10 @@ class Team:
 
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
+    # Add knowledge_filters to the Agent class attributes
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    # Let the agent choose the knowledge filters
+    enable_agentic_knowledge_filters: Optional[bool] = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
@@ -249,6 +254,8 @@ class Team:
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         knowledge: Optional[AgentKnowledge] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        enable_agentic_knowledge_filters: Optional[bool] = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         enable_agentic_context: bool = False,
@@ -312,6 +319,8 @@ class Team:
         self.add_context = add_context
 
         self.knowledge = knowledge
+        self.knowledge_filters = knowledge_filters
+        self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
         self.retriever = retriever
         self.references_format = references_format
 
@@ -546,6 +555,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         """Run the Team and return the response."""
@@ -574,6 +584,25 @@ class Team:
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
+
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_team_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
@@ -637,8 +666,21 @@ class Team:
             if self.enable_agentic_context:
                 _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
-            if (self.knowledge is not None or self.retriever is not None) and self.search_knowledge:
-                _tools.append(self.search_knowledge_base)
+            if (
+                (self.knowledge is not None or self.retriever is not None)
+                and self.search_knowledge
+                and not self.enable_agentic_knowledge_filters
+            ):
+                _tools.append(
+                    self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=False)
+                )
+
+            else:
+                _tools.append(
+                    self.search_knowledge_base_with_agentic_filters_function(
+                        knowledge_filters=effective_filters, async_mode=False
+                    )
+                )
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -651,6 +693,7 @@ class Team:
                     videos=videos,  # type: ignore
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
+                    knowledge_filters=effective_filters,
                 )
                 _tools.append(forward_task_func)
                 if self.get_member_information_tool:
@@ -666,6 +709,7 @@ class Team:
                         videos=videos,  # type: ignore
                         audio=audio,  # type: ignore
                         files=files,  # type: ignore
+                        knowledge_filters=effective_filters,
                     )
                 )
                 if self.get_member_information_tool:
@@ -974,6 +1018,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         """Run the Team asynchronously and return the response."""
@@ -1002,6 +1047,20 @@ class Team:
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
+
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_team_effective_filters(knowledge_filters)
 
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
@@ -1062,8 +1121,19 @@ class Team:
             if isinstance(self.memory, Memory) and self.enable_agentic_memory:
                 _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=True))
 
-            if (self.knowledge is not None or self.retriever is not None) and self.search_knowledge:
-                _tools.append(self.asearch_knowledge_base)
+            if (
+                (self.knowledge is not None or self.retriever is not None)
+                and self.search_knowledge
+                and not self.enable_agentic_knowledge_filters
+            ):
+                _tools.append(self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True))
+
+            else:
+                _tools.append(
+                    self.search_knowledge_base_with_agentic_filters_function(
+                        knowledge_filters=effective_filters, async_mode=True
+                    )
+                )
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -1076,6 +1146,7 @@ class Team:
                     videos=videos,  # type: ignore
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
+                    knowledge_filters=effective_filters,
                 )
                 _tools.append(forward_task_func)
                 self.model.tool_choice = "required"  # type: ignore
@@ -1089,6 +1160,7 @@ class Team:
                         videos=videos,  # type: ignore
                         audio=audio,  # type: ignore
                         files=files,  # type: ignore
+                        knowledge_filters=effective_filters,
                     )
                 )
                 self.model.tool_choice = "auto"  # type: ignore
@@ -1903,6 +1975,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -1932,6 +2005,7 @@ class Team:
                 files=files,
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
         else:
@@ -1949,6 +2023,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
 
@@ -1967,6 +2042,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -2013,6 +2089,7 @@ class Team:
                 stream=False,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
             response_timer.stop()
@@ -2248,6 +2325,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
         stream_intermediate_steps: bool = False,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -2310,6 +2388,7 @@ class Team:
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
 
@@ -2747,6 +2826,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -2776,6 +2856,7 @@ class Team:
                 files=files,
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
         else:
@@ -2793,6 +2874,7 @@ class Team:
                 videos=videos,
                 files=files,
                 markdown=markdown,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
 
@@ -2811,6 +2893,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         markdown: bool = False,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -2857,6 +2940,7 @@ class Team:
                 stream=False,
                 session_id=session_id,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
             response_timer.stop()
@@ -4307,6 +4391,27 @@ class Team:
 
             additional_information.append(f"The current time is {datetime.now()}")
 
+        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
+            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                additional_information.append(
+                    dedent(f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    Always use filters when the user query indicates specific metadata.
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """)
+                )
+
         # 2 Build the default system message for the Agent.
         system_message_content: str = ""
         system_message_content += "You are the leader of a team and sub-teams of AI Agents.\n"
@@ -5173,6 +5278,7 @@ class Team:
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5253,10 +5359,30 @@ class Team:
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
 
+            # Handle enable_agentic_knowledge_filters
+            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
+
             if stream:
-                member_agent_run_response_stream = member_agent.run(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response_stream = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response_stream = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                    )
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     if member_agent_run_response_chunk.content is not None:
@@ -5267,9 +5393,20 @@ class Team:
                     ):
                         yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
             else:
-                member_agent_run_response = member_agent.run(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response = member_agent.run(
+                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                    )
 
                 check_if_run_cancelled(member_agent_run_response)
 
@@ -5400,10 +5537,30 @@ class Team:
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
 
+            # Handle enable_agentic_knowledge_filters
+            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
+
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response_stream = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response_stream = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                    )
                 async for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     if member_agent_run_response_chunk.content is not None:
@@ -5414,9 +5571,20 @@ class Team:
                     ):
                         yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
             else:
-                member_agent_run_response = await member_agent.arun(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response = await member_agent.arun(
+                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                    )
                 check_if_run_cancelled(member_agent_run_response)
 
                 if member_agent_run_response.content is None and (
@@ -5535,6 +5703,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5577,17 +5746,48 @@ class Team:
             if expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
+            # Handle enable_agentic_knowledge_filters
+            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
+
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_response_stream = member_agent.run(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response_stream = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response_stream = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                    )
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     yield member_agent_run_response_chunk.content or ""
             else:
-                member_agent_run_response = member_agent.run(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response = member_agent.run(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response = member_agent.run(
+                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                    )
 
                 if member_agent_run_response.content is None and (
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
@@ -5677,18 +5877,54 @@ class Team:
             if expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
+            # Handle enable_agentic_knowledge_filters
+            if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
+                member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
+
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response_stream = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response_stream = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                    )
                 async for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     yield member_agent_run_response_chunk.content or ""
             else:
-                member_agent_run_response = await member_agent.arun(
-                    member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
-                )
+                if not member_agent.knowledge_filters and member_agent.knowledge:
+                    member_agent_run_response = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        knowledge_filters=knowledge_filters,
+                    )
+                else:
+                    member_agent_run_response = await member_agent.arun(
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                    )
 
                 if member_agent_run_response.content is None and (
                     member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
@@ -6253,11 +6489,26 @@ class Team:
     ###########################################################################
 
     def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Return a list of references from the knowledge base"""
         from agno.document import Document
 
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
 
@@ -6266,26 +6517,56 @@ class Team:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "team" in sig.parameters:
                     retriever_kwargs = {"team": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
+        try:
+            if self.knowledge is None or self.knowledge.vector_db is None:
+                return None
 
-        if self.knowledge is None:
-            return None
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
 
-        relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
-        if len(relevant_docs) == 0:
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = self.knowledge.search(
+                query=query, num_documents=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
 
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                # type: ignore
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
 
@@ -6294,21 +6575,34 @@ class Team:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "team" in sig.parameters:
                     retriever_kwargs = {"team": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
 
-        if self.knowledge is None or self.knowledge.vector_db is None:
-            return None
+        try:
+            if self.knowledge is None or self.knowledge.vector_db is None:
+                return None
 
-        relevant_docs: List[Document] = await self.knowledge.async_search(
-            query=query, num_documents=num_documents, **kwargs
-        )
-        if len(relevant_docs) == 0:
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = await self.knowledge.async_search(
+                query=query, num_documents=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
         if docs is None or len(docs) == 0:
@@ -6323,66 +6617,176 @@ class Team:
 
         return json.dumps(docs, indent=2)
 
-    def search_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
+    def _get_team_effective_filters(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, member_filters: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """
+        Determine effective filters for the team, considering:
+        1. Team-level filters (self.knowledge_filters)
+        2. Run-time filters (knowledge_filters)
 
-        # Get the relevant documents from the knowledge base
-        self.run_response = cast(TeamRunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            # Add the references to the run_response
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
-
-    async def asearch_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
+        Priority: Run-time filters > Team filters
         """
-        self.run_response = cast(TeamRunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+        effective_filters = None
 
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
+        # Start with team-level filters if they exist
+        if self.knowledge_filters:
+            effective_filters = self.knowledge_filters.copy()
+
+        # Apply run-time filters if they exist
+        if knowledge_filters:
+            if effective_filters:
+                effective_filters.update(knowledge_filters)
+            else:
+                effective_filters = knowledge_filters
+
+        return effective_filters
+
+    def search_knowledge_base_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(TeamRunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            self.run_response = cast(TeamRunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def search_knowledge_base_with_agentic_filters_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(TeamRunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            self.run_response = cast(TeamRunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
 
     ###########################################################################
     # Logging
@@ -6546,3 +6950,28 @@ class Team:
             )
         except Exception as e:
             log_debug(f"Could not create team monitor: {e}")
+
+    def _get_agentic_or_user_search_filters(
+        self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Helper function to determine the final filters to use for the search.
+
+        Args:
+            filters: Filters passed by the agent.
+            effective_filters: Filters passed by user.
+
+        Returns:
+            Dict[str, Any]: The final filters to use for the search.
+        """
+        search_filters = {}
+
+        # If agentic filters exist and manual filters (passed by user) do not, use agentic filters
+        if filters and not effective_filters:
+            search_filters = filters
+
+        # If both agentic filters exist and manual filters (passed by user) exist, use manual filters (give priority to user and override)
+        if filters and effective_filters:
+            search_filters = effective_filters
+
+        log_info(f"Filters used by Agent: {search_filters}")
+        return search_filters

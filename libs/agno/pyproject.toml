@@ -114,6 +114,7 @@ pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
+couchbase = ["couchbase"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
@@ -196,6 +197,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[couchbase]",
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]",
@@ -379,6 +381,8 @@ module = [
   "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "couchbase.*",
+  "acouchbase.*",
   "zep_cloud.*"
 ]
 ignore_missing_imports = true
