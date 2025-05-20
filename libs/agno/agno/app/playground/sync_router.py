@@ -160,9 +160,9 @@ def get_sync_playground_router(
                     memory_dict = {"name": "Memory"}
                     if agent.memory.model is not None:
                         memory_dict["model"] = AgentModel(
-                            name=agent.memory.model.name or agent.model.name or name,
-                            model=agent.memory.model.id or agent.model.id or model_id,
-                            provider=agent.memory.model.provider or agent.model.provider or provider,
+                            name=agent.memory.model.name,
+                            model=agent.memory.model.id,
+                            provider=agent.memory.model.provider,
                         )
                     else:
                         memory_dict["model"] = AgentModel(
