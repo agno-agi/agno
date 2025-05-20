@@ -101,6 +101,7 @@ browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
 confluence = ["atlassian-python-api"]
 zep = ["zep-cloud"]
+google_bigquery = ["google-cloud-bigquery"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -179,7 +180,8 @@ tools = [
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
-  "agno[zep]"
+  "agno[zep]",
+  "agno[google_bigquery]"
 ]
 
 # All storage
