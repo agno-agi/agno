@@ -598,71 +598,6 @@ class Agent:
         6. Save output to file if save_response_to_file is set
         """
 
-        # 1. Prepare the Agent for the run
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        # 1.2 Set streaming and stream intermediate steps
-
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-        # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
-
-        # 1.4 Register the agent on the platform
-        thread = threading.Thread(target=self._register_agent)
-        thread.start()
-
-        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
-        # 2.1 Prepare arguments for the model
-        self.set_default_model()
-        response_format = self._get_response_format()
-        self.model = cast(Model, self.model)
-
-        self.determine_tools_for_model(
-            model=self.model,
-            session_id=session_id,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=knowledge_filters,
-        )
-        run_response.model = self.model.id if self.model is not None else None
-
-        # 2.2 Resolve context
-        if self.context is not None and self.resolve_context:
-            self.resolve_run_context()
-
-        # 3. Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
-
-        # 4. Prepare run messages
-        run_messages: RunMessages = self.get_run_messages(
-            message=message,
-            session_id=session_id,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            messages=messages,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-
-        self.run_messages = run_messages
-
-        # 5. Reason about the task if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
-
-            if self.stream:
-                yield from reasoning_generator
-            else:
-                # Consume the generator without yielding
-                deque(reasoning_generator, maxlen=0)
         # 1. Reason about the task
         self._handle_reasoning(run_messages=run_messages, session_id=session_id)
 
@@ -699,6 +634,10 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
 
+        thread = threading.Thread(target=self._register_agent)
+        thread.start()
+
+
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
@@ -722,7 +661,6 @@ class Agent:
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         return run_response
-
     def _run_stream(
         self,
         run_response: RunResponse,
@@ -1059,33 +997,8 @@ class Agent:
         """
 
         # 1. Prepare the Agent for the run
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        # 1.2 Set streaming and stream intermediate steps
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-        # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
-
-        # 1.4 Register the agent on the platform
-
-        # Create a task to run the agent registration in the background
-        # This won't block the execution flow
-        asyncio.create_task(self._aregister_agent())
-
-        log_debug(f"Async Agent Run Start: {run_response.run_id}", center=True, symbol="*")
-
-        # 2.1 Prepare arguments for the model
-        self.set_default_model()
-        response_format = self._get_response_format()
         self.model = cast(Model, self.model)
-
-        self.determine_tools_for_model(
-            model=self.model,
-        self.model = cast(Model, self.model)
-        # 1. Reason about the task if reasoning is enabled
+                # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
 
         # Get the index of the last "user" message in messages_for_run
@@ -1119,6 +1032,9 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # Register Agent
+        asyncio.create_task(self._aregister_agent())
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
