@@ -167,6 +167,13 @@ def get_async_playground_router(
                             model=agent.memory.model.id,
                             provider=agent.memory.model.provider,
                         )
+                    else:
+                        memory_dict["model"] = AgentModel(
+                            name=name,
+                            model=model_id,
+                            provider=provider,
+                        )
+
                     if agent.memory.db is not None:
                         memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
 
