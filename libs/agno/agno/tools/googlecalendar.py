@@ -1,6 +1,7 @@
 import datetime
 import json
 import os.path
+import uuid
 from functools import wraps
 
 from agno.tools import Toolkit
@@ -138,6 +139,7 @@ class GoogleCalendarTools(Toolkit):
         timezone: Optional[str] = None,
         attendees: List[str] = [],
         send_updates: Optional[str] = "all",
+        add_google_meet_link: Optional[bool] = False,
     ) -> str:
         """
         Create a new event in the user's primary calendar.
@@ -150,6 +152,7 @@ class GoogleCalendarTools(Toolkit):
             end_datetime (Optional[str]) : end date and time of the event
             attendees (Optional[List[str]]) : List of emails of the attendees
             send_updates (Optional[str]): Whether to send updates to attendees. Options: 'all' (default), 'externalOnly', 'none'
+            add_google_meet_link (Optional[bool]): Whether to add a google meet link to the event
         """
 
         attendees_list = [{"email": attendee} for attendee in attendees] if attendees else []
@@ -166,9 +169,20 @@ class GoogleCalendarTools(Toolkit):
                 "end": {"dateTime": end_time, "timeZone": timezone},
                 "attendees": attendees_list,
             }
+            if add_google_meet_link:
+                event["conferenceData"] = {
+                    "createRequest": {"requestId": str(uuid.uuid4()), "conferenceSolutionKey": {"type": "hangoutsMeet"}}  # type: ignore
+                }
             if self.service:
                 event_result = (
-                    self.service.events().insert(calendarId="primary", body=event, sendUpdates=send_updates).execute()
+                    self.service.events()
+                    .insert(
+                        calendarId="primary",
+                        body=event,
+                        sendUpdates=send_updates,
+                        conferenceDataVersion=1 if add_google_meet_link else 0,
+                    )
+                    .execute()
                 )
                 return json.dumps(event_result)
             else:

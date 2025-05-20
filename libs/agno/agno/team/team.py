@@ -666,21 +666,28 @@ class Team:
             if self.enable_agentic_context:
                 _tools.append(self.get_set_shared_context_function(session_id=session_id))
 
-            if (
-                (self.knowledge is not None or self.retriever is not None)
-                and self.search_knowledge
-                and not self.enable_agentic_knowledge_filters
-            ):
-                _tools.append(
-                    self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=False)
-                )
+            if self.knowledge is not None or self.retriever is not None:
+                # Check if retriever is an async function but used in sync mode
+                from inspect import iscoroutinefunction
 
-            else:
-                _tools.append(
-                    self.search_knowledge_base_with_agentic_filters_function(
-                        knowledge_filters=effective_filters, async_mode=False
+                if self.retriever is not None and iscoroutinefunction(self.retriever):
+                    log_warning(
+                        "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                        "It is recommended to use agent.arun() or agent.aprint_response() instead."
                     )
-                )
+
+                if self.search_knowledge:
+                    # Use async or sync search based on async_mode
+                    if self.enable_agentic_knowledge_filters:
+                        _tools.append(
+                            self.search_knowledge_base_with_agentic_filters_function(
+                                knowledge_filters=effective_filters, async_mode=False
+                            )
+                        )
+                    else:
+                        _tools.append(
+                            self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=False)
+                        )
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
@@ -1121,19 +1128,19 @@ class Team:
             if isinstance(self.memory, Memory) and self.enable_agentic_memory:
                 _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=True))
 
-            if (
-                (self.knowledge is not None or self.retriever is not None)
-                and self.search_knowledge
-                and not self.enable_agentic_knowledge_filters
-            ):
-                _tools.append(self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True))
-
-            else:
-                _tools.append(
-                    self.search_knowledge_base_with_agentic_filters_function(
-                        knowledge_filters=effective_filters, async_mode=True
-                    )
-                )
+            if self.knowledge is not None or self.retriever is not None:
+                if self.search_knowledge:
+                    # Use async or sync search based on async_mode
+                    if self.enable_agentic_knowledge_filters:
+                        _tools.append(
+                            self.search_knowledge_base_with_agentic_filters_function(
+                                knowledge_filters=effective_filters, async_mode=True
+                            )
+                        )
+                    else:
+                        _tools.append(
+                            self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True)
+                        )
 
             if self.mode == "route":
                 user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)

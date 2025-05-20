@@ -43,5 +43,5 @@ agent = Agent(
 # Example: Send a template message
 # Note: Replace 'hello_world' with your actual template name
 agent.print_response(
-    "Send a template message using the 'hello_world' template in English to +91 9836079910"
+    "Send a template message using the 'hello_world' template in English to +1 123456789"
 )

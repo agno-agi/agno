@@ -16,7 +16,9 @@ Setup Couchbase Cluster (Local via Docker):
 2. Access the Couchbase UI at: http://localhost:8091
    (Login with the username and password above)
 
-3. Create a bucket named 'recipe_bucket', a scope 'recipe_scope', and a collection 'recipes'.
+3. Create a new cluster. You can select "Finish with defaults".
+
+4. Create a bucket named 'recipe_bucket', a scope 'recipe_scope', and a collection 'recipes'.
 
 Managed Couchbase (Capella):
 ----------------------------

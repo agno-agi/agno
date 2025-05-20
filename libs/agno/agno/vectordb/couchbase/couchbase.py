@@ -1057,9 +1057,9 @@ class CouchbaseSearch(VectorDb):
                         Document(
                             id=doc_id,
                             name=value.get("name"),
-                            content=value.get("content"),
-                            meta_data=value.get("meta_data"),
-                            embedding=value.get("embedding"),
+                            content=value.get("content", ""),
+                            meta_data=value.get("meta_data", {}),
+                            embedding=value.get("embedding", []),
                         )
                     )
                 except Exception as e:

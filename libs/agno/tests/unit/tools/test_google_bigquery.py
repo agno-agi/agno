@@ -20,6 +20,7 @@ def bq_tools_instance(mock_bq_client):  # mock_bq_client is the instance mock fr
     """Fixture to instantiate BQTools with the mocked BigQuery client."""
     tools = GoogleBigQueryTools(
         project="test-project",
+        location="us-central1",
         dataset="test-dataset",
         # credentials will be None by default in BQTools, which is fine for the mocked client.
     )

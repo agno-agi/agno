@@ -74,16 +74,18 @@ class TodoistTools(Toolkit):
             "order": task.order,
             "priority": task.priority,
             "url": task.url,
-            "comment_count": task.comment_count,
             "creator_id": task.creator_id,
             "created_at": task.created_at,
             "labels": task.labels,
         }
+        if hasattr(task, "comment_count"):
+            task_dict["comment_count"] = task.comment_count
         if task.due:
             task_dict["due"] = {
                 "date": task.due.date,
                 "string": task.due.string,
-                "datetime": task.due.datetime,
+                "lang": task.due.lang,
+                "is_recurring": task.due.is_recurring,
                 "timezone": task.due.timezone,
             }
         return task_dict
@@ -115,7 +117,7 @@ class TodoistTools(Toolkit):
             )
             # Convert task to a dictionary and handle the Due object
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to create task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -125,7 +127,7 @@ class TodoistTools(Toolkit):
         try:
             task = self.api.get_task(task_id)
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to get task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -216,11 +218,12 @@ class TodoistTools(Toolkit):
         """Get all active (not completed) tasks."""
         try:
             tasks = self.api.get_tasks()
+            tasks = list(tasks)[0]
             tasks_list = []
             for task in tasks:
                 task_dict = self._task_to_dict(task)
                 tasks_list.append(task_dict)
-            return json.dumps(tasks_list)
+            return json.dumps(tasks_list, default=str)
         except Exception as e:
             logger.error(f"Failed to get active tasks: {str(e)}")
             return json.dumps({"error": str(e)})
