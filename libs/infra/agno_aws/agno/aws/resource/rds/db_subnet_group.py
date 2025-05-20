@@ -43,7 +43,7 @@ class DbSubnetGroup(AwsResource):
         Args:
             aws_client: The AwsApiClient for the current cluster
         """
-        subnet_ids = []
+        subnet_ids: List[Any] = []
         if self.subnet_ids is not None:
             if isinstance(self.subnet_ids, list):
                 logger.debug("Getting subnet_ids from list")
