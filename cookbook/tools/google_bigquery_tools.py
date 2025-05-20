@@ -12,11 +12,12 @@ BQTools(
     dataset="<your-dataset>",
 )
 
-NOTE: Instruct the agent to prepend the table name with the project name and dataset name 
+NOTE: Instruct the agent to prepend the table name with the project name and dataset name
 Describe the table schemas in instructions and use thinking tools for better responses.
 """
 
 import os
+
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.google_bigquery import GoogleBigQueryTools
@@ -25,11 +26,10 @@ agent = Agent(
     instructions=[
         "You are an expert Big query Writer",
         "Always prepend the table name with your_project_id.your_dataset_name when run_sql tool is invoked",
-        ],
-        
-    tools=[GoogleBigQueryTools(dataset="your_dataset_name")],
+    ],
+    tools=[GoogleBigQueryTools(dataset="test_dataset")],
     show_tool_calls=True,
-    model=Gemini(id="gemini-2.0-flash", vertexai=True), 
+    model=Gemini(id="gemini-2.0-flash", vertexai=True),
 )
 
 agent.print_response(
