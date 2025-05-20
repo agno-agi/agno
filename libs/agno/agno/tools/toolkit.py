@@ -14,6 +14,7 @@ class Toolkit:
         add_instructions: bool = False,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        requires_confirmation_tools: Optional[list[str]] = None,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
@@ -38,7 +39,8 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
-
+        self.requires_confirmation_tools: Optional[list[str]] = requires_confirmation_tools
+        
         self._check_tools_filters(
             available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
         )
@@ -72,6 +74,11 @@ class Toolkit:
                 if missing_excludes:
                     raise ValueError(f"Excluded tool(s) not present in the toolkit: {', '.join(missing_excludes)}")
 
+        if self.requires_confirmation_tools:
+            missing_requires_confirmation = set(self.requires_confirmation_tools) - set(available_tools)
+            if missing_requires_confirmation:
+                log_warning(f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}")
+
     def _register_tools(self) -> None:
         """Register all tools."""
         for tool in self.tools:
@@ -94,7 +101,11 @@ class Toolkit:
                 return
             if self.exclude_tools is not None and tool_name in self.exclude_tools:
                 return
-
+            
+            requires_confirmation = False
+            if self.requires_confirmation_tools is not None and tool_name in self.requires_confirmation_tools:
+                requires_confirmation = True
+            
             f = Function(
                 name=tool_name,
                 entrypoint=function,
@@ -102,6 +113,7 @@ class Toolkit:
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,
+                requires_confirmation=requires_confirmation,
             )
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name}")

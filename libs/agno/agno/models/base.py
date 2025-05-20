@@ -341,8 +341,10 @@ class Model(ABC):
                         ]
                         and function_call_response.tool_executions is not None
                     ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
                         model_response.tool_executions.extend(function_call_response.tool_executions)
-                    
+
                     elif function_call_response.event not in [
                         ModelResponseEvent.tool_call_started.value,
                         ModelResponseEvent.tool_call_completed.value,
@@ -362,7 +364,7 @@ class Model(ABC):
                     break
 
                 # If we have any tool calls that require confirmation, break the loop
-                if any(tc.confirmation_required for tc in model_response.tool_executions):
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -427,6 +429,8 @@ class Model(ABC):
                         ]
                         and function_call_response.tool_executions is not None
                     ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
                         model_response.tool_executions.extend(function_call_response.tool_executions)
                     elif function_call_response.event not in [
                         ModelResponseEvent.tool_call_started.value,
@@ -448,7 +452,7 @@ class Model(ABC):
                     break
 
                 # If we have any tool calls that require confirmation, break the loop
-                if any(tc.confirmation_required for tc in model_response.tool_executions):
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -1117,12 +1121,14 @@ class Model(ABC):
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
+        additional_messages: Optional[List[Message]] = None,
     ) -> Iterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
 
         # Additional messages from function calls that will be added to the function call results
-        additional_messages: List[Message] = []
+        if additional_messages is None:
+            additional_messages = []
 
         for fc in function_calls:
             # The function cannot be executed without user confirmation
@@ -1133,7 +1139,7 @@ class Model(ABC):
                             tool_call_id=fc.call_id,
                             tool_name=fc.function.name,
                             tool_args=fc.arguments,
-                            confirmation_required=True,
+                            requires_confirmation=True,
                         )
                     ],
                     event=ModelResponseEvent.tool_call_confirmation_required.value,
@@ -1153,8 +1159,13 @@ class Model(ABC):
                 self._tool_choice = "none"
                 break
 
-    async def _arun_function_call(
-        self, function_call: FunctionCall
+        # Add any additional messages at the end
+        if additional_messages:
+            function_call_results.extend(additional_messages)
+
+    async def arun_function_call(
+        self,
+        function_call: FunctionCall,
     ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
@@ -1182,7 +1193,7 @@ class Model(ABC):
                 result = await asyncio.to_thread(function_call.execute)
                 success = result.status == "success"
         except AgentRunException as e:
-            success = e  # Pass the exception through to be handled by caller
+            success = e
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
             success = False
@@ -1196,12 +1207,14 @@ class Model(ABC):
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
-    ):
+        additional_messages: Optional[List[Message]] = None,
+    ) -> AsyncIterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
 
         # Additional messages from function calls that will be added to the function call results
-        additional_messages: List[Message] = []
+        if additional_messages is None:
+            additional_messages = []
 
         # Yield tool_call_started events for all function calls
         for fc in function_calls:
@@ -1213,7 +1226,7 @@ class Model(ABC):
                             tool_call_id=fc.call_id,
                             tool_name=fc.function.name,
                             tool_args=fc.arguments,
-                            confirmation_required=True,
+                            requires_confirmation=True,
                         )
                     ],
                     event=ModelResponseEvent.tool_call_confirmation_required.value,
@@ -1235,7 +1248,7 @@ class Model(ABC):
         # Create and run all function calls in parallel (skip ones that need confirmation)
         function_calls_to_run = [fc for fc in function_calls if not fc.function.requires_confirmation]
         results = await asyncio.gather(
-            *(self._arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
+            *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
 
         # Process results

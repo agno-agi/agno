@@ -32,7 +32,7 @@ class ToolExecution:
 
     created_at: int = int(time())
 
-    confirmation_required: Optional[bool] = None
+    requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
 
 

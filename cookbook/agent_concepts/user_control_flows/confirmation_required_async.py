@@ -14,6 +14,7 @@ Some practical applications:
 Run `pip install openai httpx rich agno` to install dependencies.
 """
 
+import asyncio
 import json
 
 from agno.utils import pprint
@@ -56,17 +57,18 @@ agent = Agent(
     markdown=True,
 )
 
-agent.run("Fetch the top 2 hackernews stories")
-if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
+run_response = asyncio.run(agent.arun("Fetch the top 2 hackernews stories"))
+if run_response.is_paused:
+    for tool in run_response.tools:
         print(f"Tool name {tool.tool_name} requires confirmation.")
         print("Tool args: ", tool.tool_args)
         user_input = input("Do you want to proceed? (y/n) ")
         # We update the tools in place
         tool.confirmed = user_input == "y"
 
-    run_response = agent.continue_run()  # or agent.continue_run(run_response=agent.run_response)
+    run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
     pprint.pprint_run_response(run_response)
 
+
 # Or for simple debug flow
-# agent.print_response("Fetch the top 2 hackernews stories")
+# asyncio.run(agent.aprint_response("Fetch the top 2 hackernews stories"))

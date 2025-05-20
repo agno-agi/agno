@@ -1758,9 +1758,7 @@ class Team:
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index
                     tool_call_index_map = {
-                        tc.tool_call_id: i
-                        for i, tc in enumerate(run_response.tools)
-                        if tc.tool_call_id is not None
+                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
                     }
                     # Process tool calls
                     for tool_call_dict in new_tool_calls_list:
