@@ -811,8 +811,11 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
     mock_search_row = Mock()
     mock_search_row.id = "test_id_scope_search"
     mock_search_row.score = 0.95
-    mock_search_result_obj.rows = Mock(return_value=[mock_search_row])
-    mock_scope_inst.search = AsyncMock(return_value=mock_search_result_obj)
+    # Patch rows to return an async iterator
+    async def async_rows():
+        yield mock_search_row
+    mock_search_result_obj.rows = async_rows  # <-- Fix: assign the async generator function directly
+    mock_scope_inst.search = Mock(return_value=mock_search_result_obj)
 
     # Mocking for __async_get_doc_from_kv internal calls
     mock_async_collection_instance = AsyncMock(spec=AsyncCollection)
@@ -883,8 +886,11 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
     mock_search_row = Mock()
     mock_search_row.id = "test_id_cluster_search"
     mock_search_row.score = 0.90
-    mock_search_result_obj.rows = Mock(return_value=[mock_search_row])
-    mock_cluster_inst.search = AsyncMock(return_value=mock_search_result_obj)
+    # Patch rows to return an async iterator
+    async def async_rows():
+        yield mock_search_row
+    mock_search_result_obj.rows = async_rows  # <-- Fix: assign the async generator function directly
+    mock_cluster_inst.search = Mock(return_value=mock_search_result_obj)
 
     # Mocking for __async_get_doc_from_kv internal calls
     mock_async_collection_instance = AsyncMock(spec=AsyncCollection)
