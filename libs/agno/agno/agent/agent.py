@@ -40,7 +40,6 @@ from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
-from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import (
     log_debug,
@@ -115,6 +114,13 @@ class Agent:
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
+
+    # Add knowledge_filters to the Agent class attributes
+    knowledge_filters: Optional[Dict[str, Any]] = None
+
+    # Let the agent choose the knowledge filters
+    enable_agentic_knowledge_filters: Optional[bool] = False
+
     add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
@@ -203,7 +209,7 @@ class Agent:
     # Use these for few-shot learning or to provide additional context to the Model.
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
     add_messages: Optional[List[Union[Dict, Message]]] = None
-
+    success_criteria: Optional[str] = None
     # --- User message settings ---
     # Provide the user message as a string, list, dict, or function
     # Note: this will ignore the message sent to the run function
@@ -296,6 +302,8 @@ class Agent:
         num_history_responses: Optional[int] = None,
         num_history_runs: int = 3,
         knowledge: Optional[AgentKnowledge] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -320,6 +328,7 @@ class Agent:
         create_default_system_message: bool = True,
         description: Optional[str] = None,
         goal: Optional[str] = None,
+        success_criteria: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
@@ -379,6 +388,8 @@ class Agent:
         self.num_history_runs = num_history_runs
 
         self.knowledge = knowledge
+        self.knowledge_filters = knowledge_filters
+        self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
         self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
@@ -409,6 +420,7 @@ class Agent:
 
         self.description = description
         self.goal = goal
+        self.success_criteria = success_criteria
         self.instructions = instructions
         self.expected_output = expected_output
         self.additional_context = additional_context
@@ -467,6 +479,8 @@ class Agent:
         self.agent_session: Optional[AgentSession] = None
 
         self._tool_instructions: Optional[List[str]] = None
+        self._tools_for_model: Optional[List[Dict[str, Any]]] = None
+        self._functions_for_model: Optional[Dict[str, Function]] = None
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -557,344 +571,843 @@ class Agent:
 
     def _run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: bool = False,
+        run_response: RunResponse,
+        run_messages: RunMessages,
         session_id: str,
         user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-        **kwargs: Any,
-    ) -> Iterator[RunResponse]:
+    ) -> RunResponse:
         """Run the Agent and yield the RunResponse.
 
         Steps:
-        1. Prepare the Agent for the run
-        2. Update the Model and resolve context
-        3. Read existing session from storage
-        4. Prepare run messages
-        5. Reason about the task if reasoning is enabled
-        6. Start the Run by yielding a RunStarted event
-        7. Generate a response from the Model (includes running function calls)
-        8. Update RunResponse
-        9. Update Agent Memory
-        10. Calculate session metrics
-        11. Save session to storage
-        12. Save output to file if save_response_to_file is set
+        1. Reason about the task if reasoning is enabled
+        2. Generate a response from the Model (includes running function calls)
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save session to storage
+        6. Save output to file if save_response_to_file is set
         """
 
-        # 1. Prepare the Agent for the run
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
-        # 1.2 Set streaming and stream intermediate steps
+        # 1. Reason about the task
+        self._handle_reasoning(run_messages=run_messages, session_id=session_id)
 
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-        # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
-        self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
+        # Get the index of the last "user" message in messages_for_run
+        # We track this so we can add messages after this index to the RunResponse and Memory
+        index_of_last_user_message = len(run_messages.messages)
 
-        log_debug(f"Agent Run Start: {self.run_response.run_id}", center=True)
+        # 2. Generate a response from the Model (includes running function calls)
+        self.model = cast(Model, self.model)
+        model_response: ModelResponse = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )
 
-        # 2. Update the Model and resolve context
-        self.update_model(async_mode=False, user_id=user_id, session_id=session_id)
-        self.run_response.model = self.model.id if self.model is not None else None
-        if self.context is not None and self.resolve_context:
-            self.resolve_run_context()
+        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # 3. Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
-
-        # 4. Prepare run messages
-        run_messages: RunMessages = self.get_run_messages(
-            message=message,
+        # 3. Update Agent Memory
+        self._update_memory(
+            run_response=run_response,
+            run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
             messages=messages,
-            **kwargs,
+            index_of_last_user_message=index_of_last_user_message,
         )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
 
-        self.run_messages = run_messages
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
 
-        # 5. Reason about the task if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
 
-            if self.stream:
-                yield from reasoning_generator
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        # Otherwise convert the response to the structured format
+        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+            if isinstance(run_response.content, str) and self.parse_response:
+                try:
+                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+
+                    # Update RunResponse
+                    if structured_output is not None:
+                        run_response.content = structured_output
+                        run_response.content_type = self.response_model.__name__
+                    else:
+                        log_warning("Failed to convert response to response_model")
+                except Exception as e:
+                    log_warning(f"Failed to convert response to output model: {e}")
             else:
-                # Consume the generator without yielding
-                deque(reasoning_generator, maxlen=0)
+                log_warning("Something went wrong. Run response content is not a string")
+
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    def _run_stream(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[RunResponse]:
+        # 1. Reason about the task if reasoning is enabled
+        yield from self._handle_reasoning_stream(run_messages=run_messages, session_id=session_id)
 
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
         # 6. Start the Run by yielding a RunStarted event
-        if self.stream_intermediate_steps:
+        if stream_intermediate_steps:
             yield self.create_run_response("Run started", session_id=session_id, event=RunEvent.run_started)
 
-        # 7. Generate a response from the Model (includes running function calls)
-        model_response: ModelResponse
-        self.model = cast(Model, self.model)
-        reasoning_started = False
-        reasoning_time_taken = 0.0
-        if self.stream:
-            model_response = ModelResponse()
-            for model_response_chunk in self.model.response_stream(messages=run_messages.messages):
-                # If the model response is an assistant_response, yield a RunResponse
-                if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
-                    # Process content and thinking
-                    if model_response_chunk.content is not None:
-                        model_response.content = (model_response.content or "") + model_response_chunk.content
-                        self.run_response.content = model_response.content
+        # 2. Process model response
+        yield from self._handle_model_response_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            response_format=response_format,
+            stream_intermediate_steps=stream_intermediate_steps,
+        )
 
-                    if model_response_chunk.thinking is not None:
-                        model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
-                        self.run_response.thinking = model_response.thinking
+        # 3. Update Agent Memory
+        self._update_memory(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+            messages=messages,
+            index_of_last_user_message=index_of_last_user_message,
+        )
 
-                    if model_response_chunk.redacted_thinking is not None:
-                        model_response.redacted_thinking = (
-                            model_response.redacted_thinking or ""
-                        ) + model_response_chunk.redacted_thinking
+        # Yield UpdatingMemory event
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content="Memory updated",
+                session_id=session_id,
+                event=RunEvent.updating_memory,
+            )
 
-                        # We only have thinking on response
-                        self.run_response.thinking = model_response.redacted_thinking
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
 
-                    if model_response_chunk.citations is not None:
-                        # We get citations in one chunk
-                        self.run_response.citations = model_response_chunk.citations
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
 
-                    # Only yield if we have content or thinking to show
-                    if (
-                        model_response_chunk.content is not None
-                        or model_response_chunk.thinking is not None
-                        or model_response_chunk.redacted_thinking is not None
-                        or model_response_chunk.citations is not None
-                    ):
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            thinking=model_response_chunk.thinking,
-                            redacted_thinking=model_response_chunk.redacted_thinking,
-                            citations=model_response_chunk.citations,
-                            created_at=model_response_chunk.created_at,
-                            session_id=session_id,
-                        )
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
 
-                    # Process audio
-                    if model_response_chunk.audio is not None:
-                        if model_response.audio is None:
-                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-                        if model_response_chunk.audio.id is not None:
-                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
-                        if model_response_chunk.audio.content is not None:
-                            model_response.audio.content += model_response_chunk.audio.content  # type: ignore
-                        if model_response_chunk.audio.transcript is not None:
-                            model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
-                        if model_response_chunk.audio.expires_at is not None:
-                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
-                        if model_response_chunk.audio.mime_type is not None:
-                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
-                        model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
-                        model_response.audio.channels = model_response_chunk.audio.channels
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content=run_response.content,
+                reasoning_content=run_response.reasoning_content,
+                session_id=session_id,
+                event=RunEvent.run_completed,
+                run_response=run_response,
+            )
 
-                        # Yield the audio and transcript bit by bit
-                        self.run_response.response_audio = AudioResponse(
-                            id=model_response_chunk.audio.id,
-                            content=model_response_chunk.audio.content,
-                            transcript=model_response_chunk.audio.transcript,
-                            sample_rate=model_response_chunk.audio.sample_rate,
-                            channels=model_response_chunk.audio.channels,
-                        )
-                        self.run_response.created_at = model_response_chunk.created_at
+    @overload
+    def run(
+        self,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        *,
+        stream: Literal[False] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: bool = False,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> RunResponse: ...
 
-                        yield self.run_response
+    @overload
+    def run(
+        self,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        *,
+        stream: Literal[True] = True,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: bool = False,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Iterator[RunResponse]: ...
 
-                    if model_response_chunk.image is not None:
-                        self.add_image(model_response_chunk.image)
+    def run(
+        self,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        *,
+        stream: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Union[RunResponse, Iterator[RunResponse]]:
+        """Run the Agent and return the response."""
 
-                        yield self.run_response
+        # Initialize the Agent
+        self.initialize_agent()
 
-                # If the model response is a tool_call_started, add the tool call to the run_response
-                elif (
-                    model_response_chunk.event == ModelResponseEvent.tool_call_started.value
-                ):  # Add tool calls to the run_response
-                    new_tool_calls_list = model_response_chunk.tool_calls
-                    if new_tool_calls_list is not None:
-                        # Add tool calls to the agent.run_response
-                        if self.run_response.tools is None:
-                            self.run_response.tools = new_tool_calls_list
-                        else:
-                            self.run_response.tools.extend(new_tool_calls_list)
+        effective_filters = knowledge_filters
 
-                        # Format tool calls whenever new ones are added during streaming
-                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
 
-                    # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
-                    if self.stream_intermediate_steps:
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_started,
-                            session_id=session_id,
-                        )
+            effective_filters = self._get_effective_filters(knowledge_filters)
 
-                # If the model response is a tool_call_completed, update the existing tool call in the run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: Optional[ReasoningStep] = None
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
 
-                    new_tool_calls_list = model_response_chunk.tool_calls
-                    if new_tool_calls_list is not None:
-                        # Update the existing tool call in the run_response
-                        if self.run_response.tools:
-                            # Create a mapping of tool_call_id to index
-                            tool_call_index_map = {
-                                tc["tool_call_id"]: i
-                                for i, tc in enumerate(self.run_response.tools)
-                                if tc.get("tool_call_id") is not None
-                            }
-                            # Process tool calls
-                            for tool_call_dict in new_tool_calls_list:
-                                tool_call_id = tool_call_dict.get("tool_call_id")
-                                index = tool_call_index_map.get(tool_call_id)
-                                if index is not None:
-                                    self.run_response.tools[index] = tool_call_dict
-                        else:
-                            self.run_response.tools = new_tool_calls_list
+        # If no retries are set, use the agent's default retries
+        if retries is None:
+            retries = self.retries
 
-                        # Only iterate through new tool calls
-                        for tool_call in new_tool_calls_list:
-                            tool_name = tool_call.get("tool_name", "")
-                            if tool_name.lower() in ["think", "analyze"]:
-                                tool_args = tool_call.get("tool_args", {})
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
 
-                                reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
 
-                                metrics = tool_call.get("metrics")
-                                if metrics is not None and metrics.time is not None:
-                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
 
-                    if self.stream_intermediate_steps:
-                        if reasoning_step is not None:
-                            if not reasoning_started:
-                                yield self.create_run_response(
-                                    content="Reasoning started",
-                                    event=RunEvent.reasoning_started,
-                                )
-                                reasoning_started = True
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
-                            yield self.create_run_response(
-                                content=reasoning_step,
-                                content_type=reasoning_step.__class__.__name__,
-                                event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
-                            )
+        # Use the default user_id and session_id when necessary
+        if user_id is None:
+            user_id = self.user_id
 
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_completed,
-                            session_id=session_id,
-                        )
-        else:
-            # Get the model response
-            model_response = self.model.response(messages=run_messages.messages)
-            # Format tool calls if they exist
-            if model_response.tool_calls:
-                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
-
-            # Handle structured outputs
-            if self.response_model is not None and model_response.parsed is not None:
-                # We get native structured outputs from the model
-                if self.model.structured_outputs:
-                    # Update the run_response content with the structured output
-                    self.run_response.content = model_response.parsed
-                    # Update the run_response content_type with the structured output class name
-                    self.run_response.content_type = self.response_model.__name__
+        if session_id is None or session_id == "":
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
             else:
-                # Update the run_response content with the model response content
-                self.run_response.content = model_response.content
+                # Generate a new session_id and store it in the agent
+                session_id = str(uuid4())
+                self.session_id = session_id
 
-            # Update the run_response thinking with the model response thinking
-            if model_response.thinking is not None:
-                self.run_response.thinking = model_response.thinking
-            if model_response.redacted_thinking is not None:
-                if self.run_response.thinking is None:
-                    self.run_response.thinking = model_response.redacted_thinking
+        session_id = cast(str, session_id)
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Session ID: {session_id}", center=True)
+
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id, user_id=user_id)
+
+        # Read existing session from storage
+        if self.context is not None:
+            self.resolve_run_context()
+
+        if self.response_model is not None and self.parse_response and stream is True:
+            # Disable stream if response_model is set
+            stream = False
+            log_debug("Disabling stream as response_model is set")
+
+        last_exception = None
+        num_attempts = retries + 1
+
+        # Prepare arguments for the model
+        self.set_default_model()
+        response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
+
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=effective_filters,
+        )
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
+        for attempt in range(num_attempts):
+            try:
+                # Create a new run_response for this attempt
+                run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
+
+                run_response.model = self.model.id if self.model is not None else None
+
+                # for backward compatibility, set self.run_response
+                self.run_response = run_response
+                self.run_id = run_id
+
+                # Set run_input
+                if message is not None:
+                    if isinstance(message, str):
+                        self.run_input = message
+                    elif isinstance(message, Message):
+                        self.run_input = message.to_dict()
+                    else:
+                        self.run_input = message
+                elif messages is not None:
+                    self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+
+                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+                # Prepare run messages
+                run_messages: RunMessages = self.get_run_messages(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    messages=messages,
+                    **kwargs,
+                )
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
+
+                self.run_messages = run_messages
+
+                if stream and self.is_streamable:
+                    response_iterator = self._run_stream(
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        message=message,
+                        user_id=user_id,
+                        session_id=session_id,
+                        response_format=response_format,
+                        messages=messages,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+                    return response_iterator
                 else:
-                    self.run_response.thinking += model_response.redacted_thinking
+                    response = self._run(
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        message=message,
+                        user_id=user_id,
+                        session_id=session_id,
+                        response_format=response_format,
+                        messages=messages,
+                    )
+                    return response
+            except ModelProviderError as e:
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                if isinstance(e, StopAgentRun):
+                    raise e
+                last_exception = e
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    import time
 
-            # Update the run_response citations with the model response citations
-            if model_response.citations is not None:
-                self.run_response.citations = model_response.citations
+                    time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                cancelled_response = RunResponse(
+                    run_id=self.run_id or str(uuid4()),
+                    session_id=session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
+                )
+                return cancelled_response
 
-            # Update the run_response tools with the model response tools
-            if model_response.tool_calls is not None:
-                if self.run_response.tools is None:
-                    self.run_response.tools = model_response.tool_calls
+        # If we get here, all retries failed
+        if last_exception is not None:
+            log_error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
+            raise last_exception
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
+
+    async def _arun(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+    ) -> RunResponse:
+        """Run the Agent and yield the RunResponse.
+
+        Steps:
+        1. Reason about the task if reasoning is enabled
+        2. Generate a response from the Model (includes running function calls)
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save session to storage
+        6. Save output to file if save_response_to_file is set
+        """
+        self.model = cast(Model, self.model)
+        # 1. Reason about the task if reasoning is enabled
+        await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
+
+        # Get the index of the last "user" message in messages_for_run
+        # We track this so we can add messages after this index to the RunResponse and Memory
+        index_of_last_user_message = len(run_messages.messages)
+
+        # 2. Generate a response from the Model (includes running function calls)
+        model_response: ModelResponse = await self.model.aresponse(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )
+
+        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        # 3. Update Agent Memory
+        await self._aupdate_memory(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+            messages=messages,
+            index_of_last_user_message=index_of_last_user_message,
+        )
+
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # Log Agent Run
+        await self._alog_agent_run(user_id=user_id, session_id=session_id)
+
+        # Otherwise convert the response to the structured format
+        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+            if isinstance(run_response.content, str) and self.parse_response:
+                try:
+                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+
+                    # Update RunResponse
+                    if structured_output is not None:
+                        run_response.content = structured_output
+                        run_response.content_type = self.response_model.__name__
+                    else:
+                        log_warning("Failed to convert response to response_model")
+                except Exception as e:
+                    log_warning(f"Failed to convert response to output model: {e}")
+            else:
+                log_warning("Something went wrong. Run response content is not a string")
+
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    async def _arun_stream(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> AsyncIterator[RunResponse]:
+        """Run the Agent and yield the RunResponse.
+
+        Steps:
+        1. Reason about the task if reasoning is enabled
+        2. Generate a response from the Model (includes running function calls)
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save session to storage
+        6. Save output to file if save_response_to_file is set
+        """
+
+        # 1. Reason about the task if reasoning is enabled
+        async for item in self._ahandle_reasoning_stream(run_messages=run_messages, session_id=session_id):
+            yield item
+
+        # Get the index of the last "user" message in messages_for_run
+        # We track this so we can add messages after this index to the RunResponse and Memory
+        index_of_last_user_message = len(run_messages.messages)
+
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run started", session_id=session_id, event=RunEvent.run_started)
+
+        # 2. Generate a response from the Model
+        async for event in self._ahandle_model_response_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            response_format=response_format,
+            stream_intermediate_steps=stream_intermediate_steps,
+        ):
+            yield event
+
+        # 3. Update Agent Memory
+        await self._aupdate_memory(
+            run_response=run_response,
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+            messages=messages,
+            index_of_last_user_message=index_of_last_user_message,
+        )
+
+        # Yield UpdatingMemory event
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content="Memory updated",
+                session_id=session_id,
+                event=RunEvent.updating_memory,
+            )
+
+        # 5. Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+
+        # 6. Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # Log Agent Run
+        await self._alog_agent_run(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+        if stream_intermediate_steps:
+            yield self.create_run_response(
+                content=run_response.content,
+                reasoning_content=run_response.reasoning_content,
+                session_id=session_id,
+                event=RunEvent.run_completed,
+                run_response=run_response,
+            )
+
+    async def arun(
+        self,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+        *,
+        stream: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Async Run the Agent and return the response."""
+
+        # Initialize the Agent
+        self.initialize_agent()
+
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
+
+        # If no retries are set, use the agent's default retries
+        if retries is None:
+            retries = self.retries
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
+
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+
+        # Use the default user_id and session_id when necessary
+        if user_id is None:
+            user_id = self.user_id
+
+        if session_id is None or session_id == "":
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                session_id = str(uuid4())
+                self.session_id = session_id
+
+        session_id = cast(str, session_id)
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Session ID: {session_id}", center=True)
+
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id, user_id=user_id)
+
+        # Read existing session from storage
+        if self.context is not None:
+            self.resolve_run_context()
+
+        if self.response_model is not None and self.parse_response and stream is True:
+            # Disable stream if response_model is set
+            stream = False
+            log_debug("Disabling stream as response_model is set")
+
+        last_exception = None
+        num_attempts = retries + 1
+
+        # Prepare arguments for the model
+        self.set_default_model()
+        response_format = self._get_response_format()
+        self.model = cast(Model, self.model)
+
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=session_id,
+            user_id=user_id,
+            async_mode=True,
+            knowledge_filters=effective_filters,
+        )
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
+        for attempt in range(num_attempts):
+            try:
+                # Create a new run_response for this attempt
+                run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
+
+                run_response.model = self.model.id if self.model is not None else None
+
+                # for backward compatibility, set self.run_response
+                self.run_response = run_response
+                self.run_id = run_id
+
+                # Set run_input
+                if message is not None:
+                    if isinstance(message, str):
+                        self.run_input = message
+                    elif isinstance(message, Message):
+                        self.run_input = message.to_dict()
+                    else:
+                        self.run_input = message
+                elif messages is not None:
+                    self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+
+                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
+                # Prepare run messages
+                run_messages: RunMessages = self.get_run_messages(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    messages=messages,
+                    **kwargs,
+                )
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
+
+                self.run_messages = run_messages
+
+                # Pass the new run_response to _arun
+                if stream and self.is_streamable:
+                    resp = self._arun_stream(
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        message=message,
+                        user_id=user_id,
+                        session_id=session_id,
+                        response_format=response_format,
+                        messages=messages,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )  # type: ignore[assignment]
+                    return resp
                 else:
-                    self.run_response.tools.extend(model_response.tool_calls)
+                    return await self._arun(
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        message=message,
+                        user_id=user_id,
+                        session_id=session_id,
+                        response_format=response_format,
+                        messages=messages,
+                    )
+            except ModelProviderError as e:
+                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
+                if isinstance(e, StopAgentRun):
+                    raise e
+                last_exception = e
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    import time
 
-                # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
-                for tool_call in model_response.tool_calls:
-                    tool_name = tool_call.get("tool_name", "")
-                    if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.get("tool_args", {})
-                        self.update_reasoning_content_from_tool_call(tool_name, tool_args)
-
-            # Update the run_response audio with the model response audio
-            if model_response.audio is not None:
-                self.run_response.response_audio = model_response.audio
-
-            if model_response.image is not None:
-                self.add_image(model_response.image)
-
-            # Update the run_response messages with the messages
-            self.run_response.messages = run_messages.messages
-            # Update the run_response created_at with the model response created_at
-            self.run_response.created_at = model_response.created_at
-
-        if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps: List[ReasoningStep] = []
-            if (
-                self.run_response
-                and self.run_response.extra_data
-                and hasattr(self.run_response.extra_data, "reasoning_steps")
-            ):
-                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
-
-            if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
-                yield self.create_run_response(
-                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                    content_type=ReasoningSteps.__class__.__name__,
-                    event=RunEvent.reasoning_completed,
+                    time.sleep(delay)
+            except KeyboardInterrupt:
+                # Create a cancelled response
+                return RunResponse(
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_id=self.agent_id,
+                    content="Operation cancelled by user",
+                    event=RunEvent.run_cancelled,
                 )
 
-        # 8. Update RunResponse
+        # If we get here, all retries failed
+        if last_exception is not None:
+            log_error(
+                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+            )
+            raise last_exception
+        else:
+            raise Exception(f"Failed after {num_attempts} attempts.")
+
+    def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
+        # Format tool calls if they exist
+        if model_response.tool_calls:
+            run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
+
+        # Handle structured outputs
+        if self.response_model is not None and model_response.parsed is not None:
+            # We get native structured outputs from the model
+            if self._model_should_return_structured_output():
+                # Update the run_response content with the structured output
+                run_response.content = model_response.parsed
+                # Update the run_response content_type with the structured output class name
+                run_response.content_type = self.response_model.__name__
+        else:
+            # Update the run_response content with the model response content
+            run_response.content = model_response.content
+
+        # Update the run_response thinking with the model response thinking
+        if model_response.thinking is not None:
+            run_response.thinking = model_response.thinking
+        if model_response.redacted_thinking is not None:
+            if run_response.thinking is None:
+                run_response.thinking = model_response.redacted_thinking
+            else:
+                run_response.thinking += model_response.redacted_thinking
+
+        # Update the run_response citations with the model response citations
+        if model_response.citations is not None:
+            run_response.citations = model_response.citations
+
+        # Update the run_response tools with the model response tools
+        if model_response.tool_calls is not None:
+            if run_response.tools is None:
+                run_response.tools = model_response.tool_calls
+            else:
+                run_response.tools.extend(model_response.tool_calls)
+
+            # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
+            for tool_call in model_response.tool_calls:
+                tool_name = tool_call.get("tool_name", "")
+                if tool_name.lower() in ["think", "analyze"]:
+                    tool_args = tool_call.get("tool_args", {})
+                    self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
+        # Update the run_response audio with the model response audio
+        if model_response.audio is not None:
+            run_response.response_audio = model_response.audio
+
+        if model_response.image is not None:
+            self.add_image(model_response.image)
+
+        # Update the run_response messages with the messages
+        run_response.messages = run_messages.messages
+        # Update the run_response created_at with the model response created_at
+        run_response.created_at = model_response.created_at
+
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         # Update the RunResponse messages
-        self.run_response.messages = messages_for_run_response
+        run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
-        # Update the run_response audio if streaming
-        if self.stream and model_response.audio is not None:
-            self.run_response.response_audio = model_response.audio
+    def _update_memory(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        index_of_last_user_message: int = 0,
+    ) -> None:
+        if isinstance(self.memory, AgentMemory):
+            self.memory = cast(AgentMemory, self.memory)
+        else:
+            self.memory = cast(Memory, self.memory)
 
-        # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
             if run_messages.system_message is not None:
@@ -914,7 +1427,7 @@ class Agent:
                 self.memory.add_messages(messages=messages_for_memory)
 
             # Create an AgentRun object to add to memory
-            agent_run = AgentRun(response=self.run_response)
+            agent_run = AgentRun(response=run_response)
             agent_run.message = run_messages.user_message
 
             # Update the memories with the user message if needed
@@ -955,14 +1468,15 @@ class Agent:
             if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
                 self.memory.update_summary()
 
-            # 10. Calculate session metrics
+            # 4. Calculate session metrics
             self.session_metrics = self.calculate_metrics(self.memory.messages)
         elif isinstance(self.memory, Memory):
             # Add AgentRun to memory
-            self.memory.add_run(session_id=session_id, run=self.run_response)
+            self.memory.add_run(session_id=session_id, run=run_response)
 
             self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
+            # 4. Calculate session metrics
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
@@ -970,578 +1484,20 @@ class Agent:
                     run_messages.messages
                 )  # Calculate metrics for the session
 
-        # Yield UpdatingMemory event
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content="Memory updated",
-                session_id=session_id,
-                event=RunEvent.updating_memory,
-            )
-
-        # 11. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
-
-        # 12. Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(message=message, session_id=session_id)
-
-        # Set run_input
-        if message is not None:
-            if isinstance(message, str):
-                self.run_input = message
-            elif isinstance(message, Message):
-                self.run_input = message.to_dict()
-            else:
-                self.run_input = message
-        elif messages is not None:
-            self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
-
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
-
-        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content=self.run_response.content,
-                reasoning_content=self.run_response.reasoning_content,
-                session_id=session_id,
-                event=RunEvent.run_completed,
-            )
-
-        # Yield final response if not streaming so that run() can get the response
-        if not self.stream:
-            yield self.run_response
-
-    @overload
-    def run(
+    async def _aupdate_memory(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: Literal[False] = False,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-        retries: Optional[int] = None,
-        **kwargs: Any,
-    ) -> RunResponse: ...
-
-    @overload
-    def run(
-        self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: Literal[True] = True,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-        retries: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Iterator[RunResponse]: ...
-
-    def run(
-        self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: Optional[bool] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-        retries: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Union[RunResponse, Iterator[RunResponse]]:
-        """Run the Agent and return the response."""
-
-        # Initialize the Agent
-        self.initialize_agent()
-
-        # If no retries are set, use the agent's default retries
-        if retries is None:
-            retries = self.retries
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        log_debug(f"Session ID: {session_id}", center=True)
-
-        last_exception = None
-        num_attempts = retries + 1
-        for attempt in range(num_attempts):
-            try:
-                # If a response_model is set, return the response as a structured output
-
-                if self.response_model is not None and self.parse_response:
-                    # Set stream=False and run the agent
-                    if self.stream and self.stream is True:
-                        log_debug("Setting stream=False as response_model is set")
-                        self.stream = False
-                    run_response: RunResponse = next(
-                        self._run(
-                            message=message,
-                            stream=False,
-                            user_id=user_id,
-                            session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
-                            messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            **kwargs,
-                        )
-                    )
-
-                    # Do a final check confirming the content is in the response_model format
-                    if isinstance(run_response.content, self.response_model):
-                        return run_response
-
-                    # Otherwise convert the response to the structured format
-                    if isinstance(run_response.content, str):
-                        try:
-                            structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                            # Update RunResponse
-                            if structured_output is not None:
-                                run_response.content = structured_output
-                                run_response.content_type = self.response_model.__name__
-                                if self.run_response is not None:
-                                    self.run_response.content = structured_output
-                                    self.run_response.content_type = self.response_model.__name__
-                            else:
-                                log_warning("Failed to convert response to response_model")
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to output model: {e}")
-                    else:
-                        log_warning("Something went wrong. Run response content is not a string")
-                    return run_response
-                else:
-                    if stream and self.is_streamable:
-                        resp = self._run(
-                            message=message,
-                            stream=True,
-                            user_id=user_id,
-                            session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
-                            messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            **kwargs,
-                        )
-                        return resp
-                    else:
-                        resp = self._run(
-                            message=message,
-                            stream=False,
-                            user_id=user_id,
-                            session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
-                            messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            **kwargs,
-                        )
-                        return next(resp)
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                # Create a cancelled response
-                cancelled_response = RunResponse(
-                    run_id=self.run_id or str(uuid4()),
-                    session_id=session_id,
-                    agent_id=self.agent_id,
-                    content="Operation cancelled by user",
-                    event=RunEvent.run_cancelled,
-                )
-                return cancelled_response
-
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
-            )
-            raise last_exception
-        else:
-            raise Exception(f"Failed after {num_attempts} attempts.")
-
-    async def _arun(
-        self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: bool = False,
+        run_response: RunResponse,
+        run_messages: RunMessages,
         session_id: str,
         user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
-        **kwargs: Any,
-    ) -> AsyncIterator[RunResponse]:
-        """Run the Agent and yield the RunResponse.
-
-        Steps:
-        1. Prepare the Agent for the run
-        2. Update the Model and resolve context
-        3. Read existing session from storage
-        4. Prepare run messages
-        5. Reason about the task if reasoning is enabled
-        6. Start the Run by yielding a RunStarted event
-        7. Generate a response from the Model (includes running function calls)
-        8. Update RunResponse
-        9. Update Agent Memory
-        10. Calculate session metrics
-        11. Save session to storage
-        12. Save output to file if save_response_to_file is set
-        """
-
-        # 1. Prepare the Agent for the run
+        index_of_last_user_message: int = 0,
+    ) -> None:
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
             self.memory = cast(Memory, self.memory)
-        # 1.2 Set streaming and stream intermediate steps
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-        # 1.3 Create a run_id and RunResponse
-        self.run_id = str(uuid4())
-        self.run_response = RunResponse(run_id=self.run_id, session_id=session_id, agent_id=self.agent_id)
 
-        log_debug(f"Async Agent Run Start: {self.run_response.run_id}", center=True, symbol="*")
-
-        # 2. Update the Model and resolve context
-        self.update_model(async_mode=True, user_id=user_id, session_id=session_id)
-        self.run_response.model = self.model.id if self.model is not None else None
-        if self.context is not None and self.resolve_context:
-            await self.aresolve_run_context()
-
-        # 3. Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
-
-        # 4. Prepare run messages
-        run_messages: RunMessages = self.get_run_messages(
-            message=message,
-            session_id=session_id,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            messages=messages,
-            **kwargs,
-        )
-        if len(run_messages.messages) == 0:
-            log_error("No messages to be sent to the model.")
-        self.run_messages = run_messages
-
-        # 5. Reason about the task if reasoning is enabled
-        if self.reasoning or self.reasoning_model is not None:
-            areason_generator = self.areason(run_messages=run_messages, session_id=session_id)
-            if self.stream:
-                async for item in areason_generator:
-                    yield item
-            else:
-                # Consume the generator without yielding
-                async for _ in areason_generator:
-                    pass
-
-        # Get the index of the last "user" message in messages_for_run
-        # We track this so we can add messages after this index to the RunResponse and Memory
-        index_of_last_user_message = len(run_messages.messages)
-
-        # 6. Start the Run by yielding a RunStarted event
-        if self.stream_intermediate_steps:
-            yield self.create_run_response("Run started", session_id=session_id, event=RunEvent.run_started)
-
-        # 7. Generate a response from the Model (includes running function calls)
-        reasoning_started = False
-        reasoning_time_taken = 0.0
-
-        model_response: ModelResponse
-        self.model = cast(Model, self.model)
-        if stream and self.is_streamable:
-            model_response = ModelResponse(content="")
-            model_response_stream = self.model.aresponse_stream(messages=run_messages.messages)  # type: ignore
-            async for model_response_chunk in model_response_stream:  # type: ignore
-                # If the model response is an assistant_response, yield a RunResponse
-                if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
-                    # Process content and thinking
-                    if model_response_chunk.content is not None:
-                        model_response.content = (model_response.content or "") + model_response_chunk.content
-                        self.run_response.content = model_response.content
-
-                    if model_response_chunk.thinking is not None:
-                        model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
-                        self.run_response.thinking = model_response.thinking
-
-                    if model_response_chunk.redacted_thinking is not None:
-                        model_response.redacted_thinking = (
-                            model_response.redacted_thinking or ""
-                        ) + model_response_chunk.redacted_thinking
-                        # We only have thinking on response
-                        self.run_response.thinking = model_response.redacted_thinking
-
-                    if model_response_chunk.citations is not None:
-                        self.run_response.citations = model_response_chunk.citations
-
-                    # Only yield if we have content or thinking to show
-                    if (
-                        model_response_chunk.content is not None
-                        or model_response_chunk.thinking is not None
-                        or model_response_chunk.redacted_thinking is not None
-                        or model_response_chunk.citations is not None
-                    ):
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            thinking=model_response_chunk.thinking,
-                            redacted_thinking=model_response_chunk.redacted_thinking,
-                            citations=model_response_chunk.citations,
-                            created_at=model_response_chunk.created_at,
-                            session_id=session_id,
-                        )
-
-                    # Process audio
-                    if model_response_chunk.audio is not None:
-                        if model_response.audio is None:
-                            model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
-
-                        if model_response_chunk.audio.id is not None:
-                            model_response.audio.id = model_response_chunk.audio.id  # type: ignore
-                        if model_response_chunk.audio.content is not None:
-                            model_response.audio.content += model_response_chunk.audio.content  # type: ignore
-                        if model_response_chunk.audio.transcript is not None:
-                            model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
-                        if model_response_chunk.audio.expires_at is not None:
-                            model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
-                        if model_response_chunk.audio.mime_type is not None:
-                            model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
-                        model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
-                        model_response.audio.channels = model_response_chunk.audio.channels
-
-                        # Yield the audio and transcript bit by bit
-                        self.run_response.response_audio = AudioResponse(
-                            id=model_response_chunk.audio.id,
-                            content=model_response_chunk.audio.content,
-                            transcript=model_response_chunk.audio.transcript,
-                            sample_rate=model_response_chunk.audio.sample_rate,
-                            channels=model_response_chunk.audio.channels,
-                        )
-                        self.run_response.created_at = model_response_chunk.created_at
-
-                        yield self.run_response
-
-                    if model_response_chunk.image is not None:
-                        self.add_image(model_response_chunk.image)
-
-                        yield self.run_response
-
-                # If the model response is a tool_call_started, add the tool call to the run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
-                    # Add tool calls to the run_response
-                    new_tool_calls_list = model_response_chunk.tool_calls
-                    if new_tool_calls_list is not None:
-                        # Add tool calls to the agent.run_response
-                        if self.run_response.tools is None:
-                            self.run_response.tools = new_tool_calls_list
-                        else:
-                            self.run_response.tools.extend(new_tool_calls_list)
-
-                        # Format tool calls whenever new ones are added during streaming
-                        self.run_response.formatted_tool_calls = format_tool_calls(self.run_response.tools)
-
-                    # If the agent is streaming intermediate steps, yield a RunResponse with the tool_call_started event
-                    if self.stream_intermediate_steps:
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_started,
-                            session_id=session_id,
-                        )
-
-                # If the model response is a tool_call_completed, update the existing tool call in the run_response
-                elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-                    reasoning_step: Optional[ReasoningStep] = None
-                    new_tool_calls_list = model_response_chunk.tool_calls
-                    if new_tool_calls_list is not None:
-                        # Update the existing tool call in the run_response
-                        if self.run_response.tools:
-                            # Create a mapping of tool_call_id to index
-                            tool_call_index_map = {
-                                tc["tool_call_id"]: i
-                                for i, tc in enumerate(self.run_response.tools)
-                                if tc.get("tool_call_id") is not None
-                            }
-                            # Process tool calls
-                            for tool_call_dict in new_tool_calls_list:
-                                tool_call_id = tool_call_dict.get("tool_call_id")
-                                index = tool_call_index_map.get(tool_call_id)
-                                if index is not None:
-                                    self.run_response.tools[index] = tool_call_dict
-                        else:
-                            self.run_response.tools = new_tool_calls_list
-
-                        # Only iterate through new tool calls
-                        for tool_call in new_tool_calls_list:
-                            tool_name = tool_call.get("tool_name", "")
-                            if tool_name.lower() in ["think", "analyze"]:
-                                tool_args = tool_call.get("tool_args", {})
-
-                                reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
-
-                                metrics = tool_call.get("metrics")
-                                if metrics is not None and metrics.time is not None:
-                                    reasoning_time_taken = reasoning_time_taken + float(metrics.time)
-
-                    if self.stream_intermediate_steps:
-                        if reasoning_step is not None:
-                            if not reasoning_started:
-                                yield self.create_run_response(
-                                    content="Reasoning started",
-                                    event=RunEvent.reasoning_started,
-                                )
-                                reasoning_started = True
-
-                            yield self.create_run_response(
-                                content=reasoning_step,
-                                content_type=reasoning_step.__class__.__name__,
-                                event=RunEvent.reasoning_step,
-                                reasoning_content=self.run_response.reasoning_content,
-                            )
-
-                        yield self.create_run_response(
-                            content=model_response_chunk.content,
-                            event=RunEvent.tool_call_completed,
-                            session_id=session_id,
-                        )
-        else:
-            # Get the model response
-            model_response = await self.model.aresponse(messages=run_messages.messages)
-            # Format tool calls if they exist
-            if model_response.tool_calls:
-                self.run_response.formatted_tool_calls = format_tool_calls(model_response.tool_calls)
-
-            # Handle structured outputs
-            if self.response_model is not None and model_response.parsed is not None:
-                # We get native structured outputs from the model
-                if self.model.structured_outputs:
-                    # Update the run_response content with the structured output
-                    self.run_response.content = model_response.parsed
-                    # Update the run_response content_type with the structured output class name
-                    self.run_response.content_type = self.response_model.__name__
-            else:
-                # Update the run_response content with the model response content
-                self.run_response.content = model_response.content
-
-            # Update the run_response thinking with the model response thinking
-            if model_response.thinking is not None:
-                self.run_response.thinking = model_response.thinking
-            if model_response.redacted_thinking is not None:
-                if self.run_response.thinking is None:
-                    self.run_response.thinking = model_response.redacted_thinking
-                else:
-                    self.run_response.thinking += model_response.redacted_thinking
-
-            if model_response.citations is not None:
-                self.run_response.citations = model_response.citations
-
-            # Update the run_response tools with the model response tools
-            if model_response.tool_calls is not None:
-                if self.run_response.tools is None:
-                    self.run_response.tools = model_response.tool_calls
-                else:
-                    self.run_response.tools.extend(model_response.tool_calls)
-
-                # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
-                for tool_call in model_response.tool_calls:
-                    tool_name = tool_call.get("tool_name", "")
-                    if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.get("tool_args", {})
-                        self.update_reasoning_content_from_tool_call(tool_name, tool_args)
-
-            # Update the run_response audio with the model response audio
-            if model_response.audio is not None:
-                self.run_response.response_audio = model_response.audio
-
-            if model_response.image is not None:
-                self.add_image(model_response.image)
-
-            # Update the run_response messages with the messages
-            self.run_response.messages = run_messages.messages
-            # Update the run_response created_at with the model response created_at
-            self.run_response.created_at = model_response.created_at
-
-        if self.stream_intermediate_steps and reasoning_started:
-            all_reasoning_steps: List[ReasoningStep] = []
-            if (
-                self.run_response
-                and self.run_response.extra_data
-                and hasattr(self.run_response.extra_data, "reasoning_steps")
-            ):
-                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
-
-            if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_time_taken)
-                yield self.create_run_response(
-                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                    content_type=ReasoningSteps.__class__.__name__,
-                    event=RunEvent.reasoning_completed,
-                )
-
-        # 8. Update RunResponse
-        # Build a list of messages that should be added to the RunResponse
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
-        # Update the RunResponse messages
-        self.run_response.messages = messages_for_run_response
-        # Update the RunResponse metrics
-        self.run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
-
-        # Update the run_response audio if streaming
-        if self.stream and model_response.audio is not None:
-            self.run_response.response_audio = model_response.audio
-
-        # 9. Update Agent Memory
         if isinstance(self.memory, AgentMemory):
             # Add the system message to the memory
             if run_messages.system_message is not None:
@@ -1561,7 +1517,7 @@ class Agent:
                 self.memory.add_messages(messages=messages_for_memory)
 
             # Create an AgentRun object to add to memory
-            agent_run = AgentRun(response=self.run_response)
+            agent_run = AgentRun(response=run_response)
             agent_run.message = run_messages.user_message
 
             # Update the memories with the user message if needed
@@ -1602,13 +1558,15 @@ class Agent:
             if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
                 await self.memory.aupdate_summary()
 
+            # 4. Calculate metrics for the run
             self.session_metrics = self.calculate_metrics(self.memory.messages)
         elif isinstance(self.memory, Memory):
             # Add AgentRun to memory
-            self.memory.add_run(session_id=session_id, run=self.run_response)
+            self.memory.add_run(session_id=session_id, run=run_response)
 
             await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
+            # 4. Calculate metrics for the run
             if self.session_metrics is None:
                 self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
             else:
@@ -1616,200 +1574,294 @@ class Agent:
                     run_messages.messages
                 )  # Calculate metrics for the session
 
-        # Yield UpdatingMemory event
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content="Memory updated",
-                session_id=session_id,
-                event=RunEvent.updating_memory,
-            )
-
-        # 11. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
-
-        # 12. Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(message=message, session_id=session_id)
-
-        # Set run_input
-        if message is not None:
-            if isinstance(message, str):
-                self.run_input = message
-            elif isinstance(message, Message):
-                self.run_input = message.to_dict()
-            else:
-                self.run_input = message
-        elif messages is not None:
-            self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
-
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session_id)
-
-        log_debug(f"Agent Run End: {self.run_response.run_id}", center=True, symbol="*")
-        if self.stream_intermediate_steps:
-            yield self.create_run_response(
-                content=self.run_response.content,
-                reasoning_content=self.run_response.reasoning_content,
-                session_id=session_id,
-                event=RunEvent.run_completed,
-            )
-
-        # Yield final response if not streaming so that run() can get the response
-        if not self.stream:
-            yield self.run_response
-
-    async def arun(
+    def _handle_model_response_stream(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
-        *,
-        stream: Optional[bool] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        retries: Optional[int] = None,
-        **kwargs: Any,
-    ) -> Any:
-        """Async Run the Agent and return the response."""
-        # Initialize the Agent
-        self.initialize_agent()
+    ) -> Iterator[RunResponse]:
+        self.model = cast(Model, self.model)
 
-        # If no retries are set, use the agent's default retries
-        if retries is None:
-            retries = self.retries
+        reasoning_state = {
+            "reasoning_started": False,
+            "reasoning_time_taken": 0.0,
+        }
+        model_response = ModelResponse(content="")
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
+        for model_response_chunk in self.model.response_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        ):
+            yield from self._handle_model_response_chunk(
+                run_response=run_response,
+                session_id=session_id,
+                model_response=model_response,
+                model_response_chunk=model_response_chunk,
+                stream_intermediate_steps=stream_intermediate_steps,
+                reasoning_state=reasoning_state,
+            )
 
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
+        # Determine reasoning completed
+        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
+            all_reasoning_steps: List[ReasoningStep] = []
+            if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
 
-        if session_id is None or session_id == "":
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        log_debug(f"Session ID: {session_id}", center=True)
-
-        last_exception = None
-        num_attempts = retries + 1
-        for attempt in range(num_attempts):
-            try:
-                # If a response_model is set, return the response as a structured output
-                if self.response_model is not None and self.parse_response:
-                    # Set stream=False and run the agent
-                    if self.stream and self.stream is True:
-                        log_debug("Setting stream=False as response_model is set")
-                        self.stream = False
-                    run_response = await self._arun(
-                        message=message,
-                        stream=False,
-                        user_id=user_id,
-                        session_id=session_id,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        messages=messages,
-                        stream_intermediate_steps=stream_intermediate_steps,
-                        **kwargs,
-                    ).__anext__()
-
-                    # Do a final check confirming the content is in the response_model format
-                    if isinstance(run_response.content, self.response_model):
-                        return run_response
-
-                    # Otherwise convert the response to the structured format
-                    if isinstance(run_response.content, str):
-                        try:
-                            structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                            # Update RunResponse
-                            if structured_output is not None:
-                                run_response.content = structured_output
-                                run_response.content_type = self.response_model.__name__
-                                if self.run_response is not None:
-                                    self.run_response.content = structured_output
-                                    self.run_response.content_type = self.response_model.__name__
-                            else:
-                                log_warning("Failed to convert response to response_model")
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to output model: {e}")
-                    else:
-                        log_warning("Something went wrong. Run response content is not a string")
-                    return run_response
-                else:
-                    if stream and self.is_streamable:
-                        resp = self._arun(
-                            message=message,
-                            stream=True,
-                            user_id=user_id,
-                            session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
-                            messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            **kwargs,
-                        )
-                        return resp
-                    else:
-                        resp = self._arun(
-                            message=message,
-                            stream=False,
-                            user_id=user_id,
-                            session_id=session_id,
-                            audio=audio,
-                            images=images,
-                            videos=videos,
-                            files=files,
-                            messages=messages,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                            **kwargs,
-                        )
-                        return await resp.__anext__()
-            except ModelProviderError as e:
-                log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
-                last_exception = e
-                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
-                    if self.exponential_backoff:
-                        delay = 2**attempt * self.delay_between_retries
-                    else:
-                        delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
-            except KeyboardInterrupt:
-                # Create a cancelled response
-                return RunResponse(
-                    run_id=self.run_id or str(uuid4()),
-                    session_id=session_id,
-                    agent_id=self.agent_id,
-                    content="Operation cancelled by user",
-                    event=RunEvent.run_cancelled,
+            if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
+                yield self.create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
                 )
 
-        # If we get here, all retries failed
-        if last_exception is not None:
-            log_error(
-                f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
+        # Update RunResponse
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+
+        # Update the run_response audio if streaming
+        if model_response.audio is not None:
+            run_response.response_audio = model_response.audio
+
+    async def _ahandle_model_response_stream(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> AsyncIterator[RunResponse]:
+        self.model = cast(Model, self.model)
+
+        reasoning_state = {
+            "reasoning_started": False,
+            "reasoning_time_taken": 0.0,
+        }
+        model_response = ModelResponse(content="")
+
+        model_response_stream = self.model.aresponse_stream(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )  # type: ignore
+
+        async for model_response_chunk in model_response_stream:  # type: ignore
+            for chunk in self._handle_model_response_chunk(
+                run_response=run_response,
+                session_id=session_id,
+                model_response=model_response,
+                model_response_chunk=model_response_chunk,
+                stream_intermediate_steps=stream_intermediate_steps,
+                reasoning_state=reasoning_state,
+            ):
+                yield chunk
+
+        if stream_intermediate_steps and reasoning_state["reasoning_started"]:
+            all_reasoning_steps: List[ReasoningStep] = []
+            if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
+
+            if all_reasoning_steps:
+                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
+                yield self.create_run_response(
+                    content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
+                    content_type=ReasoningSteps.__class__.__name__,
+                    event=RunEvent.reasoning_completed,
+                )
+
+        # Update RunResponse
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+
+        # Update the run_response audio if streaming
+        if model_response.audio is not None:
+            run_response.response_audio = model_response.audio
+
+    def _handle_model_response_chunk(
+        self,
+        run_response: RunResponse,
+        session_id: str,
+        model_response: ModelResponse,
+        model_response_chunk: ModelResponse,
+        reasoning_state: Dict[str, Any],
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[RunResponse]:
+        # If the model response is an assistant_response, yield a RunResponse
+        if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
+            # Process content and thinking
+            if model_response_chunk.content is not None:
+                model_response.content = (model_response.content or "") + model_response_chunk.content
+                run_response.content = model_response.content
+
+            if model_response_chunk.thinking is not None:
+                model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
+                run_response.thinking = model_response.thinking
+
+            if model_response_chunk.redacted_thinking is not None:
+                model_response.redacted_thinking = (
+                    model_response.redacted_thinking or ""
+                ) + model_response_chunk.redacted_thinking
+
+                # We only have thinking on response
+                run_response.thinking = model_response.redacted_thinking
+
+            if model_response_chunk.citations is not None:
+                # We get citations in one chunk
+                run_response.citations = model_response_chunk.citations
+
+            # Only yield if we have content or thinking to show
+            if (
+                model_response_chunk.content is not None
+                or model_response_chunk.thinking is not None
+                or model_response_chunk.redacted_thinking is not None
+                or model_response_chunk.citations is not None
+            ):
+                yield self.create_run_response(
+                    content=model_response_chunk.content,
+                    thinking=model_response_chunk.thinking,
+                    redacted_thinking=model_response_chunk.redacted_thinking,
+                    citations=model_response_chunk.citations,
+                    created_at=model_response_chunk.created_at,
+                    session_id=session_id,
+                )
+
+            # Process audio
+            if model_response_chunk.audio is not None:
+                if model_response.audio is None:
+                    model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+                if model_response_chunk.audio.id is not None:
+                    model_response.audio.id = model_response_chunk.audio.id  # type: ignore
+                if model_response_chunk.audio.content is not None:
+                    model_response.audio.content += model_response_chunk.audio.content  # type: ignore
+                if model_response_chunk.audio.transcript is not None:
+                    model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
+                if model_response_chunk.audio.expires_at is not None:
+                    model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
+                if model_response_chunk.audio.mime_type is not None:
+                    model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
+                model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
+                model_response.audio.channels = model_response_chunk.audio.channels
+
+                # Yield the audio and transcript bit by bit
+                run_response.response_audio = AudioResponse(
+                    id=model_response_chunk.audio.id,
+                    content=model_response_chunk.audio.content,
+                    transcript=model_response_chunk.audio.transcript,
+                    sample_rate=model_response_chunk.audio.sample_rate,
+                    channels=model_response_chunk.audio.channels,
+                )
+                run_response.created_at = model_response_chunk.created_at
+
+                yield run_response
+
+            if model_response_chunk.image is not None:
+                self.add_image(model_response_chunk.image)
+
+                yield run_response
+
+        # If the model response is a tool_call_started, add the tool call to the run_response
+        elif (
+            model_response_chunk.event == ModelResponseEvent.tool_call_started.value
+        ):  # Add tool calls to the run_response
+            new_tool_calls_list = model_response_chunk.tool_calls
+            if new_tool_calls_list is not None:
+                # Add tool calls to the agent.run_response
+                if run_response.tools is None:
+                    run_response.tools = new_tool_calls_list
+                else:
+                    run_response.tools.extend(new_tool_calls_list)
+
+                # Format tool calls whenever new ones are added during streaming
+                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+
+            # Yield a RunResponse with the tool_call_started event
+            yield self.create_run_response(
+                content=model_response_chunk.content,
+                created_at=model_response_chunk.created_at,
+                event=RunEvent.tool_call_started,
+                session_id=session_id,
+                run_response=run_response,
             )
-            raise last_exception
-        else:
-            raise Exception(f"Failed after {num_attempts} attempts.")
+
+        # If the model response is a tool_call_completed, update the existing tool call in the run_response
+        elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
+            reasoning_step: Optional[ReasoningStep] = None
+
+            new_tool_calls_list = model_response_chunk.tool_calls
+            if new_tool_calls_list is not None:
+                # Update the existing tool call in the run_response
+                if run_response.tools:
+                    # Create a mapping of tool_call_id to index
+                    tool_call_index_map = {
+                        tc["tool_call_id"]: i
+                        for i, tc in enumerate(run_response.tools)
+                        if tc.get("tool_call_id") is not None
+                    }
+                    # Process tool calls
+                    for tool_call_dict in new_tool_calls_list:
+                        tool_call_id = tool_call_dict.get("tool_call_id")
+                        index = tool_call_index_map.get(tool_call_id)
+                        if index is not None:
+                            run_response.tools[index] = tool_call_dict
+                else:
+                    run_response.tools = new_tool_calls_list
+
+                # Only iterate through new tool calls
+                for tool_call in new_tool_calls_list:
+                    tool_name = tool_call.get("tool_name", "")
+                    if tool_name.lower() in ["think", "analyze"]:
+                        tool_args = tool_call.get("tool_args", {})
+
+                        reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
+                        metrics = tool_call.get("metrics")
+                        if metrics is not None and metrics.time is not None:
+                            reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
+                                metrics.time
+                            )
+
+            if stream_intermediate_steps:
+                if reasoning_step is not None:
+                    if not reasoning_state["reasoning_started"]:
+                        yield self.create_run_response(
+                            content="Reasoning started",
+                            event=RunEvent.reasoning_started,
+                        )
+                        reasoning_state["reasoning_started"] = True
+
+                    yield self.create_run_response(
+                        content=reasoning_step,
+                        content_type=reasoning_step.__class__.__name__,
+                        event=RunEvent.reasoning_step,
+                        reasoning_content=run_response.reasoning_content,
+                    )
+
+            # Yield a RunResponse with the tool_call_completed event
+            yield self.create_run_response(
+                content=model_response_chunk.content,
+                event=RunEvent.tool_call_completed,
+                created_at=model_response_chunk.created_at,
+                session_id=session_id,
+                run_response=run_response,
+            )
 
     def create_run_response(
         self,
@@ -1823,9 +1875,33 @@ class Agent:
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
         citations: Optional[Citations] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> RunResponse:
-        self.run_response = cast(RunResponse, self.run_response)
         thinking_combined = (thinking or "") + (redacted_thinking or "")
+
+        tools = None
+        response_audio = None
+        audio = None
+        images = None
+        videos = None
+        model = None
+        messages = None
+        extra_data = None
+
+        if run_response:
+            model = run_response.model
+            messages = run_response.messages
+            extra_data = run_response.extra_data
+            content = run_response.content
+            content_type = run_response.content_type
+            audio = run_response.audio
+            images = run_response.images
+            videos = run_response.videos
+            response_audio = run_response.response_audio
+            citations = run_response.citations
+            tools = run_response.tools
+            reasoning_content = run_response.reasoning_content
+
         rr = RunResponse(
             run_id=self.run_id,
             session_id=session_id,
@@ -1833,22 +1909,32 @@ class Agent:
             content=content,
             thinking=thinking_combined if thinking_combined else None,
             reasoning_content=reasoning_content,
-            tools=self.run_response.tools,
-            audio=self.run_response.audio,
-            images=self.run_response.images,
-            videos=self.run_response.videos,
-            citations=citations or self.run_response.citations,
-            response_audio=self.run_response.response_audio,
-            model=self.run_response.model,
-            messages=self.run_response.messages,
-            extra_data=self.run_response.extra_data,
+            tools=tools,
+            audio=audio,
+            images=images,
+            videos=videos,
+            citations=citations,
+            response_audio=response_audio,
             event=event.value,
         )
         if content_type is not None:
             rr.content_type = content_type
         if created_at is not None:
             rr.created_at = created_at
+        if messages is not None:
+            rr.messages = messages
+        if extra_data is not None:
+            rr.extra_data = extra_data
+        if model is not None:
+            rr.model = model
         return rr
+
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
@@ -1860,6 +1946,7 @@ class Agent:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
 
             # TODO: Possibly do both of these in one step
@@ -1888,6 +1975,7 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             self.memory.create_session_summary(session_id=session_id, user_id=user_id)
 
     async def _amake_memories_and_summaries(
@@ -1900,6 +1988,7 @@ class Agent:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
         if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
             await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
@@ -1930,15 +2019,51 @@ class Agent:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
+            log_debug("Creating session summary.")
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
+    def _raise_if_async_tools(self) -> None:
+        """Raise an exception if any tools contain async functions"""
+        if self.tools is None:
+            return
+
+        from inspect import iscoroutinefunction
+
+        for tool in self.tools:
+            if isinstance(tool, Toolkit):
+                for func in tool.functions:
+                    if iscoroutinefunction(tool.functions[func].entrypoint):
+                        raise Exception(
+                            f"Async tool {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                            "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                        )
+            elif isinstance(tool, Function):
+                if iscoroutinefunction(tool.entrypoint):
+                    raise Exception(
+                        f"Async function {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+            elif callable(tool):
+                if iscoroutinefunction(tool):
+                    raise Exception(
+                        f"Async function {tool.__name__} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+
     def get_tools(
-        self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
+        self,
+        session_id: str,
+        async_mode: bool = False,
+        user_id: Optional[str] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
         # Add provided tools
         if self.tools is not None:
+            # If not running in async mode, raise if any tool is async
+            if not async_mode:
+                self._raise_if_async_tools()
             agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
@@ -1954,12 +2079,27 @@ class Agent:
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
+            # Check if retriever is an async function but used in sync mode
+            from inspect import iscoroutinefunction
+
+            if not async_mode and self.retriever and iscoroutinefunction(self.retriever):
+                log_warning(
+                    "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+                )
+
             if self.search_knowledge:
                 # Use async or sync search based on async_mode
-                if async_mode:
-                    agent_tools.append(self.async_search_knowledge_base)
+                if self.enable_agentic_knowledge_filters:
+                    agent_tools.append(
+                        self.search_knowledge_base_with_agentic_filters_function(
+                            async_mode=async_mode, knowledge_filters=knowledge_filters
+                        )
+                    )
                 else:
-                    agent_tools.append(self.search_knowledge_base)
+                    agent_tools.append(
+                        self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
+                    )
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -1970,24 +2110,22 @@ class Agent:
 
         return agent_tools
 
-    def add_tools_to_model(
-        self, model: Model, session_id: str, async_mode: bool = False, user_id: Optional[str] = None
+    def determine_tools_for_model(
+        self,
+        model: Model,
+        session_id: str,
+        user_id: Optional[str] = None,
+        async_mode: bool = False,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(session_id=session_id, async_mode=async_mode, user_id=user_id)
-        agent_tool_names = []
-        # Get all the tool names
-        if agent_tools is not None:
-            for tool in agent_tools:
-                if isinstance(tool, Function):
-                    agent_tool_names.append(tool.name)
-                elif isinstance(tool, Toolkit):
-                    agent_tool_names.extend([f for f in tool.functions.keys()])
-                elif callable(tool):
-                    agent_tool_names.append(tool.__name__)
+        agent_tools = self.get_tools(
+            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+        )
 
-        # Create new functions if we don't have any set on the model OR if the list of tool names is different than what is set on the model
-        existing_model_functions = model.get_functions()
-        if existing_model_functions is None or set(existing_model_functions.keys()) != set(agent_tool_names):
+        if self._tools_for_model is None:
+            self._tools_for_model = []
+            self._functions_for_model = {}
+
             # Get Agent tools
             if agent_tools is not None and len(agent_tools) > 0:
                 log_debug("Processing tools for model")
@@ -2001,29 +2139,26 @@ class Agent:
                 ):
                     strict = True
 
-                _tools_for_model = []
-                _functions_for_model = {}
-
                 for tool in agent_tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent
-                        _tools_for_model.append(tool)
+                        self._tools_for_model.append(tool)
                         log_debug(f"Included builtin tool {tool}")
 
                     elif isinstance(tool, Toolkit):
                         # For each function in the toolkit and process entrypoint
                         for name, func in tool.functions.items():
                             # If the function does not exist in self.functions
-                            if name not in _functions_for_model:
+                            if name not in self._functions_for_model:
                                 func._agent = self
                                 func.process_entrypoint(strict=strict)
-                                if strict:
+                                if strict and func.strict is None:
                                     func.strict = True
                                 if self.tool_hooks is not None:
                                     func.tool_hooks = self.tool_hooks
-                                _functions_for_model[name] = func
-                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added tool {name} from {tool.name}")
 
                         # Add instructions from the toolkit
@@ -2033,15 +2168,15 @@ class Agent:
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
-                        if tool.name not in _functions_for_model:
+                        if tool.name not in self._functions_for_model:
                             tool._agent = self
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
                             if self.tool_hooks is not None:
                                 tool.tool_hooks = self.tool_hooks
-                            _functions_for_model[tool.name] = tool
-                            _tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
                             log_debug(f"Added tool {tool.name}")
 
                         # Add instructions from the Function
@@ -2053,51 +2188,48 @@ class Agent:
                     elif callable(tool):
                         try:
                             function_name = tool.__name__
-                            if function_name not in _functions_for_model:
+                            if function_name not in self._functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
                                 if strict:
                                     func.strict = True
                                 if self.tool_hooks is not None:
                                     func.tool_hooks = self.tool_hooks
-                                _functions_for_model[func.name] = func
-                                _tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                self._functions_for_model[func.name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
                                 log_debug(f"Added tool {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
 
-                # Set tools on the model
-                model.set_tools(tools=_tools_for_model)
-                # Set functions on the model
-                model.set_functions(functions=_functions_for_model)
-
-    def update_model(self, session_id: str, async_mode: bool = False, user_id: Optional[str] = None) -> None:
-        self.set_default_model()
-
+    def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
+        return bool(
+            self.model.supports_native_structured_outputs
+            and self.response_model is not None
+            and (not self.use_json_mode or self.structured_outputs)
+        )
 
-        # Update the response_format on the Model
+    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, self.model)
         if self.response_model is None:
-            self.model.response_format = None
+            return None
         else:
             json_response_format = {"type": "json_object"}
 
             if self.model.supports_native_structured_outputs:
-                if (not self.use_json_mode) or self.structured_outputs:
+                if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.response_model")
-                    self.model.response_format = self.response_model
-                    self.model.structured_outputs = True
+                    return self.response_model
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
                     )
-                    self.model.response_format = json_response_format
-                    self.model.structured_outputs = False
+                    return json_response_format
 
             elif self.model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
-                    self.model.response_format = {
+                    return {
                         "type": "json_schema",
                         "json_schema": {
                             "name": self.response_model.__name__,
@@ -2105,28 +2237,11 @@ class Agent:
                         },
                     }
                 else:
-                    self.model.response_format = None
-                self.model.structured_outputs = False
+                    return None
 
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
-                self.model.response_format = json_response_format
-                self.model.structured_outputs = False
-
-        # Add tools to the Model
-        self.add_tools_to_model(model=self.model, session_id=session_id, async_mode=async_mode, user_id=user_id)
-
-        # Set show_tool_calls on the Model
-        if self.show_tool_calls is not None:
-            self.model.show_tool_calls = self.show_tool_calls
-
-        # Set tool_choice on the Model
-        if self.tool_choice is not None:
-            self.model.tool_choice = self.tool_choice
-
-        # Set tool_call_limit on the Model
-        if self.tool_call_limit is not None:
-            self.model.tool_call_limit = self.tool_call_limit
+                return json_response_format
 
     def resolve_run_context(self) -> None:
         from inspect import signature
@@ -2195,11 +2310,11 @@ class Agent:
         if self.team_data is not None:
             session_data["team_data"] = self.team_data
         if self.images is not None:
-            session_data["images"] = [img.model_dump() for img in self.images]  # type: ignore
+            session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
         if self.videos is not None:
-            session_data["videos"] = [vid.model_dump() for vid in self.videos]  # type: ignore
+            session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
         if self.audio is not None:
-            session_data["audio"] = [aud.model_dump() for aud in self.audio]  # type: ignore
+            session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
         return session_data
 
     def get_agent_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
@@ -2219,7 +2334,7 @@ class Agent:
             else:
                 self.memory = cast(Memory, self.memory)
                 # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs[session_id]  # type: ignore
+                run_responses = self.memory.runs.get(session_id, [])  # type: ignore
                 memory_dict = self.memory.to_dict()
                 memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
         else:
@@ -2342,6 +2457,11 @@ class Agent:
             if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
                 # Convert dict to AgentMemory
                 self.memory = AgentMemory(**self.memory)
+                # Convert dict to Memory
+            elif isinstance(self.memory, dict):
+                memory_dict = self.memory
+                memory_dict.pop("runs")
+                self.memory = Memory(**memory_dict)
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
@@ -2614,7 +2734,7 @@ class Agent:
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
         # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model()
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
             instructions.extend(_model_instructions)
 
@@ -2643,6 +2763,31 @@ class Agent:
         # 3.2.3 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")
+
+        # 3.2.4 Add information about agentic filters if enabled
+        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
+            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                additional_information.append(
+                    dedent(f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    Always use filters when the user query indicates specific metadata.
+
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """)
+                )
 
         # 3.3 Build the default system message for the Agent.
         system_message_content: str = ""
@@ -2704,6 +2849,12 @@ class Agent:
             system_message_content += (
                 f"<transfer_instructions>\n{self.get_transfer_instructions().strip()}\n</transfer_instructions>\n\n"
             )
+        if self.success_criteria:
+            system_message_content += "Your task is successful when the following criteria is met:\n"
+            system_message_content += "<success_criteria>\n"
+            system_message_content += f"{self.success_criteria}\n"
+            system_message_content += "</success_criteria>\n"
+            system_message_content += "Stop running when the success_criteria is met.\n\n"
         # 3.3.10 Then add memories to the system prompt
         if self.memory:
             if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
@@ -2728,7 +2879,7 @@ class Agent:
                     "You can add new memories using the `update_memory` tool.\n"
                     "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
                 )
-            elif isinstance(self.memory, Memory) and (self.add_memory_references):
+            elif isinstance(self.memory, Memory) and self.add_memory_references:
                 if not user_id:
                     user_id = "default"
                 user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
@@ -2788,7 +2939,7 @@ class Agent:
                     )
 
         # 3.3.12 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model()
+        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
@@ -3300,10 +3451,35 @@ class Agent:
         return ""
 
     def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
-        """Return a list of references from the knowledge base"""
+        """Get relevant docs from the knowledge base to answer a query.
+
+        Args:
+            query (str): The query to search for.
+            num_documents (Optional[int]): Number of documents to return.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: List of relevant document dicts.
+        """
         from agno.document import Document
+
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import signature
@@ -3313,25 +3489,58 @@ class Agent:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
                 return None
 
-        if self.knowledge is None:
-            return None
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
+                return None
 
-        relevant_docs: List[Document] = self.knowledge.search(query=query, num_documents=num_documents, **kwargs)
-        if len(relevant_docs) == 0:
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = self.knowledge.search(
+                query=query, num_documents=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, **kwargs
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Dict[str, Any]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
+
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:  # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
         if self.retriever is not None and callable(self.retriever):
             from inspect import isawaitable, signature
@@ -3341,6 +3550,8 @@ class Agent:
                 retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
                     retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    retriever_kwargs["filters"] = filters
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 result = self.retriever(**retriever_kwargs)
 
@@ -3352,15 +3563,30 @@ class Agent:
                 log_warning(f"Retriever failed: {e}")
                 return None
 
-        if self.knowledge is None or self.knowledge.vector_db is None:
-            return None
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
+                return None
 
-        relevant_docs: List[Document] = await self.knowledge.async_search(
-            query=query, num_documents=num_documents, **kwargs
-        )
-        if len(relevant_docs) == 0:
+            if num_documents is None:
+                num_documents = self.knowledge.num_documents
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = await self.knowledge.async_search(
+                query=query, num_documents=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
             return None
-        return [doc.to_dict() for doc in relevant_docs]
 
     def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
         if docs is None or len(docs) == 0:
@@ -3486,7 +3712,7 @@ class Agent:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 for k, v in asdict(m.metrics).items():
                     if k == "timer":
                         continue
@@ -3671,6 +3897,31 @@ class Agent:
     # Reasoning
     ###########################################################################
 
+    def _handle_reasoning(self, run_messages: RunMessages, session_id: str) -> None:
+        if self.reasoning or self.reasoning_model is not None:
+            reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
+
+            # Consume the generator without yielding
+            deque(reasoning_generator, maxlen=0)
+
+    def _handle_reasoning_stream(self, run_messages: RunMessages, session_id: str) -> Iterator[RunResponse]:
+        if self.reasoning or self.reasoning_model is not None:
+            reasoning_generator = self.reason(run_messages=run_messages, session_id=session_id)
+            yield from reasoning_generator
+
+    async def _ahandle_reasoning(self, run_messages: RunMessages, session_id: str) -> None:
+        if self.reasoning or self.reasoning_model is not None:
+            reason_generator = self.areason(run_messages=run_messages, session_id=session_id)
+            # Consume the generator without yielding
+            async for _ in reason_generator:
+                pass
+
+    async def _ahandle_reasoning_stream(self, run_messages: RunMessages, session_id: str) -> AsyncIterator[RunResponse]:
+        if self.reasoning or self.reasoning_model is not None:
+            reason_generator = self.areason(run_messages=run_messages, session_id=session_id)
+            async for item in reason_generator:
+                yield item
+
     def _format_reasoning_step_content(self, reasoning_step: ReasoningStep) -> str:
         """Format content for a reasoning step without changing any existing logic."""
         step_content = ""
@@ -3828,7 +4079,6 @@ class Agent:
                 return
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False  # type: ignore
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4039,7 +4289,6 @@ class Agent:
                 return
             # Ensure the reasoning model and agent do not show tool calls
             reasoning_agent.show_tool_calls = False
-            reasoning_agent.model.show_tool_calls = False  # type: ignore
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4242,66 +4491,181 @@ class Agent:
 
         return get_tool_call_history
 
-    def search_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query.
+    def search_knowledge_base_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            from agno.utils.log import log_debug
+
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=knowledge_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def search_knowledge_base_with_agentic_filters_function(
+        self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
+    ) -> Callable:
+        """Factory function to create a search_knowledge_base function with filters."""
+
+        def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            # Get the relevant documents from the knowledge base, passing filters
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                # Add the references to the run_response
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            from agno.utils.log import log_debug
+
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
+            """Use this function to search the knowledge base for information about a query asynchronously.
+
+            Args:
+                query: The query to search for.
+                filters: The filters to apply to the search. This is a dictionary of key-value pairs.
+
+            Returns:
+                str: A string containing the response from the knowledge base.
+            """
+            search_filters = self._get_agentic_or_user_search_filters(filters, knowledge_filters)
+
+            self.run_response = cast(RunResponse, self.run_response)
+            retrieval_timer = Timer()
+            retrieval_timer.start()
+            docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query, filters=search_filters)
+            if docs_from_knowledge is not None:
+                references = MessageReferences(
+                    query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                )
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData()
+                if self.run_response.extra_data.references is None:
+                    self.run_response.extra_data.references = []
+                self.run_response.extra_data.references.append(references)
+            retrieval_timer.stop()
+            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+
+            if docs_from_knowledge is None:
+                return "No documents found"
+            return self.convert_documents_to_string(docs_from_knowledge)
+
+        if async_mode:
+            return asearch_knowledge_base
+        else:
+            return search_knowledge_base
+
+    def _get_agentic_or_user_search_filters(
+        self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Helper function to determine the final filters to use for the search.
 
         Args:
-            query: The query to search for.
+            filters: Filters passed by the agent.
+            effective_filters: Filters passed by user.
 
         Returns:
-            str: A string containing the response from the knowledge base.
+            Dict[str, Any]: The final filters to use for the search.
         """
+        search_filters = {}
 
-        # Get the relevant documents from the knowledge base
-        self.run_response = cast(RunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            # Add the references to the run_response
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+        # If agentic filters exist and manual filters (passed by user) do not, use agentic filters
+        if filters and not effective_filters:
+            search_filters = filters
 
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
+        # If both agentic filters exist and manual filters (passed by user) exist, use manual filters (give priority to user and override)
+        if filters and effective_filters:
+            search_filters = effective_filters
 
-    async def async_search_knowledge_base(self, query: str) -> str:
-        """Use this function to search the knowledge base for information about a query asynchronously.
-
-        Args:
-            query: The query to search for.
-
-        Returns:
-            str: A string containing the response from the knowledge base.
-        """
-        self.run_response = cast(RunResponse, self.run_response)
-        retrieval_timer = Timer()
-        retrieval_timer.start()
-        docs_from_knowledge = await self.aget_relevant_docs_from_knowledge(query=query)
-        if docs_from_knowledge is not None:
-            references = MessageReferences(
-                query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
-            )
-            if self.run_response.extra_data is None:
-                self.run_response.extra_data = RunResponseExtraData()
-            if self.run_response.extra_data.references is None:
-                self.run_response.extra_data.references = []
-            self.run_response.extra_data.references.append(references)
-        retrieval_timer.stop()
-        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-
-        if docs_from_knowledge is None:
-            return "No documents found"
-        return self.convert_documents_to_string(docs_from_knowledge)
+        log_info(f"Filters used by Agent: {search_filters}")
+        return search_filters
 
     def add_to_knowledge(self, query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
@@ -4324,7 +4688,7 @@ class Agent:
             document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to knowledge base: {document_name}: {document_content}")
-        self.knowledge.load_document(
+        self.knowledge.add_document_to_knowledge_base(
             document=Document(
                 name=document_name,
                 content=document_content,
@@ -4381,9 +4745,11 @@ class Agent:
             run_response_format = "markdown"
 
         functions = {}
-        if self.model is not None and self.model._functions is not None:
+        if self._functions_for_model is not None:
             functions = {
-                f_name: func.to_dict() for f_name, func in self.model._functions.items() if isinstance(func, Function)
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
             }
 
         run_data: Dict[str, Any] = {
@@ -4480,6 +4846,7 @@ class Agent:
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -4540,6 +4907,7 @@ class Agent:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 ):
                     if isinstance(resp, RunResponse):
@@ -4720,6 +5088,7 @@ class Agent:
                     files=files,
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -4878,6 +5247,7 @@ class Agent:
         console: Optional[Any] = None,
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -4926,7 +5296,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                async for resp in await self.arun(
+                result = await self.arun(
                     message=message,
                     messages=messages,
                     session_id=session_id,
@@ -4937,8 +5307,11 @@ class Agent:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
-                ):
+                )
+
+                async for resp in result:
                     if isinstance(resp, RunResponse):
                         if resp.event == RunEvent.run_response:
                             if isinstance(resp.content, str):
@@ -5117,6 +5490,7 @@ class Agent:
                     files=files,
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -5389,6 +5763,35 @@ class Agent:
 
             log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
+    def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Determine which knowledge filters to use, with priority to run-level filters.
+
+        Args:
+            knowledge_filters: Filters passed at run time
+
+        Returns:
+            The effective filters to use, with run-level filters taking priority
+        """
+        effective_filters = None
+
+        # If agent has filters, use those as a base
+        if self.knowledge_filters:
+            effective_filters = self.knowledge_filters.copy()
+
+        # If run has filters, they override agent filters
+        if knowledge_filters:
+            if effective_filters:
+                # Merge filters, with run filters taking priority
+                effective_filters.update(knowledge_filters)
+            else:
+                effective_filters = knowledge_filters
+
+        if effective_filters:
+            log_debug(f"Using knowledge filters: {effective_filters}")
+
+        return effective_filters
+
     def cli_app(
         self,
         message: Optional[str] = None,
@@ -5412,7 +5815,7 @@ class Agent:
             for tool in self.tools:
                 if isawaitable(tool):
                     raise NotImplementedError("Use `acli_app` to use async tools.")
-                if isinstance(tool, MCPTools) or isinstance(tool, MultiMCPTools):
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if message:

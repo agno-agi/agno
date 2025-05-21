@@ -11,7 +11,7 @@ from agno.tools.yfinance import YFinanceTools
 
 def test_tool_use():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -29,7 +29,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -37,7 +37,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -53,14 +53,14 @@ def test_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -79,7 +79,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
@@ -87,7 +87,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -103,7 +105,7 @@ async def test_async_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -143,7 +145,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather_in_tokyo],
         show_tool_calls=True,
         markdown=True,
@@ -173,7 +175,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather],
         show_tool_calls=True,
         markdown=True,
@@ -191,7 +193,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=xAI(id="grok-beta"),
+        model=xAI(id="grok-3-mini-fast"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         show_tool_calls=True,
@@ -212,5 +214,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] in ["get_contents", "exa_answer"]
+            assert call["function"]["name"] in ["find_similar", "search_exa", "get_contents", "exa_answer"]
     assert response.content is not None

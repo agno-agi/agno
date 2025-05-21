@@ -11,9 +11,24 @@ class Media(BaseModel):
 
 
 class VideoArtifact(Media):
-    url: str  # Remote location for file
+    url: Optional[str] = None  # Remote location for file (if no inline content)
+    content: Optional[Union[str, bytes]] = None  # type: ignore
+    mime_type: Optional[str] = None  # MIME type of the video content
     eta: Optional[str] = None
     length: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {
+            "url": self.url,
+            "content": self.content
+            if isinstance(self.content, str)
+            else self.content.decode("utf-8")
+            if self.content
+            else None,
+            "mime_type": self.mime_type,
+            "eta": self.eta,
+        }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class ImageArtifact(Media):
@@ -21,6 +36,17 @@ class ImageArtifact(Media):
     content: Optional[bytes] = None  # Actual image bytes content
     mime_type: Optional[str] = None
     alt_text: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {
+            "url": self.url,
+            "content": self.content.decode("utf-8")
+            if self.content and isinstance(self.content, bytes)
+            else self.content,
+            "mime_type": self.mime_type,
+            "alt_text": self.alt_text,
+        }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class AudioArtifact(Media):
@@ -39,6 +65,15 @@ class AudioArtifact(Media):
         if not data.get("url") and not data.get("base64_audio"):
             raise ValueError("Either `url` or `base64_audio` must be provided.")
         return data
+
+    def to_dict(self) -> Dict[str, Any]:
+        response_dict = {
+            "url": self.url,
+            "content": self.base64_audio,
+            "mime_type": self.mime_type,
+            "length": self.length,
+        }
+        return {k: v for k, v in response_dict.items() if v is not None}
 
 
 class Video(BaseModel):

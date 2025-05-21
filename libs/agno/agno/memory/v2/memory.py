@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -673,6 +673,7 @@ class Memory:
         """Adds a RunResponse to the runs list."""
         if not self.runs:
             self.runs = {}
+
         self.runs.setdefault(session_id, []).append(run)
         log_debug("Added RunResponse to Memory")
 
@@ -788,24 +789,21 @@ class Memory:
         else:  # Default to last_n
             return self._get_last_n_memories(user_id=user_id, limit=limit)
 
-    def _update_model_for_agentic_search(self) -> None:
+    def get_response_format(self) -> Union[Dict[str, Any], Type[BaseModel]]:
         model = self.get_model()
         if model.supports_native_structured_outputs:
-            model.response_format = MemorySearchResponse
-            model.structured_outputs = True
+            return MemorySearchResponse
 
         elif model.supports_json_schema_outputs:
-            model.response_format = {
+            return {
                 "type": "json_schema",
                 "json_schema": {
                     "name": MemorySearchResponse.__name__,
                     "schema": MemorySearchResponse.model_json_schema(),
                 },
             }
-            model.structured_outputs = False
         else:
-            model.response_format = {"type": "json_object"}
-            model.structured_outputs = False
+            return {"type": "json_object"}
 
     def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using agentic search."""
@@ -814,7 +812,7 @@ class Memory:
 
         model = self.get_model()
 
-        self._update_model_for_agentic_search()
+        response_format = self.get_response_format()
 
         log_debug("Searching for memories", center=True)
 
@@ -832,7 +830,7 @@ class Memory:
         system_message_str += "\n</user_memories>\n\n"
         system_message_str += "REMEMBER: Only return the IDs of the memories that are related to the query."
 
-        if model.response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"}:
             system_message_str += "\n" + get_json_output_prompt(MemorySearchResponse)  # type: ignore
 
         messages_for_model = [
@@ -844,7 +842,7 @@ class Memory:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model.response(messages=messages_for_model)
+        response = model.response(messages=messages_for_model, response_format=response_format)
         log_debug("Search for memories complete", center=True)
 
         memory_search: Optional[MemorySearchResponse] = None

@@ -34,7 +34,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -79,7 +79,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -180,7 +182,6 @@ def test_tool_call_custom_tool_no_parameters():
     assert "Tokyo" in response.content
 
 
-@pytest.mark.skip("Llama models do not not accept optional parameters")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """

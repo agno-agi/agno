@@ -86,3 +86,9 @@ class ModelRateLimitError(ModelProviderError):
         self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
     ):
         super().__init__(message, status_code, model_name, model_id)
+
+
+class EvalError(Exception):
+    """Exception raised when an evaluation fails."""
+
+    pass

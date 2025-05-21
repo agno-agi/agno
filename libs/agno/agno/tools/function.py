@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -139,7 +139,7 @@ class Function(BaseModel):
             if strict:
                 parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
             else:
-                # Mark a field as required if it has no default value
+                # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
@@ -169,6 +169,8 @@ class Function(BaseModel):
         from agno.utils.json_schema import get_json_schema
 
         if self.skip_entrypoint_processing:
+            if strict:
+                self.process_schema_for_strict()
             return
 
         if self.entrypoint is None:
@@ -260,41 +262,9 @@ class Function(BaseModel):
         except Exception as e:
             log_warning(f"Failed to add validate decorator to entrypoint: {e}")
 
-    def get_type_name(self, t: Type[T]):
-        name = str(t)
-        if "list" in name or "dict" in name:
-            return name
-        else:
-            return t.__name__
-
-    def get_definition_for_prompt_dict(self) -> Optional[Dict[str, Any]]:
-        """Returns a function definition that can be used in a prompt."""
-
-        if self.entrypoint is None:
-            return None
-
-        type_hints = get_type_hints(self.entrypoint)
-        return_type = type_hints.get("return", None)
-        returns = None
-        if return_type is not None:
-            returns = self.get_type_name(return_type)
-
-        function_info = {
-            "name": self.name,
-            "description": self.description,
-            "arguments": self.parameters.get("properties", {}),
-            "returns": returns,
-        }
-        return function_info
-
-    def get_definition_for_prompt(self) -> Optional[str]:
-        """Returns a function definition that can be used in a prompt."""
-        import json
-
-        function_info = self.get_definition_for_prompt_dict()
-        if function_info is not None:
-            return json.dumps(function_info, indent=2)
-        return None
+    def process_schema_for_strict(self):
+        self.parameters["additionalProperties"] = False
+        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
