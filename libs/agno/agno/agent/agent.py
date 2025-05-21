@@ -2920,7 +2920,7 @@ class Agent:
 
             if self.search_previous_sessions_history:
                 additional_information.append(
-                    dedent(f"""
+                    dedent("""
                 You have access to messages from previous chat sessions through the `get_messages_from_previous_sessions` tool.
                 - Use this tool to retrieve and analyze messages whenever asked a question similar to- "What was my last conversation?"
                 - The tool returns messages in chronological order from previous sessions
