@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -299,6 +299,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             evaluator_agent = self.get_evaluator_agent()
             eval_input = self.get_eval_input()
             eval_expected_output = self.get_eval_expected_output()
+
+            self.agent = cast(Agent, self.agent)
 
             for i in range(self.num_iterations):
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
