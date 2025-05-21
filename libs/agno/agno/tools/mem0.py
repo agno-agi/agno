@@ -51,11 +51,10 @@ class Mem0Tools(Toolkit):
     def _get_user_id(
         self,
         method_name: str,
-        user_id: Optional[str] = None,
         agent: Optional[Agent] = None,
     ) -> str:
         """Resolve the user ID"""
-        resolved_user_id = user_id or self.user_id
+        resolved_user_id = self.user_id
         if not resolved_user_id and agent is not None:
             try:
                 session_state = getattr(agent, "session_state", None)
