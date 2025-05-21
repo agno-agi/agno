@@ -1,18 +1,10 @@
-"""🤝 Human-in-the-Loop: Adding User Confirmation to Tool Calls
+"""🤝 Human-in-the-Loop: Execute a tool call outside of the agent
 
 This example shows how to implement human-in-the-loop functionality in your Agno tools.
 It shows how to:
-- Add pre-hooks to tools for user confirmation
-- Handle user input during tool execution
-- Gracefully cancel operations based on user choice
+- Use external tool execution to execute a tool call outside of the agent
 
-Some practical applications:
-- Confirming sensitive operations before execution
-- Reviewing API calls before they're made
-- Validating data transformations
-- Approving automated actions in critical systems
-
-Run `pip install openai httpx rich agno` to install dependencies.
+Run `pip install openai agno` to install dependencies.
 """
 
 import asyncio
