@@ -25,6 +25,7 @@ class ModelResponse:
     parsed: Optional[Any] = None
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None
+    images: Optional[List[ImageArtifact]] = None
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     event: str = ModelResponseEvent.assistant_response.value
 

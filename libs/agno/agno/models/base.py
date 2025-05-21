@@ -9,10 +9,10 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioResponse, ImageArtifact
+from agno.media import AudioResponse, Image, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.tools.function import Function, FunctionCall
+from agno.tools.function import Function, FunctionCall, FunctionCallResult
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call
@@ -863,7 +863,7 @@ class Model(ABC):
         self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
     ) -> Message:
         """Create a function call result message."""
-        return Message(
+        message = Message(
             role=self.tool_message_role,
             content=output if success else fc.error,
             tool_call_id=fc.call_id,
@@ -873,6 +873,33 @@ class Model(ABC):
             stop_after_tool_call=fc.function.stop_after_tool_call,
             metrics=MessageMetrics(time=timer.elapsed),
         )
+
+        # Return the message
+        return message
+
+    # This gives the error- agno.exceptions.ModelProviderError: Invalid 'messages[4]'. Image URLs are only allowed for messages with role 'user', but this message with role 'tool' contains an image URL.
+    # def _create_function_call_result(
+    #     self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+    # ) -> Message:
+    #     """Create a function call result message."""
+    #     images = None
+
+    #     if isinstance(fc.result, FunctionCallResult):
+    #         # Convert ImageArtifact to Image objects using the from_artifact method
+    #         if fc.result.images:
+    #             images = [Image.from_artifact(img) for img in fc.result.images]
+
+    #     return Message(
+    #         role=self.tool_message_role,
+    #         content=output if success else fc.error,
+    #         tool_call_id=fc.call_id,
+    #         tool_name=fc.function.name,
+    #         tool_args=fc.arguments,
+    #         tool_call_error=not success,
+    #         stop_after_tool_call=fc.function.stop_after_tool_call,
+    #         metrics=MessageMetrics(time=timer.elapsed),
+    #         images=images
+    #     )
 
     def run_function_calls(
         self,
@@ -924,6 +951,33 @@ class Model(ABC):
             # Process function call output
             function_call_output: str = ""
 
+            # if isinstance(fc.result, FunctionCallResult):
+            #     function_call_output = fc.result.content
+            #     if fc.result.images:
+            #         # Convert ImageArtifact to proper format for ModelResponse
+            #         yield ModelResponse(
+            #             content=function_call_output,
+            #             images=[ImageArtifact(
+            #                 id=img.id,
+            #                 url=img.url,
+            #                 original_prompt=img.original_prompt,
+            #                 revised_prompt=img.revised_prompt
+            #             ) for img in fc.result.images]
+            #         )
+            if isinstance(fc.result, FunctionCallResult):
+                function_call_output = fc.result.content
+                if fc.result.images:
+                    # Yield a separate ModelResponse with the images
+                    yield ModelResponse(
+                        content=function_call_output,
+                        images=fc.result.images,  # Keep the original ImageArtifact objects
+                    )
+                else:
+                    yield ModelResponse(content=function_call_output)
+            else:
+                function_call_output = str(fc.result)
+                yield ModelResponse(content=function_call_output)
+
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
                     function_call_output += str(item)
@@ -938,6 +992,8 @@ class Model(ABC):
             function_call_result = self._create_function_call_result(
                 fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
+
+            print("--> function_call_result", function_call_result)
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
                 tool_calls=[function_call_result.to_function_call_dict()],
