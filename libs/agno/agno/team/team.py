@@ -7094,7 +7094,11 @@ class Team:
             "name": self.name,
             "instructions": self.instructions,
             "description": self.description,
-            "storage": self.storage.__class__.__name__ if self.storage is not None else None,
+            "storage": {
+                "name": self.storage.__class__.__name__,
+            }
+            if self.storage is not None
+            else None,
             # "tools": [tool.to_dict() for tool in self.tools] if self.tools is not None else None,
             "memory": (
                 {
