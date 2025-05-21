@@ -84,9 +84,11 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = FastAPIApp(
+fastapi_app = FastAPIApp(
     agent=StudyBuddy,
-).get_app()
+)
+
+app = fastapi_app.get_app()
 
 if __name__ == "__main__":
-    serve_fastapi_app("study_friend:app", port=8001, reload=True)
+    fastapi_app.serve_fastapi_app(app="study_friend:app", port=8001, reload=True)
