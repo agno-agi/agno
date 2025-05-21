@@ -1,6 +1,4 @@
 
-[comment]:AI Generated readme
-
 # WhatsApp API Module Documentation
 
 ## Overview
@@ -39,7 +37,7 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
      - Hobbies and interests tracking
      - Personalized responses
 
-6. **Study Buddy Agent** (`study_buddy.py`)
+6. **Study Friend Agent** (`study_friend.py`)
    - Specialized educational assistant
    - Features:
      - Memory-based learning
@@ -47,6 +45,12 @@ The WhatsApp API module provides integration between WhatsApp Business API and A
      - YouTube resource recommendations
      - Personalized study plans
      - Emotional support capabilities
+
+7. **Image Agent** (`image_generation_model.py` & `image_generation_model.py`)
+   - Image Generation implementations
+   - Features:
+     - Model Image generation through Gemini 2.0
+     - Tool Image generation through OpenAI's GPT image generation
 
 ## Setup and Configuration
 
