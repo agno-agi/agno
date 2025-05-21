@@ -174,15 +174,22 @@ class FastAPIApp:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": {
-                **self.agent.get_agent_config_dict(),
-                "agent_id": self.agent.agent_id,
-                "team_id": self.agent.team_id,
-            }
+            "agents": [
+                {
+                    **self.agent.get_agent_config_dict(),
+                    "agent_id": self.agent.agent_id,
+                    "team_id": self.agent.team_id,
+                }
+            ]
             if self.agent
             else None,
-            "teams": {**self.team.to_platform_dict(), "team_id": self.team.team_id} if self.team else None,
-            "type": "FastAPI",
+            "teams": [
+                {
+                    **self.team.to_platform_dict(),
+                    "team_id": self.team.team_id,
+                }
+            ] if self.team else None,
+            "type": "fastapi",
             "description": self.description,
         }
         payload = {k: v for k, v in payload.items() if v is not None}

@@ -5914,7 +5914,7 @@ class Agent:
         if self.model is not None:
             model = {
                 "name": self.model.__class__.__name__,
-                "id": self.model.id,
+                "model": self.model.id,
                 "provider": self.model.provider,
             }
 
@@ -5925,13 +5925,13 @@ class Agent:
                 {
                     "name": self.memory.__class__.__name__,
                     "model": {
-                        "name": self.memory.model.name,
+                        "name": self.memory.model.__class__.__name__,
                         "model": self.memory.model.id,
                         "provider": self.memory.model.provider,
                     }
                     if self.memory.model
                     else {
-                        "name": self.model.name,
+                        "name": self.model.__class__.__name__,
                         "model": self.model.id,
                         "provider": self.model.provider,
                     },

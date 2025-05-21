@@ -7050,7 +7050,7 @@ class Team:
         if self.model is not None:
             model = {
                 "name": self.model.__class__.__name__,
-                "id": self.model.id,
+                "model": self.model.id,
                 "provider": self.model.provider,
             }
 
@@ -7104,14 +7104,14 @@ class Team:
                 {
                     "name": self.memory.__class__.__name__,
                     "model": {
-                        "name": self.memory.model.name,
-                        "id": self.memory.model.id,
+                        "name": self.memory.model.__class__.__name__,
+                        "model": self.memory.model.id,
                         "provider": self.memory.model.provider,
                     }
                     if self.memory.model
                     else {
-                        "name": self.model.name,
-                        "id": self.model.id,
+                        "name": self.model.__class__.__name__,
+                        "model": self.model.id,
                         "provider": self.model.provider,
                     },
                     "db": self.memory.db.__dict__() if self.memory.db else None,
