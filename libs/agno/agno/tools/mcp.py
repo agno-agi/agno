@@ -182,7 +182,7 @@ class MCPTools(Toolkit):
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))
-        self.session = await self._session_context.__aenter__()
+        self.session = await self._session_context.__aenter__()  # type: ignore
 
         # Initialize with the new session
         await self.initialize()
