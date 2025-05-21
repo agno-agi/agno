@@ -1,9 +1,23 @@
 from agno.agent import Agent
+from agno.memory.v2 import Memory, SessionSummarizer
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
+# You can also override the entire `system_message` for the session summarizer if you wanted
+session_summarizer = SessionSummarizer(
+    model=OpenAIChat(id="gpt-4o-mini"),
+    additional_instructions="""
+    Make the summary a points-wise list of a summarised version of each message in the conversation.
+    """,
+)
+
+memory = Memory(
+    summarizer=session_summarizer,
+)
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    memory=memory,
     # Set add_history_to_messages=true to add the previous chat history to the messages sent to the Model.
     add_history_to_messages=True,
     # Number of historical responses to add to the messages.
