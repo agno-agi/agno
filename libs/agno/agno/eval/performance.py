@@ -1,6 +1,6 @@
 import gc
 import tracemalloc
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from os import getenv
 from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
@@ -329,10 +329,29 @@ class PerformanceEval:
         if self.monitoring:
             log_eval_run(
                 run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_data={
+                    "result": {
+                        "avg_run_time": self.result.avg_run_time,
+                        "min_run_time": self.result.min_run_time,
+                        "max_run_time": self.result.max_run_time,
+                        "std_dev_run_time": self.result.std_dev_run_time,
+                        "median_run_time": self.result.median_run_time,
+                        "p95_run_time": self.result.p95_run_time,
+                        "avg_memory_usage": self.result.avg_memory_usage,
+                        "min_memory_usage": self.result.min_memory_usage,
+                        "max_memory_usage": self.result.max_memory_usage,
+                        "std_dev_memory_usage": self.result.std_dev_memory_usage,
+                        "median_memory_usage": self.result.median_memory_usage,
+                        "p95_memory_usage": self.result.p95_memory_usage,
+                    },
+                    "runs": [
+                        {"runtime": runtime, "memory": memory_usage}
+                        for runtime, memory_usage in zip(self.result.run_times, self.result.memory_usages)
+                    ],
+                },
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.func.__name__,
+                evaluated_entity_name=f'Function "{self.func.__name__}"',
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
