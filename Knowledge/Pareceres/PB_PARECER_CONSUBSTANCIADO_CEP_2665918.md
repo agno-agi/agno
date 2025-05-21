@@ -1,0 +1,226 @@
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+## PARECER CONSUBSTANCIADO DO CEP
+## DADOS DO PROJETO DE PESQUISA
+Pesquisador:
+Título da Pesquisa: Efeitos da Profilaxia Pré Exposição (PrEP) sobre parâmetros microcirculatórios e a função autonômica de voluntários sadios.
+Instituição Proponente:
+Versão:
+CAAE:
+Sandra Wagner Cardoso
+INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI/FIOCRUZ
+1
+88617018.9.1001.5262
+área Temática:
+Instituto Nacional de Cardiologia - INC Financiamento Próprio
+Patrocinador Principal:
+## DADOS DO PARECER
+Número do Parecer:
+2.665.918
+## Apresentação do Projeto:
+Introdução: Estima-se que existam 36,7 milhões de pessoas vivendo com o vírus da imunodeficiência humana/síndrome da imunodeficiência adquirida HIV/Aids no mundo, com cerca de 2,1 milhões de novos casos e 1,2 milhão de mortes ao ano. Segundo o último boletim epidemiológico HIV/Aids da Secretaria de Vigilância em Saúde (2016) o número de notificações desde 1980 até 2016 é de 842 mil casos de Aids no Brasil e uma média de 41,1mil novos casos por ano, nos últimos 5 anos, com 12.298 óbitos registrados apenas em 2015. Entretanto, a Síndrome da Imunodeficiência Adquirida (Aids), embora ainda sem cura, teve seu perfil alterado e já pode ser encarada, de certa forma, como um distúrbio crônico. Isso se deu, em grande medida, em função do progresso no desenvolvimento dos medicamentos antirretrovirais (ARVs). O advento da terapia antirretroviral combinada (TARVc) foi concebido para mudar o curso dessa epidemia global. De fato, houve uma redução dramática na morbidade e mortalidade relacionadas à Aids, que permitiu encarar a infecção pelo HIV como uma doença crônica gerenciável. Os dados mais recentes da UNAIDS (Programa Conjunto das Nações Unidas sobre HIV/AIDS), que atende 160 países, indicam que nos últimos dois anos, o número de pessoas vivendo com HIV/Aids (PVHA) sob TARV aumentou cerca de um terço, atingindo 17 milhões de pessoas - 2 milhões a mais do que o registrado até 2015 pela Assembleia Geral das Nações Unidas. Desde que a primeira meta de tratamento global foi estabelecida em 2003, as mortes relacionadas com a AIDS diminuíram em
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+43%. Atualmente, no Brasil, o Ministério da Saúde fornece TARVc a aproximadamente 483 mil pacientes (48 mil, até agosto de 2016) e este número tende a aumentar significativamente no futuro, visto que novas estratégias para a identificação precoce do HIV e a introdução de TARVc precocemente após o diagnóstico tem se mostrado efetivas e seguras. Apesar da TARVc proporcionar aumento da sobrevida, pela diminuição da incidência de infecções oportunistas e pela diminuição das hospitalizações, interações medicamentosas, toxicidades relacionadas aos ARVs e falha viral precoce provocada pela resistência continuam como grandes entraves para seu sucesso terapêutico. Além disso, o aumento na sobrevida expôs os pacientes a efeitos degenerativos da doença em outros âmbitos de sua saúde, dentre esses riscos podemos citar o aumento do risco cardiovascular pela alteração no perfil lipídico, alterações vasculares, estado próinflamatório crônico, além das ações diretas da TARVc no perfil metabólico. A TARVc, terapia que combina inibidores da enzima transcriptase reversa e da protease de HIV-1, capaz de inibir o ciclo viral também é reconhecida por aumentar a pressão arterial sistólica (PAS). A TARVc geralmente não aumenta a PAS antes de 6 meses de uso. A reação à TARVc é mais acentuada nos idosos e naqueles com PA sistólica de base mais elevada, níveis de colesterol basal mais elevados e baixa contagem de linfócitos CD4. Em um grande estudo de coorte, a hipertensão foi relatada em 26,1% dos indivíduos infectados. Entre os 444 pacientes que iniciaram TARVc, 83 apresentaram aumento da PAS de 10 mm Hg ou superior, 33 apresentaram aumento da pressão arterial diastólica de 10 mmHg ou superior e 11 pacientes apresentaram novo diagnóstico de hipertensão arterial (HA) confirmado pelo tratamento anti-hipertensivo. Os pacientes com lopinavir/ritonavir apresentaram maior risco e os pacientes que receberam atazanavir tiveram o menor risco de desenvolver HA. O efeito do tratamento sobre a pressão arterial foi correlacionado, principalmente, com o aumento do IMC. O impacto dos medicamentos antirretrovirais sobre os fatores de risco para doenças cardiovasculares influenciará cada vez mais as decisões de tratamento. Em 2000, foi descrito um caso de HA grave e atrofia renal associada ao inibidor de protease indinavir. Foi também relatada crise hipertensiva secundária à fenilpropanolamina que interage com três fármacos para a profilaxia do vírus da imunodeficiência humana. Além disso, existem interações medicamentosas potenciais entre os ARVs, particularmente os inibidores de protease e os antagonistas do cálcio. O estudo de Estratégias de Tratamento Antirretroviral (SMART), que avaliou a segurança e a eficácia das estratégias de interrupção do tratamento estruturado antirretroviral (STI), mostrou aumento da morbidade e mortalidade por doenças cardiovasculares (DCV) naqueles que interromperam a TARVc em relação aos que continuaram a recebê-la. Uma hipótese para explicar este aumento relativamente rápido no risco de DCV
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+associado com STI é que a viremia induzida pela descontinuação da TARV conduz a um aumento da disfunção  autonômica  cardiovascular,  contribuindo  para  o  desenvolvimento  de  doenças  crônicas degenerativas. Importantes estudos epidemiológicos, como o ARIC e Framingham, vêm demonstrando associação entre disfunção autonômica e incidência de HA, cardiomiopatia, arritmia, infarto do miocárdio, doença coronariana e acidente vascular cerebral. A prevalência de quaisquer sintomas de neuropatia autonômica clínica no HIV tem sido variável entre diferentes populações, status e tratamento do HIV, variando de 0% a 84%. Compostella et al. identificaram neuropatia autonômica grave em 19% dos indivíduos infectados com HIV tratados. Os sintomas compreendiam intolerância ortostática, disfunção secretor e gastrointestinal. Não houve relação entre a contagem de linfócitos T-CD4+ e os escores de sintomas autonômicos. Os indivíduos relataram sintomas de disfunção autonômica, apesar das respostas reflexas autonômicas normais ou limítrofes. O sistema nervoso autônomo (SNA) é uma estrutura reguladora da função de diversos órgãos que permite adaptação do organismo a diversos estímulos. Este sistema é constituído por 2 subsistemas antagônicos - o parassimpático e o simpático - que estão envolvidos nas funções homeostática e fisiológica. O equilíbrio da atividade parassimpática e simpática é crucial para a aptidão do sistema cardiovascular. O aumento da ativação simpática está associado à síndrome metabólica, HA, cardiopatia isquêmica, arritmia e cardiomiopatia, enquanto que a diminuição da ativação parassimpática tem sido observada com o envelhecimento e no comprometimento da sensibilidade do barorreflexo e quimiorreflexo. A disfunção do SNA, particularmente entre pacientes com DCV e diabetes mellitus, está associada a um aumento do risco de morbidade/mortalidade cardiovascular e por todas as causas. Em 1998, Steve W. Cole et al. levantaram a possibilidade de que o curso do HIV poderia ser afetado por fatores associados à ativação do sistema nervoso simpático (SNS) através de experimentos que demonstravam o efeito  do  principal  neuroefetor do SNS (noradrenalina) sobre células infectadas com HIV-1. Esses experimentos mostraram que a noradrenalina aumentava a replicação do vírus, ao passo que reduzia a ativação celular e alterava a produção de várias citocinas moduladas pelo HIV. A avaliação da função autonômica em pacientes tornou-se fundamental na elucidação do papel do SNA em diversas condições, tais como arritmias cardíacas, morte súbita, HA e obesidade. Além disso, a predominância simpática pode contribuir  para  o  enrijecimento  arterial,  e  consequentemente  no  aumento  da  PAS  e  redução  na complacência arterial. Nesse contexto, é importante lembrar que o balanço autonômico desempenha importante papel na patogênese da disfunção endotelial e na predição de risco cardiovascular. No entanto, pouco se sabe sobre a função vascular de pacientes portadores de infecção pelo HIV. É importante destacar que
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+frequentemente os pacientes portadores de HIV apresentam alguns desses processos patológicos, causando uma interação complexa do HIV e esses fatores que resulta em lesão do endotélio, o que pode levar a um efeito deletério persistente desses processos patológicos. A disfunção endotelial tem sido definida tipicamente como uma redução na resposta vasodilatadora à acetilcolina (Ach) ou à hiperemia reativa pós-oclusiva (HRPO), os quais provocam liberação de óxido nítrico (NO) pelo endotélio. Uma perfusão adequada da rede microcirculatória é essencial para a integridade da função de órgãos e tecidos. Entre os diferentes órgãos acometidos por disfunção microvascular, os olhos e a pele são os mais acessíveis para estudos não-invasivos. Tendo em vista que a disfunção da microcirculação cutânea possui estreita relação com a disfunção microvascular sistêmica, foram desenvolvidas técnicas de avaliação do fluxo microvascular cutâneo através de fluxometria, mais comumente utilizando laser Doppler. No entanto, nos últimos anos, a função endotelial microvascular também tem sido avaliada por um novo método não invasivo, através de tecnologia laser 'speckle' de contraste (LSCI), que se utiliza de um sistema de imagens para medir o fluxo sanguíneo cutâneo, tendo sido padronizado e validado previamente em diferentes estudos clínicos. Além disso, já foi demonstrado ainda que a LSCI, quando combinado à manobra de HRPO, apresenta reprodutibilidade bastante superior àquela observada com laser Doppler. Em se tratando da utilização de LSCI, Souza et al utilizaram essa metodologia para demonstrar que a resposta à vasodilatação de pacientes com doença arterial crônica de início precoce estava deprimida em resposta a estímulos farmacológicos (Ach e Nitroprussiato de sódio - NPS) e fisiológico (HRPO). Não foram encontrados estudos que tenham se valido de técnicas baseadas em sistema de imagens (como LSCI), consideradas promissoras e excepcionais para esse tipo de análise em pacientes HIV. O máximo a que se chegou foi avaliar a função endotelial de pacientes portadores de infecção pelo HIV utilizando laser Doppler. Nesse contexto, Borges et al demonstraram menor complacência arterial em relação a indivíduos saudáveis e tendência de menor reatividade microvascular em resposta à estímulos farmacológicos. Uma possível associação da infecção pelo HIV e/ou a utilização de TARVc com disfunção endotelial pode estar relacionada com fatores estruturais, como a rarefação capilar e fatores funcionais, representadas pela redução da síntese/liberação ou da biodisponibilidade de vasodilatadores derivados do endotélio nesses pacientes, essencialmente o NO. Em conjunto, essas alterações são consideradas fortes indicadores de aumento da incidência de novos eventos cardiovasculares, sendo dessa forma, relacionadas a um pior prognóstico da doença. Tendo isso em vista, são necessários investimentos em intervenções capazes de atenuar as alterações vasculares discutidas. Desde 2010 os resultados de várias pesquisas vêm mostrando que o uso diário de um comprimido de TRUVADAfi, que
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+combina dois ITRN, o tenofovir (TDF) e a emtricitabina (FTC), é eficaz na prevenção da aquisição do HIV por via sexual. Entre homens que fazem sexo com homens (HSH) e travestis, a eficácia pode chegar a 99% se o indivíduo fizer uso regular do medicamento diariamente. Além disso, os estudos mostraram ainda que o uso diário dessa combinação é seguro, sem ocorrência de efeitos colaterais graves. Em 2012 a utilização do TRUVADAfi como PrEP foi aprovada pelo FDA. A Organização Mundial da Saúde (OMS), recentemente, recomendou o desenvolvimento de estudos para avaliar como esta estratégia de prevenção pode ser utilizada no mundo, considerando as especificidades da epidemia, da cultura e dos sistemas de saúde, que variam amplamente entre os países. Na Fiocruz, contamos com a colaboração do INI um dos centros de estudo para PrEP no Brasil, (http://prepbrasil.com.br/sobre-nos/). Desta maneira, apesar do grande impacto do TARVc na função vascular, estudos que abordam o efeito do tratamento farmacológico crônico na função endotelial de PVHA ou sob PrEP são escassos. Além disso, a contribuição relativa do SNS e diferentes fatores, tais como angiogênese e biodisponibilidade de NO, na resposta da função endotelial após TARVc nesses pacientes não foi observada. Nesse contexto, a hipótese deste trabalho parte do princípio que a disfunção autonômica do SNS presente em PVHA sob TARVc estaria associada as alterações da função endotelial,  e  a  ativação  crônica  do  SNS  resultaria  em  distúrbios  microvasculares  sistêmicos  que comprometeria a perfusão tecidual e consequentemente aumentaria o risco de desenvolvimento de lesões de órgão-alvo e o risco de comorbidades cardiometabólicas. Hipótese: Busca-se definir a segurança do tratamento crônico sobre as funções microvasculares e endoteliais em resposta ao esquema de terapia combinada para a profilaxia a infecção pelo HIV. Além disso, essa nova avaliação poderá auxiliar na indicação terapêutica da Truvadafi para cada tipo de sujeito, diminuindo assim, os riscos cardiovasculares. Metodologia Proposta: Trata-se de um estudo observacional demonstrativo cuja amostra será composta por voluntários sadios do sexo masculino sem histórico de doença cardiovascular. Os voluntários serão avaliados 24 meses após tratamento farmacológico quanto à função endotelial, densidade capilar, perfil bioquímico/catecolaminérgico e biodisponibilidade de óxido nítrico. Serão realizadas análises de fluxometria por laser speckle, vídeo-capilaroscopia e exames bioquímicos. Os resultados serão comparados aos valores obtidos de pessoas não portadoras de infecção pelo HIV e que não façam uso do Truvadafi. Critério de Inclusão: Para serem incluídos, todos os seguintes itens deverão ser preenchidos: 1. Homens com idade 18 anos e &lt; 40 anos; 2. Pressão arterial sistólica aferida em consultório &lt; 140 mmHg em indivíduo que não faça uso de fármacos anti-hipertensivos, ou com histórico de evento cardíaco; 3. Parâmetros bioquímicos dentro dos valores de referência; 4. Capacidade de completar os requisitos de seguimento. Critério de Exclusão:
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+Qualquer um dos seguintes: 1. Hipertensão arterial primária ou secundária; 2. Disfunção renal (depuração de creatinina &lt; 45ml/min); 3. Hepatopatia; 4. Insuficiência cardíaca; 5. Infarto agudo do miocárdio ou acidente vascular encefálico nos últimos 6 meses; 6. Angina/isquemia miocárdica não esclarecidas; 7. Doença psiquiátrica que comprometa o acompanhamento; 8. Não aderentes à PreP; 9. Diabetes mellitus tipo 1 ou tipo 2. Desfecho Primário: Com a implementação desse projeto de pesquisa, espera-se obter resultados indicadores de segurança sobre os possíveis efeitos secundários da PrEP sobre a reatividade microvascular de voluntários sadios não infectados pelo HIV. De uma forma geral, pretende-se encontrar resultados que associem o melhor esquema de terapia profilática a melhor resposta microvascular endotelial em pessoas HIV-, mas que fazem parte do grupo de risco para contaminação, e que façam uso de terapia farmacológica profilática. A partir daí, tendo em vista a ampla abordagem a ser realizada acerca dos efeitos da TARVc no sistema cardiovascular e metabólico, a expectativa é de alcançar indicadores que auxiliem na decisão sobre a combinação farmacológica de antirretrovirais mais adequada ao indivíduo, seja pelo(a): 1aumento do número e/ou diâmetro dos vasos da microcirculação; 2- melhora da reatividade microvascular dependente de endotélio;  3-  melhora  do  perfil  metabólico;  4-  aumento  na  expressão  de  fatores angiogênicos; e, 5- diminuição dos efeitos sobre a função autonômica. Em última análise, busca-se reassegurar a escolha mais adequada ao indivíduo sadio não-portador de infecção pelo HIV com menor risco  de  desenvolvimento de alterações cardiovasculares ou metabólicas crônicas, assim como o estabelecimento e redução dos riscos cardiovasculares. Em paralelo, busca-se obter progresso científico e tecnológico através da consolidação do LSCI como método de análise não-invasiva de função endotelial, atualmente considerado inovador e promissor. Vale ressaltar que esta proposta não se limita as metas estabelecias no primeiro plano, mas a partir delas e do surgimento de novas questões caberá o estabelecimento de uma linha de pesquisa duradoura e original que envolve importantes contribuições as políticas de tratamento da epidemia do HIV/Aids que envolvam o risco cardiometabólico de PVHA ou do grupo de risco. Metodologia de Análise de Dados: Assumindo um dropout máximo de 15%, teríamos um tamanho amostral de 26 pacientes sob investigação, totalizando avaliações ao longo do período de análise previsto para o estudo. A análise prospectiva da potência estatística foi baseada em dados prévios de estudos de nosso grupo de pesquisa, utilizando vídeo-capilaroscopia cutânea. Esta análise indicou que um tamanho amostral de 16 indivíduos por grupo tem um poder estatístico de 80% em nível de significância de 5%, para detectar uma diferença de aumento de 7 capilares/mm2 na densidade capilar após a hiperemia reativa pós-oclusiva, utilizando um desvio padrão de 7 capilares/mm2. Os cálculos foram feitos através da fórmula clássica de cálculo de potência
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+estatística n = ƒ (, ) . 2s2/2 onde: = nível de significância; = potência do testeƒ (, ) = é um valor de função calculado a partir de e (neste caso 7,9) = diferença nas médias dos valores que deveria ser possível detectar s = valor do desvio padrão de estudo prévios. A comparação entre as médias das variáveis contínuas basais com distribuição normal entre valores basais e os tempos de 6 e 12 meses intra e/ou intergrupo será feita por análise de variância (ANOVA) para medidas pareadas e análise post-hoc de Bonferroni. A análise de Kruskal-Wallis seguida do teste de Dunn será aplicada a variáveis contínuas com distribuição não paramétrica. A comparação entre as médias das variáveis contínuas antes e após 6 ou 12 meses intra e/ou intergrupo será feita através do teste de Mann-Whitney bicaudal ou pelo teste de Willcoxon para variáveis contínuas com distribuição não paramétrica. Os valores serão expressos em média - erro padrão da média ou mediana (intervalo interquartil) e a hipótese nula será rejeitada em p &lt; 0,05. Os dados serão analisados utilizando-se o programa GraphPad Prism 6 ou similar.
+## Objetivo da Pesquisa:
+Objetivo Primário: Estudar a reatividade microvascular dependente de endotélio e os parâmetros microcirculatórios em voluntários sadios sob tratamento farmacológico profilático com TRUVADAfi. Objetivo Secundário: 1- Avaliar a função autonômica simpática através da dosagem dos níveis de catecolaminas plasmáticas e da variabilidade da frequência cardíaca; 2- Investigar e caracterizar a capacidade de resposta endotelial através da dosagem dos marcadores da biodisponibilidade de NO, citocinas pró- inflamatórias e metabólitos do estresse oxidativo; e, 3- Analisar possíveis distúrbios metabólicos aferidos através de dosagem dos indicadores laboratoriais de síndrome metabólica.
+## Avaliação dos Riscos e Benefícios:
+Adequados (proporcionais). Riscos: Não existem riscos significativos decorrentes das técnicas de investigação do funcionamento dos seus vasos sanguíneos da pele. A coleta de sangue será realizada com material descartável, existindo apenas risco de dor leve ou pequeno hematoma. Benefícios: Viabilizar a verificação, em adultos-jovens em bom estado de saúde, os efeitos ao longo do tempo do medicamento TRUVADA sobre o funcionamento dos seus vasos sangüíneos.
+## Comentários e Considerações sobre a Pesquisa:
+Segundo informações depositadas para avaliação ética do protocolo na Plataforma Brasil (PB), o estudo é do tipo observacional, exploratório, não randomizado, com uma amostra de conveniência que incluirá 30 voluntários  não  portadores  de  HIV  fazendo  profilaxia  pré-exposição  (PrEP)  com  TRUVADAfi.  O recrutamento  desses  voluntários  ocorrerá  no  Instituto  Nacional  de  Infectologia
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+Evandro Chagas da Fundação Oswaldo Cruz/ RJ (INI / Fiocruz). Adicionalmente, 30 voluntários saudáveis não portadoras de DCV e que não estejam fazendo PrEP, também serão recrutados no INC para acompanhamento como grupo de comparação. Todos os convidados a participar do estudo receberão o TCLE para leitura, entendimento, explicação e assinatura, após o qual serão encaminhados para o INC. Indivíduos que preencherem os critérios de inclusão, sem nenhum critério de exclusão, serão incluídos no estudo no INC. Haverá retenção de amostras para armazenamento em banco, amostra de sangue, onde serão examinadas diversas substâncias cujos níveis são indicadores do seu estado de saúde, tais como o açúcar e a gordura no sangue.
+## Considerações sobre os Termos de apresentação obrigatória:
+O protocolo de pesquisa não propõe dispensa do TCLE. Os seguintes documentos de apresentação obrigatória foram postados na PB (assinados pela pesquisadora principal):
+- 1- Declaracao\_cumprimento\_resolucoes.pdf;
+- 2- Declaracao\_desenho\_do\_estudo.pdf;
+- 3- Declaracao\_destino\_amostras\_biologicas.pdf;
+- 4- Declaracao\_finalidade\_dados\_coletados.pdf;
+- 5- Declaracao\_infraestrutura\_instalacoes.pdf;
+- 6- Declaracao\_quanto\_ao\_centro\_coordenador\_e\_participante.pdf;
+- 7- Orcamento.pdf;
+- 8- Protocolo\_Truvada.pdf; e,
+- 9 -TCLE\_TRUVADA.pdf.
+## Recomendações:
+A(s) seguinte(s) recomendação(ões) PODE(M) ser respondida(s) e/ou esclarecida(s) pelo(a) pesquisador(a) principal no momenta da ressubmissão do relatório semestral de acompanhamento do estudo ao CEP-INI:
+1 - Esclarecer o processo de obtenção do consentimento livre e esclarecido, entendido como todas as etapas a serem necessariamente observadas para que o convidado a participar de uma pesquisa possa se manifestar de forma autônoma, consciente, livre e esclarecida (Res. CNS 466/12, item IV), a ser empregado no centro para esse estudo, levando em consideração suas etapas (Res. CNS 466/12 itens IV.1 e 2).
+## Conclusões ou Pendências e Lista de Inadequações:
+A(s) seguinte(s) pendência(s) DEVE(M) ser respondida(s) e/ou esclarecida(s) pelo(a) pesquisador(a) principal no momenta da ressubmissão do relatório semestral de acompanhamento do estudo ao
+Continuação do Parecer: 2.665.918
+## CEP-INI:
+- 1 - Adaptação do TCLE atual para os participantes que não estão em uso de TRUVADA;
+- 2 - Inclusão no TCLE de garantia de  de ressarcimento e como serão cobertas as despesas tidas pelos participantes da pesquisa e dela decorrentes. A Resolução CNS N° 466 de 2012, item II.21, define ressarcimento como 'compensação material, exclusivamente de despesas do participante e seus acompanhantes, quando necessário, tais como transporte e alimentação'. Ainda, o item IV.3.g orienta que o TCLE deve conter obrigatoriamente 'explicitação da garantia de ressarcimento e como serão cobertas as despesas tidas pelos participantes da pesquisa e dela decorrentes'. É prudente notar que a Resolução CNS N° 466 de 2012 (item II.21) prevê o ressarcimento dos gastos decorrentes da pesquisa não somente ao participante, mas também para aqueles que o acompanham;
+- 3 - Inclusão no TCLE de garantia por parte do pesquisador, do patrocinador e das instituições e/ou organizações envolvidas nas diferentes fases da pesquisa de assistência imediata e integral aos participantes da pesquisa no que se refere às complicações e danos decorrentes da pesquisa. A Resolução CNS N° 466 de 2012 define dano associado (ou decorrente) da pesquisa o 'agravo imediato ou posterior, direto ou indireto, ao indivíduo ou à coletividade, decorrente da pesquisa' (item II.6). Ainda no item V.6, a citada Resolução define que 'O pesquisador, o patrocinador e as instituições e/ou organizações envolvidas nas diferentes fases da pesquisa devem proporcionar assistência imediata, nos termos do item II.3, bem como responsabilizarem-se pela assistência integral aos participantes da pesquisa no que se refere às complicações e danos decorrentes da pesquisa';
+- 4 - Inclusão no TCLE de garantia por parte do pesquisador, do patrocinador e das instituições e/ou organizações envolvidas nas diferentes fases da pesquisa de  indenização aos participantes da pesquisa que vierem a sofrer qualquer tipo de dano resultante de sua participação na pesquisa, previsto ou não no Termo de Consentimento Livre e Esclarecido. A Resolução CNS N° 466 de 2012 (item IV.3) define que 'os participantes da pesquisa que vierem a sofrer qualquer tipo de dano resultante de sua participação na pesquisa, previsto ou não no Termo de Consentimento Livre e Esclarecido, têm direito à indenização, por parte do pesquisador, do patrocinador e das instituições envolvidas nas diferentes fases da pesquisa' (item V.7). Cabe enfatizar que a questão da indenização não é prerrogativa da Resolução CNS N° 466 de 2012, estando originalmente prevista no Código Civil (Lei 10.406 de 2002), sobretudo nos artigos 927 a 954, dos Capítulos  I  (Da  Obrigação  de  Indenizar)  e  II  (Da  I  (Da  Obrigação  de  Indenizar),  Título  IX  (Da Responsabilidade  Civil);
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+- 5 - Inclusão no TCLE de garantia de acesso aos resultados de exames e de tratamento ao médico do paciente ou ao próprio paciente sempre que solicitado e ou indicado. Cabe recordar que a Resolução CNS No 251 de 1997, no item III.2.i, define que 'O pesquisador responsável deverá: (...) Dar acesso aos resultados de exames e de tratamento ao médico do paciente ou ao próprio paciente sempre que solicitado e ou indicado'. Salvo melhor juízo, o pesquisador não deve limitar o acesso dos participantes de pesquisa aos resultados dos seus exames que forem realizados durante o estudo;
+- 6 - Inclusão no TCLE de garantia de manutenção do sigilo e da privacidade dos participantes da pesquisa durante todas as fases da pesquisa. O TCLE deve trazer a garantia de que os dados que permitem a identificação do participante da pesquisa serão mantidos confidenciais a fim de preservar a privacidade e não provocar danos, como, por exemplo, estigmatização e discriminação. De acordo 23com a Resolução CNS N° 466 de 2012, item III.2.i, as pesquisas devem (...) 'prever procedimentos que assegurem a confidencialidade e a privacidade, a proteção da imagem e a não estigmatização dos participantes da pesquisa, garantindo a não utilização das informações em prejuízo das pessoas e/ou das comunidades, inclusive em termos de autoestima, de prestígio e/ou de aspectos econômico-financeiros'. A mesma Resolução, no item IV.3.e, ainda define que o TCLE deve conter a 'garantia de manutenção do sigilo e da privacidade dos participantes da pesquisa durante todas as fases da pesquisa';
+- 7 - Incluir no TCLE a garantia da plena liberdade ao participante para retirar o consentimento a qualquer momento da execução da pesquisa. O item IV.3.d da Resolução CNS N° 466 de 2012 orienta que o TCLE deve assegurar plena liberdade ao participante para retirar o consentimento a qualquer momento da execução da pesquisa. Para isso, não é necessário qualquer tipo de manifestação por escrito, exceto quando for relacionada à remoção de material biológico de um biobanco ou biorrepositório (Resolução CNS N° 441 de 2011, item 10.I);
+- 8 - Inclusão no TCLE, além de telefone de contato, de endereço dos responsáveis pela pesquisa. De acordo com a Resolução CNS N° 466 de 2012, item IV.5.d, deve constar no TCLE 'o endereço e contato telefônico ou outro, dos responsáveis pela pesquisa e do CEP local e da Conep, quando pertinente';
+- 9 - A Resolução CNS n° 466 de 2012 define no item IV.5.d que: 'O Termo de Consentimento Livre e Esclarecido deverá, ainda: (...) ser elaborado em duas vias, rubricadas em todas as suas páginas e assinadas, ao seu término, pelo convidado a participar da pesquisa, ou por seu representante legal, assim como pelo pesquisador responsável, ou pela (s) pessoa (s) por ele delegada (s),
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+Continuação do Parecer: 2.665.918
+devendo as páginas de assinaturas estar na mesma folha (...)';
+10 - Garantir ao participante que o TCLE  será elaborado em duas 'VIAS' rubricadas em todas as suas páginas. A Resolução CNS N° 466 de 2012, item IV.5.d, orienta que o TCLE deve ser elaborado em duas 'VIAS' e rubricadas em todas as suas páginas (pelo participante de pesquisa e pelo pesquisador). Essas exigências têm por objetivo garantir um dos direitos do participante: o de receber o TCLE devidamente assinado e rubricado por ele e o pesquisador;
+11 - Detalhar os recursos, fontes e destinação; forma e valor da remuneração do pesquisador. A Resolução CNS N° 466 de 2012, item III.2.h, estabelece que as pesquisas devem 'contar com os recursos humanos e materiais necessários que garantam o bem-estar do participante da pesquisa, devendo o(s) pesquisador(es) possuir(em) capacidade profissional adequada para desenvolver sua função no projeto proposto'. A carência desses recursos pode inviabilizar o estudo, tornando-o fútil. A Norma Operacional CNS N° 001 de 2013, item 3.3.e, estabelece que todos os protocolos de pesquisa devem 'detalhar os recursos, fontes e destinação; forma e valor da remuneração do pesquisador; apresentar em moeda nacional ou, quando em moeda estrangeira, com o valor do câmbio oficial em Real, obtido no período da proposição da pesquisa; apresentar previsão de ressarcimento de despesas do participante e seus acompanhantes, quando necessário, tais como transporte e alimentação e compensação material nos casos ressalvados no item II.10 da Resolução do CNS 466 de 2012';
+## 12 - Substituir 'Financiamento
+Próprio' por 'Instituto Nacional de Infectologia Evandro Chagas'. A Resolução CNS N° 466 de 2012, item II.11, estabelece patrocinador como 'pessoa física ou jurídica, pública ou privada que apoia a pesquisa, mediante ações de financiamento, infraestrutura, recursos humanos ou apoio institucional'. A definição do patrocinador do estudo é manifesta na Folha de Rosto, no campo 'Patrocinador Principal';
+13 - Incluir Regulamento descritivo operacional e de infraestrutura dos biorrepositórios do Laboratório de Pesquisa Clínica em DST-AIDS (INI) e do Instituto Nacional de Cardiologia (INC). Segundo a CONEP, conforme definido pela Resolução CNS N' 441 de 2011 (Art. 1') e Portaria MS N' 2.201 de 2011 (Art. 3'): 'O tempo de armazenamento do material não define a constituição de um biorrepositório, podendo variar desde alguns minutos até muitos anos. O que, de fato, define a constituição de um banco de material biológico é a intenção de coleta para pesquisa científica. Assim, considera-se que todos os materiais biológicos coletados ao longo de uma pesquisa constituem um biorrepositório. Assim, e entendo que trata-se da composição de um biorepositório 'Atrelado a um projeto de pesquisa específico'. Nesse, o material biológico é
+21.040-360
+(21)3865-9585
+E-mail:
+cep@ini.fiocruz.br
+Endereço:
+Bairro:
+CEP:
+Telefone:
+Avenida Brasil 4365
+Manguinhos
+UF:
+Município:
+RJ
+RIO DE JANEIRO
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+utilizado conforme previsto no protocolo de pesquisa, não havendo análises adicionais futuras diferentes das previstas  no  protocolo.  Após  o  processamento  e  a  aquisição  dos  resultados,  o  material  biológico remanescente é geralmente descartado, mas o pesquisador pode optar por mantê-lo armazenado por mais algum tempo para repetição e confirmação dos testes previamente realizados, ou, ainda, transferi-lo para um biobanco (após autorização do Comitê de Ética em Pesquisa e adequação às normativas vigentes sobre a matéria). Assim, nesse tipo de biorrepositório, sua vigência é, no máximo, o prazo do projeto ao qual está atrelado. Para esse tipo de biorrepositório, a documentação exigida no protocolo de pesquisa é mais simples, restringindo-se ao 'Regulamento descritivo operacional e de infraestrutura do biorrepositório', podendo constar no próprio projeto de pesquisa; e,
+14 - Por entendermos que haverá transferência de material biológico entre instituições, a saber, o Laboratório de Pesquisa Clínica em DST-AIDS (INI) e o Instituto Nacional de Cardiologia (INC), requisita-se carta/termo de concordância do representante do INC em participar do estudo e a descrição do plano de confidencialidade e anonimização de dados, com a garantia no TCLE de que a identificação do participante da pesquisa serão mantidos confidenciais a fim de preservar a privacidade e não provocar danos, como, por exemplo, estigmatização e discriminação (Res. CNS N° 466 de 2012, item III.2.i e item IV.3.e).
+Por entendermos que uma vez respondidas as pendências acima apontadas, que o protocolo passará a obedecer as normas de condução de pesquisas em seres humanos regulamentadas pelo CNS/MS, indicaremos sua aprovação com a previsão de produção de relatórios semestrais (parciais ou final), de acordo com a Res. CNS no. 466/12 após aprovação deste pelo colegiado do CEP-INI.
+## Considerações Finais a critério do CEP:
+## Este parecer foi elaborado baseado nos documentos abaixo relacionados:
+| Tipo Documento                            | Arquivo                                        | Postagem            | Autor                       | Situação   |
+|-------------------------------------------|------------------------------------------------|---------------------|-----------------------------|------------|
+| Informações Básicas do Projeto            | PB_INFORMAÇÕES_BáSICAS_DO_P ROJETO_1110377.pdf | 27/04/2018 11:10:02 |                             | Aceito     |
+| Orçamento                                 | Orcamento.pdf                                  | 27/04/2018 11:09:25 | THIAGO PAIVA NUNES DA SILVA | Aceito     |
+| Projeto Detalhado / Brochura Investigador | Protocolo_Truvada.pdf                          | 27/04/2018 11:05:58 | THIAGO PAIVA NUNES DA SILVA | Aceito     |
+| TCLE / Termos de                          | TCLE_TRUVADA.pdf                               | 27/04/2018          | THIAGO PAIVA                | Aceito     |
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+Continuação do Parecer: 2.665.918
+| Assentimento / Justificativa de Ausência                              | TCLE_TRUVADA.pdf                                            | 11:05:46            | NUNES DA SILVA              | Aceito   |
+|-----------------------------------------------------------------------|-------------------------------------------------------------|---------------------|-----------------------------|----------|
+| Declaração do Patrocinador                                            | Declaracao_finalidade_dados_coletados .pdf                  | 27/04/2018 11:05:33 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Declaração do Patrocinador                                            | Declaracao_cumprimento_resolucoes.pd f                      | 27/04/2018 11:04:58 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Declaração de Pesquisadores                                           | Declaracao_desenho_do_estudo.pdf                            | 27/04/2018 11:04:45 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Declaração de Pesquisadores                                           | Declaracao_quanto_ao_centro_coorden ador_e_participante.pdf | 27/04/2018 11:04:17 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Declaração de Manuseio Material Biológico / Biorepositório / Biobanco | Declaracao_destino_amostras_biologica s.pdf                 | 27/04/2018 11:03:11 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Declaração de Instituição e Infraestrutura                            | Declaracao_infraestrutura_instalacoes.p df                  | 27/04/2018 11:02:52 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+| Folha de Rosto                                                        | Folha_de_rosto.pdf                                          | 27/04/2018 11:02:36 | THIAGO PAIVA NUNES DA SILVA | Aceito   |
+## Situação do Parecer:
+Pendente
+Necessita Apreciação da CONEP:
+Não
+RIO DE JANEIRO, 21 de Maio de 2018
+Léa Ferreira Camillo Coura (Coordenador) Assinado por:
