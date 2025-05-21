@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, get_type_hints
 
@@ -30,6 +31,14 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
         lines.extend(parsed.long_description.split("\n"))
 
     return "\n".join(lines)
+
+
+@dataclass
+class UserInputField:
+    name: str
+    description: str
+    field_type: str
+    value: Optional[Any] = None
 
 
 class Function(BaseModel):
@@ -76,6 +85,13 @@ class Function(BaseModel):
 
     # If True, the function will require confirmation before execution
     requires_confirmation: Optional[bool] = None
+
+    # If True, the function will require user input before execution
+    requires_user_input: Optional[bool] = None
+    # List of fields that the user will provide as input and that should be ignored by the agent (empty list means all fields are provided by the user)
+    user_input_fields: Optional[List[str]] = None
+    # This is set during parsing, not by the user
+    user_input_schema: Optional[List[UserInputField]] = None
 
     # If True, the function will be executed outside the agent's control.
     external_execution: Optional[bool] = None
@@ -188,6 +204,9 @@ class Function(BaseModel):
         # If the user set the parameters (i.e. they are different from the default), we should keep them
         if self.parameters != parameters:
             params_set_by_user = True
+            
+        if self.requires_user_input:
+            self.user_input_schema = self.user_input_schema or []
 
         try:
             sig = signature(self.entrypoint)
@@ -201,14 +220,21 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
+            exclude_params = ["return", "agent", "team"]
+            if self.requires_user_input:
+                if len(self.user_input_fields) == 0:
+                    exclude_params.extend(list(type_hints.keys()))
+                else:
+                    exclude_params.extend(self.user_input_fields)
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name not in exclude_params
             }
-
+            
             # Parse docstring for parameters
             param_descriptions = {}
+            param_descriptions_clean = {}
             if docstring := getdoc(self.entrypoint):
                 parsed_doc = parse(docstring)
                 param_docs = parsed_doc.params
@@ -221,6 +247,18 @@ class Function(BaseModel):
                         # TODO: We should use type hints first, then map param types in docs to json schema types.
                         # This is temporary to not lose information
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
+                        param_descriptions_clean[param_name] = param.description
+
+            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            if self.requires_user_input:
+                self.user_input_schema = [
+                    UserInputField(
+                        name=name,
+                        description=param_descriptions_clean.get(name, None),
+                        field_type=type_hints.get(name, None)
+                    )
+                    for name in sig.parameters
+                ]
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
@@ -230,29 +268,29 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [name for name in parameters["properties"] if name not in exclude_params]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty and name != "self" and name not in exclude_params
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
                     self.parameters["required"] = [
-                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                        name for name in self.parameters["properties"] if name not in exclude_params
                     ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                        if param.default == param.empty and name != "self" and name not in exclude_params
                     ]
-
+            
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
             log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
