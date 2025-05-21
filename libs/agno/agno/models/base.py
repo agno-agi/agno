@@ -1151,8 +1151,6 @@ class Model(ABC):
                 assistant_message.metrics.total_tokens = response_usage.total_tokens
             if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
                 assistant_message.metrics.cached_tokens = response_usage.cached_tokens
-            if hasattr(response_usage,'cost') and response_usage.cost is not None:
-                assistant_message.metrics.cost = response_usage.cost
             else:
                 assistant_message.metrics.total_tokens = (
                     assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
