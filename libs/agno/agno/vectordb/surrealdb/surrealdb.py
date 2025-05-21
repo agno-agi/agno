@@ -10,7 +10,7 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
 
-class SurrealVectorDb(VectorDb):
+class SurrealDb(VectorDb):
     """SurrealDB Vector Database implementation supporting both sync and async operations"""
 
     # TODO: Improve the vector index creation

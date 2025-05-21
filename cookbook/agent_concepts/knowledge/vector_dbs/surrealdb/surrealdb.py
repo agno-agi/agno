@@ -4,7 +4,7 @@
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.vectordb.surrealdb import SurrealVectorDb
+from agno.vectordb.surrealdb import SurrealDb
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
@@ -13,7 +13,7 @@ SURREALDB_PASSWORD = "root"
 SURREALDB_NAMESPACE = "test"
 SURREALDB_DATABASE = "test"
 
-surrealdb = SurrealVectorDb(
+surrealdb = SurrealDb(
     url=SURREALDB_URL,
     username=SURREALDB_USER,
     password=SURREALDB_PASSWORD,
@@ -27,7 +27,7 @@ surrealdb = SurrealVectorDb(
 
 
 def sync_demo():
-    """Demonstrate synchronous usage of SurrealVectorDb"""
+    """Demonstrate synchronous usage of SurrealDb"""
     knowledge_base = PDFUrlKnowledgeBase(
         urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
         vector_db=surrealdb,

@@ -43,7 +43,6 @@ dependencies = [
   "tomli",
   "typer",
   "typing-extensions",
-  "surrealdb",
 ]
 
 [project.optional-dependencies]
@@ -124,7 +123,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
-surrealdb = ["surrealdb"]
+surrealdb = ["surrealdb>=1.0.3"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
