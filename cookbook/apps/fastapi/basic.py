@@ -14,6 +14,9 @@ basic_agent = Agent(
 
 fastapi_app = FastAPIApp(
     agent=basic_agent,
+    name="Basic Agent",
+    app_id="basic_agent",
+    description="A basic agent that can answer questions and help with tasks.",
 )
 
 app = fastapi_app.get_app()

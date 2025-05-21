@@ -188,7 +188,9 @@ class FastAPIApp:
                     **self.team.to_platform_dict(),
                     "team_id": self.team.team_id,
                 }
-            ] if self.team else None,
+            ]
+            if self.team
+            else None,
             "type": "fastapi",
             "description": self.description,
         }
