@@ -351,7 +351,7 @@ class PerformanceEval:
                 },
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=f'Function "{self.func.__name__}"',
+                evaluated_entity_name=self.func.__name__,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
