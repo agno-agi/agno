@@ -10,10 +10,11 @@ evaluation = AccuracyEval(
     agent=Agent(
         model=OpenAIChat(id="gpt-4o"),
         tools=[CalculatorTools(enable_all=True)],
+        instructions="You must use the calculator tools for comparisons.",
     ),
-    input="What is 10*5 then to the power of 2? do it step by step",
-    expected_output="2500",
-    additional_guidelines="Agent output should include the steps and the final answer.",
+    input="9.11 and 9.9 -- which is bigger?",
+    expected_output="9.9",
+    additional_guidelines="Its ok for the output to include additional text or information relevant to the comparison.",
 )
 
 result: Optional[AccuracyResult] = evaluation.run(print_results=True)

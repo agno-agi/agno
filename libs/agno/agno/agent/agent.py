@@ -1228,7 +1228,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
@@ -2043,7 +2043,7 @@ class Agent:
                         f"Async function {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
                         "Use agent.arun() or agent.aprint_response() instead to use this tool."
                     )
-            elif isinstance(tool, Callable):
+            elif callable(tool):
                 if iscoroutinefunction(tool):
                     raise Exception(
                         f"Async function {tool.__name__} can't be used with synchronous agent.run() or agent.print_response(). "
@@ -2082,7 +2082,7 @@ class Agent:
             # Check if retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and iscoroutinefunction(self.retriever):
+            if not async_mode and self.retriever and iscoroutinefunction(self.retriever):
                 log_warning(
                     "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
@@ -3499,7 +3499,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:
@@ -3562,7 +3565,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:
