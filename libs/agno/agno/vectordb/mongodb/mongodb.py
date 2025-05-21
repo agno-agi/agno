@@ -44,6 +44,9 @@ class MongoDb(VectorDb):
         search_index_name: Optional[str] = "vector_index_1",
         cosmos_compatibility: Optional[bool] = False,
         search_type: SearchType = SearchType.vector,
+        hybrid_vector_weight: float = 0.5,
+        hybrid_keyword_weight: float = 0.5,
+        hybrid_rank_constant: int = 60,
         **kwargs,
     ):
         """
@@ -64,6 +67,9 @@ class MongoDb(VectorDb):
             search_index_name (str): Name of the search index (default: "vector_index_1")
             cosmos_compatibility (bool): Whether to use Azure Cosmos DB Mongovcore compatibility mode.
             search_type: The search type to use when searching for documents.
+            hybrid_vector_weight (float): Default weight for vector search results in hybrid search.
+            hybrid_keyword_weight (float): Default weight for keyword search results in hybrid search.
+            hybrid_rank_constant (int): Default rank constant (k) for Reciprocal Rank Fusion in hybrid search. This constant is added to the rank before taking the reciprocal, helping to smooth scores. A common value is 60.
             **kwargs: Additional arguments for MongoClient.
         """
         if not collection_name:
@@ -75,6 +81,9 @@ class MongoDb(VectorDb):
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
         self.search_type = search_type
+        self.hybrid_vector_weight = hybrid_vector_weight
+        self.hybrid_keyword_weight = hybrid_keyword_weight
+        self.hybrid_rank_constant = hybrid_rank_constant
 
         if embedder is None:
             from agno.embedder.openai import OpenAIEmbedder
@@ -664,12 +673,13 @@ class MongoDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        vector_weight: float = 0.5,
-        keyword_weight: float = 0.5,
-        rank_constant: int = 60,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
+
+        Weights for vector and keyword search are configured at the instance level (hybrid_vector_weight, hybrid_keyword_weight).
+        The rank constant k is used in the RRF formula `1 / (rank + k)` to smooth scores.
+
         Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/tutorials/reciprocal-rank-fusion
         """
 
@@ -686,7 +696,7 @@ class MongoDb(VectorDb):
 
         collection = self._get_collection()
 
-        k = rank_constant
+        k = self.hybrid_rank_constant
 
         pipeline = [
             # Vector Search Branch
@@ -709,7 +719,7 @@ class MongoDb(VectorDb):
                     "meta_data": "$docs.meta_data",
                     "vs_score": {
                         "$divide": [
-                            vector_weight,
+                            self.hybrid_vector_weight,
                             {"$add": ["$rank", k, 1]},
                         ]
                     },
@@ -747,10 +757,10 @@ class MongoDb(VectorDb):
                                 "name": "$docs.name",
                                 "content": "$docs.content",
                                 "meta_data": "$docs.meta_data",
-                                "vs_score": 0.0,  # Ensure vs_score exists with a default value
+                                "vs_score": 0.0,
                                 "fts_score": {
                                     "$divide": [
-                                        keyword_weight,
+                                        self.hybrid_keyword_weight,
                                         {"$add": ["$rank", k, 1]},
                                     ]
                                 },
@@ -762,7 +772,6 @@ class MongoDb(VectorDb):
                                 "name": 1,
                                 "content": 1,
                                 "meta_data": 1,
-                                # vs_score is included with its value (0.0 here)
                                 "vs_score": 1,
                                 "fts_score": 1,
                             }
