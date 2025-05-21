@@ -81,6 +81,7 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
+    search_previous_sessions_history: bool = False
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -289,6 +290,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        search_previous_sessions_history: bool = False,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -371,6 +373,7 @@ class Agent:
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
+        self.search_previous_sessions_history = search_previous_sessions_history
 
         self.context = context
         self.add_context = add_context
@@ -2071,6 +2074,8 @@ class Agent:
             agent_tools.append(self.get_chat_history_function(session_id=session_id))
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
+        if self.search_previous_sessions_history:
+            agent_tools.append(self.get_messages_from_previous_sessions(number_of_sessions=3))
 
         if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
@@ -2913,6 +2918,18 @@ class Agent:
                         "</updating_user_memories>\n\n"
                     )
 
+            if self.search_previous_sessions_history:
+                additional_information.append(
+                    dedent(f"""
+                You have access to messages from previous chat sessions through the `get_messages_from_previous_sessions` tool.
+                - Use this tool to retrieve and analyze messages whenever asked a question similar to- "What was my last conversation?"
+                - The tool returns messages in chronological order from previous sessions
+                - You can specify how many previous sessions to look at (default is 3)
+                - Use this information to maintain context and provide more personalized responses
+                - Always prefer information from the current conversation over past sessions
+                """).strip()
+                )
+
             # 3.3.11 Then add a summary of the interaction to the system prompt
             if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
                 if self.memory.summary is not None:
@@ -3166,6 +3183,14 @@ class Agent:
                 history = self.memory.get_messages_from_last_n_runs(
                     session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role
                 )
+
+            # # Add messages from previous sessions if enabled
+            # if self.search_previous_sessions_history:
+            #     previous_sessions_history = self.get_messages_from_previous_sessions(
+            #         number_of_sessions=3,
+            #     )
+            #     history.extend(previous_sessions_history)
+
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
                 history_copy = [deepcopy(msg) for msg in history]
@@ -5791,6 +5816,37 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def get_messages_from_previous_sessions(self, number_of_sessions: int) -> List[Message]:
+        """Internal helper method to get messages from previous sessions."""
+        if self.storage is None:
+            return []
+
+        sessions = self.storage.get_all_sessions(user_id=self.user_id)
+        sorted_sessions = sorted(sessions, key=lambda x: x.created_at if x.created_at else 0, reverse=True)
+        selected_sessions = sorted_sessions[:number_of_sessions]
+
+        all_messages = []
+        seen_message_pairs = set()
+
+        for session in selected_sessions:
+            if isinstance(session, AgentSession) and session.memory:
+                for run in session.memory.get("runs", []):
+                    messages = run.get("messages", [])
+                    for i in range(0, len(messages) - 1, 2):
+                        if i + 1 < len(messages):
+                            try:
+                                user_msg = messages[i]
+                                assistant_msg = messages[i + 1]
+                                msg_pair_id = f"{user_msg.get('content', '')}:{assistant_msg.get('content', '')}"
+                                if msg_pair_id not in seen_message_pairs:
+                                    seen_message_pairs.add(msg_pair_id)
+                                    all_messages.append(Message.model_validate(user_msg))
+                                    all_messages.append(Message.model_validate(assistant_msg))
+                            except Exception as e:
+                                log_warning(f"Error processing message pair: {e}")
+                                continue
+        return all_messages
 
     def cli_app(
         self,
