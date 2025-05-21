@@ -387,6 +387,7 @@ module = [
   "youtube_transcript_api.*",
   "couchbase.*",
   "acouchbase.*",
-  "zep_cloud.*"
+  "zep_cloud.*",
+  "surrealdb.*"
 ]
 ignore_missing_imports = true
