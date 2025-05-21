@@ -15,7 +15,6 @@ from agno.tools import tool
 from agno.utils import pprint
 
 
-
 # We have to create a tool with the correct name, arguments and docstring for the agent to know what to call.
 @tool(external_execution=True)
 def execute_shell_command(command: str) -> str:
@@ -40,11 +39,18 @@ agent = Agent(
     markdown=True,
 )
 
-for run_response in agent.run("What files do I have in my current directory?", stream=True):
-    if run_response.is_paused: 
+for run_response in agent.run(
+    "What files do I have in my current directory?", stream=True
+):
+    if run_response.is_paused:
         for tool in run_response.tools:
-            if tool.external_execution_required and tool.tool_name == execute_shell_command.name:
-                print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
+            if (
+                tool.external_execution_required
+                and tool.tool_name == execute_shell_command.name
+            ):
+                print(
+                    f"Executing {tool.tool_name} with args {tool.tool_args} externally"
+                )
                 # We execute the tool ourselves. You can also execute something completely external here.
                 result = execute_shell_command.entrypoint(**tool.tool_args)
                 # We have to set the result on the tool execution object so that the agent can continue

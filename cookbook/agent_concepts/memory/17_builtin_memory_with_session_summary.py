@@ -31,7 +31,10 @@ agent.print_response("Hello! How are you today?", stream=True)
 
 agent.print_response("Explain what an LLM is.", stream=True)
 
-agent.print_response("I'm thinking about learning a new programming language. Any suggestions?", stream=True)
+agent.print_response(
+    "I'm thinking about learning a new programming language. Any suggestions?",
+    stream=True,
+)
 
 agent.print_response("Tell me an interesting fact about space.", stream=True)
 
@@ -47,12 +50,7 @@ pprint(
 agent.print_response("What have we been talking about?", stream=True)
 
 # -*- Print the messages used for the last response (only the last 3 is kept in history)
-pprint(
-    [
-        m.model_dump(include={"role", "content"})
-        for m in agent.run_response.messages
-    ]
-)
+pprint([m.model_dump(include={"role", "content"}) for m in agent.run_response.messages])
 
 # We can get the session summary from memory as well
 session_summary = agent.get_session_summary()

@@ -112,7 +112,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         )
 
     def decorator(func: F) -> Function:
-        from inspect import getdoc, isasyncgenfunction, iscoroutine, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -157,17 +157,17 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
         # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
-        
+
         if kwargs.get("requires_user_input", True):
             kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])
-        
+
         if kwargs.get("user_input_fields"):
             kwargs["requires_user_input"] = True
-        
+
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
-            "description": kwargs.get("description", getdoc(func)),  # Get docstring if description not provided
+            "description": kwargs.get("description", None),  # Get docstring if description not provided
             "instructions": kwargs.get("instructions"),
             "add_instructions": kwargs.get("add_instructions", True),
             "entrypoint": wrapper,

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -17,18 +17,18 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
     if isinstance(entrypoint, partial):
         return str(entrypoint)
 
-    doc = getdoc(entrypoint)
-    if not doc:
+    docstring = getdoc(entrypoint)
+    if not docstring:
         return ""
 
-    parsed = parse(doc)
+    parsed_doc = parse(docstring)
 
     # Combine short and long descriptions
     lines = []
-    if parsed.short_description:
-        lines.append(parsed.short_description)
-    if parsed.long_description:
-        lines.extend(parsed.long_description.split("\n"))
+    if parsed_doc.short_description:
+        lines.append(parsed_doc.short_description)
+    if parsed_doc.long_description:
+        lines.extend(parsed_doc.long_description.split("\n"))
 
     return "\n".join(lines)
 
@@ -36,8 +36,8 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
 @dataclass
 class UserInputField:
     name: str
-    description: str
-    field_type: str
+    field_type: Type
+    description: Optional[str] = None
     value: Optional[Any] = None
 
 
@@ -108,7 +108,10 @@ class Function(BaseModel):
     _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"})
+        return self.model_dump(
+            exclude_none=True,
+            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+        )
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
@@ -204,7 +207,7 @@ class Function(BaseModel):
         # If the user set the parameters (i.e. they are different from the default), we should keep them
         if self.parameters != parameters:
             params_set_by_user = True
-            
+
         if self.requires_user_input:
             self.user_input_schema = self.user_input_schema or []
 
@@ -220,18 +223,16 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            exclude_params = ["return", "agent", "team"]
-            if self.requires_user_input:
+            excluded_params = ["return", "agent", "team"]
+            if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
-                    exclude_params.extend(list(type_hints.keys()))
+                    excluded_params.extend(list(type_hints.keys()))
                 else:
-                    exclude_params.extend(self.user_input_fields)
-            param_type_hints = {
-                name: type_hints.get(name)
-                for name in sig.parameters
-                if name not in exclude_params
-            }
-            
+                    excluded_params.extend(self.user_input_fields)
+
+            # Get filtered list of parameter types
+            param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
+
             # Parse docstring for parameters
             param_descriptions = {}
             param_descriptions_clean = {}
@@ -254,8 +255,8 @@ class Function(BaseModel):
                 self.user_input_schema = [
                     UserInputField(
                         name=name,
-                        description=param_descriptions_clean.get(name, None),
-                        field_type=type_hints.get(name, None)
+                        description=param_descriptions_clean.get(name),
+                        field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
                 ]
@@ -268,34 +269,35 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in exclude_params]
+                parameters["required"] = [name for name in parameters["properties"] if name not in excluded_params]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in exclude_params
+                    if param.default == param.empty and name != "self" and name not in excluded_params
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
                     self.parameters["required"] = [
-                        name for name in self.parameters["properties"] if name not in exclude_params
+                        name for name in self.parameters["properties"] if name not in excluded_params
                     ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name not in exclude_params
+                        if param.default == param.empty and name != "self" and name not in excluded_params
                     ]
-            
+
+            self.description = self.description or get_entrypoint_docstring(self.entrypoint)
+
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
             log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
 
-        self.description = self.description or get_entrypoint_docstring(self.entrypoint)
         if not params_set_by_user:
             self.parameters = parameters
 

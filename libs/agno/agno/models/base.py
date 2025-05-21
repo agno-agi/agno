@@ -1180,13 +1180,12 @@ class Model(ABC):
             # If the function requires user input, we yield a message to the user
             if fc.function.requires_user_input:
                 user_input_schema = fc.function.user_input_schema
-                print(user_input_schema)
-                print(fc.arguments)
-                for name, value in fc.arguments.items():
-                    for user_input_field in user_input_schema:
-                        if user_input_field.name == name:
-                            user_input_field.value = value
-                
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
+
                 paused_tool_executions.append(
                     ToolExecution(
                         tool_call_id=fc.call_id,
@@ -1301,11 +1300,12 @@ class Model(ABC):
             # If the function requires user input, we yield a message to the user
             if fc.function.requires_user_input and not skip_pause_check:
                 user_input_schema = fc.function.user_input_schema
-                for name, value in fc.arguments.items():
-                    for user_input_field in user_input_schema:
-                        if user_input_field.name == name:
-                            user_input_field.value = value
-                
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
+
                 paused_tool_executions.append(
                     ToolExecution(
                         tool_call_id=fc.call_id,
@@ -1350,8 +1350,16 @@ class Model(ABC):
         if skip_pause_check:
             function_calls_to_run = function_calls
         else:
-            function_calls_to_run = [fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution or fc.function.requires_user_input) ]
-            
+            function_calls_to_run = [
+                fc
+                for fc in function_calls
+                if not (
+                    fc.function.requires_confirmation
+                    or fc.function.external_execution
+                    or fc.function.requires_user_input
+                )
+            ]
+
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
