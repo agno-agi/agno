@@ -8,10 +8,6 @@ Make sure to set the Vertex AI credentials. Here's the authentication guide: htt
 Run `pip install google-genai agno` to install the necessary dependencies.
 """
 
-import base64
-import os
-from pathlib import Path
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
@@ -28,13 +24,13 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Cinematic a visual shot using a stabilized drone flying dynamically alongside a pod of immense baleen whales as they breach spectacularly in deep offshore waters. The camera maintains a close, dramatic perspective as these colossal creatures launch themselves skyward from the dark blue ocean, creating enormous splashes and showering cascades of water droplets that catch the sunlight. In the background, misty, fjord-like coastlines with dense coniferous forests provide context. The focus expertly tracks the whales, capturing their surprising agility, immense power, and inherent grace. The color palette features the deep blues and greens of the ocean, the brilliant white spray, the dark grey skin of the whales, and the muted tones of the distant wild coastline, conveying the thrilling magnificence of marine megafauna."
+    "Painterly landscape featuring a simple, isolated wooden cabin nestled amongst tall pine trees on the shore of a calm, reflective lake"
 )
 
 
 response = agent.run_response
 if response.images:
-    save_base64_data(response.images[0].content, "tmp/baleen_whale.png")
+    save_base64_data(response.images[0].content, "tmp/landscape.png")
 
 """
 Example prompts to try:
