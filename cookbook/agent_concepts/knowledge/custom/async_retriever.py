@@ -12,7 +12,9 @@ from qdrant_client import AsyncQdrantClient
 # Define the embedder
 embedder = OpenAIEmbedder(id="text-embedding-3-small")
 # Initialize vector database connection
-vector_db = Qdrant(collection="thai-recipes", path="tmp/qdrant", embedder=embedder)
+vector_db = Qdrant(
+    collection="thai-recipes", url="http://localhost:6333", embedder=embedder
+)
 # Load the knowledge base
 knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
@@ -20,7 +22,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 )
 
 # Load the knowledge base
-# knowledge_base.load(recreate=True)  # Comment out after first run
+# knowledge_base.aload(recreate=True)  # Comment out after first run
 # Knowledge base is now loaded
 # ---------------------------------------------------------
 
@@ -43,7 +45,7 @@ async def retriever(
         Optional[list[dict]]: List of retrieved documents or None if search fails
     """
     try:
-        qdrant_client = AsyncQdrantClient(path="tmp/qdrant")
+        qdrant_client = AsyncQdrantClient(url="http://localhost:6333")
         query_embedding = embedder.get_embedding(query)
         results = await qdrant_client.query_points(
             collection_name="thai-recipes",
@@ -67,7 +69,6 @@ async def amain():
     # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
         retriever=retriever,
-        knowledge=knowledge_base,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
         show_tool_calls=True,
