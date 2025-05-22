@@ -33,7 +33,6 @@ def execute_shell_command(command: str) -> str:
         raise Exception(f"Unsupported command: {command}")
 
 
-# Initialize the agent with a tech-savvy personality and clear instructions
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],

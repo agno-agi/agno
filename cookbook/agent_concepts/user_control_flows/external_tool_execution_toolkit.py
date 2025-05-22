@@ -36,7 +36,6 @@ class ShellTools(Toolkit):
 
 tools = ShellTools()
 
-# Initialize the agent with a tech-savvy personality and clear instructions
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[tools],
