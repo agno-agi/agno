@@ -81,7 +81,7 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    search_previous_sessions_history: bool = False
+    search_previous_sessions_history: Optional[bool] = False
     number_of_sessions: Optional[int] = None
 
     # --- Agent Context ---
@@ -5805,7 +5805,7 @@ class Agent:
 
         return effective_filters
 
-    def get_previous_sessions_messages_function(self, number_of_sessions: int = 3) -> Callable:
+    def get_previous_sessions_messages_function(self, number_of_sessions: Optional[int] = 3) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
