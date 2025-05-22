@@ -36,7 +36,7 @@ from agno.memory.team import TeamMemory, TeamRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
@@ -761,8 +761,10 @@ class Team:
             # # Run the team
             try:
                 self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
+
                 # Configure the team leader model
                 self.run_response.model = self.model.id if self.model is not None else None
+                self.run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # Prepare run messages
                 if self.mode == "route":
@@ -801,15 +803,13 @@ class Team:
 
                     return resp
                 else:
-                    self._run(
+                    return self._run(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
                         response_format=response_format,
                     )
-
-                    return self.run_response
 
             except ModelProviderError as e:
                 import time
@@ -844,7 +844,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> None:
+    ) -> TeamRunResponse:
         """Run the Team and return the response.
 
         Steps:
@@ -927,6 +927,8 @@ class Team:
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+        return run_response
 
     def _run_stream(
         self,
@@ -1213,8 +1215,10 @@ class Team:
             # Run the team
             try:
                 self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
+
                 # Configure the team leader model
                 self.run_response.model = self.model.id if self.model is not None else None
+                self.run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # Prepare run messages
                 if self.mode == "route":
@@ -1251,14 +1255,12 @@ class Team:
                     )
                     return resp
                 else:
-                    await self._arun(
+                    return await self._arun(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
                     )
-
-                    return self.run_response
 
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1290,7 +1292,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> None:
+    ) -> TeamRunResponse:
         """Run the Team and return the response.
 
         Steps:
@@ -1374,6 +1376,8 @@ class Team:
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+        return run_response
 
     async def _arun_stream(
         self,
@@ -1469,14 +1473,14 @@ class Team:
         if model_response.citations is not None:
             run_response.citations = model_response.citations
 
-        # Update the run_response tools with the model response tools
-        if model_response.tool_calls is not None:
+        # Update the run_response tools with the model response tool_executions
+        if model_response.tool_executions is not None:
             if run_response.tools is None:
-                run_response.tools = model_response.tool_calls
+                run_response.tools = model_response.tool_executions
             else:
-                run_response.tools.extend(model_response.tool_calls)
+                run_response.tools.extend(model_response.tool_executions)
 
-        run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+        run_response.formatted_tool_calls = format_tool_calls(run_response.tools or [])
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
@@ -1826,16 +1830,16 @@ class Team:
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif model_response_chunk.event == ModelResponseEvent.tool_call_started.value:
             # Add tool calls to the run_response
-            new_tool_calls_list = model_response_chunk.tool_calls
-            if new_tool_calls_list is not None:
+            tool_executions_list = model_response_chunk.tool_executions
+            if tool_executions_list is not None:
                 # Add tool calls to the agent.run_response
                 if run_response.tools is None:
-                    run_response.tools = new_tool_calls_list
+                    run_response.tools = tool_executions_list
                 else:
-                    run_response.tools.extend(new_tool_calls_list)
+                    run_response.tools.extend(tool_executions_list)
 
             # Format tool calls whenever new ones are added during streaming
-            run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+            run_response.formatted_tool_calls = format_tool_calls(run_response.tools or [])
 
             # Only yield the event if streaming intermediate steps
             yield self._create_run_response(
@@ -1848,37 +1852,35 @@ class Team:
         # If the model response is a tool_call_completed, update the existing tool call in the run_response
         elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
             reasoning_step: Optional[ReasoningStep] = None
-            new_tool_calls_list = model_response_chunk.tool_calls
-            if new_tool_calls_list is not None:
+            tool_executions_list = model_response_chunk.tool_executions
+            if tool_executions_list is not None:
                 # Update the existing tool call in the run_response
                 if run_response.tools:
                     # Create a mapping of tool_call_id to index
                     tool_call_index_map = {
-                        tc["tool_call_id"]: i
-                        for i, tc in enumerate(run_response.tools)
-                        if tc.get("tool_call_id") is not None
+                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
                     }
                     # Process tool calls
-                    for tool_call_dict in new_tool_calls_list:
-                        tool_call_id = tool_call_dict.get("tool_call_id")
+                    for tool_call_dict in tool_executions_list:
+                        tool_call_id = tool_call_dict.tool_call_id or ""
                         index = tool_call_index_map.get(tool_call_id)
                         if index is not None:
                             run_response.tools[index] = tool_call_dict
                 else:
-                    run_response.tools = new_tool_calls_list
+                    run_response.tools = tool_executions_list
 
                 # Only iterate through new tool calls
-                for tool_call in new_tool_calls_list:
-                    tool_name = tool_call.get("tool_name", "")
+                for tool_call in tool_executions_list:
+                    tool_name = tool_call.tool_name or ""
                     if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.get("tool_args", {})
+                        tool_args = tool_call.tool_args or {}
 
                         reasoning_step = self.update_reasoning_content_from_tool_call(
                             run_response, tool_name, tool_args
                         )
 
-                        metrics = tool_call.get("metrics")
-                        if metrics is not None:
+                        metrics = tool_call.metrics
+                        if metrics is not None and metrics.time is not None:
                             reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
                                 metrics.time
                             )
@@ -2445,7 +2447,10 @@ class Team:
                     if self.show_tool_calls and resp.tools:
                         for tool in resp.tools:
                             # Generate a unique ID for this tool call
-                            tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                            if tool.tool_call_id:
+                                tool_id = tool.tool_call_id
+                            else:
+                                tool_id = str(hash(str(tool)))
                             if tool_id not in processed_tool_calls:
                                 processed_tool_calls.add(tool_id)
                                 team_tool_calls.append(tool)
@@ -2465,7 +2470,10 @@ class Team:
 
                             for tool in member_response.tools:
                                 # Generate a unique ID for this tool call
-                                tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                                if tool.tool_call_id:
+                                    tool_id = tool.tool_call_id
+                                else:
+                                    tool_id = str(hash(str(tool)))
                                 if tool_id not in processed_tool_calls:
                                     processed_tool_calls.add(tool_id)
                                     member_tool_calls[member_id].append(tool)
@@ -3221,7 +3229,7 @@ class Team:
 
         # Track tool calls by member and team
         member_tool_calls = {}  # type: ignore
-        team_tool_calls = []
+        team_tool_calls: List[ToolExecution] = []
 
         # Track processed tool calls to avoid duplicates
         processed_tool_calls = set()
@@ -3291,7 +3299,10 @@ class Team:
                     if self.show_tool_calls and resp.tools:
                         for tool in resp.tools:
                             # Generate a unique ID for this tool call
-                            tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                            if tool.tool_call_id is not None:
+                                tool_id = tool.tool_call_id
+                            else:
+                                tool_id = str(hash(str(tool)))
                             if tool_id not in processed_tool_calls:
                                 processed_tool_calls.add(tool_id)
                                 team_tool_calls.append(tool)
@@ -3310,7 +3321,10 @@ class Team:
                                 member_tool_calls[member_id] = []
 
                             for tool in member_response.tools:
-                                tool_id = tool.get("tool_call_id", str(hash(str(tool))))
+                                if tool.tool_call_id is not None:
+                                    tool_id = tool.tool_call_id
+                                else:
+                                    tool_id = str(hash(str(tool)))
                                 if tool_id not in processed_tool_calls:
                                     processed_tool_calls.add(tool_id)
                                     member_tool_calls[member_id].append(tool)
@@ -4180,7 +4194,7 @@ class Team:
         content_type: Optional[str] = None,
         thinking: Optional[str] = None,
         event: RunEvent = RunEvent.run_response,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[ToolExecution]] = None,
         reasoning_content: Optional[str] = None,
         audio: Optional[List[AudioArtifact]] = None,
         images: Optional[List[ImageArtifact]] = None,
@@ -5090,7 +5104,7 @@ class Team:
                             member_agent_run_response_chunk.tools is not None
                             and len(member_agent_run_response_chunk.tools) > 0
                         ):
-                            yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
+                            yield ",".join([tool.result for tool in member_agent_run_response_chunk.tools])  # type: ignore
                 else:
                     member_agent_run_response = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -5106,7 +5120,7 @@ class Team:
                         if len(member_agent_run_response.content.strip()) > 0:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
                         elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                            yield f"Agent {member_agent.name}: {','.join([tool.get('content', '') for tool in member_agent_run_response.tools])}"
+                            yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
                     elif issubclass(type(member_agent_run_response.content), BaseModel):
                         try:
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -5415,7 +5429,11 @@ class Team:
                         member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response_chunk.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
             else:
                 if not member_agent.knowledge_filters and member_agent.knowledge:
                     member_agent_run_response = member_agent.run(
@@ -5444,7 +5462,11 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
 
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
@@ -5593,7 +5615,7 @@ class Team:
                         member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response_chunk.tools])
+                        yield ",".join([tool.content for tool in member_agent_run_response_chunk.tools])  # type: ignore
             else:
                 if not member_agent.knowledge_filters and member_agent.knowledge:
                     member_agent_run_response = await member_agent.arun(
@@ -5621,7 +5643,7 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.content for tool in member_agent_run_response.tools])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
@@ -5823,7 +5845,12 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        tool_str = ""
+                        for tool in member_agent_run_response.tools:
+                            if tool.result:
+                                tool_str += f"{tool.result},"
+                        yield tool_str.rstrip(",")
+
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
@@ -5960,7 +5987,7 @@ class Team:
 
                     # If the content is empty but we have tool calls
                     elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.get("content", "") for tool in member_agent_run_response.tools])
+                        yield ",".join([tool.content for tool in member_agent_run_response.tools])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
