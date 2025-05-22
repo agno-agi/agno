@@ -60,7 +60,7 @@ agent = Agent(
     markdown=True,
 )
 
-agent.run("Fetch the top 2 hackernews stories")
+agent.run("Fetch the top 2 hackernews stories.")
 if agent.is_paused:  # Or agent.run_response.is_paused
     for tool in agent.run_response.tools_requiring_confirmation:
         # Ask for confirmation
@@ -74,7 +74,7 @@ if agent.is_paused:  # Or agent.run_response.is_paused
         )
 
         if message == "n":
-            break
+            tool.confirmed = False
         else:
             # We update the tools in place
             tool.confirmed = True

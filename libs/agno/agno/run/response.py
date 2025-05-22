@@ -182,6 +182,9 @@ class RunResponse:
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        if self.tools is not None:
+            _dict["tools"] = [tool.to_dict() for tool in self.tools]
+
         return _dict
 
     def to_json(self) -> str:
