@@ -217,8 +217,8 @@ class TodoistTools(Toolkit):
     def get_active_tasks(self) -> str:
         """Get all active (not completed) tasks."""
         try:
-            tasks = self.api.get_tasks()
-            tasks = list(tasks)[0]
+            tasks_response = self.api.get_tasks()
+            tasks = list(tasks_response)[0]
             tasks_list = []
             for task in tasks:
                 task_dict = self._task_to_dict(task)

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
+from agno.models.response import ToolExecution
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 
 
@@ -21,6 +22,7 @@ class TeamRunResponse:
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
+    model_provider: Optional[str] = None
 
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
@@ -28,7 +30,7 @@ class TeamRunResponse:
     team_id: Optional[str] = None
     session_id: Optional[str] = None
 
-    tools: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images from member runs

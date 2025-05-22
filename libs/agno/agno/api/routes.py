@@ -37,3 +37,6 @@ class ApiRoutes:
     # Playground paths
     PLAYGROUND_ENDPOINT_CREATE: str = "/v1/playground/endpoint/create"
     PLAYGROUND_APP_DEPLOY: str = "/v1/playground/app/deploy"
+
+    # Eval paths
+    EVAL_RUN_CREATE: str = "/v2/eval-runs"
