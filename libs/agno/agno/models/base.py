@@ -338,6 +338,7 @@ class Model(ABC):
                         in [
                             ModelResponseEvent.tool_call_completed.value,
                             ModelResponseEvent.tool_call_confirmation_required.value,
+                            ModelResponseEvent.tool_call_external_execution_required.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -365,6 +366,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -426,6 +431,7 @@ class Model(ABC):
                         in [
                             ModelResponseEvent.tool_call_completed.value,
                             ModelResponseEvent.tool_call_confirmation_required.value,
+                            ModelResponseEvent.tool_call_external_execution_required.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -452,6 +458,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -770,6 +780,10 @@ class Model(ABC):
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
                     break
 
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -888,6 +902,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require confirmation, break the loop
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
                     break
 
                 # Continue loop to get next response
@@ -1149,6 +1167,22 @@ class Model(ABC):
                 # We don't execute the function call here, we wait for the user to confirm
                 continue
 
+            # If the function requires external execution, we yield a message to the user
+            if fc.function.external_execution:
+                yield ModelResponse(
+                    tool_executions=[
+                        ToolExecution(
+                            tool_call_id=fc.call_id,
+                            tool_name=fc.function.name,
+                            tool_args=fc.arguments,
+                            external_execution_required=True,
+                        )
+                    ],
+                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                )
+                # We don't execute the function call here, it is executed outside of the agent's control
+                continue
+
             yield from self.run_function_call(
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
@@ -1235,6 +1269,23 @@ class Model(ABC):
                 )
                 # We don't execute the function call here, we wait for the user to confirm
                 continue
+
+            # If the function requires external execution, we yield a message to the user
+            if fc.function.external_execution:
+                yield ModelResponse(
+                    tool_executions=[
+                        ToolExecution(
+                            tool_call_id=fc.call_id,
+                            tool_name=fc.function.name,
+                            tool_args=fc.arguments,
+                            external_execution_required=True,
+                        )
+                    ],
+                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                )
+                # We don't execute the function call here, it is executed outside of the agent's control
+                continue
+
             yield ModelResponse(
                 content=fc.get_call_str(),
                 tool_executions=[
@@ -1248,7 +1299,9 @@ class Model(ABC):
             )
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
-        function_calls_to_run = [fc for fc in function_calls if not fc.function.requires_confirmation]
+        function_calls_to_run = [
+            fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution)
+        ]
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )

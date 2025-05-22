@@ -22,6 +22,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
+from rich.console import Console
+from rich.prompt import Prompt
+
+console = Console()
 
 
 @tool(requires_confirmation=True)
@@ -59,12 +63,22 @@ agent = Agent(
 
 run_response = asyncio.run(agent.arun("Fetch the top 2 hackernews stories"))
 if run_response.is_paused:
-    for tool in run_response.tools:
-        print(f"Tool name {tool.tool_name} requires confirmation.")
-        print("Tool args: ", tool.tool_args)
-        user_input = input("Do you want to proceed? (y/n) ")
-        # We update the tools in place
-        tool.confirmed = user_input == "y"
+    for tool in run_response.tools_requiring_confirmation:
+        # Ask for confirmation
+        console.print(
+            f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+        )
+        message = (
+            Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+            .strip()
+            .lower()
+        )
+
+        if message == "n":
+            break
+        else:
+            # We update the tools in place
+            tool.confirmed = True
 
     run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
     pprint.pprint_run_response(run_response)

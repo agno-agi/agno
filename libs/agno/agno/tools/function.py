@@ -77,6 +77,9 @@ class Function(BaseModel):
     # If True, the function will require confirmation before execution
     requires_confirmation: Optional[bool] = None
 
+    # If True, the function will be executed outside the agent's control.
+    external_execution: Optional[bool] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -89,7 +92,10 @@ class Function(BaseModel):
     _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
+        return self.model_dump(
+            exclude_none=True,
+            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+        )
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
