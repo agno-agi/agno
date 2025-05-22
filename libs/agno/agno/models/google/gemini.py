@@ -102,6 +102,16 @@ class Gemini(Model):
         "tool": "user",
     }
 
+    def __post_init__(self):
+        """Post-initialization checks."""
+        if self.id == "gemini-2.5-flash-preview-05-20":
+            log_warning(
+                "The model 'gemini-2.5-flash-preview-05-20' is a preview version and may be unstable. "
+                "It has a known issue of potentially returning empty responses. If you encounter this, "
+                "consider using a different model version or checking for updates to the 'google-genai' SDK. "
+                "Downgrading to 'gemini-2.5-flash-preview-04-17' has been reported to resolve this in some cases."
+            )
+
     def get_client(self) -> GeminiClient:
         """
         Returns an instance of the GeminiClient client.
@@ -227,12 +237,16 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
         request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        print(f"GEMINI_LOG: Request kwargs for invoke: {request_kwargs}")
+        print(f"GEMINI_LOG: Formatted messages for invoke: {formatted_messages}")
         try:
-            return self.get_client().models.generate_content(
+            raw_response = self.get_client().models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
+            print(f"GEMINI_LOG: Raw response from invoke: {raw_response}")
+            return raw_response
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             error_message = str(e.response) if hasattr(e, "response") else str(e)
@@ -290,13 +304,16 @@ class Gemini(Model):
         formatted_messages, system_message = self._format_messages(messages)
 
         request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
-
+        print(f"GEMINI_LOG: Request kwargs for ainvoke: {request_kwargs}")
+        print(f"GEMINI_LOG: Formatted messages for ainvoke: {formatted_messages}")
         try:
-            return await self.get_client().aio.models.generate_content(
+            raw_response = await self.get_client().aio.models.generate_content(
                 model=self.id,
                 contents=formatted_messages,
                 **request_kwargs,
             )
+            print(f"GEMINI_LOG: Raw response from ainvoke: {raw_response}")
+            return raw_response
         except (ClientError, ServerError) as e:
             log_error(f"Error from Gemini API: {e}")
             raise ModelProviderError(
@@ -743,7 +760,7 @@ class Gemini(Model):
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
-
+        print(f"GEMINI_LOG: Parsed ModelResponse from parse_provider_response: {model_response}")
         return model_response
 
     def parse_provider_response_delta(self, response_delta: GenerateContentResponse) -> ModelResponse:
@@ -813,7 +830,7 @@ class Gemini(Model):
                     "total_tokens": usage.total_token_count or 0,
                     "cached_tokens": usage.cached_content_token_count or 0,
                 }
-
+        print(f"GEMINI_LOG: Parsed ModelResponse from parse_provider_response_delta: {model_response}")
         return model_response
 
     def __deepcopy__(self, memo):
