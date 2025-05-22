@@ -19,6 +19,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.tools.yfinance import YFinanceTools
 from agno.utils import pprint
+from rich.console import Console
+from rich.prompt import Prompt
+
+console = Console()
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -28,12 +32,22 @@ agent = Agent(
 
 agent.run("What is the current stock price of Apple?")
 if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
-        print("Tool name: ", tool.tool_name)
-        print("Tool args: ", tool.tool_args)
-        user_input = input("Do you want to proceed? (y/n) ")
-        # We update the tools in place
-        tool.confirmed = user_input == "y"
+    for tool in agent.run_response.tools_requiring_confirmation:
+        # Ask for confirmation
+        console.print(
+            f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+        )
+        message = (
+            Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+            .strip()
+            .lower()
+        )
+
+        if message == "n":
+            break
+        else:
+            # We update the tools in place
+            tool.confirmed = True
 
     run_response = agent.continue_run()
     pprint.pprint_run_response(run_response)
