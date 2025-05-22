@@ -45,6 +45,7 @@ class FirecrawlReader(Reader):
         log_debug(f"Scraping: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)
+        # Always pass all params through the params argument
         scraped_data = app.scrape_url(url, params=self.params)
         # print(scraped_data)
         content = scraped_data.get("markdown", "")
