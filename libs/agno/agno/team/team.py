@@ -746,8 +746,10 @@ class Team:
             # Run the team
             try:
                 self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
+
                 # Configure the team leader model
                 self.run_response.model = self.model.id if self.model is not None else None
+                self.run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # Prepare run messages
                 if self.mode == "route":
@@ -1196,8 +1198,10 @@ class Team:
             # Run the team
             try:
                 self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
+
                 # Configure the team leader model
                 self.run_response.model = self.model.id if self.model is not None else None
+                self.run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # Prepare run messages
                 if self.mode == "route":

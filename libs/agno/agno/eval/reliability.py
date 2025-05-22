@@ -5,9 +5,11 @@ from uuid import uuid4
 
 if TYPE_CHECKING:
     from rich.console import Console
+from dataclasses import asdict
 
-from agno.eval.utils import store_result_in_file
-from agno.run.response import RunResponse
+from agno.agent import RunResponse
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import log_eval_run, store_result_in_file
 from agno.utils.log import logger
 
 
@@ -56,6 +58,8 @@ class ReliabilityEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
+    # Log the results to the Agno platform. On by default.
+    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         from rich.console import Console
@@ -107,6 +111,22 @@ class ReliabilityEval:
         # Print results if requested
         if self.print_results or print_results:
             self.result.print_eval(console)
+
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.RELIABILITY,
+                agent_id=self.agent_response.agent_id if self.agent_response is not None else None,
+                model_id=self.agent_response.model
+                if self.agent_response is not None and self.agent_response.model is not None
+                else None,
+                model_provider=self.agent_response.model_provider
+                if self.agent_response is not None and self.agent_response.model_provider is not None
+                else None,
+                name=self.name if self.name is not None else None,
+            )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result

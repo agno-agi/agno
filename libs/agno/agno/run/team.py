@@ -22,6 +22,7 @@ class TeamRunResponse:
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
+    model_provider: Optional[str] = None
 
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
