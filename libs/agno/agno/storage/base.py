@@ -35,7 +35,7 @@ class Storage(ABC):
         raise NotImplementedError
 
     def get_last_n_sessions(
-        self, number_of_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
     ) -> List[Session]:
         """Get the last N sessions, sorted by created_at timestamp in descending order.
 
@@ -54,7 +54,7 @@ class Storage(ABC):
         sorted_sessions = sorted(sessions, key=lambda x: x.created_at if x.created_at else 0, reverse=True)
 
         # Return only the first N sessions
-        return sorted_sessions[:number_of_sessions]
+        return sorted_sessions[:num_history_sessions]
 
     @abstractmethod
     def upsert(self, session: Session) -> Optional[Session]:

@@ -83,6 +83,7 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
+    max_messages_per_session_for_context: Optional[int] = 5
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -293,6 +294,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         search_previous_sessions_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
+        max_messages_per_session_for_context: Optional[int] = 5,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -377,6 +379,7 @@ class Agent:
         self.session_state = session_state
         self.search_previous_sessions_history = search_previous_sessions_history
         self.num_history_sessions = num_history_sessions
+        self.max_messages_per_session_for_context = max_messages_per_session_for_context
 
         self.context = context
         self.add_context = add_context
@@ -7001,7 +7004,9 @@ class Agent:
             Callable: A function that retrieves messages from previous sessions
         """
 
-        def get_previous_session_messages(max_messages_per_session: int = 10) -> str:
+        messages_per_session_limit = self.max_messages_per_session_for_context or 5
+
+        def get_previous_session_messages() -> str:
             """Use this function to retrieve messages from previous chat sessions.
             USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
 
@@ -7012,6 +7017,8 @@ class Agent:
                 str: JSON formatted list of message pairs from previous sessions
             """
             import json
+
+            print("hey", messages_per_session_limit)
 
             if self.storage is None:
                 return "Storage not available"
@@ -7027,12 +7034,12 @@ class Agent:
                 if isinstance(session, AgentSession) and session.memory:
                     message_count = 0
                     for run in session.memory.get("runs", []):
-                        if message_count >= max_messages_per_session:
+                        if message_count >= messages_per_session_limit:
                             break
 
                         messages = run.get("messages", [])
                         for i in range(0, len(messages) - 1, 2):
-                            if message_count >= max_messages_per_session:
+                            if message_count >= messages_per_session_limit:
                                 break
 
                             if i + 1 < len(messages):
