@@ -1,6 +1,4 @@
 from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 
@@ -13,10 +11,20 @@ agent = Agent(
     add_history_to_messages=True,
     num_history_runs=3,
     search_previous_sessions_history=True,
-    number_of_sessions=3,
+    num_history_sessions=3,
     show_tool_calls=True,
 )
 
-agent.print_response("What was my last question?")
-agent.print_response("What is the capital of South America?")
-agent.print_response("What was my last conversation?")
+session_1_id = "session_1_id"
+session_2_id = "session_2_id"
+session_3_id = "session_3_id"
+session_4_id = "session_4_id"
+session_5_id = "session_5_id"
+
+agent.print_response("What is the capital of South Africa?", session_id=session_1_id)
+agent.print_response("What is the capital of China?", session_id=session_2_id)
+agent.print_response("What is the capital of France?", session_id=session_3_id)
+agent.print_response("What is the capital of Japan?", session_id=session_4_id)
+agent.print_response("What did I discuss in my previous conversations?", session_id=session_5_id)  # It should only include the last 3 sessions
+
+

@@ -82,7 +82,7 @@ class Agent:
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
-    number_of_sessions: Optional[int] = None
+    num_history_sessions: Optional[int] = None
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -292,7 +292,7 @@ class Agent:
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         search_previous_sessions_history: Optional[bool] = False,
-        number_of_sessions: Optional[int] = None,
+        num_history_sessions: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -376,7 +376,7 @@ class Agent:
         self.session_name = session_name
         self.session_state = session_state
         self.search_previous_sessions_history = search_previous_sessions_history
-        self.number_of_sessions = number_of_sessions
+        self.num_history_sessions = num_history_sessions
 
         self.context = context
         self.add_context = add_context
@@ -2080,7 +2080,7 @@ class Agent:
         if self.search_previous_sessions_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(
-                    number_of_sessions=self.number_of_sessions,
+                    num_history_sessions=self.num_history_sessions,
                 )
             )
 
@@ -5805,12 +5805,12 @@ class Agent:
 
         return effective_filters
 
-    def get_previous_sessions_messages_function(self, number_of_sessions: Optional[int] = 3) -> Callable:
+    def get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 3) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
             user_id: The user ID to get sessions for
-            number_of_sessions: The last n sessions to be taken from db
+            num_history_sessions: The last n sessions to be taken from db
 
         Returns:
             Callable: A function that retrieves messages from previous sessions
@@ -5832,7 +5832,7 @@ class Agent:
                 return "Storage not available"
 
             selected_sessions = self.storage.get_last_n_sessions(
-                number_of_sessions=number_of_sessions, user_id=self.user_id
+                num_history_sessions=num_history_sessions, user_id=self.user_id
             )
 
             all_messages = []
