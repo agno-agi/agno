@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from anthropic.types import (
@@ -232,7 +232,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                 content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
 
             if isinstance(message.content, str) and message.content:
-                content.append(TextBlock(text=message.content, type="text"))
+                if message.content != " ":
+                    content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
                 for tool_call in message.tool_calls:

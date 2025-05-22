@@ -152,7 +152,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
             content = []
 
             if isinstance(message.content, str) and message.content:
-                content.append(TextBlock(text=message.content, type="text"))
+                if message.content != " ":
+                    content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
                 for tool_call in message.tool_calls:
