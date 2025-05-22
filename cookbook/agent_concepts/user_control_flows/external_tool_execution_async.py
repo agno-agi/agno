@@ -16,7 +16,6 @@ from agno.tools import tool
 from agno.utils import pprint
 
 
-
 # We have to create a tool with the correct name, arguments and docstring for the agent to know what to call.
 @tool(external_execution=True)
 def execute_shell_command(command: str) -> str:

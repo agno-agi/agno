@@ -618,7 +618,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -684,7 +687,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1012,7 +1018,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1089,7 +1098,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -1596,7 +1608,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1673,7 +1688,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1947,7 +1965,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -2027,7 +2048,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -2146,15 +2170,17 @@ class Agent:
                 if msg.tool_call_id == tool.tool_call_id:
                     break
 
-            run_messages.messages.append(Message(
-                role=self.model.tool_message_role,
-                content=tool.result,
-                tool_call_id=tool.tool_call_id,
-                tool_name=tool.tool_name,
-                tool_args=tool.tool_args,
-                tool_call_error=tool.tool_call_error,
-                stop_after_tool_call=tool.stop_after_tool_call,
-            ))
+            run_messages.messages.append(
+                Message(
+                    role=self.model.tool_message_role,
+                    content=tool.result,
+                    tool_call_id=tool.tool_call_id,
+                    tool_name=tool.tool_name,
+                    tool_args=tool.tool_args,
+                    tool_call_error=tool.tool_call_error,
+                    stop_after_tool_call=tool.stop_after_tool_call,
+                )
+            )
             tool.external_execution_required = False
         else:
             raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")

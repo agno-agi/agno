@@ -33,7 +33,6 @@ agent = Agent(
 agent.run("What is the current stock price of Apple?")
 if agent.is_paused:  # Or agent.run_response.is_paused
     for tool in agent.run_response.tools_requiring_confirmation:
-        
         # Ask for confirmation
         console.print(
             f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."

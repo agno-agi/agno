@@ -1285,7 +1285,7 @@ class Model(ABC):
                 )
                 # We don't execute the function call here, it is executed outside of the agent's control
                 continue
-            
+
             yield ModelResponse(
                 content=fc.get_call_str(),
                 tool_executions=[
@@ -1299,7 +1299,9 @@ class Model(ABC):
             )
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
-        function_calls_to_run = [fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution)]
+        function_calls_to_run = [
+            fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution)
+        ]
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )

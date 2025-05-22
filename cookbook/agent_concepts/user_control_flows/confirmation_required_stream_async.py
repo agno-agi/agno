@@ -26,6 +26,7 @@ from rich.prompt import Prompt
 
 console = Console()
 
+
 @tool(requires_confirmation=True)
 def get_top_hackernews_stories(num_stories: int) -> str:
     """Fetch top stories from Hacker News.
@@ -71,7 +72,9 @@ async def main():
                     f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
                 )
                 message = (
-                    Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                    Prompt.ask(
+                        "Do you want to continue?", choices=["y", "n"], default="y"
+                    )
                     .strip()
                     .lower()
                 )

@@ -63,7 +63,6 @@ agent = Agent(
 for run_response in agent.run("Fetch the top 2 hackernews stories", stream=True):
     if run_response.is_paused:
         for tool in run_response.tools_requiring_confirmation:
-        
             # Ask for confirmation
             console.print(
                 f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."

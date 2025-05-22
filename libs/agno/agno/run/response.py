@@ -114,11 +114,11 @@ class RunResponse:
         if self.event == RunEvent.run_paused:
             return True
         return False
-    
+
     @property
     def tools_requiring_confirmation(self):
         return [t for t in self.tools if t.requires_confirmation]
-    
+
     @property
     def tools_awaiting_external_execution(self):
         return [t for t in self.tools if t.external_execution_required]

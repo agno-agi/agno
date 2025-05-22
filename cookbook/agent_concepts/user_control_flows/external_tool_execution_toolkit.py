@@ -16,10 +16,14 @@ from agno.tools.toolkit import Toolkit
 from agno.utils import pprint
 
 
-
 class ShellTools(Toolkit):
     def __init__(self, *args, **kwargs):
-        super().__init__(tools=[self.list_dir], external_execution_required_tools=["list_dir"], *args, **kwargs)
+        super().__init__(
+            tools=[self.list_dir],
+            external_execution_required_tools=["list_dir"],
+            *args,
+            **kwargs,
+        )
 
     def list_dir(self, directory: str):
         """

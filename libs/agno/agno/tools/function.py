@@ -92,7 +92,10 @@ class Function(BaseModel):
     _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"})
+        return self.model_dump(
+            exclude_none=True,
+            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+        )
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":

@@ -48,11 +48,17 @@ def test_tool_call_requires_external_execution_stream():
     )
 
     found_external_execution = False
-    for response in agent.run("Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True):
+    for response in agent.run(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True
+    ):
         if response.is_paused:
             assert response.tools[0].external_execution_required
             assert response.tools[0].tool_name == "send_email"
-            assert response.tools[0].tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
+            assert response.tools[0].tool_args == {
+                "to": "john@doe.com",
+                "subject": "Test",
+                "body": "Hello, how are you?",
+            }
 
             # Mark the tool as confirmed
             response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
@@ -132,11 +138,17 @@ async def test_tool_call_requires_external_execution_stream_async():
     )
 
     found_external_execution = False
-    async for response in await agent.arun("Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True):
+    async for response in await agent.arun(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True
+    ):
         if response.is_paused:
             assert response.tools[0].external_execution_required
             assert response.tools[0].tool_name == "send_email"
-            assert response.tools[0].tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
+            assert response.tools[0].tool_args == {
+                "to": "john@doe.com",
+                "subject": "Test",
+                "body": "Hello, how are you?",
+            }
 
             # Mark the tool as confirmed
             response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
