@@ -1229,7 +1229,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
@@ -2024,6 +2024,34 @@ class Agent:
             log_debug("Creating session summary.")
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
 
+    def _raise_if_async_tools(self) -> None:
+        """Raise an exception if any tools contain async functions"""
+        if self.tools is None:
+            return
+
+        from inspect import iscoroutinefunction
+
+        for tool in self.tools:
+            if isinstance(tool, Toolkit):
+                for func in tool.functions:
+                    if iscoroutinefunction(tool.functions[func].entrypoint):
+                        raise Exception(
+                            f"Async tool {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                            "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                        )
+            elif isinstance(tool, Function):
+                if iscoroutinefunction(tool.entrypoint):
+                    raise Exception(
+                        f"Async function {tool.name} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+            elif callable(tool):
+                if iscoroutinefunction(tool):
+                    raise Exception(
+                        f"Async function {tool.__name__} can't be used with synchronous agent.run() or agent.print_response(). "
+                        "Use agent.arun() or agent.aprint_response() instead to use this tool."
+                    )
+
     def get_tools(
         self,
         session_id: str,
@@ -2035,6 +2063,9 @@ class Agent:
 
         # Add provided tools
         if self.tools is not None:
+            # If not running in async mode, raise if any tool is async
+            if not async_mode:
+                self._raise_if_async_tools()
             agent_tools.extend(self.tools)
 
         # Add tools for accessing memory
@@ -2053,7 +2084,7 @@ class Agent:
             # Check if retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and iscoroutinefunction(self.retriever):
+            if not async_mode and self.retriever and iscoroutinefunction(self.retriever):
                 log_warning(
                     "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
@@ -3470,7 +3501,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:
@@ -3533,7 +3567,10 @@ class Agent:
 
         # Use knowledge base search
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "retriever", None) is None
+            ):
                 return None
 
             if num_documents is None:

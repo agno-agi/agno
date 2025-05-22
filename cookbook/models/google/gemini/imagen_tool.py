@@ -1,7 +1,4 @@
-# hello
 """🔧 Example: Using the GeminiTools Toolkit for Image Generation
-
-An Agent using the Gemini image generation tool.
 
 Make sure you have set the GOOGLE_API_KEY environment variable.
 Example prompts to try:
@@ -12,10 +9,6 @@ Example prompts to try:
 
 Run `pip install google-genai agno` to install the necessary dependencies.
 """
-
-import base64
-import os
-from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
