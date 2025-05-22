@@ -24,20 +24,17 @@ class FirecrawlReader(Reader):
         api_key: Optional[str] = None,
         params: Optional[Dict] = None,
         mode: Literal["scrape", "crawl"] = "scrape",
-        *,
         chunk: bool = True,
         chunk_size: int = 5000,
-        chunking_strategy: Optional["ChunkingStrategy"] = None,
+        chunking_strategy: Optional[ChunkingStrategy] = None,
     ) -> None:
         # Initialise base Reader (handles chunk_size / strategy)
-        super().__init__(chunk_size=chunk_size, chunking_strategy=chunking_strategy)
+        super().__init__(chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy)
 
         # Firecrawl-specific attributes
         self.api_key = api_key
         self.params = params
         self.mode = mode
-
-        self.chunk = chunk
 
     def scrape(self, url: str) -> List[Document]:
         """
