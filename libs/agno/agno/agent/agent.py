@@ -32,7 +32,7 @@ from agno.memory.agent import AgentMemory, AgentRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
@@ -618,7 +618,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -684,7 +687,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1013,7 +1019,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1090,7 +1099,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -1598,7 +1610,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1675,7 +1690,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1949,7 +1967,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -2029,7 +2050,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+        if any(
+            tool_call.requires_confirmation or tool_call.external_execution_required
+            for tool_call in run_response.tools or []
+        ):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -2136,14 +2160,41 @@ class Agent:
             else:
                 log_warning("Something went wrong. Run response content is not a string")
 
+    def _reset_tool_confirmation_required(self, tool: ToolExecution):
+        if self._functions_for_model:
+            for func_name, func in self._functions_for_model.items():
+                if func_name == tool.tool_name:
+                    func.requires_confirmation = False
+
+    def _handle_external_execution_update(self, run_messages: RunMessages, tool: ToolExecution):
+        self.model = cast(Model, self.model)
+        if tool.result is not None:
+            for msg in run_messages.messages:
+                # Skip if the message is already in the run_messages
+                if msg.tool_call_id == tool.tool_call_id:
+                    break
+
+            run_messages.messages.append(
+                Message(
+                    role=self.model.tool_message_role,
+                    content=tool.result,
+                    tool_call_id=tool.tool_call_id,
+                    tool_name=tool.tool_name,
+                    tool_args=tool.tool_args,
+                    tool_call_error=tool.tool_call_error,
+                    stop_after_tool_call=tool.stop_after_tool_call,
+                )
+            )
+            tool.external_execution_required = False
+        else:
+            raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
+
     def _handle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
-                for func_name, func in self._functions_for_model.items():
-                    if func_name == _t.tool_name:
-                        func.requires_confirmation = False
+                self._reset_tool_confirmation_required(tool=_t)
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     # Execute the tool
@@ -2168,6 +2219,10 @@ class Agent:
                     _t.requires_confirmation = False
                 else:
                     raise ValueError(f"Tool {_t.tool_name} requires confirmation, cannot continue run")
+
+            # Case 2: Handle external execution required tools
+            if _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
     def _handle_tool_call_updates_stream(
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
@@ -2176,9 +2231,7 @@ class Agent:
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
-                for func_name, func in self._functions_for_model.items():
-                    if func_name == _t.tool_name:
-                        func.requires_confirmation = False
+                self._reset_tool_confirmation_required(tool=_t)
 
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
@@ -2216,14 +2269,16 @@ class Agent:
                 else:
                     raise ValueError(f"Tool {_t.tool_name} requires confirmation, cannot continue run")
 
+            # Case 2: Handle external execution required tools
+            if _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+
     async def _ahandle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
-                for func_name, func in self._functions_for_model.items():
-                    if func_name == _t.tool_name:
-                        func.requires_confirmation = False
+                self._reset_tool_confirmation_required(tool=_t)
 
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
@@ -2251,6 +2306,10 @@ class Agent:
                 else:
                     raise ValueError(f"Tool {_t.tool_name} requires confirmation, cannot continue run")
 
+            # Case 2: Handle external execution required tools
+            if _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+
     async def _ahandle_tool_call_updates_stream(
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
     ) -> AsyncIterator[RunResponse]:
@@ -2258,9 +2317,7 @@ class Agent:
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
-                for func_name, func in self._functions_for_model.items():
-                    if func_name == _t.tool_name:
-                        func.requires_confirmation = False
+                self._reset_tool_confirmation_required(tool=_t)
 
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
@@ -2298,6 +2355,10 @@ class Agent:
                     _t.requires_confirmation = False
                 else:
                     raise ValueError(f"Tool {_t.tool_name} requires confirmation, cannot continue run")
+
+            # Case 2: Handle external execution required tools
+            if _t.external_execution_required is not None and _t.external_execution_required is True:
+                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
         # Format tool calls if they exist
@@ -2749,6 +2810,7 @@ class Agent:
         # Handle tool interruption events
         elif model_response_chunk.event in [
             ModelResponseEvent.tool_call_confirmation_required.value,
+            ModelResponseEvent.tool_call_external_execution_required.value,
         ]:
             # Add tool calls to the run_response
             tool_executions_list = model_response_chunk.tool_executions
@@ -6015,22 +6077,7 @@ class Agent:
                 ):
                     if isinstance(resp, RunResponse):
                         if resp.is_paused:
-                            tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                            if self.run_response is not None and self.run_response.tools is not None:
-                                for tool_call in self.run_response.tools:
-                                    if tool_call.requires_confirmation:
-                                        args_str = ""
-                                        for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                                            args_str += f"{arg}={value}, "
-                                        args_str = args_str.rstrip(", ")
-                                        tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-
-                            # Create panel for response
-                            response_panel = create_panel(
-                                content=tool_calls_content,
-                                title="Run Paused",
-                                border_style="blue",
-                            )
+                            response_panel = self._handle_paused_run(resp)
                             panels.append(response_panel)
                             live_log.update(Group(*panels))
                             break
@@ -6219,21 +6266,7 @@ class Agent:
                 reasoning_steps = []
 
                 if isinstance(run_response, RunResponse) and run_response.is_paused:
-                    tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                    for tool_call in run_response.tools or []:
-                        if tool_call.requires_confirmation:
-                            args_str = ""
-                            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                                args_str += f"{arg}={value}, "
-                            args_str = args_str.rstrip(", ")
-                            tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-
-                    # Create panel for response
-                    response_panel = create_panel(
-                        content=tool_calls_content,
-                        title="Run Paused",
-                        border_style="blue",
-                    )
+                    response_panel = self._handle_paused_run(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
@@ -6458,22 +6491,7 @@ class Agent:
                 async for resp in result:
                     if isinstance(resp, RunResponse):
                         if resp.is_paused:
-                            tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                            if self.run_response is not None and self.run_response.tools is not None:
-                                for tool_call in self.run_response.tools:
-                                    if tool_call.requires_confirmation:
-                                        args_str = ""
-                                        for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                                            args_str += f"{arg}={value}, "
-                                        args_str = args_str.rstrip(", ")
-                                        tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-
-                            # Create panel for response
-                            response_panel = create_panel(
-                                content=tool_calls_content,
-                                title="Run Paused",
-                                border_style="blue",
-                            )
+                            response_panel = self._handle_paused_run(resp)
                             panels.append(response_panel)
                             live_log.update(Group(*panels))
                             break
@@ -6661,21 +6679,7 @@ class Agent:
                 response_timer.stop()
 
                 if isinstance(run_response, RunResponse) and run_response.is_paused:
-                    tool_calls_content = Text("Run is paused. The following tool calls require confirmation:\n")
-                    for tool_call in run_response.tools or []:
-                        if tool_call.requires_confirmation:
-                            args_str = ""
-                            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                                args_str += f"{arg}={value}, "
-                            args_str = args_str.rstrip(", ")
-                            tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-
-                    # Create panel for response
-                    response_panel = create_panel(
-                        content=tool_calls_content,
-                        title="Run Paused",
-                        border_style="blue",
-                    )
+                    response_panel = self._handle_paused_run(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
@@ -6811,6 +6815,38 @@ class Agent:
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
+
+    def _handle_paused_run(self, run_response: RunResponse) -> Any:
+        from rich.text import Text
+
+        tool_calls_content = Text("Run is paused. ")
+        if run_response.tools is not None:
+            if any(tc.requires_confirmation for tc in run_response.tools):
+                tool_calls_content.append("The following tool calls require confirmation:\n")
+            for tool_call in run_response.tools:
+                if tool_call.requires_confirmation:
+                    args_str = ""
+                    for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                        args_str += f"{arg}={value}, "
+                    args_str = args_str.rstrip(", ")
+                    tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+            if any(tc.external_execution_required for tc in run_response.tools):
+                tool_calls_content.append("The following tool calls require external execution:\n")
+            for tool_call in run_response.tools:
+                if tool_call.external_execution_required:
+                    args_str = ""
+                    for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                        args_str += f"{arg}={value}, "
+                    args_str = args_str.rstrip(", ")
+                    tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+
+        # Create panel for response
+        response_panel = create_panel(
+            content=tool_calls_content,
+            title="Run Paused",
+            border_style="blue",
+        )
+        return response_panel
 
     def update_reasoning_content_from_tool_call(
         self, tool_name: str, tool_args: Dict[str, Any]

@@ -11,6 +11,7 @@ class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
     tool_call_confirmation_required = "ToolCallConfirmationRequired"
+    tool_call_external_execution_required = "ToolCallExternalExecutionRequired"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
@@ -34,6 +35,8 @@ class ToolExecution:
 
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
+
+    external_execution_required: Optional[bool] = None
 
 
 @dataclass

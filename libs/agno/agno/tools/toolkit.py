@@ -15,12 +15,13 @@ class Toolkit:
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         requires_confirmation_tools: Optional[list[str]] = None,
+        external_execution_required_tools: Optional[list[str]] = None,
+        stop_after_tool_call_tools: Optional[List[str]] = None,
+        show_result_tools: Optional[List[str]] = None,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
         auto_register: bool = True,
-        stop_after_tool_call_tools: Optional[List[str]] = None,
-        show_result_tools: Optional[List[str]] = None,
     ):
         """Initialize a new Toolkit.
 
@@ -31,6 +32,8 @@ class Toolkit:
             add_instructions: Whether to add instructions to the toolkit
             include_tools: List of tool names to include in the toolkit
             exclude_tools: List of tool names to exclude from the toolkit
+            requires_confirmation_tools: List of tool names that require user confirmation
+            external_execution_required_tools: List of tool names that will be executed outside of the agent loop
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
@@ -43,7 +46,10 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
+
         self.requires_confirmation_tools: list[str] = requires_confirmation_tools or []
+        self.external_execution_required_tools: list[str] = external_execution_required_tools or []
+
         self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
         self.show_result_tools: list[str] = show_result_tools or []
 
@@ -87,6 +93,13 @@ class Toolkit:
                     f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}"
                 )
 
+        if self.external_execution_required_tools:
+            missing_external_execution_required = set(self.external_execution_required_tools) - set(available_tools)
+            if missing_external_execution_required:
+                log_warning(
+                    f"External execution required tool(s) not present in the toolkit: {', '.join(missing_external_execution_required)}"
+                )
+
     def _register_tools(self) -> None:
         """Register all tools."""
         for tool in self.tools:
@@ -118,6 +131,7 @@ class Toolkit:
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,
                 requires_confirmation=tool_name in self.requires_confirmation_tools,
+                external_execution=tool_name in self.external_execution_required_tools,
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools,
             )
