@@ -5854,7 +5854,13 @@ class Agent:
                                 try:
                                     user_msg = messages[i]
                                     assistant_msg = messages[i + 1]
-                                    msg_pair_id = f"{user_msg.get('content', '')}:{assistant_msg.get('content', '')}"
+                                    user_content = user_msg.get("content")
+                                    assistant_content = assistant_msg.get("content")
+
+                                    if user_content is None or assistant_content is None:
+                                        continue  # Skip this pair if either message has no content
+
+                                    msg_pair_id = f"{user_content}:{assistant_content}"
                                     if msg_pair_id not in seen_message_pairs:
                                         seen_message_pairs.add(msg_pair_id)
                                         all_messages.append(Message.model_validate(user_msg))
