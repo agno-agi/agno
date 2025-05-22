@@ -1,7 +1,4 @@
-# hello
 """🔧 Example: Using the GeminiTools Toolkit for Image Generation
-
-An Agent using the Gemini image generation tool.
 
 Make sure you have set the GOOGLE_API_KEY environment variable.
 Example prompts to try:

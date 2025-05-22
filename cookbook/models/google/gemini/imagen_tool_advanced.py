@@ -1,11 +1,10 @@
-# hello
 """🔧 Example: Using the GeminiTools Toolkit for Image Generation
 
 An Agent using the Gemini image generation tool.
 
 Make sure to set the Vertex AI credentials. Here's the authentication guide: https://cloud.google.com/sdk/docs/initializing
 
-Run `pip install google-genai agno` to install the necessary dependencies.
+Run `pip install google-genai agno` to install the required packages.
 """
 
 from agno.agent import Agent
