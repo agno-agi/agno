@@ -68,7 +68,6 @@ class Mem0Tools(Toolkit):
             return error_msg
         return resolved_user_id
 
-
     def add_memory(
         self,
         agent: Agent,
@@ -88,7 +87,6 @@ class Mem0Tools(Toolkit):
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
             return resolved_user_id
         try:
-
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
                 content = json.dumps(content)

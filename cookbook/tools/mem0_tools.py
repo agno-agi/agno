@@ -3,6 +3,7 @@ This example demonstrates how to use the Mem0Tools class to interact with memori
 """
 
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mem0 import Mem0Tools
@@ -41,4 +42,3 @@ agent.print_response("Summarize all the details of the conversation")
 # agent.print_response("Delete all my memories")
 # agent.print_response("I moved to LA")
 # agent.print_response("What is the name of the concert I am going to?")
-
