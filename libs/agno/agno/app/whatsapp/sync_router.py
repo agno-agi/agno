@@ -157,9 +157,9 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     send_image_message(media_id=media_id, recipient=phone_number, text=response.content)
                 else:
                     log_warning(f"Could not process image content for user {phone_number}. Type: {type(image_content)}")
-                    _send_whatsapp_message(phone_number, response.content)
+                    _send_whatsapp_message(phone_number, response.content or "")
             else:
-                _send_whatsapp_message(phone_number, response.content)
+                _send_whatsapp_message(phone_number, response.content or "")
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")

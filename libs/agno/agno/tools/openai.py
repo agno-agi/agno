@@ -104,14 +104,14 @@ class OpenAITools(Toolkit):
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             else:
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             data = None
             if hasattr(response, "data") and response.data:

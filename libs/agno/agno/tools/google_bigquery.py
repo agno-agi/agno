@@ -8,7 +8,7 @@ from agno.utils.log import log_debug, logger
 try:
     from google.cloud import bigquery
 except ImportError:
-    raise ImportError("`bigquery` not installed. Please install it with google-cloud-bigquery")
+    raise ImportError("`bigquery` not installed. Please install using `pip install google-cloud-bigquery`")
 
 
 class GoogleBigQueryTools(Toolkit):

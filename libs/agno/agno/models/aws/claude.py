@@ -14,14 +14,12 @@ try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
     from anthropic.types import Message as AnthropicMessage
 except ImportError:
-    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
-    raise
+    raise ImportError("`anthropic[bedrock]` not installed. Please install using `pip install anthropic[bedrock]`")
 
 try:
     from boto3.session import Session
 except ImportError:
-    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
-    raise
+    raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
 @dataclass
