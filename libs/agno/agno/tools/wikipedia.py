@@ -15,7 +15,7 @@ class WikipediaTools(Toolkit):
         if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
             tools.append(self.search_wikipedia_and_update_knowledge_base)
         else:
-            tools.append(self.search_wikipedia)
+            tools.append(self.search_wikipedia)  # type: ignore
 
         super().__init__(name="wikipedia_tools", tools=tools, **kwargs)
 
