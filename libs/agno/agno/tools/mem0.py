@@ -90,12 +90,13 @@ class Mem0Tools(Toolkit):
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
                 content = json.dumps(content)
+            elif not isinstance(content, str):
+                content = str(content)
             messages_list = [{"role": "user", "content": content}]
 
             result = self.client.add(
                 messages_list,
                 user_id=resolved_user_id,
-                output_format="v1.1",  # Added to avoid deprecation warning
             )
             return json.dumps(result)
         except Exception as e:
