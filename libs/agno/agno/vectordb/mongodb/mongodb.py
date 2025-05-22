@@ -372,8 +372,8 @@ class MongoDb(VectorDb):
         else:
             try:
                 collection = self._get_collection()
-                indexes = list(collection.list_search_indexes()) # type: ignore
-                exists = any(index["name"] == index_name for index in indexes) # type: ignore
+                indexes = list(collection.list_search_indexes())  # type: ignore
+                exists = any(index["name"] == index_name for index in indexes)  # type: ignore
                 return exists
             except Exception as e:
                 logger.error(f"Error checking search index existence: {e}")
@@ -602,7 +602,7 @@ class MongoDb(VectorDb):
                     match_filters.update(mongo_filters)
 
                 if match_filters:
-                    pipeline.append({"$match": match_filters}) # type: ignore
+                    pipeline.append({"$match": match_filters})  # type: ignore
 
                 pipeline.append({"$project": {"embedding": 0}})
 
