@@ -110,6 +110,19 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         raise ValueError(
             f"Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}"
         )
+    
+    # Check that only one of requires_user_input, requires_confirmation, and external_execution is set at the same time
+    exclusive_flags = [
+        kwargs.get("requires_user_input", False),
+        kwargs.get("requires_confirmation", False),
+        kwargs.get("external_execution", False)
+    ]
+    true_flags_count = sum(1 for flag in exclusive_flags if flag)
+    
+    if true_flags_count > 1:
+        raise ValueError(
+            "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
+        )
 
     def decorator(func: F) -> Function:
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction

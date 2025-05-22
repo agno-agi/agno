@@ -2256,6 +2256,8 @@ class Agent:
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
+                    
+                    # Consume the generator without yielding
                     deque(self._run_tool(run_messages, _t), maxlen=0)
                     _t.requires_confirmation = False
                 else:
@@ -2269,6 +2271,7 @@ class Agent:
             if _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
                 _t.requires_user_input = False
+                # Consume the generator without yielding
                 deque(self._run_tool(run_messages, _t), maxlen=0)
 
     def _handle_tool_call_updates_stream(
