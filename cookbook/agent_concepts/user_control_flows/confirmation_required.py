@@ -2,8 +2,7 @@
 
 This example shows how to implement human-in-the-loop functionality in your Agno tools.
 It shows how to:
-- Add pre-hooks to tools for user confirmation
-- Handle user input during tool execution
+- Handle user confirmation during tool execution
 - Gracefully cancel operations based on user choice
 
 Some practical applications:
@@ -16,10 +15,10 @@ Run `pip install openai httpx rich agno` to install dependencies.
 """
 
 import json
-from textwrap import dedent
 
 import httpx
 from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
 from rich.console import Console
@@ -55,33 +54,15 @@ def get_top_hackernews_stories(num_stories: int) -> str:
     return json.dumps(all_stories)
 
 
-# Initialize the agent with a tech-savvy personality and clear instructions
 agent = Agent(
-    description="A Tech News Assistant that fetches and summarizes Hacker News stories",
-    instructions=dedent("""\
-        You are an enthusiastic Tech Reporter
-
-        Your responsibilities:
-        - Present Hacker News stories in an engaging and informative way
-        - Provide clear summaries of the information you gather
-
-        Style guide:
-        - Use emoji to make your responses more engaging
-        - Keep your summaries concise but informative
-        - End with a friendly tech-themed sign-off\
-    """),
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
-    show_tool_calls=True,
     markdown=True,
 )
 
-# Example questions to try:
-# - "What are the top 3 HN stories right now?"
-# - "Show me the most recent story from Hacker News"
-# - "Get the top 5 stories (you can try accepting and declining the confirmation)"
-response = agent.run("What are the top 2 hackernews stories?")
-if response.is_paused:
-    for tool in response.tools:
+agent.run("Fetch the top 2 hackernews stories")
+if agent.is_paused:  # Or agent.run_response.is_paused
+    for tool in agent.run_response.tools_requiring_confirmation:
         # Ask for confirmation
         console.print(
             f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
@@ -98,5 +79,10 @@ if response.is_paused:
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = agent.continue_run(run_response=response)
+    run_response = (
+        agent.continue_run()
+    )  # or agent.continue_run(run_response=agent.run_response)
     pprint.pprint_run_response(run_response)
+
+# Or for simple debug flow
+# agent.print_response("Fetch the top 2 hackernews stories")
