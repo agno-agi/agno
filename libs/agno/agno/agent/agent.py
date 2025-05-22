@@ -618,11 +618,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            return self._handle_agent_run_paused(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -685,11 +684,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            yield from self._handle_agent_run_paused_stream(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            yield from self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
             return
 
         # 3. Update Agent Memory
@@ -1014,11 +1012,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            return self._handle_agent_run_paused(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         await self._aupdate_memory(
@@ -1092,11 +1089,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            for item in self._handle_agent_run_paused_stream(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message):
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            for item in self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            ):
                 yield item
             return
 
@@ -1600,11 +1596,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            return self._handle_agent_run_paused(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -1678,13 +1673,11 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            yield from self._handle_agent_run_paused_stream(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            yield from self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
             return
-
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -1954,11 +1947,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            return self._handle_agent_run_paused(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message)
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         await self._aupdate_memory(
@@ -2035,11 +2027,10 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation for tc in run_response.tools or []):
-            for item in self._handle_agent_run_paused_stream(run_response=run_response,
-                                                 session_id=session_id,
-                                                 user_id=user_id,
-                                                 message=message):
+        if any(tool_call.requires_confirmation for tool_call in run_response.tools or []):
+            for item in self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            ):
                 yield item
             return
         # 3. Update Agent Memory
@@ -2101,7 +2092,13 @@ class Agent:
         run_response.event = RunEvent.run_paused
         return run_response
 
-    def _handle_agent_run_paused_stream(self, run_response: RunResponse, session_id: str, user_id: Optional[str] = None, message: Optional[Union[str, List, Dict, Message]] = None) -> Iterator[RunResponse]:
+    def _handle_agent_run_paused_stream(
+        self,
+        run_response: RunResponse,
+        session_id: str,
+        user_id: Optional[str] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+    ) -> Iterator[RunResponse]:
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
@@ -2195,7 +2192,6 @@ class Agent:
                     ):
                         if call_result.event == ModelResponseEvent.tool_call_started.value:
                             yield self.create_run_response(
-                                content=call_result.content,
                                 event=RunEvent.tool_call_started,
                                 session_id=session_id,
                                 created_at=call_result.created_at,
@@ -2278,7 +2274,6 @@ class Agent:
                     ):
                         if call_result.event == ModelResponseEvent.tool_call_started.value:
                             yield self.create_run_response(
-                                content=call_result.content,
                                 event=RunEvent.tool_call_started,
                                 session_id=session_id,
                                 created_at=call_result.created_at,

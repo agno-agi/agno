@@ -43,9 +43,9 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
-        self.requires_confirmation_tools: Optional[list[str]] = requires_confirmation_tools or []
-        self.stop_after_tool_call_tools: Optional[list[str]] = stop_after_tool_call_tools or []
-        self.show_result_tools: Optional[list[str]] = show_result_tools or []
+        self.requires_confirmation_tools: list[str] = requires_confirmation_tools or []
+        self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
+        self.show_result_tools: list[str] = show_result_tools or []
 
         self._check_tools_filters(
             available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
