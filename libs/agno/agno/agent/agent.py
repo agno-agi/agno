@@ -3127,7 +3127,7 @@ class Agent:
         if self.search_previous_sessions_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(
-                    num_history_sessions=self.num_history_sessions,
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
                 )
             )
 
@@ -7029,7 +7029,9 @@ class Agent:
 
         return effective_filters
 
-    def get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 3) -> Callable:
+    def get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None
+    ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
@@ -7060,7 +7062,7 @@ class Agent:
                 return "Storage not available"
 
             selected_sessions = self.storage.get_last_n_sessions(
-                num_history_sessions=num_history_sessions, user_id=self.user_id
+                num_history_sessions=num_history_sessions, user_id=user_id
             )
 
             all_messages = []
