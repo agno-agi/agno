@@ -27,5 +27,6 @@ agent = Agent(
 
 # Ask the agent about the documents in the knowledge base
 agent.print_response(
-    "What are the documents in the knowledge base about?", markdown=True
+    "What are the documents in the knowledge base about?",
+    markdown=True,
 )
