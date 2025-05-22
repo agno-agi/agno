@@ -37,7 +37,7 @@ AgnoInstrumentor().instrument()
 market_data_agent = Agent(
     name="Market Data Agent",
     role="Fetch and analyze stock market data",
-    agent_id="market-data",  # Added agent_id
+    agent_id="market-data",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[
         YFinanceTools(stock_price=True, company_info=True, analyst_recommendations=True)
@@ -53,7 +53,7 @@ market_data_agent = Agent(
 news_agent = Agent(
     name="News Research Agent",
     role="Research company news",
-    agent_id="news-research",  # Added agent_id
+    agent_id="news-research", 
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     instructions=[
