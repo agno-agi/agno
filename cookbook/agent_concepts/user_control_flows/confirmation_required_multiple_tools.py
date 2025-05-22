@@ -16,6 +16,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
+from rich.console import Console
+from rich.prompt import Prompt
+
+console = Console()
 
 
 def get_top_hackernews_stories(num_stories: int) -> str:
@@ -68,14 +72,24 @@ run_response = agent.run(
 if run_response.is_paused:  # Or agent.run_response.is_paused
     for tool in run_response.tools:
         if tool.requires_confirmation:
-            print(f"Tool name {tool.tool_name} requires confirmation.")
-            print("Tool args: ", tool.tool_args)
-            user_input = input("Do you want to proceed? (y/n) ")
-            # We update the tools in place
-            tool.confirmed = user_input == "y"
+            # Ask for confirmation
+            console.print(
+                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
+            )
+            message = (
+                Prompt.ask("Do you want to continue?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
+
+            if message == "n":
+                break
+            else:
+                # We update the tools in place
+                tool.confirmed = True
         else:
-            print(
-                f"Tool name {tool.tool_name} was completed in {tool.metrics.time:.2f} seconds."
+            console.print(
+                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.time:.2f}[/] seconds."
             )
 
     run_response = agent.continue_run()
