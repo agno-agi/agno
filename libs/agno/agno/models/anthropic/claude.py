@@ -54,6 +54,7 @@ class Claude(Model):
 
     # Client parameters
     api_key: Optional[str] = None
+    default_headers: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
@@ -72,6 +73,8 @@ class Claude(Model):
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
+        if self.default_headers is not None:
+            client_params["default_headers"] = self.default_headers
         return client_params
 
     def get_client(self) -> AnthropicClient:
