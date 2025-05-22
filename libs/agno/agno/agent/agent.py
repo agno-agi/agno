@@ -2161,11 +2161,13 @@ class Agent:
                 log_warning("Something went wrong. Run response content is not a string")
 
     def _reset_tool_confirmation_required(self, tool: ToolExecution):
-        for func_name, func in self._functions_for_model.items():
-            if func_name == tool.tool_name:
-                func.requires_confirmation = False
+        if self._functions_for_model:
+            for func_name, func in self._functions_for_model.items():
+                if func_name == tool.tool_name:
+                    func.requires_confirmation = False
 
     def _handle_external_execution_update(self, run_messages: RunMessages, tool: ToolExecution):
+        self.model = cast(Model, self.model)
         if tool.result is not None:
             for msg in run_messages.messages:
                 # Skip if the message is already in the run_messages
@@ -6828,7 +6830,7 @@ class Agent:
                         args_str += f"{arg}={value}, "
                     args_str = args_str.rstrip(", ")
                     tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-            if any(tc.external_execution_required for tc in self.run_response.tools):
+            if any(tc.external_execution_required for tc in run_response.tools):
                 tool_calls_content.append("The following tool calls require external execution:\n")
             for tool_call in run_response.tools:
                 if tool_call.external_execution_required:
