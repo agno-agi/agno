@@ -54,9 +54,7 @@ async def main():
 
                     # Get user input
                     if field.value is None:
-                        user_value = input(
-                            f"Please enter a value for {field.name}: "
-                        )
+                        user_value = input(f"Please enter a value for {field.name}: ")
                     else:
                         print(f"Value: {field.value}")
                         user_value = field.value

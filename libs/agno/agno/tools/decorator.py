@@ -1,7 +1,7 @@
 from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
-from agno.tools.function import Function
+from agno.tools.function import Function, get_entrypoint_docstring
 from agno.utils.log import logger
 
 # Type variable for better type hints
@@ -25,11 +25,8 @@ def tool(
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
     requires_confirmation: Optional[bool] = None,
-<<<<<<< HEAD
     requires_user_input: Optional[bool] = None,
     user_input_fields: Optional[List[str]] = None,
-=======
->>>>>>> 669d3275ed2565e085c1b77696ae9f86fb11b054
     external_execution: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
@@ -113,15 +110,15 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         raise ValueError(
             f"Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}"
         )
-    
+
     # Check that only one of requires_user_input, requires_confirmation, and external_execution is set at the same time
     exclusive_flags = [
         kwargs.get("requires_user_input", False),
         kwargs.get("requires_confirmation", False),
-        kwargs.get("external_execution", False)
+        kwargs.get("external_execution", False),
     ]
     true_flags_count = sum(1 for flag in exclusive_flags if flag)
-    
+
     if true_flags_count > 1:
         raise ValueError(
             "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
@@ -183,7 +180,9 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
-            "description": kwargs.get("description", None),  # Get docstring if description not provided
+            "description": kwargs.get(
+                "description", get_entrypoint_docstring(wrapper)
+            ),  # Get docstring if description not provided
             "instructions": kwargs.get("instructions"),
             "add_instructions": kwargs.get("add_instructions", True),
             "entrypoint": wrapper,

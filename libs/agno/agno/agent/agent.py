@@ -618,10 +618,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -687,10 +684,7 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1019,10 +1013,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1099,10 +1090,7 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -1610,10 +1598,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1690,10 +1675,7 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -1967,10 +1949,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
@@ -2050,10 +2029,7 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(
-            tool_call.is_paused
-            for tool_call in run_response.tools or []
-        ):
+        if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
                 run_response=run_response, session_id=session_id, user_id=user_id, message=message
             ):
@@ -2258,7 +2234,6 @@ class Agent:
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    
                     # Consume the generator without yielding
                     deque(self._run_tool(run_messages, _t), maxlen=0)
                     _t.requires_confirmation = False

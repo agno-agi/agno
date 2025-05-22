@@ -66,6 +66,7 @@ def test_tool_call_requires_user_input_specific_fields():
     assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
+
 def test_tool_call_requires_user_input_stream():
     @tool(requires_user_input=True)
     def get_the_weather(city: str):
@@ -144,7 +145,7 @@ async def test_tool_call_requires_user_input_stream_async():
         monitoring=False,
     )
 
-    found_confirmation = False
+    found_user_input = False
     async for response in await agent.arun("What is the weather in Tokyo?", stream=True):
         if response.is_paused:
             assert response.tools[0].requires_user_input
