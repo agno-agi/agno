@@ -1504,8 +1504,14 @@ class Agent:
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
-            runs = self.memory.get_runs(session_id=session_id)
-            run_response = next((r for r in runs if r.run_id == run_id), None)
+            if isinstance(self.memory, Memory):
+                runs = self.memory.get_runs(session_id=session_id)
+                run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+            else:
+                runs = self.memory.runs  # type: ignore
+                run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
+            if run_response is None:
+                raise RuntimeError(f"No runs found for run ID {run_id}")
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
@@ -1895,8 +1901,14 @@ class Agent:
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
-            runs = self.memory.get_runs(session_id=session_id)
-            run_response = next((r for r in runs if r.run_id == run_id), None)
+            if isinstance(self.memory, Memory):
+                runs = self.memory.get_runs(session_id=session_id)
+                run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
+            else:
+                runs = self.memory.runs  # type: ignore
+                run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
+            if run_response is None:
+                raise RuntimeError(f"No runs found for run ID {run_id}")
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
