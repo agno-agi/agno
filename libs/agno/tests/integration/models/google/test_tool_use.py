@@ -116,7 +116,7 @@ def test_tool_use_with_native_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
         show_tool_calls=True,
         markdown=True,
