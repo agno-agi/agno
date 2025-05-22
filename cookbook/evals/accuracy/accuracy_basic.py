@@ -14,6 +14,7 @@ evaluation = AccuracyEval(
     input="What is 10*5 then to the power of 2? do it step by step",
     expected_output="2500",
     additional_guidelines="Agent output should include the steps and the final answer.",
+    num_iterations=3,
 )
 
 result: Optional[AccuracyResult] = evaluation.run(print_results=True)
