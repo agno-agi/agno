@@ -79,10 +79,14 @@ if agent.is_paused:  # Or agent.run_response.is_paused
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = (
-        agent.continue_run()
-    )  # or agent.continue_run(run_response=agent.run_response)
-    pprint.pprint_run_response(run_response)
+run_response = agent.continue_run()
+# Or
+# run_response = agent.continue_run(run_id=run_response.run_id)
+# Or
+# run_response = agent.continue_run(run_response=run_response)
+
+pprint.pprint_run_response(run_response)
+
 
 # Or for simple debug flow
 # agent.print_response("Fetch the top 2 hackernews stories")

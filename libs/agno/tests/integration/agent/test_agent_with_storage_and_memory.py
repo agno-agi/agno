@@ -2,14 +2,14 @@ import os
 import tempfile
 import uuid
 
-from agno.memory.agent import AgentMemory
-from agno.models.message import Message
 import pytest
 
 from agno.agent.agent import Agent
+from agno.memory.agent import AgentMemory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 
@@ -64,7 +64,6 @@ def memory(memory_db):
     return Memory(model=Claude(id="claude-3-5-sonnet-20241022"), db=memory_db)
 
 
-    
 @pytest.fixture
 def chat_agent(agent_storage, memory):
     """Create an agent with storage and memory for testing."""
@@ -74,7 +73,7 @@ def chat_agent(agent_storage, memory):
         memory=memory,
     )
 
-    
+
 @pytest.fixture
 def memory_agent(agent_storage, memory):
     """Create an agent that creates memories."""
@@ -85,13 +84,14 @@ def memory_agent(agent_storage, memory):
         enable_user_memories=True,
     )
 
+
 def test_agent_runs_in_memory(chat_agent):
     session_id = "test_session"
     response = chat_agent.run("Hello, how are you?", session_id=session_id)
     assert response is not None
     assert response.content is not None
     assert response.run_id is not None
-    
+
     assert len(chat_agent.memory.runs[session_id]) == 1
     stored_run_response = chat_agent.memory.runs[session_id][0]
     assert stored_run_response.run_id == response.run_id
@@ -100,14 +100,22 @@ def test_agent_runs_in_memory(chat_agent):
     # Check that the run is also stored in the agent session
     assert len(chat_agent.agent_session.memory["runs"]) == 1
 
+
 def test_agent_runs_in_memory_legacy(chat_agent):
     chat_agent.memory = AgentMemory()
     session_id = "test_session"
-    response = chat_agent.run("What can you do?", messages=[Message(role="user", content="Hello, how are you?"), Message(role="assistant", content="I'm good, thank you!")], session_id=session_id)
+    response = chat_agent.run(
+        "What can you do?",
+        messages=[
+            Message(role="user", content="Hello, how are you?"),
+            Message(role="assistant", content="I'm good, thank you!"),
+        ],
+        session_id=session_id,
+    )
     assert response is not None
     assert response.content is not None
     assert response.run_id is not None
-    
+
     assert len(chat_agent.memory.runs) == 1
     stored_agent_run = chat_agent.memory.runs[0]
     assert stored_agent_run.response.run_id == response.run_id
@@ -116,7 +124,8 @@ def test_agent_runs_in_memory_legacy(chat_agent):
 
     # Check that the run is also stored in the agent session
     assert len(chat_agent.agent_session.memory["runs"]) == 1
-    
+
+
 @pytest.mark.asyncio
 async def test_multi_user_multi_session_chat(memory_agent, agent_storage, memory):
     """Test multi-user multi-session chat with storage and memory."""

@@ -682,7 +682,7 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
-        
+
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Reason about the task if reasoning is enabled
@@ -1495,7 +1495,6 @@ class Agent:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
-
         # Read existing session from storage
         self.read_from_storage(session_id=session_id, user_id=user_id)
 
@@ -1538,7 +1537,6 @@ class Agent:
             async_mode=False,
             knowledge_filters=effective_filters,
         )
-
 
         # Extract original user message from messages and remove from messages
         user_message = None
@@ -1931,7 +1929,6 @@ class Agent:
             knowledge_filters=effective_filters,
         )
 
-
         # Extract original user message from messages and remove from messages
         user_message = None
         for m in messages:
@@ -2043,7 +2040,7 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
-        
+
         self.model = cast(Model, self.model)
 
         # 1. Handle the updated tools
@@ -2218,7 +2215,6 @@ class Agent:
         user_id: Optional[str] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> RunResponse:
-
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
@@ -2530,10 +2526,14 @@ class Agent:
         # Update the RunResponse metrics
         run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
-    def _add_run_to_memory(self,
-                           run_response: RunResponse,
-                           run_messages: RunMessages, session_id: str, messages: Optional[Sequence[Union[Dict, Message]]] = None, index_of_last_user_message: int = 0):
-
+    def _add_run_to_memory(
+        self,
+        run_response: RunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        index_of_last_user_message: int = 0,
+    ):
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
@@ -2591,7 +2591,6 @@ class Agent:
             # Add AgentRun to memory
             self.memory.add_run(session_id=session_id, run=run_response)
 
-
     def _set_session_metrics(self, run_messages: RunMessages):
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
@@ -2623,7 +2622,6 @@ class Agent:
             self.memory = cast(Memory, self.memory)
 
         if isinstance(self.memory, AgentMemory):
-
             # Update the memories with the user message if needed
             if (
                 self.memory.create_user_memories
@@ -2658,11 +2656,8 @@ class Agent:
             if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
                 self.memory.update_summary()
 
-
         elif isinstance(self.memory, Memory):
-
             self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
-
 
     async def _aupdate_memory(
         self,
@@ -2711,7 +2706,6 @@ class Agent:
                 await self.memory.aupdate_summary()
 
         elif isinstance(self.memory, Memory):
-
             await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
     def _handle_model_response_stream(

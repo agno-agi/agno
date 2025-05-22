@@ -678,16 +678,16 @@ class Memory:
             self.runs[session_id] = []
 
         # Check if run already exists with the same run_id
-        if hasattr(run, 'run_id') and run.run_id:
+        if hasattr(run, "run_id") and run.run_id:
             run_id = run.run_id
             # Look for existing run with same ID
             for i, existing_run in enumerate(self.runs[session_id]):
-                if hasattr(existing_run, 'run_id') and existing_run.run_id == run_id:
+                if hasattr(existing_run, "run_id") and existing_run.run_id == run_id:
                     # Replace existing run
                     self.runs[session_id][i] = run
                     log_debug(f"Replaced existing run with run_id {run_id} in memory")
                     return
-            
+
         self.runs[session_id].append(run)
         log_debug("Added RunResponse to Memory")
 

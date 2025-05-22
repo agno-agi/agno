@@ -101,11 +101,11 @@ class AgentMemory(BaseModel):
         # Initialize runs list if it doesn't exist
         if self.runs is None:
             self.runs = []
-        
+
         # Process run if it has a valid response with run_id
         if agent_run.response and agent_run.response.run_id:
             run_id = agent_run.response.run_id
-            
+
             # Check for existing run with same ID
             for i, run in enumerate(self.runs):
                 if run.response and run.response.run_id == run_id:
@@ -113,7 +113,7 @@ class AgentMemory(BaseModel):
                     self.runs[i] = agent_run
                     log_debug(f"Replaced existing AgentRun with run_id {run_id} in memory")
                     return
-            
+
             # Add new run if not found
             self.runs.append(agent_run)
             log_debug("Added AgentRun to AgentMemory")
