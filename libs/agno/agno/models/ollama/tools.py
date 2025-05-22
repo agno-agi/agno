@@ -222,7 +222,9 @@ class OllamaTools(Ollama):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response_delta=model_response_delta,
                 )
 
     async def aprocess_response_stream(
@@ -245,7 +247,9 @@ class OllamaTools(Ollama):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response_delta=model_response_delta,
                 ):
                     yield model_response
 

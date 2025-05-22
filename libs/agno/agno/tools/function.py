@@ -1,5 +1,6 @@
+from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
@@ -16,20 +17,28 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
     if isinstance(entrypoint, partial):
         return str(entrypoint)
 
-    doc = getdoc(entrypoint)
-    if not doc:
+    docstring = getdoc(entrypoint)
+    if not docstring:
         return ""
 
-    parsed = parse(doc)
+    parsed_doc = parse(docstring)
 
     # Combine short and long descriptions
     lines = []
-    if parsed.short_description:
-        lines.append(parsed.short_description)
-    if parsed.long_description:
-        lines.extend(parsed.long_description.split("\n"))
+    if parsed_doc.short_description:
+        lines.append(parsed_doc.short_description)
+    if parsed_doc.long_description:
+        lines.extend(parsed_doc.long_description.split("\n"))
 
     return "\n".join(lines)
+
+
+@dataclass
+class UserInputField:
+    name: str
+    field_type: Type
+    description: Optional[str] = None
+    value: Optional[Any] = None
 
 
 class Function(BaseModel):
@@ -74,6 +83,19 @@ class Function(BaseModel):
     # A list of hooks to run around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
+    # If True, the function will require confirmation before execution
+    requires_confirmation: Optional[bool] = None
+
+    # If True, the function will require user input before execution
+    requires_user_input: Optional[bool] = None
+    # List of fields that the user will provide as input and that should be ignored by the agent (empty list means all fields are provided by the user)
+    user_input_fields: Optional[List[str]] = None
+    # This is set during parsing, not by the user
+    user_input_schema: Optional[List[UserInputField]] = None
+
+    # If True, the function will be executed outside the agent's control.
+    external_execution: Optional[bool] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -86,7 +108,10 @@ class Function(BaseModel):
     _team: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(exclude_none=True, include={"name", "description", "parameters", "strict"})
+        return self.model_dump(
+            exclude_none=True,
+            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+        )
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
@@ -183,6 +208,9 @@ class Function(BaseModel):
         if self.parameters != parameters:
             params_set_by_user = True
 
+        if self.requires_user_input:
+            self.user_input_schema = self.user_input_schema or []
+
         try:
             sig = signature(self.entrypoint)
             type_hints = get_type_hints(self.entrypoint)
@@ -195,14 +223,19 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            param_type_hints = {
-                name: type_hints.get(name)
-                for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
-            }
+            excluded_params = ["return", "agent", "team"]
+            if self.requires_user_input and self.user_input_fields:
+                if len(self.user_input_fields) == 0:
+                    excluded_params.extend(list(type_hints.keys()))
+                else:
+                    excluded_params.extend(self.user_input_fields)
+
+            # Get filtered list of parameter types
+            param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
 
             # Parse docstring for parameters
             param_descriptions = {}
+            param_descriptions_clean = {}
             if docstring := getdoc(self.entrypoint):
                 parsed_doc = parse(docstring)
                 param_docs = parsed_doc.params
@@ -215,6 +248,18 @@ class Function(BaseModel):
                         # TODO: We should use type hints first, then map param types in docs to json schema types.
                         # This is temporary to not lose information
                         param_descriptions[param_name] = f"({param_type}) {param.description}"
+                        param_descriptions_clean[param_name] = param.description
+
+            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            if self.requires_user_input:
+                self.user_input_schema = [
+                    UserInputField(
+                        name=name,
+                        description=param_descriptions_clean.get(name),
+                        field_type=type_hints.get(name, str),
+                    )
+                    for name in sig.parameters
+                ]
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
@@ -224,34 +269,35 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [name for name in parameters["properties"] if name not in excluded_params]
             else:
                 # Mark a field as required if it has no default value
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                    if param.default == param.empty and name != "self" and name not in excluded_params
                 ]
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
                     self.parameters["required"] = [
-                        name for name in self.parameters["properties"] if name not in ["agent", "team"]
+                        name for name in self.parameters["properties"] if name not in excluded_params
                     ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name not in ["agent", "team"]
+                        if param.default == param.empty and name != "self" and name not in excluded_params
                     ]
+
+            self.description = self.description or get_entrypoint_docstring(self.entrypoint)
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
             log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
 
-        self.description = self.description or get_entrypoint_docstring(self.entrypoint)
         if not params_set_by_user:
             self.parameters = parameters
 
@@ -331,6 +377,10 @@ class Function(BaseModel):
             log_error(f"Error writing cache: {e}")
 
 
+class FunctionExecutionResult(BaseModel):
+    status: Literal["success", "failure"]
+
+
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
 
@@ -350,7 +400,7 @@ class FunctionCall(BaseModel):
         """Returns a string representation of the function call."""
         import shutil
 
-        # Get terminal width, default to 80 if can't determine
+        # Get terminal width, default to 80 if it can't be determined
         term_width = shutil.get_terminal_size().columns or 80
         max_arg_len = max(20, (term_width - len(self.function.name) - 4) // 2)
 
@@ -484,15 +534,14 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
-    def execute(self) -> bool:
+    def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
         from inspect import isgenerator
 
         if self.function.entrypoint is None:
-            return False
+            return FunctionExecutionResult(status="failure")
 
         log_debug(f"Running: {self.get_call_str()}")
-        function_call_success = False
 
         # Execute pre-hook if it exists
         self._handle_pre_hook()
@@ -508,8 +557,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                function_call_success = True
-                return function_call_success
+                return FunctionExecutionResult(status="success")
 
         # Execute function
         try:
@@ -534,8 +582,6 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
-            function_call_success = True
-
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -544,12 +590,12 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return function_call_success
+            return FunctionExecutionResult(status="failure")
 
         # Execute post-hook if it exists
         self._handle_post_hook()
 
-        return function_call_success
+        return FunctionExecutionResult(status="success")
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -667,15 +713,14 @@ class FunctionCall(BaseModel):
 
         return chain
 
-    async def aexecute(self) -> bool:
+    async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
-            return False
+            return FunctionExecutionResult(status="failure")
 
         log_debug(f"Running: {self.get_call_str()}")
-        function_call_success = False
 
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
@@ -695,8 +740,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                function_call_success = True
-                return function_call_success
+                return FunctionExecutionResult(status="success")
 
         # Execute function
         try:
@@ -721,8 +765,6 @@ class FunctionCall(BaseModel):
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
 
-            function_call_success = True
-
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
             self.error = str(e)
@@ -731,7 +773,7 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return function_call_success
+            return FunctionExecutionResult(status="failure")
 
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):
@@ -739,4 +781,4 @@ class FunctionCall(BaseModel):
         else:
             self._handle_post_hook()
 
-        return function_call_success
+        return FunctionExecutionResult(status="success")
