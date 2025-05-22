@@ -118,11 +118,15 @@ class RunResponse:
 
     @property
     def tools_requiring_confirmation(self):
-        return [t for t in self.tools if t.requires_confirmation]
+        return [t for t in self.tools if t.requires_confirmation] if self.tools else []
+    
+    @property
+    def tools_requiring_user_input(self):
+        return [t for t in self.tools if t.requires_user_input] if self.tools else []
 
     @property
     def tools_awaiting_external_execution(self):
-        return [t for t in self.tools if t.external_execution_required]
+        return [t for t in self.tools if t.external_execution_required] if self.tools else []
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {

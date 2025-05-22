@@ -32,7 +32,7 @@ agent = Agent(
 
 agent.run("Send an email please")
 if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
+    for tool in agent.run_response.tools_requiring_user_input:
         input_schema: Dict[str, Any] = tool.user_input_schema
 
         for field in input_schema:

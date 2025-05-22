@@ -11,7 +11,12 @@ from agno.tools.function import UserInputField
 class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
+<<<<<<< HEAD
     tool_call_paused = "ToolCallPaused"
+=======
+    tool_call_confirmation_required = "ToolCallConfirmationRequired"
+    tool_call_external_execution_required = "ToolCallExternalExecutionRequired"
+>>>>>>> 669d3275ed2565e085c1b77696ae9f86fb11b054
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
@@ -36,6 +41,7 @@ class ToolExecution:
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
 
+<<<<<<< HEAD
     requires_user_input: Optional[bool] = None
     user_input_schema: Optional[List[UserInputField]] = None
 
@@ -45,6 +51,10 @@ class ToolExecution:
     def is_paused(self) -> bool:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
 
+=======
+    external_execution_required: Optional[bool] = None
+
+>>>>>>> 669d3275ed2565e085c1b77696ae9f86fb11b054
 
 @dataclass
 class ModelResponse:

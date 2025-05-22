@@ -25,8 +25,11 @@ def tool(
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
     requires_confirmation: Optional[bool] = None,
+<<<<<<< HEAD
     requires_user_input: Optional[bool] = None,
     user_input_fields: Optional[List[str]] = None,
+=======
+>>>>>>> 669d3275ed2565e085c1b77696ae9f86fb11b054
     external_execution: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,

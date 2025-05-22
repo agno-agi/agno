@@ -1214,6 +1214,22 @@ class Model(ABC):
                 # We don't execute the function calls here
                 continue
 
+            # If the function requires external execution, we yield a message to the user
+            if fc.function.external_execution:
+                yield ModelResponse(
+                    tool_executions=[
+                        ToolExecution(
+                            tool_call_id=fc.call_id,
+                            tool_name=fc.function.name,
+                            tool_args=fc.arguments,
+                            external_execution_required=True,
+                        )
+                    ],
+                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                )
+                # We don't execute the function call here, it is executed outside of the agent's control
+                continue
+
             yield from self.run_function_call(
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
