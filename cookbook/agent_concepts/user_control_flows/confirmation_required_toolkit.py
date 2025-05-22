@@ -28,7 +28,7 @@ agent = Agent(
 
 agent.run("What is the current stock price of Apple?")
 if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
+    for tool in agent.run_response.tools_requiring_confirmation:
         print("Tool name: ", tool.tool_name)
         print("Tool args: ", tool.tool_args)
         user_input = input("Do you want to proceed? (y/n) ")

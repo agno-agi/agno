@@ -595,6 +595,7 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Reason about the task
         self._handle_reasoning(run_messages=run_messages, session_id=session_id)
@@ -617,20 +618,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.run_paused
-            return run_response
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -651,22 +642,8 @@ class Agent:
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
-        # Otherwise convert the response to the structured format
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                    # Update RunResponse
-                    if structured_output is not None:
-                        run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to response_model")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Run response content is not a string")
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -683,6 +660,8 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponse]:
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages, session_id=session_id)
 
@@ -705,22 +684,9 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            yield self.create_run_response(
-                event=RunEvent.run_paused,
-                session_id=session_id,
-                run_response=run_response,
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            yield from self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
             return
 
@@ -930,8 +896,6 @@ class Agent:
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
-                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
                     message=message,
@@ -1025,6 +989,8 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+
         self.model = cast(Model, self.model)
         # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_messages=run_messages, session_id=session_id)
@@ -1046,20 +1012,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.run_paused
-            return run_response
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         await self._aupdate_memory(
@@ -1080,22 +1036,8 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
-        # Otherwise convert the response to the structured format
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                    # Update RunResponse
-                    if structured_output is not None:
-                        run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to response_model")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Run response content is not a string")
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1122,6 +1064,7 @@ class Agent:
         5. Save session to storage
         6. Save output to file if save_response_to_file is set
         """
+        log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # 1. Reason about the task if reasoning is enabled
         async for item in self._ahandle_reasoning_stream(run_messages=run_messages, session_id=session_id):
@@ -1144,25 +1087,13 @@ class Agent:
             stream_intermediate_steps=stream_intermediate_steps,
         ):
             yield event
-        
+
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            yield self.create_run_response(
-                event=RunEvent.run_paused,
-                session_id=session_id,
-                run_response=run_response,
-            )
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            for item in self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            ):
+                yield item
             return
 
         # 3. Update Agent Memory
@@ -1193,6 +1124,7 @@ class Agent:
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
         if stream_intermediate_steps:
             yield self.create_run_response(
                 content=run_response.content,
@@ -1333,8 +1265,6 @@ class Agent:
                         self.run_input = message
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
-
-                log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
@@ -1666,20 +1596,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.run_paused
-            return run_response
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         self._update_memory(
@@ -1700,24 +1620,8 @@ class Agent:
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
-        # Otherwise convert the response to the structured format
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                    # Update RunResponse
-                    if structured_output is not None:
-                        run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to response_model")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Run response content is not a string")
-
-        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         run_response.event = RunEvent.run_response
 
@@ -1769,22 +1673,9 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            yield self.create_run_response(
-                event=RunEvent.run_paused,
-                session_id=session_id,
-                run_response=run_response,
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            yield from self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
             )
             return
 
@@ -2056,20 +1947,10 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            run_response.event = RunEvent.run_paused
-            return run_response
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            return self._handle_agent_run_paused(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            )
 
         # 3. Update Agent Memory
         await self._aupdate_memory(
@@ -2090,22 +1971,8 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
-        # Otherwise convert the response to the structured format
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
-            if isinstance(run_response.content, str) and self.parse_response:
-                try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
-
-                    # Update RunResponse
-                    if structured_output is not None:
-                        run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
-                    else:
-                        log_warning("Failed to convert response to response_model")
-                except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
-            else:
-                log_warning("Something went wrong. Run response content is not a string")
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2160,25 +2027,12 @@ class Agent:
             yield event
 
         # We should break out of the run function
-        if any(tc.requires_confirmation or tc.external_execution_required for tc in run_response.tools or []):
-            # Save session to storage
-            self.write_to_storage(user_id=user_id, session_id=session_id)
-            # Log Agent Run
-            self._log_agent_run(user_id=user_id, session_id=session_id)
-
-            log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
-            # Save output to file if save_response_to_file is set
-            self.save_run_response_to_file(message=message, session_id=session_id)
-
-            # We return and await confirmation/completion for the tools that require it
-            yield self.create_run_response(
-                event=RunEvent.run_paused,
-                session_id=session_id,
-                run_response=run_response,
-            )
+        if any(tool_call.requires_confirmation or tool_call.external_execution_required for tool_call in run_response.tools or []):
+            for item in self._handle_agent_run_paused_stream(
+                run_response=run_response, session_id=session_id, user_id=user_id, message=message
+            ):
+                yield item
             return
-
         # 3. Update Agent Memory
         await self._aupdate_memory(
             run_response=run_response,
@@ -2216,6 +2070,69 @@ class Agent:
                 event=RunEvent.run_completed,
                 run_response=run_response,
             )
+
+    def _handle_agent_run_paused(
+        self,
+        run_response: RunResponse,
+        session_id: str,
+        user_id: Optional[str] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+    ) -> RunResponse:
+        # Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+        # Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # We return and await confirmation/completion for the tools that require it
+        run_response.event = RunEvent.run_paused
+        return run_response
+
+    def _handle_agent_run_paused_stream(
+        self,
+        run_response: RunResponse,
+        session_id: str,
+        user_id: Optional[str] = None,
+        message: Optional[Union[str, List, Dict, Message]] = None,
+    ) -> Iterator[RunResponse]:
+        # Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
+
+        # Save output to file if save_response_to_file is set
+        self.save_run_response_to_file(message=message, session_id=session_id)
+
+        # We return and await confirmation/completion for the tools that require it
+        yield self.create_run_response(
+            event=RunEvent.run_paused,
+            session_id=session_id,
+            run_response=run_response,
+        )
+
+    def _convert_response_to_structured_format(self, run_response: RunResponse):
+        # Convert the response to the structured format if needed
+        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+            if isinstance(run_response.content, str) and self.parse_response:
+                try:
+                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+
+                    # Update RunResponse
+                    if structured_output is not None:
+                        run_response.content = structured_output
+                        run_response.content_type = self.response_model.__name__
+                    else:
+                        log_warning("Failed to convert response to response_model")
+                except Exception as e:
+                    log_warning(f"Failed to convert response to output model: {e}")
+            else:
+                log_warning("Something went wrong. Run response content is not a string")
 
     def _reset_tool_confirmation_required(self, tool: ToolExecution):
         for func_name, func in self._functions_for_model.items():
@@ -2300,7 +2217,6 @@ class Agent:
                     ):
                         if call_result.event == ModelResponseEvent.tool_call_started.value:
                             yield self.create_run_response(
-                                content=call_result.content,
                                 event=RunEvent.tool_call_started,
                                 session_id=session_id,
                                 created_at=call_result.created_at,
@@ -2387,7 +2303,6 @@ class Agent:
                     ):
                         if call_result.event == ModelResponseEvent.tool_call_started.value:
                             yield self.create_run_response(
-                                content=call_result.content,
                                 event=RunEvent.tool_call_started,
                                 session_id=session_id,
                                 created_at=call_result.created_at,

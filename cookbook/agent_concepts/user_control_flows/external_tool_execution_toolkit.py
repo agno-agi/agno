@@ -45,8 +45,8 @@ agent = Agent(
 
 run_response = agent.run("What files do I have in my current directory?")
 if run_response.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
-        if tool.external_execution_required and tool.tool_name == "list_dir":
+    for tool in run_response.tools_awaiting_external_execution:
+        if tool.tool_name == "list_dir":
             print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
             # We execute the tool ourselves. You can also execute something completely external here.
             result = tools.list_dir(**tool.tool_args)

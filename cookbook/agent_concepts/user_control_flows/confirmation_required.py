@@ -58,7 +58,7 @@ agent = Agent(
 
 agent.run("Fetch the top 2 hackernews stories")
 if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in agent.run_response.tools:
+    for tool in agent.run_response.tools_requiring_confirmation:
         print(f"Tool name {tool.tool_name} requires confirmation.")
         print("Tool args: ", tool.tool_args)
         user_input = input("Do you want to proceed? (y/n) ")

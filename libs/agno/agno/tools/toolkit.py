@@ -46,10 +46,10 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
-        
+
         self.requires_confirmation_tools: list[str] = requires_confirmation_tools or []
         self.external_execution_required_tools: list[str] = external_execution_required_tools or []
-        
+
         self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
         self.show_result_tools: list[str] = show_result_tools or []
 
@@ -92,7 +92,7 @@ class Toolkit:
                 log_warning(
                     f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}"
                 )
-        
+
         if self.external_execution_required_tools:
             missing_external_execution_required = set(self.external_execution_required_tools) - set(available_tools)
             if missing_external_execution_required:

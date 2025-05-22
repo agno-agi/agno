@@ -59,7 +59,7 @@ agent = Agent(
 
 run_response = asyncio.run(agent.arun("Fetch the top 2 hackernews stories"))
 if run_response.is_paused:
-    for tool in run_response.tools:
+    for tool in run_response.tools_requiring_confirmation:
         print(f"Tool name {tool.tool_name} requires confirmation.")
         print("Tool args: ", tool.tool_args)
         user_input = input("Do you want to proceed? (y/n) ")
