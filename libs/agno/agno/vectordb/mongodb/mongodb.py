@@ -4,9 +4,10 @@ from typing import Any, Dict, List, Optional
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
 
 try:
     from hashlib import md5
@@ -42,6 +43,10 @@ class MongoDb(VectorDb):
         client: Optional[MongoClient] = None,
         search_index_name: Optional[str] = "vector_index_1",
         cosmos_compatibility: Optional[bool] = False,
+        search_type: SearchType = SearchType.vector,
+        hybrid_vector_weight: float = 0.5,
+        hybrid_keyword_weight: float = 0.5,
+        hybrid_rank_constant: int = 60,
         **kwargs,
     ):
         """
@@ -61,6 +66,10 @@ class MongoDb(VectorDb):
             client (Optional[MongoClient]): An existing MongoClient instance.
             search_index_name (str): Name of the search index (default: "vector_index_1")
             cosmos_compatibility (bool): Whether to use Azure Cosmos DB Mongovcore compatibility mode.
+            search_type: The search type to use when searching for documents.
+            hybrid_vector_weight (float): Default weight for vector search results in hybrid search.
+            hybrid_keyword_weight (float): Default weight for keyword search results in hybrid search.
+            hybrid_rank_constant (int): Default rank constant (k) for Reciprocal Rank Fusion in hybrid search. This constant is added to the rank before taking the reciprocal, helping to smooth scores. A common value is 60.
             **kwargs: Additional arguments for MongoClient.
         """
         if not collection_name:
@@ -71,6 +80,10 @@ class MongoDb(VectorDb):
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
+        self.search_type = search_type
+        self.hybrid_vector_weight = hybrid_vector_weight
+        self.hybrid_keyword_weight = hybrid_keyword_weight
+        self.hybrid_rank_constant = hybrid_rank_constant
 
         if embedder is None:
             from agno.embedder.openai import OpenAIEmbedder
@@ -519,6 +532,9 @@ class MongoDb(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
     ) -> List[Document]:
         """Search for documents using vector similarity."""
+        if self.search_type == SearchType.hybrid:
+            return self.hybrid_search(query, limit=limit)
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
@@ -653,10 +669,165 @@ class MongoDb(VectorDb):
             logger.error(f"Error during keyword search: {e}")
             return []
 
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a hybrid search combining vector and keyword-based searches."""
-        log_debug("Performing hybrid search is not yet implemented.")
-        return []
+    def hybrid_search(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> List[Document]:
+        """
+        Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
+
+        Weights for vector and keyword search are configured at the instance level (hybrid_vector_weight, hybrid_keyword_weight).
+        The rank constant k is used in the RRF formula `1 / (rank + k)` to smooth scores.
+
+        Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/tutorials/reciprocal-rank-fusion
+        """
+
+        if self.cosmos_compatibility:
+            log_warning("Hybrid search is not implemented for Cosmos DB compatibility mode. Returning empty list.")
+            return []
+
+        log_debug(f"Performing hybrid search for query: '{query}' with limit: {limit}")
+
+        query_embedding = self.embedder.get_embedding(query)
+        if query_embedding is None:
+            logger.error(f"Failed to generate embedding for query: {query}")
+            return []
+
+        collection = self._get_collection()
+
+        k = self.hybrid_rank_constant
+
+        pipeline = [
+            # Vector Search Branch
+            {
+                "$vectorSearch": {
+                    "index": self.search_index_name,
+                    "path": "embedding",
+                    "queryVector": query_embedding,
+                    "numCandidates": min(limit * 10, 200),
+                    "limit": limit * 2,
+                }
+            },
+            {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
+            {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
+            {
+                "$addFields": {
+                    "_id": "$docs._id",
+                    "name": "$docs.name",
+                    "content": "$docs.content",
+                    "meta_data": "$docs.meta_data",
+                    "vs_score": {
+                        "$divide": [
+                            self.hybrid_vector_weight,
+                            {"$add": ["$rank", k, 1]},
+                        ]
+                    },
+                    "fts_score": 0.0,  # Ensure fts_score exists with a default value
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "content": 1,
+                    "meta_data": 1,
+                    "vs_score": 1,
+                    # Now fts_score is included with its value (0.0 here)
+                    "fts_score": 1,
+                }
+            },
+            # Union with Keyword Search Branch
+            {
+                "$unionWith": {
+                    "coll": self.collection_name,
+                    "pipeline": [
+                        {
+                            "$search": {
+                                "index": "default",
+                                "text": {"query": query, "path": "content"},
+                            }
+                        },
+                        {"$limit": limit * 2},
+                        {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
+                        {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
+                        {
+                            "$addFields": {
+                                "_id": "$docs._id",
+                                "name": "$docs.name",
+                                "content": "$docs.content",
+                                "meta_data": "$docs.meta_data",
+                                "vs_score": 0.0,
+                                "fts_score": {
+                                    "$divide": [
+                                        self.hybrid_keyword_weight,
+                                        {"$add": ["$rank", k, 1]},
+                                    ]
+                                },
+                            }
+                        },
+                        {
+                            "$project": {
+                                "_id": 1,
+                                "name": 1,
+                                "content": 1,
+                                "meta_data": 1,
+                                "vs_score": 1,
+                                "fts_score": 1,
+                            }
+                        },
+                    ],
+                }
+            },
+            # Combine and Rank
+            {
+                "$group": {
+                    "_id": "$_id",
+                    "name": {"$first": "$name"},
+                    "content": {"$first": "$content"},
+                    "meta_data": {"$first": "$meta_data"},
+                    "vs_score": {"$sum": "$vs_score"},
+                    "fts_score": {"$sum": "$fts_score"},
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "content": 1,
+                    "meta_data": 1,
+                    "score": {"$add": ["$vs_score", "$fts_score"]},
+                }
+            },
+            {"$sort": {"score": -1}},
+            {"$limit": limit},
+        ]
+
+        try:
+            results = list(collection.aggregate(pipeline))
+            docs = [
+                Document(
+                    id=str(doc["_id"]),
+                    name=doc.get("name"),
+                    content=doc["content"],
+                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                )
+                for doc in results
+            ]
+            log_info(f"Hybrid search completed. Found {len(docs)} documents.")
+            return docs
+        except errors.OperationFailure as e:
+            logger.error(
+                f"Error during hybrid search, potentially due to missing or misconfigured Atlas Search index for text search: {e}"
+            )
+            logger.error(f"Details: {e.details}")
+            return []
+        except Exception as e:
+            logger.error(f"Error during hybrid search: {e}")
+            import traceback
+
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
 
     def drop(self) -> None:
         """Drop the collection and clean up indexes."""
@@ -711,13 +882,15 @@ class MongoDb(VectorDb):
             try:
                 collection = self._get_collection()
                 result = collection.delete_many({})
-                success = result.deleted_count >= 0  # Consider any deletion (even 0) as success
+                # Consider any deletion (even 0) as success
+                success = result.deleted_count >= 0
                 log_info(f"Deleted {result.deleted_count} documents from collection.")
                 return success
             except Exception as e:
                 logger.error(f"Error deleting documents: {e}")
                 return False
-        return True  # Return True if collection doesn't exist (nothing to delete)
+        # Return True if collection doesn't exist (nothing to delete)
+        return True
 
     def prepare_doc(self, document: Document, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
