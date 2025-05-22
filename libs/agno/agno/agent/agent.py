@@ -1827,7 +1827,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
