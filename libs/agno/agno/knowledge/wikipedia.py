@@ -27,6 +27,6 @@ class WikipediaKnowledgeBase(AgentKnowledge):
                 Document(
                     name=topic,
                     meta_data={"topic": topic},
-                    content=wikipedia.summary(topic, auto_suggest=self.autosuggest),
+                    content=wikipedia.summary(topic, auto_suggest=self.auto_suggest),
                 )
             ]
