@@ -83,6 +83,7 @@ cerebras = ["cerebras-cloud-sdk"]
 apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
+mem0 = ["mem0ai"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
@@ -181,7 +182,8 @@ tools = [
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
   "agno[zep]",
-  "agno[google_bigquery]"
+  "agno[mem0]",
+  "agno[google_bigquery]",
 ]
 
 # All storage
