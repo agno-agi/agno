@@ -2,7 +2,7 @@ from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools.function import Function
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 
 
 class Toolkit:
@@ -14,6 +14,7 @@ class Toolkit:
         add_instructions: bool = False,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        requires_confirmation_tools: Optional[list[str]] = None,
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
@@ -42,8 +43,9 @@ class Toolkit:
         self.functions: Dict[str, Function] = OrderedDict()
         self.instructions: Optional[str] = instructions
         self.add_instructions: bool = add_instructions
-        self.stop_after_tool_call_tools = stop_after_tool_call_tools or []
-        self.show_result_tools = show_result_tools or []
+        self.requires_confirmation_tools: list[str] = requires_confirmation_tools or []
+        self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
+        self.show_result_tools: list[str] = show_result_tools or []
 
         self._check_tools_filters(
             available_tools=[tool.__name__ for tool in tools], include_tools=include_tools, exclude_tools=exclude_tools
@@ -78,6 +80,13 @@ class Toolkit:
                 if missing_excludes:
                     raise ValueError(f"Excluded tool(s) not present in the toolkit: {', '.join(missing_excludes)}")
 
+        if self.requires_confirmation_tools:
+            missing_requires_confirmation = set(self.requires_confirmation_tools) - set(available_tools)
+            if missing_requires_confirmation:
+                log_warning(
+                    f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}"
+                )
+
     def _register_tools(self) -> None:
         """Register all tools."""
         for tool in self.tools:
@@ -108,6 +117,7 @@ class Toolkit:
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,
+                requires_confirmation=tool_name in self.requires_confirmation_tools,
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools,
             )

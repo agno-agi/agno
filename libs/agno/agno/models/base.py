@@ -11,11 +11,11 @@ from pydantic import BaseModel
 from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
-from agno.models.response import ModelResponse, ModelResponseEvent
-from agno.tools.function import Function, FunctionCall
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.tools.function import Function, FunctionCall, FunctionExecutionResult
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
-from agno.utils.tools import get_function_call_for_tool_call
+from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
 
 @dataclass
@@ -34,6 +34,165 @@ class MessageData:
     response_provider_data: Optional[Dict[str, Any]] = None
 
     extra: Optional[Dict[str, Any]] = None
+
+
+def _log_messages(messages: List[Message]) -> None:
+    """
+    Log messages for debugging.
+    """
+    for m in messages:
+        # Don't log metrics for input messages
+        m.log(metrics=False)
+
+
+def _add_usage_metrics_to_assistant_message(assistant_message: Message, response_usage: Any) -> None:
+    """
+    Add usage metrics from the model provider to the assistant message.
+
+    Args:
+        assistant_message: Message to update with metrics
+        response_usage: Usage data from model provider
+    """
+
+    # Standard token metrics
+    if isinstance(response_usage, dict):
+        if "input_tokens" in response_usage:
+            assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
+        if "output_tokens" in response_usage:
+            assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
+        if "prompt_tokens" in response_usage:
+            assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
+        if "completion_tokens" in response_usage:
+            assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
+        if "total_tokens" in response_usage:
+            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
+        if "cached_tokens" in response_usage:
+            assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
+        else:
+            assistant_message.metrics.total_tokens = (
+                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+            )
+    else:
+        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
+            assistant_message.metrics.input_tokens = response_usage.input_tokens
+        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
+            assistant_message.metrics.output_tokens = response_usage.output_tokens
+        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
+            assistant_message.metrics.input_tokens = response_usage.prompt_tokens
+            assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
+        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
+            assistant_message.metrics.output_tokens = response_usage.completion_tokens
+            assistant_message.metrics.completion_tokens = response_usage.completion_tokens
+        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
+            assistant_message.metrics.total_tokens = response_usage.total_tokens
+        if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
+            assistant_message.metrics.cached_tokens = response_usage.cached_tokens
+        else:
+            assistant_message.metrics.total_tokens = (
+                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+            )
+
+    # Additional metrics (e.g., from Groq, Ollama)
+    if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
+        assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
+
+    # Token details (e.g., from OpenAI)
+    if hasattr(response_usage, "prompt_tokens_details"):
+        if isinstance(response_usage.prompt_tokens_details, dict):
+            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
+            if (
+                "audio_tokens" in response_usage.prompt_tokens_details
+                and response_usage.prompt_tokens_details["audio_tokens"] is not None
+            ):
+                assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details["audio_tokens"]
+            if (
+                "cached_tokens" in response_usage.prompt_tokens_details
+                and response_usage.prompt_tokens_details["cached_tokens"] is not None
+            ):
+                assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details["cached_tokens"]
+        elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
+            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
+                exclude_none=True
+            )
+            if (
+                hasattr(response_usage.prompt_tokens_details, "audio_tokens")
+                and response_usage.prompt_tokens_details.audio_tokens is not None
+            ):
+                assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens
+            if (
+                hasattr(response_usage.prompt_tokens_details, "cached_tokens")
+                and response_usage.prompt_tokens_details.cached_tokens is not None
+            ):
+                assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
+
+    if hasattr(response_usage, "completion_tokens_details"):
+        if isinstance(response_usage.completion_tokens_details, dict):
+            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
+            if (
+                "audio_tokens" in response_usage.completion_tokens_details
+                and response_usage.completion_tokens_details["audio_tokens"] is not None
+            ):
+                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details["audio_tokens"]
+            if (
+                "reasoning_tokens" in response_usage.completion_tokens_details
+                and response_usage.completion_tokens_details["reasoning_tokens"] is not None
+            ):
+                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
+                    "reasoning_tokens"
+                ]
+        elif hasattr(response_usage.completion_tokens_details, "model_dump"):
+            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details.model_dump(
+                exclude_none=True
+            )
+            if (
+                hasattr(response_usage.completion_tokens_details, "audio_tokens")
+                and response_usage.completion_tokens_details.audio_tokens is not None
+            ):
+                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens
+            if (
+                hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
+                and response_usage.completion_tokens_details.reasoning_tokens is not None
+            ):
+                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
+
+    assistant_message.metrics.audio_tokens = (
+        assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
+    )
+
+
+def _handle_agent_exception(a_exc: AgentRunException, additional_messages: Optional[List[Message]] = None) -> None:
+    """Handle AgentRunException and collect additional messages."""
+    if additional_messages is None:
+        additional_messages = []
+    if a_exc.user_message is not None:
+        msg = (
+            Message(role="user", content=a_exc.user_message)
+            if isinstance(a_exc.user_message, str)
+            else a_exc.user_message
+        )
+        additional_messages.append(msg)
+
+    if a_exc.agent_message is not None:
+        msg = (
+            Message(role="assistant", content=a_exc.agent_message)
+            if isinstance(a_exc.agent_message, str)
+            else a_exc.agent_message
+        )
+        additional_messages.append(msg)
+
+    if a_exc.messages:
+        for m in a_exc.messages:
+            if isinstance(m, Message):
+                additional_messages.append(m)
+            elif isinstance(m, dict):
+                try:
+                    additional_messages.append(Message(**m))
+                except Exception as e:
+                    log_warning(f"Failed to convert dict to Message: {e}")
+
+    if a_exc.stop_execution:
+        for m in additional_messages:
+            m.stop_after_tool_call = True
 
 
 @dataclass
@@ -144,7 +303,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
 
-        self._log_messages(messages)
+        _log_messages(messages)
         model_response = ModelResponse()
 
         while True:
@@ -175,10 +334,17 @@ class Model(ABC):
                     tool_call_limit=tool_call_limit,
                 ):
                     if (
-                        function_call_response.event == ModelResponseEvent.tool_call_completed.value
-                        and function_call_response.tool_calls is not None
+                        function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_confirmation_required.value,
+                        ]
+                        and function_call_response.tool_executions is not None
                     ):
-                        model_response.tool_calls.extend(function_call_response.tool_calls)
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
+
                     elif function_call_response.event not in [
                         ModelResponseEvent.tool_call_started.value,
                         ModelResponseEvent.tool_call_completed.value,
@@ -195,6 +361,10 @@ class Model(ABC):
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    break
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -221,7 +391,7 @@ class Model(ABC):
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
-        self._log_messages(messages)
+        _log_messages(messages)
         model_response = ModelResponse()
 
         while True:
@@ -252,16 +422,22 @@ class Model(ABC):
                     tool_call_limit=tool_call_limit,
                 ):
                     if (
-                        function_call_response.event == ModelResponseEvent.tool_call_completed.value
-                        and function_call_response.tool_calls is not None
+                        function_call_response.event
+                        in [
+                            ModelResponseEvent.tool_call_completed.value,
+                            ModelResponseEvent.tool_call_confirmation_required.value,
+                        ]
+                        and function_call_response.tool_executions is not None
                     ):
-                        model_response.tool_calls.extend(function_call_response.tool_calls)
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
                     elif function_call_response.event not in [
                         ModelResponseEvent.tool_call_started.value,
                         ModelResponseEvent.tool_call_completed.value,
                     ]:
                         if function_call_response.content:
-                            model_response.content += function_call_response.content
+                            model_response.content += function_call_response.content  # type: ignore
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -272,6 +448,10 @@ class Model(ABC):
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
+                    break
+
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -472,7 +652,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            self._add_usage_metrics_to_assistant_message(
+            _add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message, response_usage=provider_response.response_usage
             )
 
@@ -498,7 +678,7 @@ class Model(ABC):
         ):
             model_response_delta = self.parse_provider_response_delta(response_delta)
             yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             )
 
     def response_stream(
@@ -516,7 +696,7 @@ class Model(ABC):
 
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
-        self._log_messages(messages)
+        _log_messages(messages)
 
         while True:
             # Create assistant message and stream data
@@ -586,6 +766,10 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -614,7 +798,7 @@ class Model(ABC):
         ):  # type: ignore
             model_response_delta = self.parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             ):
                 yield model_response
 
@@ -633,7 +817,7 @@ class Model(ABC):
 
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
-        self._log_messages(messages)
+        _log_messages(messages)
 
         while True:
             # Create assistant message and stream data
@@ -702,6 +886,10 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -711,7 +899,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
 
     def _populate_stream_data_and_assistant_message(
-        self, stream_data: MessageData, assistant_message: Message, model_response: ModelResponse
+        self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
 
@@ -720,81 +908,94 @@ class Model(ABC):
             assistant_message.metrics.set_time_to_first_token()
 
         # Add role to assistant message
-        if model_response.role is not None:
-            assistant_message.role = model_response.role
+        if model_response_delta.role is not None:
+            assistant_message.role = model_response_delta.role
 
         should_yield = False
         # Update stream_data content
-        if model_response.content is not None:
-            stream_data.response_content += model_response.content
+        if model_response_delta.content is not None:
+            stream_data.response_content += model_response_delta.content
             should_yield = True
 
-        if model_response.thinking is not None:
-            stream_data.response_thinking += model_response.thinking
+        if model_response_delta.thinking is not None:
+            stream_data.response_thinking += model_response_delta.thinking
             should_yield = True
 
-        if model_response.redacted_thinking is not None:
-            stream_data.response_redacted_thinking += model_response.redacted_thinking
+        if model_response_delta.redacted_thinking is not None:
+            stream_data.response_redacted_thinking += model_response_delta.redacted_thinking
             should_yield = True
 
-        if model_response.citations is not None:
-            stream_data.response_citations = model_response.citations
+        if model_response_delta.citations is not None:
+            stream_data.response_citations = model_response_delta.citations
             should_yield = True
 
-        if model_response.provider_data:
+        if model_response_delta.provider_data:
             if stream_data.response_provider_data is None:
                 stream_data.response_provider_data = {}
-            stream_data.response_provider_data.update(model_response.provider_data)
+            stream_data.response_provider_data.update(model_response_delta.provider_data)
 
         # Update stream_data tool calls
-        if model_response.tool_calls is not None:
+        if model_response_delta.tool_calls is not None:
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
-            stream_data.response_tool_calls.extend(model_response.tool_calls)
+            stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
             should_yield = True
 
-        if model_response.audio is not None:
+        if model_response_delta.audio is not None:
             if stream_data.response_audio is None:
                 stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
             # Update the stream data with audio information
-            if model_response.audio.id is not None:
-                stream_data.response_audio.id = model_response.audio.id  # type: ignore
-            if model_response.audio.content is not None:
-                stream_data.response_audio.content += model_response.audio.content  # type: ignore
-            if model_response.audio.transcript is not None:
-                stream_data.response_audio.transcript += model_response.audio.transcript  # type: ignore
-            if model_response.audio.expires_at is not None:
-                stream_data.response_audio.expires_at = model_response.audio.expires_at
-            if model_response.audio.mime_type is not None:
-                stream_data.response_audio.mime_type = model_response.audio.mime_type
-            stream_data.response_audio.sample_rate = model_response.audio.sample_rate
-            stream_data.response_audio.channels = model_response.audio.channels
+            if model_response_delta.audio.id is not None:
+                stream_data.response_audio.id = model_response_delta.audio.id  # type: ignore
+            if model_response_delta.audio.content is not None:
+                stream_data.response_audio.content += model_response_delta.audio.content  # type: ignore
+            if model_response_delta.audio.transcript is not None:
+                stream_data.response_audio.transcript += model_response_delta.audio.transcript  # type: ignore
+            if model_response_delta.audio.expires_at is not None:
+                stream_data.response_audio.expires_at = model_response_delta.audio.expires_at
+            if model_response_delta.audio.mime_type is not None:
+                stream_data.response_audio.mime_type = model_response_delta.audio.mime_type
+            stream_data.response_audio.sample_rate = model_response_delta.audio.sample_rate
+            stream_data.response_audio.channels = model_response_delta.audio.channels
 
             should_yield = True
 
-        if model_response.image:
+        if model_response_delta.image:
             if stream_data.response_image is None:
-                stream_data.response_image = model_response.image
+                stream_data.response_image = model_response_delta.image
 
-        if model_response.extra is not None:
+        if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
-            stream_data.extra.update(model_response.extra)
+            stream_data.extra.update(model_response_delta.extra)
 
-        if model_response.response_usage is not None:
-            self._add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message, response_usage=model_response.response_usage
+        if model_response_delta.response_usage is not None:
+            _add_usage_metrics_to_assistant_message(
+                assistant_message=assistant_message, response_usage=model_response_delta.response_usage
             )
 
         if should_yield:
-            yield model_response
+            yield model_response_delta
 
     def parse_tool_calls(self, tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Parse the tool calls from the model provider into a list of tool calls.
         """
         return tool_calls_data
+
+    def get_function_call_to_run_from_tool_execution(
+        self,
+        tool_execution: ToolExecution,
+        functions: Optional[Dict[str, Function]] = None,
+    ) -> FunctionCall:
+        function_call = get_function_call_for_tool_execution(
+            tool_execution=tool_execution,
+            functions=functions,
+        )
+        if function_call is None:
+            raise ValueError("Function call not found")
+        return function_call
 
     def get_function_calls_to_run(
         self,
@@ -827,38 +1028,6 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
-    def _handle_agent_exception(self, a_exc: AgentRunException, additional_messages: List[Message]) -> None:
-        """Handle AgentRunException and collect additional messages."""
-        if a_exc.user_message is not None:
-            msg = (
-                Message(role="user", content=a_exc.user_message)
-                if isinstance(a_exc.user_message, str)
-                else a_exc.user_message
-            )
-            additional_messages.append(msg)
-
-        if a_exc.agent_message is not None:
-            msg = (
-                Message(role="assistant", content=a_exc.agent_message)
-                if isinstance(a_exc.agent_message, str)
-                else a_exc.agent_message
-            )
-            additional_messages.append(msg)
-
-        if a_exc.messages:
-            for m in a_exc.messages:
-                if isinstance(m, Message):
-                    additional_messages.append(m)
-                elif isinstance(m, dict):
-                    try:
-                        additional_messages.append(Message(**m))
-                    except Exception as e:
-                        log_warning(f"Failed to convert dict to Message: {e}")
-
-        if a_exc.stop_execution:
-            for m in additional_messages:
-                m.stop_after_tool_call = True
-
     def _create_function_call_result(
         self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
     ) -> Message:
@@ -874,92 +1043,131 @@ class Model(ABC):
             metrics=MessageMetrics(time=timer.elapsed),
         )
 
+    def run_function_call(
+        self,
+        function_call: FunctionCall,
+        function_call_results: List[Message],
+        additional_messages: Optional[List[Message]] = None,
+    ) -> Iterator[ModelResponse]:
+        # Start function call
+        function_call_timer = Timer()
+        function_call_timer.start()
+        # Yield a tool_call_started event
+        yield ModelResponse(
+            content=function_call.get_call_str(),
+            tool_executions=[
+                ToolExecution(
+                    tool_call_id=function_call.call_id,
+                    tool_name=function_call.function.name,
+                    tool_args=function_call.arguments,
+                )
+            ],
+            event=ModelResponseEvent.tool_call_started.value,
+        )
+
+        # Run function calls sequentially
+        function_execution_result: FunctionExecutionResult = FunctionExecutionResult(status="failure")
+        try:
+            function_execution_result = function_call.execute()
+        except AgentRunException as a_exc:
+            # Update additional messages from function call
+            _handle_agent_exception(a_exc, additional_messages)
+            # Set function call success to False if an exception occurred
+        except Exception as e:
+            log_error(f"Error executing function {function_call.function.name}: {e}")
+            raise e
+
+        function_call_success = function_execution_result.status == "success"
+
+        # Stop function call timer
+        function_call_timer.stop()
+
+        # Process function call output
+        function_call_output: str = ""
+
+        if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+            for item in function_call.result:
+                function_call_output += str(item)
+                if function_call.function.show_result:
+                    yield ModelResponse(content=str(item))
+        else:
+            function_call_output = str(function_call.result)
+            if function_call.function.show_result:
+                yield ModelResponse(content=function_call_output)
+
+        # Create and yield function call result
+        function_call_result = self._create_function_call_result(
+            function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
+        )
+        yield ModelResponse(
+            content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
+            tool_executions=[
+                ToolExecution(
+                    tool_call_id=function_call_result.tool_call_id,
+                    tool_name=function_call_result.tool_name,
+                    tool_args=function_call_result.tool_args,
+                    tool_call_error=function_call_result.tool_call_error,
+                    result=str(function_call_result.content),
+                    stop_after_tool_call=function_call_result.stop_after_tool_call,
+                    metrics=function_call_result.metrics,
+                )
+            ],
+            event=ModelResponseEvent.tool_call_completed.value,
+        )
+
+        # Add function call to function call results
+        function_call_results.append(function_call_result)
+
     def run_function_calls(
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
+        additional_messages: Optional[List[Message]] = None,
     ) -> Iterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
 
         # Additional messages from function calls that will be added to the function call results
-        additional_messages: List[Message] = []
+        if additional_messages is None:
+            additional_messages = []
 
         for fc in function_calls:
-            # Start function call
-            function_call_timer = Timer()
-            function_call_timer.start()
-            # Yield a tool_call_started event
-            yield ModelResponse(
-                content=fc.get_call_str(),
-                tool_calls=[
-                    {
-                        "role": self.tool_message_role,
-                        "tool_call_id": fc.call_id,
-                        "tool_name": fc.function.name,
-                        "tool_args": fc.arguments,
-                    }
-                ],
-                event=ModelResponseEvent.tool_call_started.value,
+            # The function cannot be executed without user confirmation
+            if fc.function.requires_confirmation:
+                yield ModelResponse(
+                    tool_executions=[
+                        ToolExecution(
+                            tool_call_id=fc.call_id,
+                            tool_name=fc.function.name,
+                            tool_args=fc.arguments,
+                            requires_confirmation=True,
+                        )
+                    ],
+                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+                )
+                # We don't execute the function call here, we wait for the user to confirm
+                continue
+
+            yield from self.run_function_call(
+                function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
 
-            # Track if the function call was successful
-            function_call_success = False
-            # Run function calls sequentially
-            try:
-                function_call_success = fc.execute()
-            except AgentRunException as a_exc:
-                # Update additional messages from function call
-                self._handle_agent_exception(a_exc, additional_messages)
-                # Set function call success to False if an exception occurred
-                function_call_success = False
-            except Exception as e:
-                log_error(f"Error executing function {fc.function.name}: {e}")
-                raise e
-
-            # Stop function call timer
-            function_call_timer.stop()
-
-            # Process function call output
-            function_call_output: str = ""
-
-            if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
-                for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
-            else:
-                function_call_output = str(fc.result)
-                if fc.function.show_result:
-                    yield ModelResponse(content=function_call_output)
-
-            # Create and yield function call result
-            function_call_result = self._create_function_call_result(
-                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
-            )
-            yield ModelResponse(
-                content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[function_call_result.to_function_call_dict()],
-                event=ModelResponseEvent.tool_call_completed.value,
-            )
-
-            # Add function call to function call results
-            function_call_results.append(function_call_result)
+            # Add function call result to function call results
             self._function_call_stack.append(fc)
 
             # Check function call limit
             if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                # Deactivate tool calls by setting future tool calls to "none"
                 self._tool_choice = "none"
-                break  # Exit early if we reach the function call limit
+                break
 
         # Add any additional messages at the end
         if additional_messages:
             function_call_results.extend(additional_messages)
 
-    async def _arun_function_call(
-        self, function_call: FunctionCall
+    async def arun_function_call(
+        self,
+        function_call: FunctionCall,
     ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
@@ -974,16 +1182,20 @@ class Model(ABC):
                 or isasyncgenfunction(function_call.function.entrypoint)
                 or iscoroutine(function_call.function.entrypoint)
             ):
-                success = await function_call.aexecute()
+                result = await function_call.aexecute()
+                success = result.status == "success"
+
             # If any of the hooks are async, we need to run the function call asynchronously
             elif function_call.function.tool_hooks is not None and any(
                 iscoroutinefunction(f) for f in function_call.function.tool_hooks
             ):
-                success = await function_call.aexecute()
+                result = await function_call.aexecute()
+                success = result.status == "success"
             else:
-                success = await asyncio.to_thread(function_call.execute)
+                result = await asyncio.to_thread(function_call.execute)
+                success = result.status == "success"
         except AgentRunException as e:
-            success = e  # Pass the exception through to be handled by caller
+            success = e
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {e}")
             success = False
@@ -997,30 +1209,49 @@ class Model(ABC):
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
-    ):
+        additional_messages: Optional[List[Message]] = None,
+    ) -> AsyncIterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
 
         # Additional messages from function calls that will be added to the function call results
-        additional_messages: List[Message] = []
+        if additional_messages is None:
+            additional_messages = []
 
         # Yield tool_call_started events for all function calls
         for fc in function_calls:
+            # Function cannot be executed without user confirmation
+            if fc.function.requires_confirmation:
+                yield ModelResponse(
+                    tool_executions=[
+                        ToolExecution(
+                            tool_call_id=fc.call_id,
+                            tool_name=fc.function.name,
+                            tool_args=fc.arguments,
+                            requires_confirmation=True,
+                        )
+                    ],
+                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+                )
+                # We don't execute the function call here, we wait for the user to confirm
+                continue
             yield ModelResponse(
                 content=fc.get_call_str(),
-                tool_calls=[
-                    {
-                        "role": self.tool_message_role,
-                        "tool_call_id": fc.call_id,
-                        "tool_name": fc.function.name,
-                        "tool_args": fc.arguments,
-                    }
+                tool_executions=[
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                    )
                 ],
                 event=ModelResponseEvent.tool_call_started.value,
             )
 
-        # Create and run all function calls in parallel
-        results = await asyncio.gather(*(self._arun_function_call(fc) for fc in function_calls), return_exceptions=True)
+        # Create and run all function calls in parallel (skip ones that need confirmation)
+        function_calls_to_run = [fc for fc in function_calls if not fc.function.requires_confirmation]
+        results = await asyncio.gather(
+            *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
+        )
 
         # Process results
         for result in results:
@@ -1036,7 +1267,7 @@ class Model(ABC):
             if isinstance(function_call_success, AgentRunException):
                 a_exc = function_call_success
                 # Update additional messages from function call
-                self._handle_agent_exception(a_exc, additional_messages)
+                _handle_agent_exception(a_exc, additional_messages)
                 # Set function call success to False if an exception occurred
                 function_call_success = False
 
@@ -1063,7 +1294,17 @@ class Model(ABC):
             )
             yield ModelResponse(
                 content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                tool_calls=[function_call_result.to_function_call_dict()],
+                tool_executions=[
+                    ToolExecution(
+                        tool_call_id=function_call_result.tool_call_id,
+                        tool_name=function_call_result.tool_name,
+                        tool_args=function_call_result.tool_args,
+                        tool_call_error=function_call_result.tool_call_error,
+                        result=str(function_call_result.content),
+                        stop_after_tool_call=function_call_result.stop_after_tool_call,
+                        metrics=function_call_result.metrics,
+                    )
+                ],
                 event=ModelResponseEvent.tool_call_completed.value,
             )
 
@@ -1108,134 +1349,6 @@ class Model(ABC):
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
-
-    def _add_usage_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
-        """
-        Add usage metrics from the model provider to the assistant message.
-
-        Args:
-            assistant_message: Message to update with metrics
-            response_usage: Usage data from model provider
-        """
-
-        # Standard token metrics
-        if isinstance(response_usage, dict):
-            if "input_tokens" in response_usage:
-                assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-            if "output_tokens" in response_usage:
-                assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-            if "prompt_tokens" in response_usage:
-                assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
-            if "completion_tokens" in response_usage:
-                assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
-            if "total_tokens" in response_usage:
-                assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-            if "cached_tokens" in response_usage:
-                assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
-            else:
-                assistant_message.metrics.total_tokens = (
-                    assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-                )
-        else:
-            if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
-                assistant_message.metrics.input_tokens = response_usage.input_tokens
-            if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
-                assistant_message.metrics.output_tokens = response_usage.output_tokens
-            if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
-                assistant_message.metrics.input_tokens = response_usage.prompt_tokens
-                assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-            if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
-                assistant_message.metrics.output_tokens = response_usage.completion_tokens
-                assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-            if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
-                assistant_message.metrics.total_tokens = response_usage.total_tokens
-            if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
-                assistant_message.metrics.cached_tokens = response_usage.cached_tokens
-            else:
-                assistant_message.metrics.total_tokens = (
-                    assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-                )
-
-        # Additional metrics (e.g., from Groq, Ollama)
-        if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
-            assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
-
-        # Token details (e.g., from OpenAI)
-        if hasattr(response_usage, "prompt_tokens_details"):
-            if isinstance(response_usage.prompt_tokens_details, dict):
-                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
-                if (
-                    "audio_tokens" in response_usage.prompt_tokens_details
-                    and response_usage.prompt_tokens_details["audio_tokens"] is not None
-                ):
-                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details["audio_tokens"]
-                if (
-                    "cached_tokens" in response_usage.prompt_tokens_details
-                    and response_usage.prompt_tokens_details["cached_tokens"] is not None
-                ):
-                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details["cached_tokens"]
-            elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
-                assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
-                    exclude_none=True
-                )
-                if (
-                    hasattr(response_usage.prompt_tokens_details, "audio_tokens")
-                    and response_usage.prompt_tokens_details.audio_tokens is not None
-                ):
-                    assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens
-                if (
-                    hasattr(response_usage.prompt_tokens_details, "cached_tokens")
-                    and response_usage.prompt_tokens_details.cached_tokens is not None
-                ):
-                    assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
-
-        if hasattr(response_usage, "completion_tokens_details"):
-            if isinstance(response_usage.completion_tokens_details, dict):
-                assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
-                if (
-                    "audio_tokens" in response_usage.completion_tokens_details
-                    and response_usage.completion_tokens_details["audio_tokens"] is not None
-                ):
-                    assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details[
-                        "audio_tokens"
-                    ]
-                if (
-                    "reasoning_tokens" in response_usage.completion_tokens_details
-                    and response_usage.completion_tokens_details["reasoning_tokens"] is not None
-                ):
-                    assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
-                        "reasoning_tokens"
-                    ]
-            elif hasattr(response_usage.completion_tokens_details, "model_dump"):
-                assistant_message.metrics.completion_tokens_details = (
-                    response_usage.completion_tokens_details.model_dump(exclude_none=True)
-                )
-                if (
-                    hasattr(response_usage.completion_tokens_details, "audio_tokens")
-                    and response_usage.completion_tokens_details.audio_tokens is not None
-                ):
-                    assistant_message.metrics.output_audio_tokens = (
-                        response_usage.completion_tokens_details.audio_tokens
-                    )
-                if (
-                    hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
-                    and response_usage.completion_tokens_details.reasoning_tokens is not None
-                ):
-                    assistant_message.metrics.reasoning_tokens = (
-                        response_usage.completion_tokens_details.reasoning_tokens
-                    )
-
-        assistant_message.metrics.audio_tokens = (
-            assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
-        )
-
-    def _log_messages(self, messages: List[Message]) -> None:
-        """
-        Log messages for debugging.
-        """
-        for m in messages:
-            # Don't log metrics for input messages
-            m.log(metrics=False)
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         return self.system_prompt
