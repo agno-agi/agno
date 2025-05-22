@@ -1,17 +1,11 @@
-"""🗽 Basic Agent Example - Creating a Quirky News Reporter
-
-This example shows how to create a basic AI agent with a distinct personality.
-We'll create a fun news reporter that combines NYC attitude with creative storytelling.
-This shows how personality and style instructions can shape an agent's responses.
-
-Run `pip install openai agno` to install dependencies.
-"""
-
 from textwrap import dedent
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.models.groq import Groq
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
 
 # Create our News Reporter with a fun personality
 agent = Agent(
@@ -34,7 +28,7 @@ agent = Agent(
 
 # Example usage
 agent.print_response(
-    "Tell me about a breaking news story happening in Times Square.", stream=True
+    "Tell me about broken fingers and the best way to fix them.", stream=True
 )
 
 # More example prompts to try:

@@ -1,0 +1,840 @@
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+## PARECER CONSUBSTANCIADO DA CONEP
+
+## DADOS DO PROJETO DE PESQUISA
+
+Pesquisador:
+
+Título da Pesquisa:
+
+Instituiçªo Proponente:
+
+Versªo:
+
+CAAE:
+
+Estudo clínico duplo-cego, randomizado, controlado por placebo de combinaçªo de anticorpos monoclonais específicos a HIV amplamente neutralizantes combinados com início da TARV durante a infecçªo aguda por HIV para induçªo de remissªo de HIV - A5388
+
+Sandra Wagner Cardoso
+
+INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS -
+
+3
+
+76607523.7.1001.5262
+
+`rea TemÆtica:
+
+Pesquisas com coordenaçªo e/ou patrocínio originados fora do Brasil, excetuadas aquelas com copatrocínio do Governo Brasileiro;
+
+National Institute of Allergy and Infectious Diseases Patrocinador Principal:
+
+## DADOS DO PARECER
+
+Nœmero do Parecer:
+
+6.888.473
+
+## Apresentaçªo do Projeto:
+
+As informaçıes contidas nos campos "Apresentaçªo do Projeto", "Objetivo da Pesquisa" e "Avaliaçªo dos Riscos e Benefícios" foram obtidas dos documentos contendo as Informaçıes BÆsicas sobre o Projeto de Pesquisa (PB\_INFORMA˙ÕES\_B`SICAS\_DO\_PROJETO\_2260839.pdf de 25/04/2024) e do Projeto Detalhado.
+
+## INTRODU˙ˆO
+
+Necessidade de estratØgias para induçªo de remissªo de HIVA terapia antirretroviral (TARV) reduziu drasticamente a morbidade e a mortalidade associadas à infecçªo por vírus da imunodeficiŒncia humana (HIV), suprimindo a replicaçªo viral. Contudo, o tratamento Ø por toda a vida, uma vez que a TARV nªo erradica HIV dos reservatórios celulares, incluindo cØlulas T CD4+ infectadas de modo latente no sangue e tecidos linfoides. O rebote viral ocorre em semanas na maioria dos indivíduos com HIV que descontinuaram a TARV, incluindo aqueles que iniciaram a TARV precocemente durante a infecçªo aguda e cuja viremia plasmÆtica foi suprimida com sucesso por anos. AlØm disso, a TARV nªo recupera a saœde. Adultos com HIV em TARV eficaz tŒm um risco aumentado de condiçıes "nªo relacionadas à AIDS", como doenças cardiovasculares, em comparaçªo com a populaçªo em geral. AlØm disso, hÆ barreiras
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+ao uso universal da TARV que incluem toxicidades, custos, resistŒncia ao medicamento e necessidade de adesªo por toda a vida. Por todas essas razıes, estratØgias de tratamento que minimizem a exposiçªo à TARV enquanto conferem controle virológico durÆvel e retardam a progressªo da doença sªo altamente desejÆveis. Início da TARV durante infecçªo aguda por HIVO início da TARV durante a infecçªo inicial por HIV estÆ associado a vÆrios efeitos favorÆveis, incluindo um menor reservatório latente, reduçªo da diversidade viral e preservaçªo das respostas inatas e de cØlulas imunes T e B. Em contraste com os indivíduos que iniciaram a TARV tardiamente no curso da infecçªo crônica pelo HIV, alguns indivíduos que iniciaram a TARV no momento da infecçªo aguda demonstraram viremia atenuada após a interrupçªo do tratamento, e 5-16% apresentaram controle virológico prolongado. Na coorte VISCONTI, 15% dos indivíduos com HIV tratados durante a infecçªo aguda mantiveram controle virológico por mais de 5 anos após a interrupçªo do tratamento. Isto estÆ em absoluto contraste com a observaçªo de que &lt; 1% dos indivíduos com HIV controlam espontaneamente a viremia a níveis nªo detectÆveis. Os fatores associados ao controle virológico de sucesso incluem menor duraçªo entre o início do HIV e início da TARV, maior duraçªo da TARV e níveis mais baixos de DNA HIV em cØlulas mononucleares do sangue perifØrico (CMSPs). Anticorpos amplamente neutralizantes específicos para HIVbNAbs específicos para HIV representam uma nova abordagem terapŒutica com vÆrias possíveis vantagens em relaçªo à TARV que poderiam promover a remissªo do HIV. Os BNAbs se ligam a epítopos específicos no envelope do HIV e aproveitam as funçıes efetoras do hospedeiro por meio da interaçªo com os receptores Fc do hospedeiro, levando a citotoxicidade celular, fagocitose e lise mediada pelo complemento. BNAbs, incluindo 3BNC117, VRC01 e 10-1074, demonstraram reduzir a viremia em indivíduos virŒmicos. A administraçªo de bNAbs em combinaçªo (3BNC117 e 10-1074) a indivíduos virŒmicos foi associada à maior reduçªo da carga viral em comparaçªo à monoterapia. BNAbs tambØm demonstraram inibir a replicaçªo viral a partir do reservatório reativado in vitro. No estudo de Borducchi et al, a administraçªo do bNAb PGT121 dependente de glicano V3 com o agonista de receptor do tipo toll 7 (TLR7) vesatolimode (GS-9620) a macacos rhesus infectados com vírus de imunodeficiŒncia símia-humana (SHIV)- SF162P3 que iniciaram a TARV 1 semana após a infecçªo, houve rebote viral em apenas 6/11 animais atØ o dia 196 após descontinuaçªo da TARV. Os animais com rebote apresentaram uma reduçªo de 2,6 log10 cópias/ml nas cargas virais mÆximas e uma reduçªo de 1,5 log10 cópia/ml nas cargas virais de pontos estabelecidos em comparaçªo aos controles. A transferŒncia adotiva de CMSPs e cØlulas mononucleares de linfonodos de animais sem rebote nªo transferiu a infecçªo a hospedeiros nªo tratados. AlØm
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+disso, as cargas virais nos animais sem rebote tambØm permaneceram nªo detectÆveis após depleçªo de cØlulas CD8 e natural killer (NK). Em um estudo humano preliminar onde uma combinaçªo de dois bNAb de 3BNC-117 e 10- 1074 foi administrada a indivíduos tratados com TARV durante ATI, 2/9 indivíduos com vírus sensível a ambos os anticorpos na linha de base mantiveram a supressªo viral por mais de 30 semanas após a interrupçªo da TARV. Portanto, estes dados sugerem que a administraçªo de bNAbs em combinaçªo com TARV pode ser direcionada e eliminar o reservatório viral. AlØm disso, a administraçªo de bNAb tambØm pode aumentar a magnitude e a amplitude das respostas imunológicas humorais e celulares do hospedeiro ao HIV (ou seja, um efeito vacinal). No segundo estudo de Nishimura et al., no qual 3BNC117 e 10-1074 foram administrados a 13 macacos rhesus SHIVAD8-EO infectados de modo agudo, 6 animais (5 após rebote inicial, 1 sem rebote) atingiram controle viral. A depleçªo de cØlulas CD8 e NK nestes animais com controle foi associada à rÆpida induçªo de viremia plasmÆtica, sugerindo que as cØlulas T CD8 sªo responsÆveis pelo controle viral. Os autores postularam que os complexos imunes anticorpo-antígeno podem ativar as cØlulas dendríticas para aumentar o antígeno e respostas imunes adaptativas (ou seja, um efeito vacinal), contribuindo assim para o controle viral durante a ATI. VRC07-523LS Ø uma variante modificada de VRC-01, um bNAb direcionado ao sítio de ligaçªo a CD4 no envelope de HIV-1. Neutralizou 96% de 179 isolados a partir dos principais clados de HIV e Ø 8 vezes mais potente que VRC01. Tem meiavida plasmÆtica mais longa devido a mutaçıes que aumentam a afinidade ao receptor de Fc neonatal. Resultados preliminares do estudo A5378 demonstraram reduçªo de &gt; 1,2 log10 cópia/ml na carga viral plasmÆtica em 8/9 dos receptores de VRC07-523LS e nenhum efeito adverso inesperado [Chen 2019]. A experiŒncia clínica com VRC07-523LS Ø proveniente de 15 estudos clínicos (trŒs concluídos e 12 em andamento com alguns dados preliminares) realizados nos Estados Unidos da AmØrica, `frica do Sul e Suíça. Os dados publicados estªo disponíveis para apenas dois estudos. AtØ outubro de 2020, VRC07523LS foi administrado por uma veia (infusªo IV), ou injeçªo subcutânea (injeçªo SC), ou injeçªo em um mœsculo (injeçªo IM) em aproximadamente 230 adultos sem HIV, 28 adultos que vivem com HIV e 22 bebŒs expostos ao vírus HIV-1. VRC07- 523LS foi administrado isoladamente ou em combinaçªo com outros anticorpos contra HIV. De modo geral, adultos que receberam uma dose ou doses repetidas de VRC07523LS nªo apresentaram reaçıes preocupantes e geralmente toleraram bem as doses. Os dados limitados sobre os bebŒs expostos ao vírus HIV-1 e que receberam VRC07-523LS (por injeçªo SC) demonstraram que ele foi bem tolerado. Nªo foram relatados efeitos colaterais graves relacionados a VRC07-523LS em nenhum estudo.
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+PGT121.414.LS Ø uma variante modificada de PGT121, um bNAb direcionado a uma regiªo de epítopo dependente de glicano V3 do HIV Env. PGT121 neutralizou 70% de 162 isolados dos principais clados de HIV. Em um primeiro ensaio clínico de fase 1 em humanos, onde 13 participantes receberam PGT121, 9/13 responderam (definido como carga viral 0,5 log10 cópia/ml no dia 7). Todos os responsivos no grupo de carga viral elevada (N=5) apresentaram rebote atØ o dia 28. Para os responsivos no grupo de baixa carga viral (N=4), 2 mantiveram VL 90% no IC80 &lt; 5,0 g/ml com uso de dados específicos a vírus do clado B. A cobertura de isolado de HIV subtipo B fornecida por esta combinaçªo Ø similar à de uma combinaçªo de trŒs bNAbs, incluindo 10E8VLS (Figura 2.1-1, comunicaçªo pessoal, Bette Korber).
+
+## HIPÓTESE
+
+- 1.1. Hipóteses
+- 1.1.1. A administraçªo da terapia combinada de anticorpo amplamente neutralizante específica a HIV-1 (bNAb) adicionada à TARV durante a infecçªo aguda por HIV (AHI) serÆ segura.
+- 1.1.2. Os participantes que recebem terapia combinada de bNAb e TARV serªo mais predispostos a apresentar um atraso no tempo atØ RNA do HIV-1 &gt; 1.000 cópias/ml por 4 semanas consecutivas, em comparaçªo a participantes que recebem placebo mais TARV.
+- 1.1.3.  Os  participantes  que  recebem terapia combinada de bNAb e TARV demonstrarªo menores reservatórios virais e potencializaçªo da imunidade específica a HIV, em comparaçªo a participantes que recebem placebo mais TARV.
+
+## METODOLOGIA
+
+O tratamento em estudo Ø definido como VRC07-523LS (VRC-HIVMAB075-00-AB) e PGT121.414.LS (VRCHIVMAB0107-00-AB) ou placebo, e regime de comprimido œnico de bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg (STR).5.1 Regimes, intervençªo e duraçªo
+
+## BRA˙O 1
+
+- Etapa 1: Tratamento agudo (admissªo à semana 48, com possível extensªo para a semana 60, 72, 84 ou 96¿ Infusªo intravenosa de VRC07-523LS 10 mg/kg em aproximadamente 15 a 30 minutos uma vez na admissªo
+
+Infusªo intravenosa de PGT121.414.LS 5 mg/kg em aproximadamente 30 a 60 minutos uma vez na admissªo¿ Comprimido oral de bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg uma vez ao dia com ou sem alimento (consultar a seçªo 8.6 para as
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+Continuaçªo do Parecer: 6.888.473
+
+modificaçıes permitidas no esquema de TARV).
+
+Etapa 2: Interrupçªo do tratamento analítico (ATI, Semanas 0-24) Descontinuar a dose diÆria do comprimido de Bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg.
+
+Etapa 3: Interrupçªo do tratamento analítico estendido (ATI, Semanas 28-120) Monitoramento contínuo sem TARV.
+
+Etapa 4: Reinício da TARV (Reinício da TARV, Semanas 0-48)Comprimido oral de bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg uma vez ao dia com ou sem alimento.
+
+## BRA˙O 2
+
+Etapa 1: Tratamento agudo (Admissªo à semana 48, com possível extensªo para a semana 60, 72, 84 ou 96 Placebo para infusªo intravenosa de VRC07-523LS em aproximadamente 15 a 30 minutos uma vez na admissªo. Placebo para infusªo intravenosa de PGT121.414.LS em aproximadamente 30 a 60 minutos uma vez na admissªo. Comprimido oral de bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg uma vez ao dia com ou sem alimento (consultar a seçªo 8.6 para as modificaçıes permitidas no esquema de TARV).
+
+Etapa 2: Interrupçªo do tratamento analítico (ATI, Semanas 0-24) Descontinuar a dose diÆria do comprimido de Bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg.
+
+Etapa 3: Interrupçªo do tratamento analítico estendido (ATI, Semanas 28-120)Monitoramento contínuo sem TARV.
+
+Etapa 4: Reinício da TARV (Reinício da TARV, Semanas 0-48)Comprimido oral de bictegravir 50 mg/emtricitabina 200 mg/tenofovir alafenamida 25 mg uma vez ao dia com ou sem alimento.
+
+## CRITÉRIOS DE INCLUSˆO
+
+- 1. Documentaçªo adequada a partir de registros mØdicos de diagnóstico de AHI antes da inclusªo, que inclua um dos seguintes:
+- a. RNA do HIV-1 detectÆvel no período de 28 dias antes da admissªo ao estudo E anticorpo nªo reagente contra HIV-1 no período de 7 dias antes da admissªo ao estudo OU
+- b. RNA do HIV-1 detectÆvel ou anticorpo reagente contra HIV-1 no período de 28 dias antes da admissªo ao estudo E um Western Blot (WB) negativo/nªo determinado ou Ensaio Suplementar Geenius HIV-1/HIV-2 negativo/nªo determinado no período de 7 dias antes da admissªo OU
+- c. Anticorpo nªo reagente documentado contra HIV-1 ou RNA do HIV-1 negativo no período de 90 dias antes da admissªo ao estudo E anticorpo reagente documentado contra HIV-1 ou WB positivo negativo para banda p31 ou um Ensaio Suplementar Geenius HIV-1/HIV-2 positivo negativo para banda p31 no período de
+
+7dias antes da admissªo OU
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+<!-- image -->
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+- d. ARCHITECT ou GSCOMBO S/CO &gt;10 no período de 7dias antes da admissªo E anticorpo nªo reagente contra HIV-1 no período de 7 dias antes da admissªo OU
+- e. ARCHITECT ou GSCOMBO S/CO &gt;1 no período de 7dias antes da admissªo E anticorpo nªo reagente contra HIV-1 no período de 7 dias antes da admissªo E S/CO anterior conhecido de &lt; 0,5 no período de 90 dias antes da admissªo OU
+- f. ARCHITECT ou GSCOMBO S/CO &gt; 0,5, porØm &lt; 10 no período de 7 dias antes da admissªo E anticorpo nªo reagente contra HIV-1 no período de 7 dias antes da admissªo E RNA do HIV-1 detectÆvel no período de 7 dias antes da admissªo
+- 2. Os seguintes valores laboratoriais obtidos no período de 21 dias antes da admissªo ao estudo por qualquer laboratório nos EUA que tenha certificaçªo CLIA ou seu equivalente, ou para qualquer laboratório fora dos EUA aprovado pela Rede que atue de acordo com as Boas PrÆticas Clínicas e Laboratoriais (BPCL) e participe de programas garantia de qualidade externa apropriados (EQA)
+
+Contagem absoluta de neutrófilos (ANC)  1.000 cØlulas/mm3¿Hemoglobinao&gt; 10 g/dL para homens cisgŒnero e mulheres transgŒneroo&gt; 9 g/dL para mulheres cisgŒnero e homens transgŒnero
+
+Contagem de plaquetas &gt; 100.000/mm3¿Taxa de filtraçªo glomerular estimada (TFGe) &gt; 50 ml/min/1,73 m2 com uso da equaçªo da Colaboraçªo de Epidemiologia na Nefropatia Crônica (CKD-Epi), considerando taxas mais baixas em circunstâncias especiais.
+
+## ALT (TGP) &lt; 2,5 x ULN¿AST (TGO) &lt; 2,5 x ULN
+
+## Bilirrubina total &lt; 1,5 x ULN
+
+- 3. Para pessoas que podem engravidar, um teste sØrico ou urinÆrio negativo de gravidez no período de 24 horas antes da admissªo ao estudo por uma clínica dos EUA ou laboratório com certificaçªo CLIA ou seu equivalente, ou utilizando um teste remoto (POC)/isento pela CLIA ou em qualquer laboratório ou clínica fora dos EUA aprovado pela Rede que atue de acordo com as BPCL e participe de programas de EQA.
+- 4. As pessoas que podem engravidar devem concordar em usar dois mØtodos contraceptivos ao longo da Etapa 1 se participarem de atividades sexuais que possam levar à gravidez. Um mØtodo contraceptivo deve ser um dos mØtodos altamente eficazes listados abaixo. O segundo mØtodo contraceptivo deverÆ ser um mØtodo de barreira.
+- 5. Participantes com potencial reprodutivo que se envolvam em atividades sexuais que possam levar à gravidez de suas parceiras devem concordar em usar um mØtodo contraceptivo de barreira durante toda a Etapa 1.
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+- 6. Capacidade e disposiçªo de uso de um mØtodo de barreira ou abstinŒncia de atividade sexual com todos os parceiros vulnerÆveis a HIV ou cujo status sorológico de HIV Ø desconhecido, para prevenir a transmissªo de HIV durante as Etapas 2, 3 e atØ que o RNA do HIV-1 plasmÆtico sejam inferior ao limite de detecçªo após reinício da TARV na Etapa4
+- 7. Idade de &gt;18 a &lt;70 anos
+- 8. Capacidade e disposiçªo de iniciar a TARV na admissªo
+- 9. Capacidade e disposiçªo de participar em consultas do estudo agendadas, inclusive durante a ATI,de acordo com o Cronograma de Avaliaçıes
+- 10. Capacidade e disposiçªo do participante em fornecer consentimento livre e esclarecido
+
+## CRITÉRIOS DE EXCLUSˆO
+
+## Etapa 1
+
+- 1. Recebimento anterior de terapia com imunoglobulina (IgG).
+- 2. Recebimento anterior de anticorpo monoclonal humanizado ou humano, licenciado ou em investigaçªo (exceto para prevençªo e/ou tratamento de SARS-CoV- 2/COVID-19).
+- 3. Histórico de reaçªo alØrgica severa com urticÆria generalizada; angioedema ou anafilaxia nos 2 anos antes da inclusªo.
+- 4. Histórico de urticÆria crônica que exige tratamento diÆrio em qualquer momento do passado.
+- 5. Recebimento de um agente em estudo em investigaçªo no período de 28 dias antes da inclusªo.
+- 6. Participaçªo anterior em um estudo investigativo de uma vacina candidata contra o HIV ou profilaxia imunológica para infecçªo por HIV-1 com recebimento de produto ativo ou com recebimento de produto ativo ou placebo e permanece cego para o que realmente recebeu.
+- 7. Malignidade ativa ou recente nªo associada a HIV, exigindo quimioterapia sistŒmica ou cirurgia nos 36 meses anteriores ou para a qual estas terapias sªo esperadas nos 12 meses subsequentes.
+- 8. Uso de quaisquer medicaçıes imunomoduladoras no período de 6 meses da admissªo ao estudo, incluindo corticosteroides sistŒmicos (crônicos), imunossupressores, anticâncer, interleucinas, interferons sistŒmicos, quimioterapia sistŒmica ou outras medicaçıes que o pesquisador do centro considera que poderiam ter um efeito imunomodulador.
+- 9. Uso de TARV por qualquer razªo, incluindo profilaxia prØ ou pós-exposiçªo, no período de 60 dias antes da admissªo ao estudo.
+- 10. Uso ou dependŒncia de medicamento ativo ou Ælcool que, na opiniªo do pesquisador do
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+Continuaçªo do Parecer: 6.888.473
+
+centro, poderia interferir na adesªo aos requisitos do estudo.
+
+- 11. Histórico conhecido de infecçªo ativa por hepatite B ou hepatite C.
+- 12. Doença hepÆtica grave (Child-Pugh Classe C)
+- 13. Qualquer condiçªo clínica aguda, crônica ou recente e clinicamente significativa que, no parecer do pesquisador do centro, interferiria na adesªo às exigŒncias do estudo ou prejudicaria a segurança ou os direitos do participante.
+- 14. Histórico ou doença cardiovascular aterosclerótica clínica (ASCVD) atual, conforme definida pelas diretrizes de 2013 do American College of Cardiology (ACC)/American Heart Association (AHA), incluindo diagnóstico anterior de qualquer um dos seguintes:¿Infarto agudo do miocÆrdio
+
+Síndromes coronarianas agudas
+
+Angina estÆvel ou instÆvel
+
+Revascularizaçªo coronariana ou outra revascularizaçªo arterial
+
+Acidente vascular cerebral
+
+## TIA
+
+Arteriopatia perifØrica considerada de origem aterosclerótica
+
+- 15. Atualmente lactante ou gestante.
+- 16. Peso &gt; 115 kg.
+- 17. Uso de medicaçıes proibidas para bictegravir, emtricitabina e tenofovir alafenamida (consultar a seçªo 5.8) no período de 7 dias antes da admissªo, ou uso planejado de medicaçıes proibidas durante o período de participaçªo no estudo.
+- 18. AusŒncia de acesso venoso adequado para a administraçªo de infusªo ou para flebotomia para avaliar o desfecho primÆrio do estudo.
+
+## Objetivo da Pesquisa:
+
+## OBJETIVOS PRIM`RIOS
+
+- 1. Avaliar a segurança da terapia combinada de bNAb mais TARV durante AHI (estÆgios I-V de Fiebig).
+- 2. Avaliar o impacto da terapia combinada de bNAb mais TARV em comparaçªo a placebo mais TARV durante AHI (estÆgios I-V de Fiebig) no tempo atØ RNA para HIV-1 &gt; 1.000 cópias/ml por 4 semanas consecutivas após ATI.
+
+## OBJETIVOS SECUND`RIOS
+
+- 1. Avaliar o impacto da terapia combinada de bNAb mais TARV em comparaçªo a placebo mais
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+<!-- image -->
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+TARV durante AHI (estÆgios I-V de Fiebig) atØ primeiro RNA do HIV-1 documentado após ATI de &gt; 50, &gt; 200 e &gt; 1.000 cópias/ml.
+
+- 2. Avaliar o impacto da terapia combinada de bNAb mais TARV em comparaçªo a placebo mais TARV durante AHI (estÆgios I-V de Fiebig) na supressªo virológica (&lt; 200 cópias/ml) 24 semanas após ATI.
+- 3. Avaliar o impacto da terapia combinada de bNAb mais TARV em comparaçªo a placebo mais TARV durante AHI (estÆgios I-V de Fiebig) no tempo atØ reinício de TARV por razªo relacionada a HIV (virológica, imunológica ou clínica) durante a Etapa 2.
+- 4. Avaliar a frequŒncia de participantes que nªo atendem a nenhum critØrio de reinício de TARV.
+- 5. Comparar longitudinalmente o reservatório de HIV-1 de participantes que receberam terapia combinada com bNAb mais TARV durante AHI com aqueles que receberam placebo mais TARV, com uso de ensaios baseados na literatura contemporânea. Estes poderªo incluir, entre outros:a. DNA HIV-1 total e intactob. Transcritos de envelope de HIV-1 associados às cØlulasc. Viremia plasmÆtica residual (RNA do HIV-1) medida por ensaio de cópia œnica (SCA)d. Vírus infeccioso induzível medido por ensaio quantitativo de crescimento viral (qVOA)
+- 6. Identificar e quantificar qualquer efeito vacinal (isto Ø, imunidade de cØlulas T gerada por imunizaçªo passiva) pela avaliaçªo de cØlulas T CD4+ e CD8+ específicas a HIV-1 por citometria de fluxo antes do início da TARV, durante supressªo de RNA do HIV-1 e durante rebote viral, comparando participantes que receberam terapia combinada de bNAb mais TARV durante AHI com aqueles que receberam placebo mais TARV, que podem incluir, entre outros:a. Magnitude e distribuiçªo de respostas de cØlulas T CD4+ e CD8+ a peptídeos nef/tat/rev/vpr/vpu, gag, pol e envb. Qualidade de respostas de cØlulas T (incluindo secreçªo de citocinas, citotoxicidade e proliferaçªo)
+- 7. Caracterizar a farmacocinØtica da terapia combinada de bNAb administrada durante AHI.
+- 8. Avaliar a frequŒncia de sinais e sintomas apresentados de síndrome retroviral aguda durante a ATI na Etapa 2.
+- 9. Avaliar as respostas de anticorpos funcionais, incluindo citotoxicidade mediada por cØlula dependente de anticorpos (ADCC) e fagocitose celular dependente de anticorpos (ADCP) e outras respostas mediadas por anticorpos, com base na literatura contemporânea, antes do início da TARV, durante supressªo de RNA do HIV-1 e durante rebote viral, comparando participantes que receberam terapia combinada de bNAb mais TARV durante AHI com aqueles que receberam placebo mais TARV.
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+- 10. Descrever a sensibilidade à neutralizaçªo de isolados de HIV-1 e sequŒncia genØtica, incluindo efeito de peneira da terapia combinada com bNAb no rebote viral, caso ocorra após cessaçªo da TARV.
+
+## Avaliaçªo dos Riscos e Benefícios:
+
+## RISCOS
+
+Efeito dos Anticorpos: Os efeitos colaterais e a eficÆcia dos anticorpos VRC07-523LS e PGT121.414.LS podem nªo ser totalmente conhecidos, podendo apresentar riscos desconhecidos ou inesperados. Interrupçªo da TARV: A interrupçªo temporÆria da TARV (Etapa 2 e 3) pode aumentar o risco de reativaçªo viral e resistŒncia a medicamentos, caso o sistema imunológico nªo seja capaz de manter o controle viral. Variaçıes nas Concentraçıes de Anticorpos: Se as concentraçıes de anticorpos nªo estiverem dentro das variaçıes esperadas, isso pode indicar problemas na eficÆcia do tratamento, levando à necessidade de ajustes ou extensªo da Etapa 1. Descontinuidade do Tratamento: Aqueles que nªo atendem aos critØrios de reinício da TARV podem enfrentar riscos prolongados sem tratamento antirretroviral efetivo. Participaçªo de Curto Prazo: Aqueles que reiniciarem a TARV após a Etapa 3 terªo um acompanhamento limitado de 48 semanas (Etapa 4), o que pode nªo ser suficiente para avaliar completamente a eficÆcia a longo prazo. TransferŒncia para Outro Protocolo: A transferŒncia para outro protocolo (A5385) pode apresentar riscos desconhecidos associados a novas intervençıes ou observaçıes. É essencial que os participantes sejam devidamente informados sobre os riscos e benefícios do estudo, e que a pesquisa seja conduzida de acordo com as diretrizes Øticas e regulatórias para garantir a segurança e a integridade dos participantes.
+
+## BENEF˝CIOS
+
+Inovaçªo TerapŒutica: A combinaçªo de TARV com bNAbs representa uma abordagem inovadora para o tratamento do HIV, buscando maior eficÆcia e durabilidade do controle viral. Potencial Duradouro: A administraçªo de anticorpos amplamente neutralizantes pode oferecer uma resposta imunológica duradoura, permitindo a interrupçªo temporÆria da TARV (Etapa 2 e 3) para avaliar a capacidade do sistema imunológico em manter o controle viral. Monitoramento atento: O estudo propıe um monitoramento atento durante todas as fases do tratamento, o que pode permitir uma detecçªo precoce de efeitos adversos e uma adaptaçªo adequada do protocolo.
+
+## ComentÆrios e Consideraçıes sobre a Pesquisa:
+
+A5388 Ø um estudo fase II, de dois braços, randomizado, duplo-cego, controlado por placebo,
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+PÆgina 10 de 16
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+de vÆrias etapas, que incluirÆ adultos com infecçªo aguda por HIV (AHI) nªo tratados anteriormente com TARV. Os participantes iniciarªo a TARV fornecida pelo estudo na admissªo e receberªo uma dose œnica de dois anticorpos amplamente neutralizantes (bNAbs) VRC07-523LS e PGT121.414.LS (Braço 1) ou de placebos (Braço 2). Os participantes continuarªo na TARV por um total de 48-96 semanas (Etapa 1), seguida por interrupçªo do tratamento analítico (ATI) de todas as terapias (Etapas 2), durante as quais os participantes serªo atentamente monitorados.
+
+## O estudo propıe 2 braços:
+
+- (1) VRC07-523LS + PGT121.414.LS + TARV;
+- (2) Placebos (Cloreto de sódio para injeçªo USP, 0,9%) + TARV;
+
+Patrocinador: Institutos Nacionais da Saœde dos EUA (NIH).
+
+País de Origem: Estados Unidos da AmØrica.
+
+## Consideraçıes sobre os Termos de apresentaçªo obrigatória:
+
+Vide item "Conclusıes ou PendŒncias e Lista de Inadequaçıes".
+
+## Conclusıes ou PendŒncias e Lista de Inadequaçıes:
+
+- 1.  Quanto  ao  termo  de  consentimento  livre  e  esclarecido  (TCLE),  arquivo,  arquivo "A5388\_3\_TCLE\_V2\_INI\_30nov2023\_modificado\_para\_atender\_CEP\_25mar2024\_limpo.docx":
+- 1.1. Deve ser garantido ao participante de pesquisa e seu acompanhante o ressarcimento de despesas decorrentes da participaçªo no estudo nos dias em que for necessÆria sua presença para consultas ou exames. Sendo assim, solicita-se que o trecho seja reescrito garantindo, de forma clara e afirmativa, o ressarcimento das despesas tidas pelo participante da pesquisa e de seu acompanhante em decorrŒncia de sua participaçªo na pesquisa, podendo-se citar como exemplo, o transporte e a alimentaçªo, mas nªo se restringindo a eles. (Resoluçªo CNS n' 466 de 2012, itens II.21 e IV.3.g).
+- 1.2. Solicita-se esclarecimento quanto ao destino das amostras biológicas ao final das anÆlises realizadas no estudo, isto Ø, se as amostras serªo ou nªo destruídas (Resoluçªo CNS n.° 441, de 2011, item 8).
+- 1.3.  Na  pÆgina  17  de  22  lŒ-se:  "Após  o  estudo:[...]  Após  o  tØrmino  do  estudo  vocŒ  seguirÆ  seu acompanhamento e seu tratamento (TARV) seja fornecido pela rotina do INI de acordo com as diretrizes nacionais de TARV." Solicita-se que seja informado, no TCLE, de modo claro e
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município: BRASILIA
+
+DF
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+afirmativo, como serÆ o fornecimento pós estudo do TARV no Brasil, jÆ que Ø utilizado por tempo indeterminado.
+
+## ORIENTA˙ÕES PARA A TRAMITA˙ˆO DAS RESPOSTAS:
+
+- A - Cabe ao pesquisador responsÆvel encaminhar as respostas ao parecer pendente, por meio da Plataforma Brasil, em atØ 30 dias a contar a partir da data de emissªo do referido parecer. As respostas às pendŒncias devem ser apresentadas em documento à parte (CARTA RESPOSTA). Ressalta-se que DEVE HAVER RESPOSTA PARA CADA UMA DAS PEND˚NCIAS apontadas no parecer, OBEDECENDO A ORDENA˙ˆO DESTE.
+- B - A carta resposta deve permitir o uso correto dos recursos "copiar" e "colar" em qualquer palavra ou trecho do texto, isto Ø, a palavra e/ou trecho ao ser "colado" nªo deve sofrer alteraçªo.
+- C -  AlØm da carta resposta, cabe ao pesquisador alterar os documentos solicitados nos campos "Recomendaçıes" e/ou "Conclusıes ou PendŒncias e Lista de Inadequaçıes" e esses documentos devem:
+- I - Permitir o uso correto dos recursos "copiar" e "colar" em qualquer palavra ou trecho do texto;
+- II - Uma versªo do(s) documento(s) com as alteraçıes devidamente realçadas, podendo lançar mªo de sublinhado, negrito, e/ou outra cor de fonte.
+- III - Uma versªo do documento incluindo as alteraçıes sem destaque (versªo limpa).
+
+## Consideraçıes Finais a critØrio da CONEP:
+
+Diante do exposto, a Comissªo Nacional de Ética em Pesquisa - Conep, de acordo com as atribuiçıes definidas na Resoluçªo CNS n' 466 de 2012 e na Norma Operacional n' 001 de 2013 do CNS, manifesta-se por aguardar o atendimento às questıes acima para emissªo de seu parecer final.
+
+De acordo com a Resoluçªo CNS n' 466 de 2012 e a Norma Operacional n' 001 de 2013 do CNS, as pendŒncias devem ser respondidas exclusivamente pelo pesquisador responsÆvel no prazo de 30 dias, a partir da data de envio do parecer pela Conep. Após esse prazo, a Conep poderÆ optar por encerrar a tramitaçªo.
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município: BRASILIA
+
+DF
+
+Continuaçªo do Parecer: 6.888.473
+
+Situaçªo: Protocolo pendente.
+
+## Este parecer foi elaborado baseado nos documentos abaixo relacionados:
+
+| Tipo Documento                                         | Arquivo                                                                          | Postagem            | Autor                    | Situaçªo   |
+|--------------------------------------------------------|----------------------------------------------------------------------------------|---------------------|--------------------------|------------|
+| Informaçıes BÆsicas do Projeto                         | PB_INFORMA˙ÕES_B`SICAS_DO_P ROJETO_2260839.pdf                                   | 25/04/2024 12:00:52 |                          | Aceito     |
+| Projeto Detalhado / Brochura                           | Brochura_VRC07_523LS_VRC_HIVMA B075_00_AB_POR_.docx                              | 25/04/2024 12:00:06 | Alessandra da Motta Reis | Aceito     |
+| Investigador Projeto Detalhado / Brochura Investigador | Brochura_PGT121_414_LS_V4_June20 23_POR_.docx                                    | 25/04/2024 11:59:56 | Alessandra da Motta Reis | Aceito     |
+| Outros                                                 | A5388_18_Aprovacao_no_pais_de_orig em_CEP_ADvarra_EUA_POR_.docx                  | 25/04/2024 11:54:51 | Alessandra da Motta Reis | Aceito     |
+| Projeto Detalhado / Brochura Investigador              | A5388_2_Protocolo_V2_18Out2023_PO R_.docx                                        | 25/04/2024 11:53:01 | Alessandra da Motta Reis | Aceito     |
+| Outros                                                 | Carta_Resposta_Ref_Documentos_ingle s_e_portugues.pdf                            | 25/04/2024 11:51:49 | Alessandra da Motta Reis | Aceito     |
+| Outros                                                 | Carta_Resposta_Ref_Documentos_ingle s_e_portugues.docx                           | 25/04/2024 11:51:20 | Alessandra da Motta Reis | Aceito     |
+| Informaçıes BÆsicas do Projeto                         | PB_INFORMA˙ÕES_B`SICAS_DO_P ROJETO_2260839.pdf                                   | 17/04/2024 08:21:00 |                          | Aceito     |
+| Projeto Detalhado / Brochura Investigador              | VRC_HIVMAB075_00_AB_VRC07_523 LS_Edition_9_April2023_POR.docx                    | 17/04/2024 08:20:40 | Alessandra da Motta Reis | Aceito     |
+| Projeto Detalhado / Brochura Investigador              | VRC_HIVMAB075_00_AB_VRC07_523 LS_Edition_9_April2023_POR.docx                    | 17/04/2024 08:20:40 | Alessandra da Motta Reis | Postado    |
+| Projeto Detalhado / Brochura                           | 1_14_4_1_inv_brochure_pgt121_414_ls _v4_June2023_POR.docx                        | 17/04/2024 08:20:34 | Alessandra da Motta Reis | Aceito     |
+| Investigador Projeto Detalhado / Brochura Investigador | 1_14_4_1_inv_brochure_pgt121_414_ls _v4_June2023_POR.docx                        | 17/04/2024 08:20:34 | Alessandra da Motta Reis | Postado    |
+| Outros                                                 | A5388_Carta_Resposta_Pendencia_28 mar24.docx                                     | 01/04/2024 11:19:47 | Alessandra da Motta Reis | Aceito     |
+| Outros                                                 | A5388_Carta_Resposta_Pendencia_28 mar24.pdf                                      | 01/04/2024 11:18:54 | Alessandra da Motta Reis | Aceito     |
+| TCLE / Termos de Assentimento / Justificativa de       | A5388_3_TCLE_V2_INI_30nov2023_mo dificado_para_atender_CEP_25mar2024 _limpo.docx | 01/04/2024 11:16:05 | Alessandra da Motta Reis | Aceito     |
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+| AusŒncia                                                              | A5388_3_TCLE_V2_INI_30nov2023_mo dificado_para_atender_CEP_25mar2024 _limpo.docx                  | 01/04/2024 11:16:05   | Alessandra da Motta Reis   | Aceito   |
+|-----------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|-----------------------|----------------------------|----------|
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | A5388_3_TCLE_V2_INI_30nov2023_mo dificado_para_atender_CEP_25mar2024 _alteracoes_assinaladas.docx | 01/04/2024 11:15:54   | Alessandra da Motta Reis   | Aceito   |
+| Folha de Rosto                                                        | 1_folhaDeRosto_Assinada.pdf                                                                       | 18/12/2023 11:59:45   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_14_Regulamento_Armazena_A mostras_Testes_Futuros.doc                                        | 18/12/2023 11:58:56   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_7_Declaracao_de_cumprimento_ das_resolucoes_do_CNS.pdf                                      | 18/12/2023 11:58:19   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Manuseio Material Biológico / Biorepositório / Biobanco | A5388_14_Regulamento_Armazena_A mostras_Testes_Futuros_Assinado.pdf                               | 18/12/2023 11:52:49   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Instituiçªo e Infraestrutura                            | A5388_9_Declaracao_de_Infraestrutura _e_Instalacoes_v2_Assinado.pdf                               | 18/12/2023 11:52:13   | Alessandra da Motta Reis   | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | A5388_3_TCLE_V2_INI_30nov2023.pdf                                                                 | 18/12/2023 11:51:34   | Alessandra da Motta Reis   | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | A5388_3_TCLE_V2_INI_30nov2023.doc x                                                               | 18/12/2023 11:51:26   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Manuseio Material Biológico / Biorepositório / Biobanco | A5388_15_REGIMENTO_INTERNO_BI OREPOSITORIO_LAPCLINAIDS.pdf                                        | 15/12/2023 16:22:19   | Alessandra da Motta Reis   | Aceito   |
+| Outros                                                                | A5388_17_Termo_de_Anuencia_IPARG S_08Dec2023_Assinado.pdf                                         | 15/12/2023 16:20:04   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_16_Declaracao_centro_coorden ador_e_centros_participantes_no_Brasil. pdf                    | 15/12/2023 16:19:04   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_16_Declaracao_centro_coorden ador_e_centros_participantes_no_Brasil. doc                    | 15/12/2023 16:18:50   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_12_Justificativa_Armazena_Amo stras.pdf                                                     | 15/12/2023 16:18:02   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de Pesquisadores                                           | A5388_12_Justificativa_Armazena_Amo stras.docx                                                    | 15/12/2023 16:17:51   | Alessandra da Motta Reis   | Aceito   |
+| Declaraçªo de                                                         | A5388_11_Declaracao_referente_a_                                                                  | 15/12/2023            | Alessandra da              | Aceito   |
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+<!-- image -->
+
+Continuaçªo do Parecer: 6.888.473
+
+| Pesquisadores                              | finalidade_dos_dados_coletados.pdf                                       | 16:17:33            | Motta Reis               | Aceito   |
+|--------------------------------------------|--------------------------------------------------------------------------|---------------------|--------------------------|----------|
+| Declaraçªo de Pesquisadores                | A5388_11_Declaracao_referente_a_fina lidade_dos_dados_coletados.doc      | 15/12/2023 16:17:26 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Pesquisadores                | A5388_10_Declaracao_do_Pesquisador _quanto_ao_desenho.pdf                | 15/12/2023 16:17:12 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Pesquisadores                | A5388_10_Declaracao_do_Pesquisador _quanto_ao_desenho.doc                | 15/12/2023 16:17:02 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Pesquisadores                | A5388_8_Declaracao_do_Pesq_destino _amostras_biologicas.pdf              | 15/12/2023 16:16:34 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Pesquisadores                | A5388_8_Declaracao_do_Pesq_destino _amostras_biologicas.doc              | 15/12/2023 16:16:28 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Pesquisadores                | A5388_7_Declaracao_de_cumprimento_ das_resolucoes_do_CNS.doc             | 15/12/2023 16:15:54 | Alessandra da Motta Reis | Aceito   |
+| Outros                                     | A5388_00_Carta_de_Encaminhamento_ Dossie_inicial.pdf                     | 15/12/2023 16:15:42 | Alessandra da Motta Reis | Aceito   |
+| Outros                                     | A5388_00_Carta_de_Encaminhamento_ Dossie_inicial.docx                    | 15/12/2023 16:15:33 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo de Instituiçªo e Infraestrutura | A5388_9_Declaracao_de_Infraestrutura _e_Instalacoes_v2.doc               | 15/12/2023 16:14:49 | Alessandra da Motta Reis | Aceito   |
+| Projeto Detalhado / Brochura Investigador  | A5388_5_VRC_HIVMAB075_00_AB_V RC07_523LS_Edition_9_dated_April_20 23.pdf | 15/12/2023 16:14:38 | Alessandra da Motta Reis | Aceito   |
+| Projeto Detalhado / Brochura Investigador  | A5388_4_brochure_pgt121_414_ls_v4.p df                                   | 15/12/2023 16:14:21 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo do Patrocinador                 | A5388_18_Aprovacao_no_pais_de_orig em_CEP_ADvarra_EUA_POR.docx           | 15/12/2023 15:41:13 | Alessandra da Motta Reis | Aceito   |
+| Declaraçªo do Patrocinador                 | A5388_18_Aprovacao_no_pais_de_orig em_CEP_ADvarra_EUA_ENG.pdf            | 15/12/2023 15:41:04 | Alessandra da Motta Reis | Aceito   |
+| Projeto Detalhado / Brochura Investigador  | A5388_6_Bula_biktarvy.pdf                                                | 15/12/2023 15:33:05 | Alessandra da Motta Reis | Aceito   |
+| Projeto Detalhado / Brochura Investigador  | A5388_2_Protocolo_V2_18Out2023_PO R.docx                                 | 15/12/2023 15:32:56 | Alessandra da Motta Reis | Aceito   |
+| Projeto Detalhado / Brochura Investigador  | A5388_2_Protocol_V2_18Oct2023_ENG .pdf                                   | 15/12/2023 15:32:46 | Alessandra da Motta Reis | Aceito   |
+| Orçamento                                  | A5388_13_Orcamento.pdf                                                   | 15/12/2023 15:32:26 | Alessandra da Motta Reis | Aceito   |
+
+## Situaçªo do Parecer:
+
+Pendente
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+Continuaçªo do Parecer: 6.888.473
+
+## COMISSˆO NACIONAL DE ÉTICA EM PESQUISA
+
+BRASILIA, 26 de Junho de 2024
+
+Laís Alves de Souza Bonilha (Coordenador(a)) Assinado por:
+
+70.719-040
+
+(61)3315-5877
+
+E-mail:
+
+conep@saude.gov.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+SRTVN 701, Via W 5 Norte, lote D - Edifício PO 700, 3' andar
+
+Asa Norte
+
+UF:
+
+Município:
+
+DF
+
+BRASILIA
+
+<!-- image -->

@@ -1,0 +1,272 @@
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+<!-- image -->
+
+## PARECER CONSUBSTANCIADO DO CEP
+
+## DADOS DO PROJETO DE PESQUISA
+
+Pesquisador:
+
+Título da Pesquisa:
+
+Instituiçªo Proponente: INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI/FIOCRUZ INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI/FIOCRUZ Patrocinador Principal:
+
+Versªo:
+
+CAAE:
+
+Pesquisa colaborativa entre Sªo Francisco e Rio de Janeiro sobre prevalŒncia, risco e intervençıes de prevençªo biomØdica do HIV entre homens jovens que fazem sexo com homens
+
+Beatriz Grinsztejn
+
+2
+
+26086719.0.0000.5262
+
+`rea TemÆtica:
+
+## DADOS DO PARECER
+
+Nœmero do Parecer:
+
+3.826.341
+
+## Apresentaçªo do Projeto:
+
+De acordo com o arquivo "PB\_INFORMA˙ÕES\_B`SICAS\_DO\_PROJETO\_1475178.pdf":
+
+Ao passo que a epidemia de HIV em Sªo Francisco deve zerar o nœmero de infecçıes pelo HIV, o Rio de Janeiro estÆ apresentando um recrudescimento de novos casos de HIV relatados entre homens que fazem sexo com homens (HSH). O sucesso de Sªo Francisco pode ser atribuído a intervençıes biomØdicas eficazes, como: diagnóstico precoce, início de terapia antirretroviral (TARV) imediata, supressªo viral sustentada, amplo uso de profilaxia prØ-exposiçªo (PrEP) e interrupçªo de novas cadeias de transmissªo. No entanto, no Brasil, a adoçªo dessas intervençıes biomØdicas atØ agora tem sido insuficiente para reverter a epidemia, apesar de ser o primeiro país de baixa e mØdia renda a fornecer TARV sem custo a todas as pessoas vivendo com HIV, ter participado em ensaios clínicos que comprovam a eficÆcia da PrEP e políticas nacionais para fornecer PrEP gratuitamente. Enquanto isso, jovens HSH, principalmente negros, mantŒm alta incidŒncia de HIV, baixa supressªo viral e baixa adesªo à PrEP. Portanto, propomos uma pesquisa para identificar os fatores que motivam a infecçªo pelo HIV, maneiras de abordar as barreiras às intervençıes biomØdicas e a identificaçªo dos obstÆculos à inclusªo de jovens HSH em pesquisas biomØdicas. Os mØtodos incluem uma pesquisa transversal com HSH de 18 a 24 anos, usando amostragem orientada por respondente (do inglŒs, respondent driven sampling [RDS]), adaptada
+
+21.040-360
+
+(21)3865-9585
+
+E-mail:
+
+cep@ini.fiocruz.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+Avenida Brasil 4365
+
+Manguinhos
+
+UF: RJ
+
+Município:
+
+RIO DE JANEIRO
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+<!-- image -->
+
+Continuaçªo do Parecer: 3.826.341
+
+para amostragem baseada em mídias sociais, e o desenvolvimento de uma intervençªo tecnológica de engajamento rÆpido e retençªo em TARV e PrEP. Sªo Francisco Ø um caso modelo de eliminaçªo do HIV, apesar de ainda existirem desafios para atingir HSH jovens e minoritÆrios. O Rio de Janeiro Ø uma referŒncia de pesquisa em HIV na AmØrica do Sul, mas enfrenta desafios para colher o benefício de intervençıes biomØdicas comprovadas para HSH. A pesquisa proposta proporcionarÆ benefícios mœtuos no aumento da eficÆcia de intervençıes biomØdicas para reverter a epidemia de HIV entre HSH no Brasil.
+
+## Objetivo da Pesquisa:
+
+Objetivo PrimÆrio: Estimar a prevalŒncia e a incidŒncia de HIV, infecçıes sexualmente transmissíveis (IST), início do comportamento de risco e barreiras para intervençıes biomØdicas entre HSH de 18 a 24 anos em um levantamento de base populacional no Rio de Janeiro, Brasil. Objetivo SecundÆrio: Vincular rapidamente jovens HSH da RDS em TAR ou PrEP e realizar um estudo-piloto com uma intervençªo para adesªo baseada em tecnologia.
+
+## Avaliaçªo dos Riscos e Benefícios:
+
+Riscos: Um risco potencial para os participantes Ø a violaçªo do sigilo. Serªo adotados todos os cuidados para proteger a confidencialidade de todos os participantes. Nossa equipe tem vasta experiŒncia em pesquisas, sem que tenha ocorrido qualquer caso de violaçªo da confidencialidade das informaçıes. Minimizaremos o risco de violaçıes ao manter a confidencialidade e a discriçªo em todas as atividades de coleta  de  dados.Todos  os  participantes  serªo  informados  sobre  os  riscos  relacionados  com  os procedimentos do estudo, tais como coleta de amostras de sangue, incluindo hematomas ao redor do local onde o sangue foi coletado. Outros riscos potenciais que poderiam resultar da participaçªo no estudo sªo constrangimento relacionado às perguntas que tratam de hÆbitos pessoais e estilo de vida e à coleta de amostras genitais. Nossa equipe tem desenvolvido pesquisas em Æreas cuja temÆtica engloba aspectos íntimos da vida dos participantes, estando habituada a lidar com temas delicados. Todos os profissionais envolvidos diretamente na coleta de dados receberªo treinamento e/ou atualizaçªo específicos para permitir que ela seja realizada de forma segura, objetiva, confidencial e Øtica. Em relaçªo à testagem para o HIV, serÆ oferecido aconselhamento prØ- e pós-teste a todos os participantes e, em caso de resultados positivos, os participantes serªo encaminhados para acompanhamento específico.
+
+Benefícios: Os potenciais benefícios para os participantes incluem: encaminhamento dos participantes em que for realizado algum diagnóstico para cuidados e aconselhamento e reduçªo
+
+21.040-360
+
+(21)3865-9585
+
+E-mail:
+
+cep@ini.fiocruz.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+Avenida Brasil 4365
+
+Manguinhos
+
+UF: RJ
+
+Município:
+
+RIO DE JANEIRO
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+<!-- image -->
+
+Continuaçªo do Parecer: 3.826.341
+
+do risco individual, alØm de tratamento dos participantes com diagnóstico de sífilis, clamídia e/ou gonococo. Os benefícios para as comunidades da populaçªo de jovens HSH e para a saœde pœblica geral no Brasil podem ocorrer devido à ampliaçªo do conhecimento sobre esse grupo populacional e de meios mais efetivos para expansªo dos programas de prevençªo ao HIV e outras IST, baseados em evidŒncias e voltados para as populaçıes que mais precisam, o que, por fim, contribuirÆ para o controle da epidemia do HIV. Essa pesquisa contribuirÆ para o estabelecimento de uma base de evidŒncia rigorosa para uma ou mais novas estratØgias de uso e adesªo que podem ser utilizadas para otimizar a ampliaçªo do uso de PrEP em ambientes comunitÆrios com a populaçªo de HSH jovens no Rio de Janeiro e em outras partes do Brasil e da AmØrica Latina.
+
+## ComentÆrios e Consideraçıes sobre a Pesquisa:
+
+Vide campo de conclusıes e pendŒncias.
+
+## Consideraçıes sobre os Termos de apresentaçªo obrigatória:
+
+Vide campo de conclusıes e pendŒncias.
+
+## Recomendaçıes:
+
+Vide campo de conclusıes e pendŒncias.
+
+## Conclusıes ou PendŒncias e Lista de Inadequaçıes:
+
+As recomendaçıes foram atendidas e a pendŒncia relativa ao valor dos brindes foi devidamente esclarecida. Os brindes especificados (ecobag, doleira, porta-cartªo, garrafa plÆstica, alØm de materiais de prevençªo, como preservativos e gel) sªo de baixo valor monetÆrio e permitem facilitar a adesªo de participantes, sem constituir coerçªo à participaçªo no estudo. Portanto, os preceitos Øticos foram preservados.
+
+## Consideraçıes Finais a critØrio do CEP:
+
+As recomendaçıes do parecer consubstanciado de 3.800.914 de 15-01-2020 foram atendidas, bem como a pendŒncia metodológica de oferta de brindes. Com as correçıes e o esclarecimento, nªo hÆ óbices Øticos e o estudo mostra-se adequado.
+
+Aprovaçªo ad referendum da reuniªo plenÆria prevista para 17/02/2020.
+
+## Este parecer foi elaborado baseado nos documentos abaixo relacionados:
+
+| Tipo Documento   | Arquivo                     | Postagem   | Autor   | Situaçªo   |
+|------------------|-----------------------------|------------|---------|------------|
+| Informaçıes      | PB_INFORMA˙ÕES_B`SICAS_DO_P | 23/01/2020 |         | Aceito     |
+
+21.040-360
+
+(21)3865-9585
+
+E-mail:
+
+cep@ini.fiocruz.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+Avenida Brasil 4365
+
+Manguinhos
+
+UF: RJ
+
+Município:
+
+RIO DE JANEIRO
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+<!-- image -->
+
+Continuaçªo do Parecer: 3.826.341
+
+| BÆsicas do Projeto                                                    | ETO_1475178.pdf                                               | 14:02:00            |                           | Aceito   |
+|-----------------------------------------------------------------------|---------------------------------------------------------------|---------------------|---------------------------|----------|
+| Projeto Detalhado / Brochura Investigador                             | projeto_janeiro_2020_com_controle_de_ alts.docx               | 23/01/2020 13:57:10 | Raquel Malaguthi de Souza | Aceito   |
+| Projeto Detalhado / Brochura Investigador                             | projeto_janeiro_2020_final.docx                               | 23/01/2020 13:57:00 | Raquel Malaguthi de Souza | Aceito   |
+| Orçamento                                                             | ORCAMENTO_rev_com_controle_de_al ts.docx                      | 23/01/2020 13:56:47 | Raquel Malaguthi de Souza | Aceito   |
+| Orçamento                                                             | ORCAMENTO_rev_final.docx                                      | 23/01/2020 13:56:39 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | resposta_parecer_3800914_15jan2020. pdf                       | 23/01/2020 13:49:52 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_referente_finalidade_dados _coletados_assinada.pdf | 22/11/2019 16:17:49 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_destino_amostras_biologica s_assinada.pdf          | 22/11/2019 16:14:21 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_desenho_estudo_assinada. pdf                       | 22/11/2019 15:47:12 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_cumprimento_resol_CNS_a ssinada.pdf                | 22/11/2019 15:42:15 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_referente_finalidade_dados _coletados.doc          | 22/11/2019 15:23:19 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | Declaracao_cumprimento_resol_CNS.do c                         | 22/11/2019 15:22:28 | Raquel Malaguthi de Souza | Aceito   |
+| Outros                                                                | RDS_Jovens_HSH_Co_patrocinio.pdf                              | 22/11/2019 15:20:55 | Raquel Malaguthi de Souza | Aceito   |
+| Declaraçªo de Manuseio Material Biológico / Biorepositório / Biobanco | Declaracao_destino_amostras_biologica s.doc                   | 22/11/2019 15:20:39 | Raquel Malaguthi de Souza | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | TCLE_fase_formativa_entrevistas.docx                          | 22/11/2019 15:19:44 | Raquel Malaguthi de Souza | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | TCLE_fase_formativa_DGF.docx                                  | 22/11/2019 15:19:36 | Raquel Malaguthi de Souza | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de AusŒncia             | TCLE_estudo_RDS.docx                                          | 22/11/2019 15:19:28 | Raquel Malaguthi de Souza | Aceito   |
+| TCLE / Termos de Assentimento / Justificativa de                      | TCLE_estudo_intervencao.docx                                  | 22/11/2019 15:19:18 | Raquel Malaguthi de Souza | Aceito   |
+
+21.040-360
+
+(21)3865-9585
+
+E-mail:
+
+cep@ini.fiocruz.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+Avenida Brasil 4365
+
+Manguinhos
+
+UF: RJ
+
+Município:
+
+RIO DE JANEIRO
+
+## INSTITUTO NACIONAL DE INFECTOLOGIA EVANDRO CHAGAS - INI / FIOCRUZ
+
+<!-- image -->
+
+Continuaçªo do Parecer: 3.826.341
+
+| AusŒncia                   | TCLE_estudo_intervencao.docx   | 22/11/2019 15:19:18   | Raquel Malaguthi de Souza   | Aceito   |
+|----------------------------|--------------------------------|-----------------------|-----------------------------|----------|
+| Declaraçªo do Patrocinador | Declaracao_desenho_estudo.doc  | 22/11/2019 15:18:33   | Raquel Malaguthi de Souza   | Aceito   |
+| Folha de Rosto             | digitalizar0005.pdf            | 22/11/2019 15:17:53   | Raquel Malaguthi de Souza   | Aceito   |
+
+## Situaçªo do Parecer:
+
+Aprovado
+
+Necessita Apreciaçªo da CONEP:
+
+Nªo
+
+RIO DE JANEIRO, 07 de Fevereiro de 2020
+
+Mauro Brandªo Carneiro (Coordenador(a)) Assinado por:
+
+21.040-360
+
+(21)3865-9585
+
+E-mail:
+
+cep@ini.fiocruz.br
+
+Endereço:
+
+Bairro:
+
+CEP:
+
+Telefone:
+
+Avenida Brasil 4365
+
+Manguinhos
+
+UF: RJ
+
+Município:
+
+RIO DE JANEIRO

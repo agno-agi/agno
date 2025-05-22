@@ -12,7 +12,7 @@ db_file = "tmp/agent.db"
 # Initialize memory.v2
 memory = Memory(
     # Use any model for creating memories
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIChat(id="gpt-4.1-nano"),
     db=SqliteMemoryDb(table_name="user_memories", db_file=db_file),
     delete_memories=True,
     clear_memories=True,
