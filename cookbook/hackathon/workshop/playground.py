@@ -4,7 +4,12 @@ from agno_assist_voice import agno_assist_voice
 from fastapi import FastAPI
 
 # Create and configure the playground app
-playground_app = Playground(agents=[agno_support, agno_assist_voice], name="Playground-hackathon", app_id="playground-hackathon", description="A playground for testing and playing with Agno")
+playground_app = Playground(
+    agents=[agno_support, agno_assist_voice],
+    name="Playground-hackathon",
+    app_id="playground-hackathon",
+    description="A playground for testing and playing with Agno",
+)
 
 app = playground_app.get_app()
 

@@ -32,4 +32,4 @@ whatsapp_app = WhatsappAPI(
 app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    whatsapp_app.serve_whatsapp_app(app="reasoning_agent:app", port=8000, reload=True)
+    whatsapp_app.serve(app="reasoning_agent:app", port=8000, reload=True)

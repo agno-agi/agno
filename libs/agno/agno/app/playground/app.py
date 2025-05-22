@@ -194,13 +194,13 @@ class Playground:
         self.register_app_on_platform()
         if self.agents:
             for agent in self.agents:
-                agent._register_agent()
+                agent.register_agent()
         if self.teams:
             for team in self.teams:
-                team._register_team()
+                team.register_team()
         if self.workflows:
             for workflow in self.workflows:
-                workflow._register_workflow()
+                workflow.register_workflow()
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:

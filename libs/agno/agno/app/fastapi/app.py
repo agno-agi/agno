@@ -140,7 +140,7 @@ class FastAPIApp:
         )
         return self.api_app
 
-    def serve_fastapi_app(
+    def serve(
         self,
         app: Union[str, FastAPI],
         *,
@@ -153,9 +153,9 @@ class FastAPIApp:
         self.register_app_on_platform()
 
         if self.agent:
-            self.agent._register_agent()
+            self.agent.register_agent()
         if self.team:
-            self.team._register_team()
+            self.team.register_team()
         logger.info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

@@ -640,7 +640,7 @@ class Team:
         self._set_default_model()
 
         # Register the team on the platform
-        thread = threading.Thread(target=self._register_team)
+        thread = threading.Thread(target=self.register_team)
         thread.start()
 
         # Run the team
@@ -7027,7 +7027,7 @@ class Team:
         log_info(f"Filters used by Agent: {search_filters}")
         return search_filters
 
-    def _register_team(self) -> None:
+    def register_team(self) -> None:
         self._set_monitoring()
         if not self.monitoring:
             return

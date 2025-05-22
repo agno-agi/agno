@@ -55,27 +55,19 @@ class WhatsappAPI:
         if self.agent:
             if not self.agent.app_id:
                 self.agent.app_id = self.app_id
-            if not self.agent.agent_id:
-                self.agent.agent_id = generate_id(self.agent.name)
             self.agent.initialize_agent()
 
         if self.team:
             if not self.team.app_id:
                 self.team.app_id = self.app_id
-            if not self.team.team_id:
-                self.team.team_id = generate_id(self.team.name)
             self.team.initialize_team()
             for member in self.team.members:
                 if isinstance(member, Agent):
                     if not member.app_id:
                         member.app_id = self.app_id
-                    if not member.agent_id:
-                        member.agent_id = generate_id(member.name)
                     member.team_id = None
                     member.initialize_agent()
                 elif isinstance(member, Team):
-                    if not member.app_id:
-                        member.app_id = self.app_id
                     member.initialize_team()
 
         self.endpoints_created: Set[str] = set()
@@ -152,7 +144,7 @@ class WhatsappAPI:
         )
         return self.api_app
 
-    def serve_whatsapp_app(
+    def serve(
         self,
         app: Union[str, FastAPI],
         *,
@@ -165,9 +157,9 @@ class WhatsappAPI:
         self.register_app_on_platform()
 
         if self.agent:
-            self.agent._register_agent()
+            self.agent.register_agent()
         if self.team:
-            self.team._register_team()
+            self.team.register_team()
 
         logger.info(f"Starting Whatsapp API on {host}:{port}")
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

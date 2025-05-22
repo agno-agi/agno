@@ -883,7 +883,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Register Agent
-        thread = threading.Thread(target=self._register_agent)
+        thread = threading.Thread(target=self.register_agent)
         thread.start()
 
         for attempt in range(num_attempts):
@@ -5915,7 +5915,7 @@ class Agent:
 
         return run_data
 
-    def _register_agent(self) -> None:
+    def register_agent(self) -> None:
         """Register this agent with Agno's platform."""
         self.set_monitoring()
         if not self.monitoring:

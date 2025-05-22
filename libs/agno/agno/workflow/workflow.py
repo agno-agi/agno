@@ -154,18 +154,17 @@ class Workflow:
         self.initialize_memory()
 
         # Update workflow_id for all agents before registration
-        for field_name, value in self.__class__.__dict__.items():
+        for value in self.__class__.__dict__.items():
             if isinstance(value, Agent):
                 value.initialize_agent()
                 value.workflow_id = self.workflow_id
-                print(value.agent_id)
+
             if isinstance(value, Team):
                 value.initialize_team()
                 value.workflow_id = self.workflow_id
-                print(value.team_id)
 
         # Register the workflow, which will also register agents and teams
-        self._register_workflow()
+        self.register_workflow()
 
         # Create a run_id
         self.run_id = str(uuid4())
@@ -663,7 +662,7 @@ class Workflow:
         # For other types, return as is
         return field_value
 
-    def _register_workflow(self, force: bool = False) -> None:
+    def register_workflow(self, force: bool = False) -> None:
         """Register this workflow with Agno's platform.
 
         Args:
@@ -682,7 +681,6 @@ class Workflow:
 
             workflow_config = self.to_config_dict()
             log_debug(f"Registering workflow: {self.name} (ID: {self.workflow_id})")
-            print(f"Workflow config: {workflow_config}")
             # Register the workflow as an app
             create_workflow(
                 workflow=WorkflowCreate(
