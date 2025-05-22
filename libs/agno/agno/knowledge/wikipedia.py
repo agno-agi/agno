@@ -11,6 +11,7 @@ except ImportError:
 
 class WikipediaKnowledgeBase(AgentKnowledge):
     topics: List[str] = []
+    auto_suggest: bool = True
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
@@ -26,6 +27,6 @@ class WikipediaKnowledgeBase(AgentKnowledge):
                 Document(
                     name=topic,
                     meta_data={"topic": topic},
-                    content=wikipedia.summary(topic),
+                    content=wikipedia.summary(topic, auto_suggest=self.auto_suggest),
                 )
             ]
