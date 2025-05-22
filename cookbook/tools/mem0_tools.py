@@ -3,13 +3,12 @@ This example demonstrates how to use the Mem0Tools class to interact with memori
 """
 
 from textwrap import dedent
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mem0 import Mem0Tools
 
-USER_ID = "john_billings"
-SESSION_ID = "session1"
+USER_ID = "jane_doe"
+SESSION_ID = "agno_session"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -32,10 +31,14 @@ agent = Agent(
 )
 
 agent.print_response("I live in NYC")
-agent.print_response("NYC is a big city")
-agent.print_response("NYC has a famous Brooklyn Bridge")
-agent.print_response("Delete all my memories")
-agent.print_response("I moved to LA")
+agent.print_response("I lived in San Francisco for 5 years previously")
 agent.print_response("I'm going to a Taylor Swift concert tomorrow")
+
 agent.print_response("Summarize all the details of the conversation")
-agent.print_response("What is the name of the concert I am going to?")
+
+# More examples:
+# agent.print_response("NYC has a famous Brooklyn Bridge")
+# agent.print_response("Delete all my memories")
+# agent.print_response("I moved to LA")
+# agent.print_response("What is the name of the concert I am going to?")
+

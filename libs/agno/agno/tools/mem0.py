@@ -7,7 +7,7 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from mem0 import Memory, MemoryClient  # type: ignore
+    from mem0 import Memory, MemoryClient
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
@@ -86,16 +86,18 @@ class Mem0Tools(Toolkit):
     ) -> str:
         """Add facts to the user's memory.
         Args:
-            content: The facts that should be stored.
+            content(Union[str, Dict[str, str]]): The facts that should be stored.
+            Example:
+                content = "I live in NYC"
+                content = {"Name": "John", "Age": 30, "Location": "New York"}
         Returns:
             str: JSON-encoded Mem0 response or an error message.
         """
+
         resolved_user_id = self._get_user_id("add_memory", agent=agent)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
             return resolved_user_id
         try:
-            session_id = self._get_session_id(agent)
-            log_debug(f"Adding memory for user_id: {resolved_user_id}, session_id: {session_id}")
 
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
@@ -105,7 +107,7 @@ class Mem0Tools(Toolkit):
             result = self.client.add(
                 messages_list,
                 user_id=resolved_user_id,
-                run_id=session_id,
+                output_format="v1.1",  # Added to avoid deprecation warning
             )
             return json.dumps(result)
         except Exception as e:
@@ -118,6 +120,7 @@ class Mem0Tools(Toolkit):
         query: str,
     ) -> str:
         """Semantic search for *query* across the user's stored memories."""
+
         resolved_user_id = self._get_user_id("search_memory", agent=agent)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
             return resolved_user_id
@@ -145,6 +148,7 @@ class Mem0Tools(Toolkit):
 
     def get_all_memories(self, agent: Agent) -> str:
         """Return **all** memories for the current user as a JSON string."""
+
         resolved_user_id = self._get_user_id("get_all_memories", agent=agent)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
             return resolved_user_id
@@ -170,6 +174,7 @@ class Mem0Tools(Toolkit):
 
     def delete_all_memories(self, agent: Agent) -> str:
         """Delete *all* memories associated with the current user and session."""
+
         resolved_user_id = self._get_user_id("delete_all_memories", agent=agent)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
             error_msg = resolved_user_id
