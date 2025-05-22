@@ -68,16 +68,6 @@ class Mem0Tools(Toolkit):
             return error_msg
         return resolved_user_id
 
-    def _get_session_id(self, agent: Optional[Agent] = None) -> Optional[str]:
-        """Extract the current session identifier from *agent* if available."""
-        try:
-            if agent is not None:
-                session_state = getattr(agent, "session_state", None)
-                if isinstance(session_state, dict):
-                    return session_state.get("current_session_id")
-        except Exception:
-            pass
-        return None
 
     def add_memory(
         self,
@@ -173,7 +163,7 @@ class Mem0Tools(Toolkit):
             return f"Error getting all memories: {e}"
 
     def delete_all_memories(self, agent: Agent) -> str:
-        """Delete *all* memories associated with the current user and session."""
+        """Delete *all* memories associated with the current user"""
 
         resolved_user_id = self._get_user_id("delete_all_memories", agent=agent)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
@@ -181,11 +171,8 @@ class Mem0Tools(Toolkit):
             log_error(error_msg)
             return f"Error deleting all memories: {error_msg}"
         try:
-            session_id = self._get_session_id(agent)
-            log_debug(f"Attempting to delete ALL memories for user_id: {resolved_user_id}, session_id: {session_id}")
-
-            self.client.delete_all(user_id=resolved_user_id, run_id=session_id)
-            return f"Successfully deleted all memories for user_id: {resolved_user_id}, session_id: {session_id}."
+            self.client.delete_all(user_id=resolved_user_id)
+            return f"Successfully deleted all memories for user_id: {resolved_user_id}."
         except Exception as e:
             log_error(f"Error deleting all memories: {e}")
             return f"Error deleting all memories: {e}"

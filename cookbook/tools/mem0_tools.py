@@ -38,7 +38,7 @@ agent.print_response("Summarize all the details of the conversation")
 
 # More examples:
 # agent.print_response("NYC has a famous Brooklyn Bridge")
-# agent.print_response("Delete all my memories")
+agent.print_response("Delete all my memories")
 # agent.print_response("I moved to LA")
-# agent.print_response("What is the name of the concert I am going to?")
+agent.print_response("What is the name of the concert I am going to?")
 
