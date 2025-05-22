@@ -1214,7 +1214,6 @@ class Model(ABC):
                 # We don't execute the function calls here
                 continue
 
-
             yield from self.run_function_call(
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
