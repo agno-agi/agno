@@ -32,7 +32,6 @@ def execute_shell_command(command: str) -> str:
         raise Exception(f"Unsupported command: {command}")
 
 
-# Initialize the agent with a tech-savvy personality and clear instructions
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],
@@ -45,11 +44,8 @@ async def main():
         "What files do I have in my current directory?", stream=True
     ):
         if run_response.is_paused:
-            for tool in run_response.tools:
-                if (
-                    tool.external_execution_required
-                    and tool.tool_name == execute_shell_command.name
-                ):
+            for tool in run_response.tools_awaiting_external_execution:
+                if tool.tool_name == execute_shell_command.name:
                     print(
                         f"Executing {tool.tool_name} with args {tool.tool_args} externally"
                     )

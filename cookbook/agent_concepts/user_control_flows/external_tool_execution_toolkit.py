@@ -7,51 +7,54 @@ It shows how to:
 Run `pip install openai agno` to install dependencies.
 """
 
-import asyncio
 import subprocess
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.tools.toolkit import Toolkit
 from agno.utils import pprint
 
 
-# We have to create a tool with the correct name, arguments and docstring for the agent to know what to call.
-@tool(external_execution=True)
-def execute_shell_command(command: str) -> str:
-    """Execute a shell command.
+class ShellTools(Toolkit):
+    def __init__(self, *args, **kwargs):
+        super().__init__(
+            tools=[self.list_dir],
+            external_execution_required_tools=["list_dir"],
+            *args,
+            **kwargs,
+        )
 
-    Args:
-        command (str): The shell command to execute
+    def list_dir(self, directory: str):
+        """
+        Lists the contents of a directory.
 
-    Returns:
-        str: The output of the shell command
-    """
-    if command.startswith("ls"):
-        return subprocess.check_output(command, shell=True).decode("utf-8")
-    else:
-        raise Exception(f"Unsupported command: {command}")
+        Args:
+            directory: The directory to list.
 
+        Returns:
+            A string containing the contents of the directory.
+        """
+        return subprocess.check_output(f"ls {directory}", shell=True).decode("utf-8")
+
+
+tools = ShellTools()
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[execute_shell_command],
+    tools=[tools],
     markdown=True,
 )
 
-run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
+run_response = agent.run("What files do I have in my current directory?")
 if run_response.is_paused:  # Or agent.run_response.is_paused
     for tool in run_response.tools_awaiting_external_execution:
-        if tool.tool_name == execute_shell_command.name:
+        if tool.tool_name == "list_dir":
             print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
             # We execute the tool ourselves. You can also execute something completely external here.
-            result = execute_shell_command.entrypoint(**tool.tool_args)
+            result = tools.list_dir(**tool.tool_args)
             # We have to set the result on the tool execution object so that the agent can continue
             tool.result = result
 
-    run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
+    run_response = agent.continue_run()
     pprint.pprint_run_response(run_response)
-
-
-# Or for simple debug flow
-# agent.print_response("What files do I have in my current directory?")

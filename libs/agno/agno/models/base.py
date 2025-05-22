@@ -1334,6 +1334,7 @@ class Model(ABC):
                 # We don't execute the function calls here
                 continue
 
+
             yield ModelResponse(
                 content=fc.get_call_str(),
                 tool_executions=[
