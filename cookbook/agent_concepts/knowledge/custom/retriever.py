@@ -68,7 +68,6 @@ def main():
     # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
         retriever=retriever,
-        knowledge=knowledge_base,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
         show_tool_calls=True,
