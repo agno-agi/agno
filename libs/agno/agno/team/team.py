@@ -788,15 +788,13 @@ class Team:
 
                     return resp
                 else:
-                    self._run(
+                    return self._run(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
                         response_format=response_format,
                     )
-
-                    return self.run_response
 
             except ModelProviderError as e:
                 import time
@@ -831,7 +829,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> None:
+    ) -> TeamRunResponse:
         """Run the Team and return the response.
 
         Steps:
@@ -914,6 +912,8 @@ class Team:
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+        return run_response
 
     def _run_stream(
         self,
@@ -1238,14 +1238,12 @@ class Team:
                     )
                     return resp
                 else:
-                    await self._arun(
+                    return await self._arun(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
                     )
-
-                    return self.run_response
 
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1277,7 +1275,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> None:
+    ) -> TeamRunResponse:
         """Run the Team and return the response.
 
         Steps:
@@ -1361,6 +1359,8 @@ class Team:
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+        return run_response
 
     async def _arun_stream(
         self,
@@ -5084,10 +5084,11 @@ class Team:
                         if member_agent_run_response_chunk.content is not None:
                             yield member_agent_run_response_chunk.content
                         elif (
-                            member_agent_run_response_chunk.tools is not None
+                            member_agent_run_response_chunk.event == RunEvent.tool_call_completed
+                            and member_agent_run_response_chunk.tools is not None
                             and len(member_agent_run_response_chunk.tools) > 0
                         ):
-                            yield ",".join([tool.result for tool in member_agent_run_response_chunk.tools])  # type: ignore
+                            yield ",".join([tool.result for tool in member_agent_run_response_chunk.tools if tool.result])  # type: ignore
                 else:
                     member_agent_run_response = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -5595,10 +5596,11 @@ class Team:
                     if member_agent_run_response_chunk.content is not None:
                         yield member_agent_run_response_chunk.content
                     elif (
-                        member_agent_run_response_chunk.tools is not None
+                        member_agent_run_response_chunk.event == RunEvent.tool_call_completed
+                        and member_agent_run_response_chunk.tools is not None
                         and len(member_agent_run_response_chunk.tools) > 0
                     ):
-                        yield ",".join([tool.content for tool in member_agent_run_response_chunk.tools])  # type: ignore
+                        yield ",".join([tool.result for tool in member_agent_run_response_chunk.tools if tool.result])
             else:
                 if not member_agent.knowledge_filters and member_agent.knowledge:
                     member_agent_run_response = await member_agent.arun(
@@ -5625,8 +5627,8 @@ class Team:
                         yield member_agent_run_response.content
 
                     # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.content for tool in member_agent_run_response.tools])  # type: ignore
+                    elif member_agent_run_response.event == RunEvent.tool_call_completed and member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                        yield ",".join([tool.result for tool in member_agent_run_response.tools and tool.result])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
@@ -5969,8 +5971,8 @@ class Team:
                         yield member_agent_run_response.content
 
                     # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.content for tool in member_agent_run_response.tools])  # type: ignore
+                    elif member_agent_run_response.event == RunEvent.tool_call_completed and member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):
                     try:
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
