@@ -95,6 +95,7 @@ class RunResponse:
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
+    model_provider: Optional[str] = None
     run_id: Optional[str] = None
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
