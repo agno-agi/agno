@@ -5831,9 +5831,9 @@ class Agent:
             if self.storage is None:
                 return "Storage not available"
 
-            sessions = self.storage.get_all_sessions(user_id=self.user_id)
-            sorted_sessions = sorted(sessions, key=lambda x: x.created_at if x.created_at else 0, reverse=True)
-            selected_sessions = sorted_sessions[:number_of_sessions]
+            selected_sessions = self.storage.get_last_n_sessions(
+                number_of_sessions=number_of_sessions, user_id=self.user_id
+            )
 
             all_messages = []
             seen_message_pairs = set()
