@@ -80,8 +80,13 @@ if run_response.is_paused:
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
-    pprint.pprint_run_response(run_response)
+
+# run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
+# Or
+run_response = asyncio.run(agent.acontinue_run(run_id=run_response.run_id))
+# Or
+# run_response = asyncio.run(agent.acontinue_run())
+pprint.pprint_run_response(run_response)
 
 
 # Or for simple debug flow

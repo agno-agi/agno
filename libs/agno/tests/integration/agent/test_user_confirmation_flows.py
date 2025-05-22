@@ -34,6 +34,47 @@ def test_tool_call_requires_confirmation():
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
+
+
+def test_tool_call_requires_confirmation_memory_footprint():
+    @tool(requires_confirmation=True)
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        show_tool_calls=True,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+    
+    session_id = "test_session"
+
+    response = agent.run("What is the weather in Tokyo?", session_id=session_id)
+    
+    assert len(agent.memory.runs[session_id]) == 1, "There should be one run in the memory"
+    assert len(agent.memory.runs[session_id][0].messages) == 3, "There should be three messages in the run (system, user, assistant)"
+
+    assert response.is_paused
+
+    # Mark the tool as confirmed
+    response.tools[0].confirmed = True
+
+    response = agent.continue_run(response)
+    assert response.is_paused is False
+    assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+    
+    assert len(agent.memory.runs[session_id]) == 1, "There should be one run in the memory"
+    print([(m.role, m.content) for m in agent.memory.runs[session_id][0].messages])
+    assert len(agent.memory.runs[session_id][0].messages) == 5, "There should be five messages in the run (system, user, assistant, tool call, assistant)"
+    assert False
+
+
+
+
+
 def test_tool_call_requires_confirmation_stream():
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
