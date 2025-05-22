@@ -2200,13 +2200,13 @@ class Agent:
         self.model = cast(Model, self.model)
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
         function_call.error = tool.confirmation_note or "Function call was rejected by the user"
-        
+
         function_call_result = self.model.create_function_call_result(
             function_call=function_call,
             success=False,
         )
         run_messages.messages.append(function_call_result)
-    
+
     async def _arun_tool(
         self, run_messages: RunMessages, tool: ToolExecution, session_id: Optional[str] = None
     ) -> AsyncIterator[RunResponse]:
@@ -2250,7 +2250,7 @@ class Agent:
                 else:
                     self._reject_tool_call(run_messages, _t)
                 _t.requires_confirmation = False
-                
+
             # Case 2: Handle external execution required tools
             if _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)

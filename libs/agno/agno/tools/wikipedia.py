@@ -9,9 +9,8 @@ from agno.utils.log import log_debug, log_info
 
 class WikipediaTools(Toolkit):
     def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
-        
         tools = []
-        
+
         self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
         if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
             tools.append(self.search_wikipedia_and_update_knowledge_base)

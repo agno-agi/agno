@@ -1061,7 +1061,11 @@ class Model(ABC):
         return function_calls_to_run
 
     def create_function_call_result(
-        self, function_call: FunctionCall, success: bool, output: Optional[Union[List[Any], str]] = None, timer: Optional[Timer] = None
+        self,
+        function_call: FunctionCall,
+        success: bool,
+        output: Optional[Union[List[Any], str]] = None,
+        timer: Optional[Timer] = None,
     ) -> Message:
         """Create a function call result message."""
         kwargs = {}
@@ -1215,22 +1219,6 @@ class Model(ABC):
                     event=ModelResponseEvent.tool_call_paused.value,
                 )
                 # We don't execute the function calls here
-                continue
-
-            # If the function requires external execution, we yield a message to the user
-            if fc.function.external_execution:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            external_execution_required=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_external_execution_required.value,
-                )
-                # We don't execute the function call here, it is executed outside of the agent's control
                 continue
 
             yield from self.run_function_call(

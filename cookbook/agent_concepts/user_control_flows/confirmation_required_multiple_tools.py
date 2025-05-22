@@ -16,11 +16,11 @@ Run `pip install openai httpx rich agno` to install dependencies.
 
 import json
 
-from agno.tools.wikipedia import WikipediaTools
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.tools.wikipedia import WikipediaTools
 from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
@@ -57,12 +57,17 @@ def get_top_hackernews_stories(num_stories: int) -> str:
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[get_top_hackernews_stories, WikipediaTools(requires_confirmation_tools=["search_wikipedia"])],
+    tools=[
+        get_top_hackernews_stories,
+        WikipediaTools(requires_confirmation_tools=["search_wikipedia"]),
+    ],
     markdown=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
-run_response = agent.run("Fetch 2 articles about the topic 'python'. You can choose which source to use, but only use one source.")
+run_response = agent.run(
+    "Fetch 2 articles about the topic 'python'. You can choose which source to use, but only use one source."
+)
 while run_response.is_paused:  # Or agent.run_response.is_paused
     for tool in agent.run_response.tools_requiring_confirmation:
         # Ask for confirmation
@@ -77,11 +82,11 @@ while run_response.is_paused:  # Or agent.run_response.is_paused
 
         if message == "n":
             tool.confirmed = False
-            tool.confirmation_note = "This is not the right tool to use. Use the other tool!"
+            tool.confirmation_note = (
+                "This is not the right tool to use. Use the other tool!"
+            )
         else:
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = (
-        agent.continue_run()
-    ) 
+    run_response = agent.continue_run()

@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
