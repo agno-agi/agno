@@ -67,7 +67,7 @@ print(f"Dividido em {len(chunks)} chunks.")
 print("Gerando embeddings para os chunks...")
 
 # Use OpenAIEmbeddings para gerar os embeddings
-embeddings = OpenAIEmbeddings()
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 # --- Passo 4: Criar o Vector Store e o Retriever ---
 print("Criando Vector Store (Chroma) e o Retriever...")
