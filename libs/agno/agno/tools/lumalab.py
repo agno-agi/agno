@@ -1,7 +1,7 @@
 import time
 import uuid
 from os import getenv
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, Literal, Optional, TypedDict, List
 
 from agno.agent import Agent
 from agno.media import VideoArtifact
@@ -42,7 +42,7 @@ class LumaLabTools(Toolkit):
 
         self.client = LumaAI(auth_token=self.api_key)
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.generate_video)
         tools.append(self.image_to_video)
 

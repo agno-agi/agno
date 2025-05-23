@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 import requests
 
@@ -28,7 +28,7 @@ class LinearTools(Toolkit):
         self.endpoint = "https://api.linear.app/graphql"
         self.headers = {"Authorization": f"{self.api_token}"}
 
-        tools = []
+        tools: List[Any] = []
         if get_user_details:
             tools.append(self.get_user_details)
         if get_issue_details:

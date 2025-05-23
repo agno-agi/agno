@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Any
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -51,7 +51,7 @@ class OpenAITools(Toolkit):
         self.image_style = image_style
         self.image_size = image_size
 
-        tools = []
+        tools: List[Any] = []
         if enable_transcription:
             tools.append(self.transcribe_audio)
         if enable_image_generation:

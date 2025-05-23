@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -36,7 +36,7 @@ class GoogleBigQueryTools(Toolkit):
         # Initialize the BQ CLient
         self.client = bigquery.Client(project=self.project, credentials=credentials)
 
-        tools = []
+        tools: List[Any] = []
         if list_tables:
             tools.append(self.list_tables)
         if describe_table:

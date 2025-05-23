@@ -2,7 +2,7 @@ from base64 import b64encode
 from io import BytesIO
 from os import getenv, path
 from pathlib import Path
-from typing import Iterator, Literal, Optional, Union
+from typing import Iterator, Literal, Optional, Union, List, Any
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -56,7 +56,7 @@ class ElevenLabsTools(Toolkit):
 
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
 
-        tools = []
+        tools: List[Any] = []
 
         tools.append(self.get_voices)
         tools.append(self.generate_sound_effect)

@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, cast
+from typing import Optional, cast, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -41,7 +41,7 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.get_issue)
         tools.append(self.create_issue)
         tools.append(self.search_issues)

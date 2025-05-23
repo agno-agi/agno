@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -17,7 +17,7 @@ class FileTools(Toolkit):
     ):
         self.base_dir: Path = base_dir or Path.cwd()
 
-        tools = []
+        tools: List[Any] = []
         if save_files:
             tools.append(self.save_file)
         if read_files:

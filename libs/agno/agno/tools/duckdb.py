@@ -30,7 +30,9 @@ class DuckDbTools(Toolkit):
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        tools = [self.show_tables, self.describe_table]
+        tools: List[Any] = []
+        tools.append(self.show_tables)
+        tools.append(self.describe_table)
 
         if inspect_queries:
             tools.append(self.inspect_query)

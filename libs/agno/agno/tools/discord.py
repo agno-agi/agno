@@ -2,7 +2,7 @@
 
 import json
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import requests
 
@@ -31,7 +31,7 @@ class DiscordTools(Toolkit):
             "Content-Type": "application/json",
         }
 
-        tools = []
+        tools: List[Any] = []
         if enable_messaging:
             tools.append(self.send_message)
         if enable_history:

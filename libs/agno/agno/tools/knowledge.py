@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Any
 
 from agno.agent import Agent
 from agno.document import Document
@@ -38,7 +38,7 @@ class KnowledgeTools(Toolkit):
         # The knowledge to search
         self.knowledge: AgentKnowledge = knowledge
 
-        tools = []
+        tools: List[Any] = []
         if think:
             tools.append(self.think)
         if search:

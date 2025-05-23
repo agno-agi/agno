@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 
@@ -26,7 +26,7 @@ class ScrapeGraphTools(Toolkit):
         if not smartscraper:
             markdownify = True
 
-        tools = []
+        tools: List[Any] = []
         if smartscraper:
             tools.append(self.smartscraper)
         if markdownify:

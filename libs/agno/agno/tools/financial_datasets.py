@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import requests
 
@@ -44,7 +44,7 @@ class FinancialDatasetsTools(Toolkit):
 
         self.base_url = "https://api.financialdatasets.ai"
 
-        tools = []
+        tools: List[Any] = []
 
         if enable_financial_statements:
             tools.extend(

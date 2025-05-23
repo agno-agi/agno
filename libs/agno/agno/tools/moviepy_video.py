@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -19,7 +19,7 @@ class MoviePyVideoTools(Toolkit):
         embed_captions: bool = True,
         **kwargs,
     ):
-        tools = []
+        tools: List[Any] = []
         if process_video:
             tools.append(self.extract_audio)
         if generate_captions:

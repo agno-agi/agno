@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional, Union
+from typing import Optional, Union, List, Any
 from uuid import uuid4
 
 import requests
@@ -24,7 +24,7 @@ class DesiVocalTools(Toolkit):
 
         self.voice_id = voice_id
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.get_voices)
         tools.append(self.text_to_speech)
 

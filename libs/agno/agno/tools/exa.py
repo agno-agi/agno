@@ -87,7 +87,7 @@ class ExaTools(Toolkit):
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
 
-        tools = []
+        tools: List[Any] = []
         if search:
             tools.append(self.search_exa)
         if get_contents:

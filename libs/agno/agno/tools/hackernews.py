@@ -1,6 +1,7 @@
 import json
 
 import httpx
+from typing import List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -15,7 +16,7 @@ class HackerNewsTools(Toolkit):
     """
 
     def __init__(self, get_top_stories: bool = True, get_user_details: bool = True, **kwargs):
-        tools = []
+        tools: List[Any] = []
         if get_top_stories:
             tools.append(self.get_top_hackernews_stories)
         if get_user_details:
