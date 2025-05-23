@@ -78,8 +78,6 @@ class Claude(Model):
             client_params.update(self.client_params)
         if self.default_headers is not None:
             client_params["default_headers"] = self.default_headers
-        if self.extended_cache_time:
-            client_params["beta"] = "extended-cache-ttl-2025-04-11"
 
         return client_params
 
