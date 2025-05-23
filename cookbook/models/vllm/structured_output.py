@@ -1,11 +1,8 @@
-import asyncio
 from typing import List
 
 from agno.agent import Agent
-from agno.models.vllm import Vllm
-from agno.run.response import RunResponse
+from agno.models.vllm import vLLMOpenAI
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
@@ -27,15 +24,12 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that returns a structured output
-structured_output_agent = Agent(
-    model=Vllm(id="Qwen/Qwen3-8B-FP8", top_k=20, enable_thinking=False),
+agent = Agent(
+    model=vLLMOpenAI(
+        id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
+    ),
     description="You write movie scripts.",
     response_model=MovieScript,
 )
 
-# Run the agent synchronously
-structured_output_response: RunResponse = structured_output_agent.run(
-    "Llamas ruling the world"
-)
-pprint(structured_output_response.content)
+agent.print_response("Llamas ruling the world")

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class Vllm(OpenAILike):
+class vLLMOpenAI(OpenAILike):
     """
     Class for interacting with vLLM models via OpenAI-compatible API.
 
@@ -27,7 +29,7 @@ class Vllm(OpenAILike):
     provider: str = "vLLM"
 
     api_key: Optional[str] = getenv("VLLM_API_KEY") or "EMPTY"
-    base_url: str = getenv("VLLM_BASE_URL")
+    base_url: Optional[str] = getenv("VLLM_BASE_URL", "http://localhost:8000/v1/")
 
     temperature: float = 0.7
     top_p: float = 0.8
@@ -42,17 +44,31 @@ class Vllm(OpenAILike):
         if self.id == "not-set":
             raise ValueError("Model ID must be set via environment variable or explicit initialization")
 
-    @property
-    def extra_body(self) -> Optional[Dict[str, Any]]:
-        """Dynamic parameters for vLLM API calls"""
         body: Dict[str, Any] = {}
         if self.top_k is not None:
             body["top_k"] = self.top_k
         if self.enable_thinking is not None:
             body["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
-        return body or None
+        self.extra_body = body or None
 
-    @extra_body.setter
-    def extra_body(self, value: Any) -> None:
-        """Dummy setter to handle potential parent class expectations"""
-        pass  # Explicitly ignore assignment attempts
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        request_kwargs = super().get_request_kwargs(
+            response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
+
+        vllm_body: Dict[str, Any] = {}
+        if self.top_k is not None:
+            vllm_body["top_k"] = self.top_k
+        if self.enable_thinking is not None:
+            vllm_body.setdefault("chat_template_kwargs", {})["enable_thinking"] = self.enable_thinking
+
+        if vllm_body:
+            existing_body = request_kwargs.get("extra_body") or {}
+            request_kwargs["extra_body"] = {**existing_body, **vllm_body}
+
+        return request_kwargs

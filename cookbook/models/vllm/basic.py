@@ -1,8 +1,11 @@
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.vllm import Vllm
+from agno.agent import Agent, RunResponse
+from agno.models.vllm import vLLMOpenAI
 
 agent = Agent(
-    model=Vllm(id="Qwen/Qwen3-8B-FP8", top_k=20, enable_thinking=False), markdown=True
+    model=vLLMOpenAI(
+        id="microsoft/Phi-3-mini-4k-instruct", top_k=20, enable_thinking=False
+    ),
+    markdown=True,
 )
 
 agent.print_response("Share a 2 sentence horror story")

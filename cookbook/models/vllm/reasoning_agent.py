@@ -1,10 +1,10 @@
 from agno.agent import Agent
-from agno.models.vllm import Vllm
+from agno.models.vllm import vLLMOpenAI
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=Vllm(id="Qwen/Qwen3-8B-FP8", top_k=20, enable_thinking=False),
+    model=vLLMOpenAI(id="Qwen/Qwen3-8B-FP8", top_k=20, enable_thinking=False),
     tools=[
         ReasoningTools(add_instructions=True, add_few_shot=True),
         YFinanceTools(

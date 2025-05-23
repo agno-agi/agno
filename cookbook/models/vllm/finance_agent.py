@@ -18,11 +18,13 @@ Run: `pip install openai yfinance agno` to install the dependencies
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.vllm import Vllm
+from agno.models.vllm import vLLMOpenAI
 from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
-    model=Vllm(id="Qwen/Qwen3-8B-FP8", top_k=20, enable_thinking=False),
+    model=vLLMOpenAI(
+        id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
+    ),
     tools=[
         YFinanceTools(
             stock_price=True,
