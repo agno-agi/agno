@@ -730,12 +730,20 @@ class OpenAIResponses(Model):
             else:
                 stream_data.response_citations.raw.append(stream_event.annotation)  # type: ignore
 
-            if stream_event.annotation.type == "url_citation":
-                if stream_data.response_citations.urls is None:
-                    stream_data.response_citations.urls = []
-                stream_data.response_citations.urls.append(
-                    UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
-                )
+            if isinstance(stream_event.annotation, dict):
+                if stream_event.annotation.get("type") == "url_citation":
+                    if stream_data.response_citations.urls is None:
+                        stream_data.response_citations.urls = []
+                    stream_data.response_citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
+                    )
+            else:
+                if stream_event.annotation.type == "url_citation":
+                    if stream_data.response_citations.urls is None:
+                        stream_data.response_citations.urls = []
+                    stream_data.response_citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                    )
 
             model_response.citations = stream_data.response_citations
 

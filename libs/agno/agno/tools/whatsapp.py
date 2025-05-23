@@ -29,8 +29,6 @@ class WhatsAppTools(Toolkit):
             recipient_waid: Default recipient WhatsApp ID (optional)
             async_mode: Whether to use async methods (default: False)
         """
-        super().__init__(name="whatsapp")
-
         # Core credentials
         self.access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
         if not self.access_token:
@@ -53,13 +51,15 @@ class WhatsAppTools(Toolkit):
         self.version = version or os.getenv("WHATSAPP_VERSION") or os.getenv("WHATSAPP_VERSION", "v22.0")
         self.async_mode = async_mode
 
-        # Register methods that can be used by the agent based on mode
+        tools: List[Any] = []
         if self.async_mode:
-            self.register(self.send_text_message_async)
-            self.register(self.send_template_message_async)
+            tools.append(self.send_text_message_async)
+            tools.append(self.send_template_message_async)
         else:
-            self.register(self.send_text_message_sync)
-            self.register(self.send_template_message_sync)
+            tools.append(self.send_text_message_sync)
+            tools.append(self.send_template_message_sync)
+
+        super().__init__(name="whatsapp", tools=tools)
 
     def _get_headers(self) -> Dict[str, str]:
         """Get headers for API requests."""

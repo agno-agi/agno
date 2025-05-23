@@ -53,7 +53,7 @@ market_data_agent = Agent(
 news_agent = Agent(
     name="News Research Agent",
     role="Research company news",
-    agent_id="news-research", 
+    agent_id="news-research",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     instructions=[
