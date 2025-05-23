@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -11,7 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
-from agno.utils.models.claude import format_messages
+from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -51,6 +51,7 @@ class Claude(Model):
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     request_params: Optional[Dict[str, Any]] = None
+    mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -117,6 +118,11 @@ class Claude(Model):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.mcp_servers:
+            _request_params["betas"] = ["mcp-client-2025-04-04"]
+            _request_params["mcp_servers"] = [
+                {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
+            ]
         if self.request_params:
             _request_params.update(self.request_params)
         return _request_params
@@ -248,7 +254,7 @@ class Claude(Model):
         try:
             return (
                 self.get_client()
-                .messages.stream(
+                .beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
