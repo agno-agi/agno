@@ -1,6 +1,6 @@
 import os
 import uuid
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Any
 
 import httpx
 
@@ -31,7 +31,7 @@ class GiphyTools(Toolkit):
 
         self.limit: int = limit
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.search_gifs)
 
         super().__init__(name="giphy_tools", tools=tools, **kwargs)
