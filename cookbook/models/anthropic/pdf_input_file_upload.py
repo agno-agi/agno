@@ -26,7 +26,7 @@ if uploaded_file is not None:
         model=Claude(
             id="claude-opus-4-20250514",
             default_headers={
-                "anthropic-beta": "code-execution-2025-05-22"
+                "anthropic-beta": "files-api-2025-04-14"
             },
         ),
         markdown=True,
