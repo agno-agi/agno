@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -63,7 +63,7 @@ class ConfluenceTools(Toolkit):
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.get_page_content)
         tools.append(self.get_space_key)
         tools.append(self.create_page)

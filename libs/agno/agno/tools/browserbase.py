@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -60,7 +60,7 @@ class BrowserbaseTools(Toolkit):
         self._session = None
         self._connect_url = None
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.navigate_to)
         tools.append(self.screenshot)
         tools.append(self.get_page_content)

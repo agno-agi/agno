@@ -1,7 +1,7 @@
 import json
 from base64 import b64encode
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -36,7 +36,7 @@ class CartesiaTools(Toolkit):
         self.model_id = model_id
         self.default_voice_id = default_voice_id
 
-        tools = []
+        tools: List[Any] = []
         if voice_localize_enabled:
             tools.append(self.localize_voice)
         if text_to_speech_enabled:

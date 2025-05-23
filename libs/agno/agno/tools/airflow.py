@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -21,7 +21,7 @@ class AirflowTools(Toolkit):
                 _dags_dir = dags_dir
         self.dags_dir: Path = _dags_dir or Path.cwd()
 
-        tools = []
+        tools: List[Any] = []
         if save_dag:
             tools.append(self.save_dag_file)
         if read_dag:

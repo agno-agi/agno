@@ -23,7 +23,7 @@ class ArxivTools(Toolkit):
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")
 
-        tools = []
+        tools: List[Any] = []
         if search_arxiv:
             tools.append(self.search_arxiv_and_return_articles)
         if read_arxiv_papers:

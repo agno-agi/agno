@@ -1,6 +1,6 @@
 from datetime import datetime
 from os import getenv
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -48,7 +48,7 @@ class CalComTools(Toolkit):
 
         self.user_timezone = user_timezone or "America/New_York"
 
-        tools = []
+        tools: List[Any] = []
         if get_available_slots:
             tools.append(self.get_available_slots)
         if create_booking:

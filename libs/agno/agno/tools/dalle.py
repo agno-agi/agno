@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, List, Any
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -50,7 +50,7 @@ class DalleTools(Toolkit):
         if not self.api_key:
             logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.create_image)
 
         super().__init__(name="dalle", tools=tools, **kwargs)

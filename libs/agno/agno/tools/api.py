@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -32,7 +32,7 @@ class CustomApiTools(Toolkit):
         self.verify_ssl = verify_ssl
         self.timeout = timeout
 
-        tools = []
+        tools: List[Any] = []
         if make_request:
             tools.append(self.make_request)
 

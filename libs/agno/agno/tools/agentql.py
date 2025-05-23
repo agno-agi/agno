@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info
@@ -19,7 +19,7 @@ class AgentQLTools(Toolkit):
 
         self.agentql_query = agentql_query
 
-        tools = []
+        tools: List[Any] = []
         if scrape:
             tools.append(self.scrape_website)
         if agentql_query:

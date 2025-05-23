@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 
@@ -18,7 +18,7 @@ class Crawl4aiTools(Toolkit):
     ):
         self.max_length = max_length
 
-        tools = []
+        tools: List[Any] = []
         if web_crawler:
             tools.append(self.web_crawler)
 

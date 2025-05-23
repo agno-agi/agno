@@ -36,7 +36,7 @@ class ClickUpTools(Toolkit):
         if not self.master_space_id:
             raise ValueError("MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable.")
 
-        tools = []
+        tools: List[Any] = []
         if list_tasks:
             tools.append(self.list_tasks)
         if create_task:

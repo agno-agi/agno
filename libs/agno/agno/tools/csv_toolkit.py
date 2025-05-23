@@ -33,7 +33,7 @@ class CsvTools(Toolkit):
         self.duckdb_connection: Optional[Any] = duckdb_connection
         self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
 
-        tools = []
+        tools: List[Any] = []
         if read_csvs:
             tools.append(self.read_csv_file)
         if list_csvs:
