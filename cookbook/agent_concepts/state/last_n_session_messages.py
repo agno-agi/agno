@@ -12,7 +12,6 @@ agent = Agent(
     num_history_runs=3,
     search_previous_sessions_history=True,
     num_history_sessions=3,
-    max_messages_per_session_for_context=4,
     show_tool_calls=True,
 )
 
