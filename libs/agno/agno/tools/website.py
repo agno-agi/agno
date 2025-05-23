@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional, Union, cast
+from typing import List, Optional, Union, cast, Any
 
 from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
@@ -12,7 +12,7 @@ class WebsiteTools(Toolkit):
     def __init__(self, knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = None, **kwargs):
         self.knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = knowledge_base
 
-        tools = []
+        tools: List[Any] = []
         if self.knowledge_base is not None:
             if isinstance(self.knowledge_base, WebsiteKnowledgeBase):
                 tools.append(self.add_website_to_knowledge_base)

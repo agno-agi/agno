@@ -1,7 +1,7 @@
 import functools
 import runpy
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Ant
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -33,7 +33,7 @@ class PythonTools(Toolkit):
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
-        tools = []
+        tools: List[Any] = []
         if run_code:
             tools.append(self.run_python_code, sanitize_arguments=False)
         if save_and_run:

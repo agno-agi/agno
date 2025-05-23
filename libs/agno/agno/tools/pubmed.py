@@ -20,7 +20,7 @@ class PubmedTools(Toolkit):
         self.email: str = email
         self.results_expanded: bool = results_expanded
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.search_pubmed)
 
         super().__init__(name="pubmed", tools=tools, **kwargs)

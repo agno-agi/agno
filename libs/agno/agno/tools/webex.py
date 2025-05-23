@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
@@ -23,7 +23,7 @@ class WebexTools(Toolkit):
 
         self.client = WebexAPI(access_token=access_token)
 
-        tools = []
+        tools: List[Any] = []
         if send_message:
             tools.append(self.send_message)
         if list_rooms:

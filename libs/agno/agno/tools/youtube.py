@@ -27,7 +27,7 @@ class YouTubeTools(Toolkit):
         self.languages: Optional[List[str]] = languages
         self.proxies: Optional[Dict[str, Any]] = proxies
 
-        tools = []
+        tools: List[Any] = []
         if get_video_captions:
             tools.append(self.get_youtube_video_captions)
         if get_video_data:

@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -39,7 +39,7 @@ class TrelloTools(Toolkit):
             logger.error(f"Error initializing Trello client: {e}")
             self.client = None
 
-        tools = []
+        tools: List[Any] = []
         if create_card:
             tools.append(self.create_card)
         if get_board_lists:

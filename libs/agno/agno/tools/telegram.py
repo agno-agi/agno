@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Optional, Union, List, Any
 
 import httpx
 
@@ -17,7 +17,7 @@ class TelegramTools(Toolkit):
 
         self.chat_id = chat_id
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.send_message)
 
         super().__init__(name="telegram", tools=tools, **kwargs)

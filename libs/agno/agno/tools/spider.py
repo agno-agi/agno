@@ -5,7 +5,7 @@ try:
 except ImportError:
     raise ImportError("`spider-client` not installed. Please install using `pip install spider-client`")
 
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_info, logger
@@ -23,7 +23,7 @@ class SpiderTools(Toolkit):
         self.url = url
         self.optional_params = optional_params or {}
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.search)
         tools.append(self.scrape)
         tools.append(self.crawl)

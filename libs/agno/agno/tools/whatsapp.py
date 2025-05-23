@@ -51,7 +51,7 @@ class WhatsAppTools(Toolkit):
         self.version = version or os.getenv("WHATSAPP_VERSION") or os.getenv("WHATSAPP_VERSION", "v22.0")
         self.async_mode = async_mode
 
-        tools = []
+        tools: List[Any] = []
         if self.async_mode:
             tools.append(self.send_text_message_async)
             tools.append(self.send_template_message_async)

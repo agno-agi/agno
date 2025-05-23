@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -22,7 +22,7 @@ class SerpApiTools(Toolkit):
         if not self.api_key:
             logger.warning("No Serpapi API key provided")
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.search_google)
         if search_youtube:
             tools.append(self.search_youtube)

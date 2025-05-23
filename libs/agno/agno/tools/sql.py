@@ -52,7 +52,7 @@ class SQLTools(Toolkit):
         # Tables this toolkit can access
         self.tables: Optional[Dict[str, Any]] = tables
 
-        tools = []
+        tools: List[Any] = []
         if list_tables:
             tools.append(self.list_tables)
         if describe_table:

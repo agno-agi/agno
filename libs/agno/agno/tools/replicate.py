@@ -1,6 +1,6 @@
 import os
 from os import getenv
-from typing import Iterable, Iterator, Optional, Union
+from typing import Iterable, Iterator, Optional, Union, List, Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -29,7 +29,7 @@ class ReplicateTools(Toolkit):
             logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
         self.model = model
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.generate_media)
 
         super().__init__(name="replicate_toolkit", tools=tools, **kwargs)

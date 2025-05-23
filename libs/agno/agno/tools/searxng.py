@@ -1,6 +1,6 @@
 import json
 import urllib.parse
-from typing import List, Optional
+from typing import List, Optional, Any
 
 import httpx
 
@@ -29,7 +29,7 @@ class Searxng(Toolkit):
 
         self.register(self.search)
 
-        tools = []
+        tools: List[Any] = []
         if images:
             tools.append(self.image_search)
         if it:

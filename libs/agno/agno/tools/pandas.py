@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -13,7 +13,7 @@ class PandasTools(Toolkit):
     def __init__(self, **kwargs):
         self.dataframes: Dict[str, pd.DataFrame] = {}
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.create_pandas_dataframe)
         tools.append(self.run_dataframe_operation)
 

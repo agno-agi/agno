@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 try:
     import psycopg2
@@ -37,7 +37,7 @@ class PostgresTools(Toolkit):
         self.port: Optional[int] = port
         self.table_schema: str = table_schema
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.show_tables)
         tools.append(self.describe_table)
         if inspect_queries:

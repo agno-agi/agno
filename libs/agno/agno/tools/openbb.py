@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, List
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -33,7 +33,7 @@ class OpenBBTools(Toolkit):
 
         self.provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = provider
 
-        tools = []
+        tools: List[Any] = []
         if stock_price:
             tools.append(self.get_stock_price)
         if search_symbols:

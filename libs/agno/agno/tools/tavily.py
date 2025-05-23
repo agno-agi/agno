@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, List
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -33,7 +33,7 @@ class TavilyTools(Toolkit):
         self.include_answer: bool = include_answer
         self.format: Literal["json", "markdown"] = format
 
-        tools = []
+        tools: List[Any] = []
         if search:
             if use_search_context:
                 tools.append(self.web_search_with_tavily)

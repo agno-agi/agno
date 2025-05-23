@@ -1,7 +1,7 @@
 import json
 import re
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -41,7 +41,7 @@ class ZendeskTools(Toolkit):
         if not self.username or not self.password or not self.company_name:
             logger.error("Username, password, or company name not provided.")
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.search_zendesk)
 
         super().__init__(name="zendesk_tools", tools=tools, **kwargs)

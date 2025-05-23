@@ -83,7 +83,7 @@ class TwilioTools(Toolkit):
             logging.basicConfig()
             self.client.http_client.logger.setLevel(logging.INFO)
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.send_sms)
         tools.append(self.get_call_details)
         tools.append(self.list_messages)

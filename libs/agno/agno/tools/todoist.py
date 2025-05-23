@@ -44,7 +44,7 @@ class TodoistTools(Toolkit):
 
         self.api = TodoistAPI(self.api_token)
 
-        tools = []
+        tools: List[Any] = []
         if create_task:
             tools.append(self.create_task)
         if get_task:

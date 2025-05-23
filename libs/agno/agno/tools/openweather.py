@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -44,7 +44,7 @@ class OpenWeatherTools(Toolkit):
         self.base_url = "https://api.openweathermap.org/data/2.5"
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
-        tools = []
+        tools: List[Any] = []
         if current_weather:
             tools.append(self.get_current_weather)
         if forecast:
