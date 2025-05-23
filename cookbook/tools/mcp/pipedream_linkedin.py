@@ -30,12 +30,7 @@ async def run_agent(task: str) -> None:
                 tools=[mcp],
                 markdown=True,
             )
-            await agent.aprint_response(
-                message=task,
-                stream=True,
-                stream_intermediate_steps=True,
-                show_full_reasoning=True,
-            )
+            await agent.aprint_response(message=task, stream=True)
     except Exception as e:
         log_exception(f"Unexpected error: {e}")
 
