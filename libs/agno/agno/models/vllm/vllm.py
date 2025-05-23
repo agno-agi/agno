@@ -38,13 +38,9 @@ class Vllm(OpenAILike):
     def __post_init__(self):
         """Validate required configuration"""
         if not self.base_url:
-            raise ValueError(
-                "VLLM_BASE_URL must be set via environment variable or explicit initialization"
-            )
+            raise ValueError("VLLM_BASE_URL must be set via environment variable or explicit initialization")
         if self.id == "not-set":
-            raise ValueError(
-                "Model ID must be set via environment variable or explicit initialization"
-            )
+            raise ValueError("Model ID must be set via environment variable or explicit initialization")
 
     @property
     def extra_body(self) -> Optional[Dict[str, Any]]:
