@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
-from openai.types.responses.response_output_text import Annotation
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
