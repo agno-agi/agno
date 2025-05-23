@@ -23,7 +23,6 @@ class FalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "fal-ai/hunyuan-video",
-        media_generation: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("FAL_KEY")
@@ -33,8 +32,7 @@ class FalTools(Toolkit):
         self.seen_logs: set[str] = set()
 
         tools = []
-        if media_generation:
-            tools.append(self.generate_media)
+        tools.append(self.generate_media)
 
     def on_queue_update(self, update):
         if isinstance(update, fal_client.InProgress) and update.logs:

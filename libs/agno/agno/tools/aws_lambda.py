@@ -15,17 +15,13 @@ class AWSLambdaTools(Toolkit):
     def __init__(
         self,
         region_name: str = "us-east-1",
-        enable_list_functions: bool = True,
-        enable_invoke_function: bool = True,
         **kwargs,
     ):
         self.client = boto3.client("lambda", region_name=region_name)
 
         tools: List[Any] = []
-        if enable_list_functions:
-            tools.append(self.list_functions)
-        if enable_invoke_function:
-            tools.append(self.invoke_function)
+        tools.append(self.list_functions)
+        tools.append(self.invoke_function)
 
         super().__init__(name="aws-lambda", tools=tools, **kwargs)
 

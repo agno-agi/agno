@@ -18,10 +18,6 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        get_issue: bool = True,
-        create_issue: bool = True,
-        search_issues: bool = True,
-        add_comment: bool = True,
         **kwargs,
     ):
         self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
@@ -46,14 +42,10 @@ class JiraTools(Toolkit):
             self.jira = JIRA(server=self.server_url)
 
         tools = []
-        if get_issue:
-            tools.append(self.get_issue)
-        if create_issue:
-            tools.append(self.create_issue)
-        if search_issues:
-            tools.append(self.search_issues)
-        if add_comment:
-            tools.append(self.add_comment)
+        tools.append(self.get_issue)
+        tools.append(self.create_issue)
+        tools.append(self.search_issues)
+        tools.append(self.add_comment)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 

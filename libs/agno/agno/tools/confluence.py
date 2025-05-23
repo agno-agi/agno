@@ -19,12 +19,6 @@ class ConfluenceTools(Toolkit):
         url: Optional[str] = None,
         api_key: Optional[str] = None,
         verify_ssl: bool = True,
-        get_page_content: bool = True,
-        get_space_key: bool = True,
-        create_page: bool = True,
-        update_page: bool = True,
-        get_all_space_detail: bool = True,
-        get_all_page_from_space: bool = True,
         **kwargs,
     ):
         """Initialize Confluence Tools with authentication credentials.
@@ -70,18 +64,12 @@ class ConfluenceTools(Toolkit):
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         tools = []
-        if get_page_content:
-            tools.append(self.get_page_content)
-        if get_space_key:
-            tools.append(self.get_space_key)
-        if create_page:
-            tools.append(self.create_page)
-        if update_page:
-            tools.append(self.update_page)
-        if get_all_space_detail:
-            tools.append(self.get_all_space_detail)
-        if get_all_page_from_space:
-            tools.append(self.get_all_page_from_space)
+        tools.append(self.get_page_content)
+        tools.append(self.get_space_key)
+        tools.append(self.create_page)
+        tools.append(self.update_page)
+        tools.append(self.get_all_space_detail)
+        tools.append(self.get_all_page_from_space)
 
         super().__init__(name="confluence_tools", tools=tools, **kwargs)
 

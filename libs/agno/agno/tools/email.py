@@ -11,7 +11,6 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
-        email: bool = True,
         **kwargs,
     ):
         self.receiver_email: Optional[str] = receiver_email
@@ -20,8 +19,7 @@ class EmailTools(Toolkit):
         self.sender_passkey: Optional[str] = sender_passkey
 
         tools = []
-        if email:
-            tools.append(self.email_user)
+        tools.append(self.email_user)
 
         # Call superclass with tools list
         super().__init__(name="email_tools", tools=tools, **kwargs)

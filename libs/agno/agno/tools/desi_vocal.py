@@ -16,8 +16,6 @@ class DesiVocalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
-        get_voices: bool = True,
-        text_to_speech: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
@@ -27,10 +25,8 @@ class DesiVocalTools(Toolkit):
         self.voice_id = voice_id
 
         tools = []
-        if get_voices:
-            tools.append(self.get_voices)
-        if text_to_speech:
-            tools.append(self.text_to_speech)
+        tools.append(self.get_voices)
+        tools.append(self.text_to_speech)
 
         super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
 

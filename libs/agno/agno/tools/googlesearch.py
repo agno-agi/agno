@@ -38,7 +38,6 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
-        search: bool = True,
         **kwargs,
     ):
         self.fixed_max_results: Optional[int] = fixed_max_results
@@ -48,8 +47,7 @@ class GoogleSearchTools(Toolkit):
         self.timeout: Optional[int] = timeout
 
         tools = []
-        if search:
-            tools.append(self.google_search)
+        tools.append(self.google_search)
 
         super().__init__(name="google_search_tools", tools=tools, **kwargs)
 

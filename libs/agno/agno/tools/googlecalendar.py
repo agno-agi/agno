@@ -61,8 +61,6 @@ class GoogleCalendarTools(Toolkit):
         self,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        list_events: bool = True,
-        create_event: bool = True,
         **kwargs,
     ):
         """
@@ -96,10 +94,8 @@ class GoogleCalendarTools(Toolkit):
         self.creds_path = credentials_path
 
         tools = []
-        if list_events:
-            tools.append(self.list_events)
-        if create_event:
-            tools.append(self.create_event)
+        tools.append(self.list_events)
+        tools.append(self.create_event)
 
         super().__init__(name="google_calendar_tools", tools=tools, **kwargs)
 
