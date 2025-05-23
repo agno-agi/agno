@@ -11,7 +11,7 @@ from agno.agent import Agent, RunResponse  # noqa
 from agno.models.anthropic import Claude
 
 # Update this string with the actual contents of the book (or any other book!)
-system_prompt = """
+system_message = """
         You are an AI assistant specialized in literature, specifically in 'Pride and Prejudice'.
         You have the entire contents of the book here: <entire contents of 'Pride and Prejudice'>
         """
@@ -19,12 +19,12 @@ system_prompt = """
 agent = Agent(
     model=Claude(
         id="claude-3-5-sonnet-20241022",
-        system_prompt=system_prompt,
         cache_system_prompt=True,  # Activate prompt caching for Anthropic to cache the system prompt
     ),
+    system_message=system_message,
     markdown=True,
 )
 
 
 response = agent.run("Talk to me about the characters of 'Pride and Prejudice'")
-print(f"Cached tokens: {response.metrics['cached_tokens']}")  # type: ignore
+print(f"Cache creation input tokens: {response.metrics['cache_creation_input_tokens']}")  # type: ignore
