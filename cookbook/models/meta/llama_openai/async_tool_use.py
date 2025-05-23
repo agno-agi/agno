@@ -1,4 +1,4 @@
-"""Run `pip install openai yfinance` to install dependencies."""    
+"""Run `pip install openai yfinance` to install dependencies."""
 
 # Note: Currently, Llama API does not support tools with parameters other than string.
 # This is a limitation of the Llama API.
