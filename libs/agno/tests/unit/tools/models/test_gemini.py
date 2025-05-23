@@ -8,6 +8,8 @@ import pytest
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
 from agno.tools.models.gemini import GeminiTools
+from agno.models.message import Message
+from agno.models.response import ModelResponse
 
 
 # Fixture for mock agent
@@ -256,3 +258,30 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
     assert result == "Failed to generate video: API error"
     mock_agent.add_video.assert_not_called()
+
+
+def test_empty_response_handling(mock_gemini_tools, mock_agent):
+    """Test that empty responses from Gemini are handled correctly."""
+    mock_response = MagicMock()
+    mock_response.candidates = [
+        MagicMock(
+            content=MagicMock(
+                role="model",
+                parts=[],
+            ),
+            finishReason="STOP",
+            index=0,
+        )
+    ]
+    mock_response.usage_metadata = MagicMock(
+        prompt_token_count=16425,
+        total_token_count=16425,
+        cached_content_token_count=13947,
+    )
+    mock_gemini_tools.client.models.generate_content.return_value = mock_response
+    test_message = Message(role="user", content="Test message")
+    response = mock_gemini_tools.invoke([test_message])
+    parsed_response = mock_gemini_tools.parse_provider_response(response)
+    assert parsed_response.role == "assistant"
+    assert parsed_response.content == ""
+    assert len(parsed_response.tool_calls) == 0
