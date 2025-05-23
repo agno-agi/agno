@@ -34,27 +34,11 @@ class Storage(ABC):
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
         raise NotImplementedError
 
+    @abstractmethod
     def get_last_n_sessions(
-        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, entity_id: Optional[str] = None
     ) -> List[Session]:
-        """Get the last N sessions, sorted by created_at timestamp in descending order.
-
-        Args:
-            n (int): Number of most recent sessions to return
-            user_id (Optional[str]): Filter sessions by user ID
-            entity_id (Optional[str]): Filter sessions by entity ID (agent_id, team_id, or workflow_id)
-
-        Returns:
-            List[Session]: List of the N most recent sessions, sorted by created_at in descending order
-        """
-        # Get all sessions using the existing method
-        sessions = self.get_all_sessions(user_id=user_id, entity_id=entity_id)
-
-        # Sort sessions by created_at in descending order (newest first)
-        sorted_sessions = sorted(sessions, key=lambda x: x.created_at if x.created_at else 0, reverse=True)
-
-        # Return only the first N sessions
-        return sorted_sessions[:num_history_sessions]
+        raise NotImplementedError
 
     @abstractmethod
     def upsert(self, session: Session) -> Optional[Session]:
