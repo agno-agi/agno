@@ -51,7 +51,7 @@ print("Dividindo documentos em chunks...")
 
 # Configurações para o text splitter
 chunk_size = 1000  # Tamanho máximo de cada chunk
-chunk_overlap = 500 # Quantidade de texto sobreposto entre chunks para manter contexto
+chunk_overlap = 300 # Quantidade de texto sobreposto entre chunks para manter contexto
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=chunk_size,
