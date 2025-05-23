@@ -171,12 +171,16 @@ class JsonStorage(Storage):
 
         # Convert filtered and sorted data to Session objects
         for _, data in session_data:
+            session: Optional[Session] = None
             if self.mode == "agent":
-                sessions.append(AgentSession.from_dict(data))
+                session = AgentSession.from_dict(data)
             elif self.mode == "team":
-                sessions.append(TeamSession.from_dict(data))
+                session = TeamSession.from_dict(data)
             elif self.mode == "workflow":
-                sessions.append(WorkflowSession.from_dict(data))
+                session = WorkflowSession.from_dict(data)
+
+            if session is not None:
+                sessions.append(session)
 
         return sessions
 
