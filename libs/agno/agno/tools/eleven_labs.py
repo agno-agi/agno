@@ -39,10 +39,11 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
+        voice_listing: bool = True,
+        sound_effects: bool = True,
+        text_to_speech: bool = True,
         **kwargs,
     ):
-        super().__init__(name="elevenlabs_tools", **kwargs)
-
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
             logger.error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
@@ -57,9 +58,17 @@ class ElevenLabsTools(Toolkit):
             target_path.mkdir(parents=True, exist_ok=True)
 
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
-        self.register(self.get_voices)
-        self.register(self.generate_sound_effect)
-        self.register(self.text_to_speech)
+
+        tools = []
+
+        if voice_listing:
+            tools.append(self.get_voices)
+        if sound_effects:
+            tools.append(self.generate_sound_effect)
+        if text_to_speech:
+            tools.append(self.text_to_speech)
+
+        super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 
     def get_voices(self) -> str:
         """

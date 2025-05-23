@@ -45,8 +45,6 @@ class FirecrawlTools(Toolkit):
         api_url: Optional[str] = "https://api.firecrawl.dev",
         **kwargs,
     ):
-        super().__init__(name="firecrawl_tools", **kwargs)
-
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
             logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
@@ -62,12 +60,13 @@ class FirecrawlTools(Toolkit):
         elif not scrape:
             crawl = True
 
+        tools = []
         if scrape:
-            self.register(self.scrape_website)
+            tools.append(self.scrape_website)
         if crawl:
-            self.register(self.crawl_website)
+            tools.append(self.crawl_website)
         if mapping:
-            self.register(self.map_website)
+            tools.append(self.map_website)
 
     def scrape_website(self, url: str) -> str:
         """Use this function to scrape a website using Firecrawl.
