@@ -1,3 +1,5 @@
+from typing import Any, List
+
 from agno.tools import Toolkit
 
 try:
@@ -19,7 +21,7 @@ class AWSLambdaTools(Toolkit):
     ):
         self.client = boto3.client("lambda", region_name=region_name)
 
-        tools = []
+        tools: List[Any] = []
         if enable_list_functions:
             tools.append(self.list_functions)
         if enable_invoke_function:

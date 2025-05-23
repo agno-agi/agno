@@ -19,6 +19,12 @@ class ConfluenceTools(Toolkit):
         url: Optional[str] = None,
         api_key: Optional[str] = None,
         verify_ssl: bool = True,
+        get_page_content: bool = True,
+        get_space_key: bool = True,
+        create_page: bool = True,
+        update_page: bool = True,
+        get_all_space_detail: bool = True,
+        get_all_page_from_space: bool = True,
         **kwargs,
     ):
         """Initialize Confluence Tools with authentication credentials.
@@ -63,12 +69,21 @@ class ConfluenceTools(Toolkit):
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        self.register(self.get_page_content)
-        self.register(self.get_space_key)
-        self.register(self.create_page)
-        self.register(self.update_page)
-        self.register(self.get_all_space_detail)
-        self.register(self.get_all_page_from_space)
+        tools = []
+        if get_page_content:
+            tools.append(self.get_page_content)
+        if get_space_key:
+            tools.append(self.get_space_key)
+        if create_page:
+            tools.append(self.create_page)
+        if update_page:
+            tools.append(self.update_page)
+        if get_all_space_detail:
+            tools.append(self.get_all_space_detail)
+        if get_all_page_from_space:
+            tools.append(self.get_all_page_from_space)
+
+        super().__init__(name="confluence_tools", tools=tools, **kwargs)
 
     def get_page_content(self, space_name: str, page_title: str, expand: Optional[str] = "body.storage"):
         """Retrieve the content of a specific page in a Confluence space.

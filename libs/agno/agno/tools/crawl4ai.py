@@ -13,13 +13,17 @@ class Crawl4aiTools(Toolkit):
     def __init__(
         self,
         max_length: Optional[int] = 1000,
+        web_crawler: bool = True,
         **kwargs,
     ):
-        super().__init__(name="crawl4ai_tools", **kwargs)
-
         self.max_length = max_length
 
-        self.register(self.web_crawler)
+        tools = []
+        if web_crawler:
+            tools.append(self.web_crawler)
+
+        # Call superclass with tools list
+        super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
 
     def web_crawler(self, url: str, max_length: Optional[int] = None) -> str:
         """
