@@ -2662,9 +2662,9 @@ class Agent:
                         try:
                             mp = Message(**_im)
                         except Exception as e:
-                            log_warning(f"Failed to validate message: {e}")
+                            log_warning(f"Failed to validate message during memory update: {e}")
                     else:
-                        log_warning(f"Unsupported message type: {type(_im)}")
+                        log_warning(f"Unsupported message type during memory update: {type(_im)}")
                         continue
 
                     # Add the message to the AgentRun
@@ -2712,7 +2712,7 @@ class Agent:
                         try:
                             mp = Message(**_im)
                         except Exception as e:
-                            log_warning(f"Failed to validate message: {e}")
+                            log_warning(f"Failed to validate message during memory update: {e}")
                     else:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
@@ -3130,7 +3130,7 @@ class Agent:
                         try:
                             parsed_messages.append(Message(**_im))
                         except Exception as e:
-                            log_warning(f"Failed to validate message: {e}")
+                            log_warning(f"Failed to validate message during memory update: {e}")
                     else:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
@@ -3174,7 +3174,7 @@ class Agent:
                         try:
                             parsed_messages.append(Message(**_im))
                         except Exception as e:
-                            log_warning(f"Failed to validate message: {e}")
+                            log_warning(f"Failed to validate message during memory update: {e}")
                     else:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
