@@ -58,7 +58,6 @@ class Claude(Model):
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
-    default_headers: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
     client: Optional[AnthropicClient] = None

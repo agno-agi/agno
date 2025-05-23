@@ -387,7 +387,9 @@ class Llama(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: CreateChatCompletionResponseStreamChunk, **kwargs) -> ModelResponse:
+    def parse_provider_response_delta(
+        self, response_delta: CreateChatCompletionResponseStreamChunk, **kwargs
+    ) -> ModelResponse:
         """
         Parse the Llama streaming response into a ModelResponse.
 
