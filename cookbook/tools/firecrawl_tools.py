@@ -1,3 +1,12 @@
+"""
+This is an example of how to use the FirecrawlTools.
+
+Prerequisites:
+- Create a Firecrawl account and get an API key
+- Set the API key as an environment variable:
+    export FIRECRAWL_API_KEY=<your-api-key>
+"""
+
 from agno.agent import Agent
 from agno.tools.firecrawl import FirecrawlTools
 
