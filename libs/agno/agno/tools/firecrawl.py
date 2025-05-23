@@ -39,6 +39,7 @@ class FirecrawlTools(Toolkit):
         api_key: Optional[str] = None,
         formats: Optional[List[str]] = None,
         limit: int = 10,
+        poll_interval: int = 30,
         scrape: bool = True,
         crawl: bool = False,
         mapping: bool = False,
@@ -55,6 +56,7 @@ class FirecrawlTools(Toolkit):
 
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
+        self.poll_interval: int = poll_interval
         self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
 
         # Start with scrape by default. But if crawl is set, then set scrape to False.
@@ -103,7 +105,7 @@ class FirecrawlTools(Toolkit):
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
-        params["poll_interval"] = 30
+        params["poll_interval"] = self.poll_interval
 
         crawl_result = self.app.crawl_url(url, **params)
         return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
