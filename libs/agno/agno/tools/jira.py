@@ -18,10 +18,12 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        get_issue: bool = True,
+        create_issue: bool = True,
+        search_issues: bool = True,
+        add_comment: bool = True,
         **kwargs,
     ):
-        super().__init__(name="jira_tools", **kwargs)
-
         self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
         self.username = username or os.getenv("JIRA_USERNAME")
         self.password = password or os.getenv("JIRA_PASSWORD")
@@ -43,12 +45,17 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        # Register methods
-        self.register(self.get_issue)
-        self.register(self.create_issue)
-        self.register(self.search_issues)
-        self.register(self.add_comment)
-        # You can register more methods here
+        tools = []
+        if get_issue:
+            tools.append(self.get_issue)
+        if create_issue:
+            tools.append(self.create_issue)
+        if search_issues:
+            tools.append(self.search_issues)
+        if add_comment:
+            tools.append(self.add_comment)
+
+        super().__init__(name="jira_tools", tools=tools, **kwargs)
 
     def get_issue(self, issue_key: str) -> str:
         """

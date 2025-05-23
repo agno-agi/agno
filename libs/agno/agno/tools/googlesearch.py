@@ -38,17 +38,20 @@ class GoogleSearchTools(Toolkit):
         headers: Optional[Any] = None,
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
+        search: bool = True,
         **kwargs,
     ):
-        super().__init__(name="googlesearch", **kwargs)
-
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.fixed_language: Optional[str] = fixed_language
         self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
         self.timeout: Optional[int] = timeout
 
-        self.register(self.google_search)
+        tools = []
+        if search:
+            tools.append(self.google_search)
+
+        super().__init__(name="google_search_tools", tools=tools, **kwargs)
 
     def google_search(self, query: str, max_results: int = 5, language: str = "en") -> str:
         """

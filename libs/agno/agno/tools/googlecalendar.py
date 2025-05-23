@@ -57,7 +57,14 @@ def authenticated(func):
 
 
 class GoogleCalendarTools(Toolkit):
-    def __init__(self, credentials_path: Optional[str] = None, token_path: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        credentials_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        list_events: bool = True,
+        create_event: bool = True,
+        **kwargs,
+    ):
         """
         Google Calendar Tool.
 
@@ -65,7 +72,6 @@ class GoogleCalendarTools(Toolkit):
         :param token_path: Path of the file token.json which stores the user's access and refresh tokens, and is created automatically when the authorization flow completes for the first time.
 
         """
-        super().__init__(name="google_calendar_tools", **kwargs)
 
         if not credentials_path:
             logger.error(
@@ -88,8 +94,14 @@ class GoogleCalendarTools(Toolkit):
         self.service = None
         self.token_path = token_path
         self.creds_path = credentials_path
-        self.register(self.list_events)
-        self.register(self.create_event)
+
+        tools = []
+        if list_events:
+            tools.append(self.list_events)
+        if create_event:
+            tools.append(self.create_event)
+
+        super().__init__(name="google_calendar_tools", tools=tools, **kwargs)
 
     @authenticated
     def list_events(self, limit: int = 10, date_from: str = datetime.date.today().isoformat()) -> str:
