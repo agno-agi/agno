@@ -4,11 +4,13 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.memory.v2 import Memory
 from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
 
@@ -67,16 +69,12 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     agent_id="finance-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        )
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(enable_all=True),
     ],
-    instructions=["Always use tables to display data"],
+    instructions="Always use tables to display data.",
     storage=SqliteStorage(
         table_name="finance_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),

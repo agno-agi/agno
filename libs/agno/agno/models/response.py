@@ -4,15 +4,46 @@ from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
-from agno.models.message import Citations
+from agno.models.message import Citations, MessageMetrics
+from agno.tools.function import UserInputField
 
 
 class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
+    tool_call_paused = "ToolCallPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
+
+
+@dataclass
+class ToolExecution:
+    """Execution of a tool"""
+
+    tool_call_id: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_args: Optional[Dict[str, Any]] = None
+    tool_call_error: Optional[bool] = None
+    result: Optional[str] = None
+    metrics: Optional[MessageMetrics] = None
+
+    # If True, the agent will stop executing after this tool call.
+    stop_after_tool_call: bool = False
+
+    created_at: int = int(time())
+
+    requires_confirmation: Optional[bool] = None
+    confirmed: Optional[bool] = None
+
+    requires_user_input: Optional[bool] = None
+    user_input_schema: Optional[List[UserInputField]] = None
+
+    external_execution_required: Optional[bool] = None
+
+    @property
+    def is_paused(self) -> bool:
+        return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
 
 
 @dataclass
@@ -25,7 +56,13 @@ class ModelResponse:
     parsed: Optional[Any] = None
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None
+
+    # Model tool calls
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Actual tool executions
+    tool_executions: Optional[List[ToolExecution]] = field(default_factory=list)
+
     event: str = ModelResponseEvent.assistant_response.value
 
     provider_data: Optional[Dict[str, Any]] = None
