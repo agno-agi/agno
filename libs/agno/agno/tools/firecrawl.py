@@ -137,4 +137,4 @@ class FirecrawlTools(Toolkit):
         if search_result.success:
             return json.dumps(search_result.data, cls=CustomJSONEncoder)
         else:
-            return "Error: " + search_result.error
+            return "Error searching with the Firecrawl tool: " + search_result.error
