@@ -7,16 +7,13 @@ from agno.tools import Toolkit
 class UserControlFlowTools(Toolkit):
     def __init__(
         self,
-        get_user_input: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
         """A toolkit that provides the ability for the agent to interrupt the agent run and interact with the user."""
 
-        tools = []
-        if get_user_input:
-            tools.append(self.get_user_input)
+        tools = [self.get_user_input]
 
         super().__init__(
             name="user_control_flow_tools",
@@ -52,10 +49,10 @@ class UserControlFlowTools(Toolkit):
             - Usage: Call `get_user_input` with the fields you require the user to fill in for you to continue your task.
 
         ## IMPORTANT GUIDELINES
-        - **Don't respond and ask the user for information:** Don't respond and ask the user for information. Just use the `get_user_input` tool to get the information you need from the user.
-        - **Don't make up information you don't have:** Don't make up information you don't have. If you don't have the information, use the `get_user_input` tool to get the information you need from the user.
-        - **Include only the required fields:** Include only the required fields in the `user_input_fields` parameter of the `get_user_input` tool. Don't include fields you already have the information for.
-        - **Provide a clear and concise description of the field:** Provide a clear and concise description of the field in the `field_description` parameter of the `user_input_fields` parameter of the `get_user_input` tool.
-        - **Provide a type for the field:** Provide a type for the field in the `field_type` parameter of the `user_input_fields` parameter of the `get_user_input` tool.
+        - **Don't respond and ask the user for information.** Just use the `get_user_input` tool to get the information you need from the user.
+        - **Don't make up information you don't have.** If you don't have the information, use the `get_user_input` tool to get the information you need from the user.
+        - **Include only the required fields.** Include only the required fields in the `user_input_fields` parameter of the `get_user_input` tool. Don't include fields you already have the information for.
+        - **Provide a clear and concise description of the field.** Clearly describe the field in the `field_description` parameter of the `user_input_fields` parameter of the `get_user_input` tool.
+        - **Provide a type for the field.** Fill the `field_type` parameter of the `user_input_fields` parameter of the `get_user_input` tool with the type of the field.
         """
     )

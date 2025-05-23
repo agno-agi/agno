@@ -1,6 +1,7 @@
 """🤝 Human-in-the-Loop: Allowing users to provide input externally
 
-This example shows how to use the UserControlFlowTools to allow the agent to get user input dynamically.
+This example shows how to use the UserControlFlowTools to allow the agent to get user input dynamically.  
+If the agent doesn't have enough information to complete a task, it will use the toolkit to get the information it needs from the user.
 """
 
 from typing import Any, Dict
@@ -42,7 +43,7 @@ class EmailTools(Toolkit):
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[EmailTools(), UserControlFlowTools(get_user_input=True)],
+    tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
     debug_mode=True,
 )

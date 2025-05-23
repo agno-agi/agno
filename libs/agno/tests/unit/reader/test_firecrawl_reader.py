@@ -78,6 +78,27 @@ def test_scrape_with_api_key_and_params():
         mock_app.scrape_url.assert_called_once_with("https://example.com", **params)
 
 
+def test_scrape_with_api_key_and_formats_params():
+    """Test scraping with API key and formats parameter"""
+    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+        # Set up mock
+        mock_app = MockFirecrawlApp.return_value
+        mock_app.scrape_url.return_value = {"markdown": "Test content"}
+
+        # Create reader with API key and params containing both formats and other params
+        api_key = "test_api_key"
+        params = {
+            "waitUntil": "networkidle2",  # This should be ignored
+            "formats": ["markdown"],
+        }
+        reader = FirecrawlReader(api_key=api_key, params=params)
+        reader.scrape("https://example.com")
+
+        # Verify FirecrawlApp was called with correct parameters
+        MockFirecrawlApp.assert_called_once_with(api_key=api_key)
+        mock_app.scrape_url.assert_called_once_with("https://example.com", params=params)
+
+
 def test_scrape_empty_response():
     """Test handling of empty response from scrape_url"""
     with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
