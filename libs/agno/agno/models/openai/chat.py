@@ -598,7 +598,6 @@ class OpenAIChat(Model):
                     tool_call_entry["id"] = _tool_call_id
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
-
         return tool_calls
 
     def parse_provider_response(
