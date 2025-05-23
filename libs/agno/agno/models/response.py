@@ -5,13 +5,13 @@ from typing import Any, Dict, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, MessageMetrics
+from agno.tools.function import UserInputField
 
 
 class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
-    tool_call_confirmation_required = "ToolCallConfirmationRequired"
-    tool_call_external_execution_required = "ToolCallExternalExecutionRequired"
+    tool_call_paused = "ToolCallPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
@@ -36,7 +36,14 @@ class ToolExecution:
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
 
+    requires_user_input: Optional[bool] = None
+    user_input_schema: Optional[List[UserInputField]] = None
+
     external_execution_required: Optional[bool] = None
+
+    @property
+    def is_paused(self) -> bool:
+        return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
 
 
 @dataclass

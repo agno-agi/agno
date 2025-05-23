@@ -337,8 +337,7 @@ class Model(ABC):
                         function_call_response.event
                         in [
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_confirmation_required.value,
-                            ModelResponseEvent.tool_call_external_execution_required.value,
+                            ModelResponseEvent.tool_call_paused.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -370,6 +369,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -430,8 +433,7 @@ class Model(ABC):
                         function_call_response.event
                         in [
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_confirmation_required.value,
-                            ModelResponseEvent.tool_call_external_execution_required.value,
+                            ModelResponseEvent.tool_call_paused.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -462,6 +464,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -784,6 +790,10 @@ class Model(ABC):
                 if any(fc.function.external_execution for fc in function_calls_to_run):
                     break
 
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -906,6 +916,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
 
                 # Continue loop to get next response
@@ -1151,36 +1165,53 @@ class Model(ABC):
             additional_messages = []
 
         for fc in function_calls:
+            paused_tool_executions = []
+
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            requires_confirmation=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_confirmation=True,
+                    )
                 )
-                # We don't execute the function call here, we wait for the user to confirm
-                continue
+            # If the function requires user input, we yield a message to the user
+            if fc.function.requires_user_input:
+                user_input_schema = fc.function.user_input_schema
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
 
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
             # If the function requires external execution, we yield a message to the user
             if fc.function.external_execution:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            external_execution_required=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        external_execution_required=True,
+                    )
                 )
-                # We don't execute the function call here, it is executed outside of the agent's control
+
+            if paused_tool_executions:
+                yield ModelResponse(
+                    tool_executions=paused_tool_executions,
+                    event=ModelResponseEvent.tool_call_paused.value,
+                )
+                # We don't execute the function calls here
                 continue
 
             yield from self.run_function_call(
@@ -1244,6 +1275,7 @@ class Model(ABC):
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
@@ -1254,36 +1286,52 @@ class Model(ABC):
 
         # Yield tool_call_started events for all function calls
         for fc in function_calls:
-            # Function cannot be executed without user confirmation
-            if fc.function.requires_confirmation:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            requires_confirmation=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+            paused_tool_executions = []
+            # The function cannot be executed without user confirmation
+            if fc.function.requires_confirmation and not skip_pause_check:
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_confirmation=True,
+                    )
                 )
-                # We don't execute the function call here, we wait for the user to confirm
-                continue
+            # If the function requires user input, we yield a message to the user
+            if fc.function.requires_user_input and not skip_pause_check:
+                user_input_schema = fc.function.user_input_schema
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
 
-            # If the function requires external execution, we yield a message to the user
-            if fc.function.external_execution:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            external_execution_required=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
                 )
-                # We don't execute the function call here, it is executed outside of the agent's control
+            # If the function requires external execution, we yield a message to the user
+            if fc.function.external_execution and not skip_pause_check:
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        external_execution_required=True,
+                    )
+                )
+
+            if paused_tool_executions:
+                yield ModelResponse(
+                    tool_executions=paused_tool_executions,
+                    event=ModelResponseEvent.tool_call_paused.value,
+                )
+                # We don't execute the function calls here
                 continue
 
             yield ModelResponse(
@@ -1299,9 +1347,19 @@ class Model(ABC):
             )
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
-        function_calls_to_run = [
-            fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution)
-        ]
+        if skip_pause_check:
+            function_calls_to_run = function_calls
+        else:
+            function_calls_to_run = [
+                fc
+                for fc in function_calls
+                if not (
+                    fc.function.requires_confirmation
+                    or fc.function.external_execution
+                    or fc.function.requires_user_input
+                )
+            ]
+
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
