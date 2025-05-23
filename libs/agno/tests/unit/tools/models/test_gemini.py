@@ -262,25 +262,7 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
 def test_empty_response_handling(mock_gemini_tools, mock_agent):
     """Test that empty responses from Gemini are handled correctly."""
     mock_response = MagicMock()
-    mock_response.candidates = [
-        MagicMock(
-            content=MagicMock(
-                role="model",
-                parts=[],
-            ),
-            finishReason="STOP",
-            index=0,
-        )
-    ]
-    mock_response.usage_metadata = MagicMock(
-        prompt_token_count=16425,
-        total_token_count=16425,
-        cached_content_token_count=13947,
-    )
-    mock_gemini_tools.client.models.generate_content.return_value = mock_response
-    test_message = Message(role="user", content="Test message")
-    response = mock_gemini_tools.invoke([test_message])
-    parsed_response = mock_gemini_tools.parse_provider_response(response)
-    assert parsed_response.role == "assistant"
-    assert parsed_response.content == ""
-    assert len(parsed_response.tool_calls) == 0
+    mock_response.generated_images = []
+    mock_gemini_tools.client.models.generate_images.return_value = mock_response
+    response = mock_gemini_tools.generate_image(mock_agent, "Test prompt")
+    assert response == "Failed to generate image: No images were generated."
