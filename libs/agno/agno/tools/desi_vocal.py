@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional, Union, List, Any
+from typing import Any, List, Optional, Union
 from uuid import uuid4
 
 import requests

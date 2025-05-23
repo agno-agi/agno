@@ -2,7 +2,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Optional, List, Any
+from typing import Any, List, Optional
 
 import requests
 
@@ -40,7 +40,7 @@ class ZoomTools(Toolkit):
             )
 
         tools: List[Any] = []
-        
+
         tools.append(self.schedule_meeting)
         tools.append(self.get_upcoming_meetings)
         tools.append(self.list_meetings)

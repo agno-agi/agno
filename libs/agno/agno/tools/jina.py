@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Dict, Optional, List, Any
+from typing import Any, Dict, List, Optional
 
 import httpx
 from pydantic import BaseModel, Field, HttpUrl

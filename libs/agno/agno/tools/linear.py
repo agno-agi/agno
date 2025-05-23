@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional, List, Any
+from typing import Any, List, Optional
 
 import requests
 

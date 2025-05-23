@@ -1,7 +1,7 @@
 import json
 from base64 import b64encode
 from os import getenv
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent

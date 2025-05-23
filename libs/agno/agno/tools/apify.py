@@ -78,7 +78,7 @@ class ApifyTools(Toolkit):
             actor_list = [actors] if isinstance(actors, str) else actors
             for actor_id in actor_list:
                 tools.append(actor_id)
-        
+
         super().__init__(name="ApifyTools", tools=tools)
 
     def register_actor(self, actor_id: str) -> None:

@@ -2,7 +2,7 @@
 
 import json
 from os import getenv
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 import requests
 

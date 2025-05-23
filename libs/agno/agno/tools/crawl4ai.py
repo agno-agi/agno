@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, List, Any
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
@@ -13,14 +13,12 @@ class Crawl4aiTools(Toolkit):
     def __init__(
         self,
         max_length: Optional[int] = 1000,
-        web_crawler: bool = True,
         **kwargs,
     ):
         self.max_length = max_length
 
         tools: List[Any] = []
-        if web_crawler:
-            tools.append(self.web_crawler)
+        tools.append(self.web_crawler)
 
         # Call superclass with tools list
         super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)

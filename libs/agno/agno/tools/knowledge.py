@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import List, Optional, Union, Any
+from typing import Any, List, Optional, Union
 
 from agno.agent import Agent
 from agno.document import Document

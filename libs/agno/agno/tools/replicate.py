@@ -1,6 +1,6 @@
 import os
 from os import getenv
-from typing import Iterable, Iterator, Optional, Union, List, Any
+from typing import Any, Iterable, Iterator, List, Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
