@@ -1,171 +1,148 @@
-import re
-from typing import List, Optional
+import os
+import tempfile
+from typing import List
+
+from unstructured.chunking.title import chunk_by_title
+from unstructured.partition.md import partition_md
 
 from agno.document.base import Document
 from agno.document.chunking.strategy import ChunkingStrategy
 
 
 class MarkdownChunking(ChunkingStrategy):
-    """
-    Chunking strategy optimized for Markdown documents.
-    It considers headers, paragraphs and code blocks to decide where to split the document.
-    """
+    """A chunking strategy that splits markdown based on structure like headers, paragraphs and sections"""
 
     def __init__(self, chunk_size: int = 5000, overlap: int = 0):
         self.chunk_size = chunk_size
         self.overlap = overlap
-        self._newline_size = 1
 
-    def _create_chunk_document(
-        self,
-        content: str,
-        document: Document,
-        chunk_number: int,
-        meta_data: dict,
-        current_header: Optional[str] = None,
-    ) -> Document:
-        """Create a new Document chunk with the given content and metadata."""
-        meta_data = meta_data.copy()
-        meta_data["chunk"] = chunk_number
-        meta_data["chunk_size"] = len(content)
-        if current_header:
-            meta_data["header"] = current_header
+    def _partition_markdown_content(self, content: str) -> List[str]:
+        """
+        Partition markdown content and return a list of text chunks.
+        Falls back to paragraph splitting if the markdown chunking fails.
+        """
+        try:
+            # Create a temporary file with the markdown content.
+            # This is the recommended usage of the unstructured library.
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as temp_file:
+                temp_file.write(content)
+                temp_file_path = temp_file.name
 
-        chunk_id = None
-        if document.id:
-            chunk_id = f"{document.id}_{chunk_number}"
-        elif document.name:
-            chunk_id = f"{document.name}_{chunk_number}"
+            try:
+                elements = partition_md(filename=temp_file_path)
 
-        return Document(
-            id=chunk_id,
-            name=document.name,
-            meta_data=meta_data,
-            content=content,
-        )
+                if not elements:
+                    return self.clean_text(content).split("\n\n")
 
-    def _is_code_block_limit(self, line: str) -> bool:
-        """Check if the line marks the start or end of a code block."""
-        return line.strip().startswith("```")
+                # Chunk by title with some default values
+                chunked_elements = chunk_by_title(
+                    elements=elements,
+                    max_characters=self.chunk_size,
+                    new_after_n_chars=int(self.chunk_size * 0.8),
+                    combine_text_under_n_chars=500,
+                    overlap=0,
+                )
+
+                # Generate the final text chunks
+                text_chunks = []
+                for chunk_group in chunked_elements:
+                    if isinstance(chunk_group, list):
+                        chunk_text = "\n\n".join([elem.text for elem in chunk_group if hasattr(elem, "text")])
+                    else:
+                        chunk_text = chunk_group.text if hasattr(chunk_group, "text") else str(chunk_group)
+
+                    if chunk_text.strip():
+                        text_chunks.append(chunk_text.strip())
+
+                return text_chunks if text_chunks else self.clean_text(content).split("\n\n")
+
+            # Always clean up the temporary file
+            finally:
+                os.unlink(temp_file_path)
+
+        # Fallback to simple paragraph splitting if the markdown chunking fails
+        except Exception:
+            return self.clean_text(content).split("\n\n")
 
     def chunk(self, document: Document) -> List[Document]:
-        """Split markdown document into chunks, considering markdown structure"""
+        """Split markdown document into chunks based on markdown structure"""
         if not document.content or len(document.content) <= self.chunk_size:
             return [document]
 
+        # Split using markdown chunking logic, or fallback to paragraphs
+        sections = self._partition_markdown_content(document.content)
+
         chunks: List[Document] = []
-        chunk_meta_data = document.meta_data or {}
-        chunk_number = 1
-
-        # Regex to match headers of level 2 or higher
-        header_pattern = r"^(#{2,6})\s+(.+)$"
-
-        # Split the content on headers
-        lines = document.content.split("\n")
         current_chunk = []
         current_size = 0
-        current_header = None
-        in_code_block = False
+        chunk_meta_data = document.meta_data
+        chunk_number = 1
 
-        for line in lines:
-            # Flag a code block is starting or ending
-            if self._is_code_block_limit(line):
-                in_code_block = not in_code_block
+        for section in sections:
+            section = section.strip()
+            section_size = len(section)
 
-            # Process headers, if not in a code block
-            if not in_code_block and re.match(header_pattern, line, re.MULTILINE):
-                # If we already have content in the current chunk, save it
-                if current_chunk and current_size > 0:
-                    chunk_content = "\n".join(current_chunk)
+            if current_size + section_size <= self.chunk_size:
+                current_chunk.append(section)
+                current_size += section_size
+            else:
+                meta_data = chunk_meta_data.copy()
+                meta_data["chunk"] = chunk_number
+                chunk_id = None
+                if document.id:
+                    chunk_id = f"{document.id}_{chunk_number}"
+                elif document.name:
+                    chunk_id = f"{document.name}_{chunk_number}"
+                meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+
+                if current_chunk:
                     chunks.append(
-                        self._create_chunk_document(
-                            chunk_content,
-                            document,
-                            chunk_number,
-                            chunk_meta_data,
-                            current_header,
+                        Document(
+                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
                         )
                     )
                     chunk_number += 1
 
-                # Start a new chunk with this header
-                current_header = line.strip()
-                current_chunk = [line]
-                current_size = len(line)
-            else:
-                line_length = len(line)
-                line_size = line_length + self._newline_size
+                current_chunk = [section]
+                current_size = section_size
 
-                # If adding this line exceeds chunk size, save current chunk and start a new one
-                if current_size + line_size > self.chunk_size and current_chunk:
-                    # Don't split in the middle of a code block
-                    if in_code_block:
-                        # Continue adding to the current chunk even if it exceeds size
-                        current_chunk.append(line)
-                        current_size += line_size
-                    else:
-                        chunk_content = "\n".join(current_chunk)
-                        chunks.append(
-                            self._create_chunk_document(
-                                chunk_content,
-                                document,
-                                chunk_number,
-                                chunk_meta_data,
-                                current_header,
-                            )
-                        )
-                        chunk_number += 1
-
-                        # Start a new chunk but keep the header context
-                        current_chunk = []
-                        if current_header:
-                            current_chunk.append(current_header)
-                            current_size = len(current_header)
-                        else:
-                            current_size = 0
-
-                        current_chunk.append(line)
-                        current_size += line_size
-                else:
-                    current_chunk.append(line)
-                    current_size += line_size
-
-        # Add the last chunk if it exists
         if current_chunk:
-            chunk_content = "\n".join(current_chunk)
+            meta_data = chunk_meta_data.copy()
+            meta_data["chunk"] = chunk_number
+            chunk_id = None
+            if document.id:
+                chunk_id = f"{document.id}_{chunk_number}"
+            elif document.name:
+                chunk_id = f"{document.name}_{chunk_number}"
+            meta_data["chunk_size"] = len("\n\n".join(current_chunk))
             chunks.append(
-                self._create_chunk_document(
-                    chunk_content,
-                    document,
-                    chunk_number,
-                    chunk_meta_data,
-                    current_header,
-                )
+                Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk))
             )
 
         # Handle overlap if specified
-        if self.overlap > 0 and len(chunks) > 1:
+        if self.overlap > 0:
             overlapped_chunks = []
             for i in range(len(chunks)):
                 if i > 0:
                     # Add overlap from previous chunk
-                    prev_content = chunks[i - 1].content
-                    prev_text = prev_content[-min(self.overlap, len(prev_content)) :]
+                    prev_text = chunks[i - 1].content[-self.overlap :]
+                    meta_data = chunk_meta_data.copy()
+                    meta_data["chunk"] = chunks[i].meta_data["chunk"]
+                    chunk_id = chunks[i].id
+                    meta_data["chunk_size"] = len(prev_text + chunks[i].content)
 
                     if prev_text:
                         overlapped_chunks.append(
-                            self._create_chunk_document(
-                                prev_text + "\n" + chunks[i].content,
-                                document,
-                                chunks[i].meta_data["chunk"],
-                                chunks[i].meta_data,
+                            Document(
+                                id=chunk_id,
+                                name=document.name,
+                                meta_data=meta_data,
+                                content=prev_text + chunks[i].content,
                             )
                         )
                     else:
                         overlapped_chunks.append(chunks[i])
                 else:
                     overlapped_chunks.append(chunks[i])
-
-            return overlapped_chunks
-
+            chunks = overlapped_chunks
         return chunks

@@ -8,7 +8,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
 knowledge_base = MarkdownKnowledgeBase(
-    path=Path("data/mds"),  # Path to your markdown files
+    path=Path("README.md"),  # Path to your markdown file(s)
     vector_db=PgVector(
         table_name="markdown_documents",
         db_url=db_url,
@@ -27,6 +27,6 @@ agent = Agent(
 
 # Ask the agent about the documents in the knowledge base
 agent.print_response(
-    "What are the documents in the knowledge base about?",
+    "What is a good way to get started with Agno?",
     markdown=True,
 )
