@@ -96,7 +96,7 @@ def test_scrape_with_api_key_and_formats_params():
 
         # Verify FirecrawlApp was called with correct parameters
         MockFirecrawlApp.assert_called_once_with(api_key=api_key)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=params)
+        mock_app.scrape_url.assert_called_once_with("https://example.com", **params)
 
 
 def test_scrape_empty_response():
