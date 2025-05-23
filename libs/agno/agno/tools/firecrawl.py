@@ -39,9 +39,12 @@ class FirecrawlTools(Toolkit):
         api_key: Optional[str] = None,
         formats: Optional[List[str]] = None,
         limit: int = 10,
+        poll_interval: int = 30,
         scrape: bool = True,
         crawl: bool = False,
         mapping: bool = False,
+        search: bool = False,
+        search_params: Optional[Dict[str, Any]] = None,
         api_url: Optional[str] = "https://api.firecrawl.dev",
         **kwargs,
     ):
@@ -53,6 +56,7 @@ class FirecrawlTools(Toolkit):
 
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
+        self.poll_interval: int = poll_interval
         self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
 
         # Start with scrape by default. But if crawl is set, then set scrape to False.
@@ -68,6 +72,9 @@ class FirecrawlTools(Toolkit):
             self.register(self.crawl_website)
         if mapping:
             self.register(self.map_website)
+        if search:
+            self.register(self.search)
+        self.search_params = search_params
 
     def scrape_website(self, url: str) -> str:
         """Use this function to scrape a website using Firecrawl.
@@ -98,7 +105,7 @@ class FirecrawlTools(Toolkit):
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
-        params["poll_interval"] = 30
+        params["poll_interval"] = self.poll_interval
 
         crawl_result = self.app.crawl_url(url, **params)
         return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
@@ -112,3 +119,24 @@ class FirecrawlTools(Toolkit):
         """
         map_result = self.app.map_url(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
+
+    def search(self, query: str, limit: Optional[int] = None):
+        """Use this function to search for the web using Firecrawl.
+
+        Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of results to return.
+        """
+        params: Dict[str, Any] = {}
+        if self.limit or limit:
+            params["limit"] = self.limit or limit
+        if self.formats:
+            params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
+        if self.search_params:
+            params.update(self.search_params)
+
+        search_result = self.app.search(query, **params)
+        if search_result.success:
+            return json.dumps(search_result.data, cls=CustomJSONEncoder)
+        else:
+            return "Error searching with the Firecrawl tool: " + search_result.error

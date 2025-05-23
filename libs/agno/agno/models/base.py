@@ -1060,19 +1060,26 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
-    def _create_function_call_result(
-        self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+    def create_function_call_result(
+        self,
+        function_call: FunctionCall,
+        success: bool,
+        output: Optional[Union[List[Any], str]] = None,
+        timer: Optional[Timer] = None,
     ) -> Message:
         """Create a function call result message."""
+        kwargs = {}
+        if timer is not None:
+            kwargs["metrics"] = MessageMetrics(time=timer.elapsed)
         return Message(
             role=self.tool_message_role,
-            content=output if success else fc.error,
-            tool_call_id=fc.call_id,
-            tool_name=fc.function.name,
-            tool_args=fc.arguments,
+            content=output if success else function_call.error,
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
             tool_call_error=not success,
-            stop_after_tool_call=fc.function.stop_after_tool_call,
-            metrics=MessageMetrics(time=timer.elapsed),
+            stop_after_tool_call=function_call.function.stop_after_tool_call,
+            **kwargs,
         )
 
     def run_function_call(
@@ -1128,7 +1135,7 @@ class Model(ABC):
                 yield ModelResponse(content=function_call_output)
 
         # Create and yield function call result
-        function_call_result = self._create_function_call_result(
+        function_call_result = self.create_function_call_result(
             function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
         )
         yield ModelResponse(
@@ -1400,7 +1407,7 @@ class Model(ABC):
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
-            function_call_result = self._create_function_call_result(
+            function_call_result = self.create_function_call_result(
                 fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
