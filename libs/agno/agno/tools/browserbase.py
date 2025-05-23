@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -33,8 +33,6 @@ class BrowserbaseTools(Toolkit):
             project_id (str, optional): Browserbase project ID.
             base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL). Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
         """
-        super().__init__(name="browserbase_tools", **kwargs)
-
         self.api_key = api_key or getenv("BROWSERBASE_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -62,10 +60,13 @@ class BrowserbaseTools(Toolkit):
         self._session = None
         self._connect_url = None
 
-        self.register(self.navigate_to)
-        self.register(self.screenshot)
-        self.register(self.get_page_content)
-        self.register(self.close_session)
+        tools: List[Any] = []
+        tools.append(self.navigate_to)
+        tools.append(self.screenshot)
+        tools.append(self.get_page_content)
+        tools.append(self.close_session)
+
+        super().__init__(name="browserbase_tools", tools=tools, **kwargs)
 
     def _ensure_session(self):
         """Ensures a session exists, creating one if needed."""

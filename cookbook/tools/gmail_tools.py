@@ -30,7 +30,6 @@ agent = Agent(
     ],
     markdown=True,
     show_tool_calls=False,
-    debug_mode=True,
     response_model=FindEmailOutput,
 )
 

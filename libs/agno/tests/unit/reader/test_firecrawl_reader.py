@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.document.base import Document
+from agno.document.chunking.fixed import FixedSizeChunking
 from agno.document.reader.firecrawl_reader import FirecrawlReader
 
 
@@ -56,7 +57,7 @@ def test_scrape_basic(mock_scrape_response):
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=None)
+        mock_app.scrape_url.assert_called_once_with("https://example.com")
 
 
 def test_scrape_with_api_key_and_params():
@@ -74,7 +75,28 @@ def test_scrape_with_api_key_and_params():
 
         # Verify FirecrawlApp was called with correct parameters
         MockFirecrawlApp.assert_called_once_with(api_key=api_key)
-        mock_app.scrape_url.assert_called_once_with("https://example.com", params=params)
+        mock_app.scrape_url.assert_called_once_with("https://example.com", **params)
+
+
+def test_scrape_with_api_key_and_formats_params():
+    """Test scraping with API key and formats parameter"""
+    with patch("agno.document.reader.firecrawl_reader.FirecrawlApp") as MockFirecrawlApp:
+        # Set up mock
+        mock_app = MockFirecrawlApp.return_value
+        mock_app.scrape_url.return_value = {"markdown": "Test content"}
+
+        # Create reader with API key and params containing both formats and other params
+        api_key = "test_api_key"
+        params = {
+            "waitUntil": "networkidle2",  # This should be ignored
+            "formats": ["markdown"],
+        }
+        reader = FirecrawlReader(api_key=api_key, params=params)
+        reader.scrape("https://example.com")
+
+        # Verify FirecrawlApp was called with correct parameters
+        MockFirecrawlApp.assert_called_once_with(api_key=api_key)
+        mock_app.scrape_url.assert_called_once_with("https://example.com", **params)
 
 
 def test_scrape_empty_response():
@@ -119,7 +141,7 @@ def test_scrape_with_chunking(mock_scrape_response):
         # Create reader with chunking enabled
         reader = FirecrawlReader()
         reader.chunk = True
-        reader.chunking_strategy.chunk_size = 10  # Small chunk size to ensure multiple chunks
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=10)  # Small chunk size to ensure multiple chunks
 
         # Create a patch for chunk_document
         def mock_chunk_document(doc):
@@ -166,7 +188,7 @@ def test_crawl_basic(mock_crawl_response):
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
-        mock_app.crawl_url.assert_called_once_with("https://example.com", params=None)
+        mock_app.crawl_url.assert_called_once_with("https://example.com")
 
 
 def test_crawl_empty_response():
@@ -209,7 +231,7 @@ def test_crawl_with_chunking(mock_crawl_response):
         # Create reader with chunking enabled
         reader = FirecrawlReader(mode="crawl")
         reader.chunk = True
-        reader.chunking_strategy.chunk_size = 10  # Small chunk size to ensure multiple chunks
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=10)  # Small chunk size to ensure multiple chunks
 
         def mock_chunk_document(doc):
             # Simple mock that splits into 2 chunks
