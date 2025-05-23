@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import Optional, Union
+from typing import Optional, Union, List, Any
 
 from agno.agent import Agent
 from agno.reasoning.step import NextAction, ReasoningStep
@@ -31,7 +31,7 @@ class ReasoningTools(Toolkit):
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
             self.instructions += "\n</reasoning_instructions>\n"
 
-        tools = []
+        tools: List[Any] = []
         if think:
             tools.append(self.think)
         if analyze:

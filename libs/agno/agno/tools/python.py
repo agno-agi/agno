@@ -35,9 +35,9 @@ class PythonTools(Toolkit):
 
         tools: List[Any] = []
         if run_code:
-            tools.append(self.run_python_code, sanitize_arguments=False)
+            tools.append(self.run_python_code)
         if save_and_run:
-            tools.append(self.save_to_file_and_run, sanitize_arguments=False)
+            tools.append(self.save_to_file_and_run)
         if pip_install:
             tools.append(self.pip_install_package)
         if uv_pip_install:

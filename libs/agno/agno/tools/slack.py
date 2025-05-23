@@ -26,7 +26,7 @@ class SlackTools(Toolkit):
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
 
-        tools = []
+        tools: List[Any] = []
         if send_message:
             tools.append(self.send_message)
         if list_channels:

@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 
 import httpx
 from pydantic import BaseModel, Field, HttpUrl
@@ -36,7 +36,7 @@ class JinaReaderTools(Toolkit):
             timeout=timeout,
         )
 
-        tools = []
+        tools: List[Any] = []
         if read_url:
             tools.append(self.read_url)
         if search_query:
