@@ -14,11 +14,14 @@ system_prompt = """
 
 agent = Agent(
     model=Claude(
-        id="claude-3-5-sonnet-20241022",
-        system_prompt=system_prompt,
+        id="claude-sonnet-4-20250514",
+        default_headers={
+            "anthropic-beta": "extended-cache-ttl-2025-04-11"
+        },  
         cache_system_prompt=True,  # Activate prompt caching for Anthropic to cache the system prompt
         extended_cache_time=True,  # Extend the cache time from the default to 1 hour
     ),
+    system_message=system_prompt,
     markdown=True,
 )
 

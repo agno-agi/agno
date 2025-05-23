@@ -10,7 +10,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.models.claude import format_messages
 
 try:
@@ -78,8 +78,6 @@ class Claude(Model):
             client_params.update(self.client_params)
         if self.default_headers is not None:
             client_params["default_headers"] = self.default_headers
-        if self.extended_cache_time:
-            client_params["beta"] = "extended-cache-ttl-2025-04-11"
 
         return client_params
 
@@ -467,11 +465,13 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
+            log_info(f"Usage: {response.usage}")
             model_response.response_usage = response.usage
             if response.usage.cache_creation_input_tokens is not None:
                 model_response.response_usage.cache_creation_input_tokens = response.usage.cache_creation_input_tokens
             if response.usage.cache_read_input_tokens is not None:
                 model_response.response_usage.cache_read_input_tokens += response.usage.cache_read_input_tokens
+            
 
         return model_response
 

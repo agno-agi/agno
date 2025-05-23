@@ -18,7 +18,7 @@ system_message = """
 
 agent = Agent(
     model=Claude(
-        id="claude-3-5-sonnet-20241022",
+        id="claude-sonnet-4-20250514",
         cache_system_prompt=True,  # Activate prompt caching for Anthropic to cache the system prompt
     ),
     system_message=system_message,
