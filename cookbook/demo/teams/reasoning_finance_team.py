@@ -74,6 +74,7 @@ finance_agent = Agent(
 )
 # *******************************
 
+
 def get_reasoning_finance_team():
     return Team(
         name="Reasoning Finance Team",

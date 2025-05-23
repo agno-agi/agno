@@ -53,8 +53,26 @@ class ToolExecution:
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
-            
+
         return _dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ToolExecution":
+        return cls(
+            tool_call_id=data.get("tool_call_id"),
+            tool_name=data.get("tool_name"),
+            tool_args=data.get("tool_args"),
+            tool_call_error=data.get("tool_call_error"),
+            result=data.get("result"),
+            stop_after_tool_call=data.get("stop_after_tool_call", False),
+            requires_confirmation=data.get("requires_confirmation"),
+            confirmed=data.get("confirmed"),
+            confirmation_note=data.get("confirmation_note"),
+            requires_user_input=data.get("requires_user_input"),
+            user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema", [])],
+            external_execution_required=data.get("external_execution_required"),
+            metrics=MessageMetrics(**data.get("metrics", {})),
+        )
 
 
 @dataclass
