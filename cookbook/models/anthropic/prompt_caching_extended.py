@@ -533,6 +533,7 @@ agent = Agent(
         cache_system_prompt=True,  # Activate prompt caching for Anthropic to cache the system prompt
         extended_cache_time=True,  # Extend the cache time from the default to 1 hour
     ),
+    system_message=system_prompt,
     markdown=True,
 )
 
