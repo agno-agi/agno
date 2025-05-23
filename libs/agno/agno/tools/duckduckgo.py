@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -46,7 +46,7 @@ class DuckDuckGoTools(Toolkit):
         self.modifier: Optional[str] = modifier
         self.verify_ssl: bool = verify_ssl
 
-        tools = []
+        tools: List[Any] = []
         if search:
             tools.append(self.duckduckgo_search)
         if news:

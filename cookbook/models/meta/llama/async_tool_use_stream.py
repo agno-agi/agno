@@ -1,14 +1,17 @@
-"""Run `pip install agno llama-api-client duckduckgo-search` to install dependencies."""
+"""Run `pip install agno llama-api-client yfinance` to install dependencies."""
+
+# Note: Currently, Llama API does not support tools with parameters other than string.
+# This is a limitation of the Llama API.
 
 import asyncio
 
 from agno.agent import Agent
 from agno.models.meta import Llama
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-    tools=[DuckDuckGoTools()],
+    tools=[YFinanceTools()],
     show_tool_calls=True,
 )
-asyncio.run(agent.aprint_response("What's happening in France?", stream=True))
+asyncio.run(agent.aprint_response("Whats the price of AAPL stock?", stream=True))

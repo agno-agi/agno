@@ -44,7 +44,7 @@ if agent.is_paused:  # Or agent.run_response.is_paused
         )
 
         if message == "n":
-            break
+            tool.confirmed = False
         else:
             # We update the tools in place
             tool.confirmed = True
