@@ -1,6 +1,5 @@
 from docling.document_converter import DocumentConverter
 import os
-import time # Adicionado para um pequeno delay, pode ser útil para evitar sobrecarga ou problemas em alguns sistemas
 
 # Define as pastas de origem e destino
 source_folder = 'Knowledge/PDF'
@@ -26,14 +25,8 @@ except Exception as e:
 
 print(f"\nVerificando arquivos na pasta de origem: '{source_folder}'...")
 
-try:
-    # Lista todos os arquivos na pasta de origem
-    files_in_source = os.listdir(source_folder)
-    print(f"Encontrados {len(files_in_source)} itens.")
-except FileNotFoundError:
-    print(f"Erro: Pasta de origem '{source_folder}' não encontrada.")
-    print("Por favor, crie a pasta Knowledge/PDF e coloque seus arquivos PDF nela.")
-    exit() # Sai se a pasta de origem não existir
+files_in_source = os.listdir(source_folder)
+print(f"Encontrados {len(files_in_source)} itens.")
 
 # Filtra apenas arquivos que terminam com .pdf (case-insensitive)
 # e garante que sejam realmente arquivos (não subpastas)
@@ -79,7 +72,7 @@ for pdf_filename in pdf_files:
             # Salva o conteúdo Markdown no arquivo de destino
             with open(dest_md_path, 'w', encoding='utf-8') as f:
                 f.write(markdown_content)
-            print(f"Conversão bem-sucedida. Arquivo salvo em '{dest_md_path}'.")
+            print(f"\nConversão bem-sucedida. Arquivo salvo em '{dest_md_path}'.")
 
             # --- Exclusão do PDF Original ---
             try:
@@ -100,9 +93,6 @@ for pdf_filename in pdf_files:
         # Captura qualquer erro durante o processo de conversão ou escrita do arquivo
         print(f"Erro durante o processamento (conversão ou salvamento) de '{pdf_filename}': {e}")
         # O arquivo PDF original não é excluído em caso de erro.
-
-    # Opcional: Adicionar um pequeno delay entre as conversões
-    # time.sleep(1) # Descomente esta linha se precisar de um pequeno intervalo
 
 print("\n--- Processamento Concluído ---")
 print(f"Verifique a pasta '{dest_folder}' para os arquivos .md convertidos.")
