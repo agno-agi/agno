@@ -50,6 +50,8 @@ class Claude(Model):
     stop_sequences: Optional[List[str]] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
+    cache_system_prompt: Optional[bool] = False
+    extended_cache_time: Optional[bool] = False
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -70,11 +72,15 @@ class Claude(Model):
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
         if self.default_headers is not None:
             client_params["default_headers"] = self.default_headers
+        if self.extended_cache_time:
+            client_params["beta"] = "extended-cache-ttl-2025-04-11"
+
         return client_params
 
     def get_client(self) -> AnthropicClient:
@@ -134,7 +140,23 @@ class Claude(Model):
             Dict[str, Any]: The request keyword arguments.
         """
         request_kwargs = self.request_kwargs.copy()
-        request_kwargs["system"] = system_message
+
+        if self.cache_system_prompt:
+            cache_control = (
+                {"type": "ephemeral", "ttl": "1h"}
+                if self.extended_cache_time is not None and self.extended_cache_time is True
+                else {"type": "ephemeral"}
+            )
+            request_kwargs["system"] = [
+                {"text": system_message, "type": "text"},
+                {"text": self.system_prompt, "type": "text", "cache_control": cache_control},
+            ]
+
+        else:
+            request_kwargs["system"] = [
+                {"text": system_message, "type": "text"},
+                {"text": self.system_prompt, "type": "text"},
+            ]
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
@@ -453,6 +475,10 @@ class Claude(Model):
         # Add usage metrics
         if response.usage is not None:
             model_response.response_usage = response.usage
+            if response.usage.cache_creation_input_tokens is not None:
+                model_response.response_usage.cached_tokens = response.usage.cache_creation_input_tokens
+            if response.usage.cache_read_input_tokens is not None:
+                model_response.response_usage.cached_tokens += response.usage.cache_read_input_tokens
 
         return model_response
 
