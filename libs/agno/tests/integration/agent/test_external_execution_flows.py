@@ -87,7 +87,9 @@ async def test_tool_call_requires_external_execution_async():
         monitoring=False,
     )
 
-    response = await agent.arun("What is the weather in Tokyo?")
+    response = await agent.arun(
+        "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'"
+    )
 
     assert response.is_paused
     assert response.tools[0].external_execution_required

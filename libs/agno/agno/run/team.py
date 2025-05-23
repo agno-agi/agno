@@ -84,7 +84,12 @@ class TeamRunResponse:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if self.tools is not None:
-            _dict["tools"] = [tool.to_dict() for tool in self.tools]
+            _dict["tools"] = []
+            for tool in self.tools:
+                if isinstance(tool, ToolExecution):
+                    _dict["tools"].append(tool.to_dict())
+                else:
+                    _dict["tools"].append(tool)
 
         return _dict
 
@@ -122,6 +127,9 @@ class TeamRunResponse:
         audio = data.pop("audio", None)
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
+        tools = data.pop("tools", None)
+        tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
@@ -133,6 +141,7 @@ class TeamRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            tools=tools,
             **data,
         )
 

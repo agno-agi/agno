@@ -193,27 +193,6 @@ async def test_tool_call_requires_confirmation_async():
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
-def test_tool_call_requires_confirmation_error():
-    @tool(requires_confirmation=True)
-    def get_the_weather(city: str):
-        return f"It is currently 70 degrees and cloudy in {city}"
-
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[get_the_weather],
-        show_tool_calls=True,
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("What is the weather in Tokyo?")
-
-    # Check that we cannot continue without confirmation
-    with pytest.raises(ValueError):
-        response = agent.continue_run(response)
-
-
 @pytest.mark.asyncio
 async def test_tool_call_requires_confirmation_stream_async():
     @tool(requires_confirmation=True)

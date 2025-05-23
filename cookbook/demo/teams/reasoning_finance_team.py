@@ -26,6 +26,7 @@ memory = Memory(
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests and general research",
+    agent_id="web_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     storage=PostgresAgentStorage(
@@ -33,7 +34,6 @@ web_agent = Agent(
         table_name="web_agent_sessions",
     ),
     memory=memory,
-    add_memory_references=True,
     instructions=[
         "Search for current and relevant information on financial topics",
         "Always include sources and publication dates",
@@ -46,6 +46,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests and market analysis",
+    agent_id="finance_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[
         YFinanceTools(
@@ -69,7 +70,6 @@ finance_agent = Agent(
         "Include key financial ratios and metrics in your analysis.",
         "Focus on delivering actionable financial insights.",
     ],
-    add_memory_references=True,
     add_datetime_to_instructions=True,
 )
 # *******************************
@@ -94,6 +94,7 @@ def get_reasoning_finance_team():
             "Ensure all claims are supported by data and sources",
             "Present findings in a structured, easy-to-follow format",
             "Only output the final consolidated analysis, not individual agent responses",
+            "Dont use emojis",
         ],
         storage=PostgresAgentStorage(
             db_url=db_url,
@@ -118,39 +119,33 @@ Analyze Apple (AAPL) as a potential investment:
 1. Get current stock price and fundamentals
 2. Research recent news and market sentiment
 3. Calculate key financial ratios and risk metrics
-4. Create visualizations of price trends
-5. Provide a comprehensive investment recommendation
+4. Provide a comprehensive investment recommendation
 
 2. SECTOR COMPARISON ANALYSIS:
 Compare the tech sector giants (AAPL, GOOGL, MSFT) performance:
 1. Get financial data for all three companies
 2. Analyze recent news affecting the tech sector
 3. Calculate comparative metrics and correlations
-4. Create comparison charts and risk analysis
-5. Recommend portfolio allocation weights
+4. Recommend portfolio allocation weights
 
 3. RISK ASSESSMENT SCENARIO:
 Evaluate the risk profile of Tesla (TSLA):
 1. Calculate volatility metrics and beta
 2. Analyze recent news for risk factors
 3. Compare risk vs return to market benchmarks
-4. Identify key risk drivers and mitigation strategies
-5. Provide risk-adjusted investment recommendation
+4. Provide risk-adjusted investment recommendation
 
 4. MARKET SENTIMENT ANALYSIS:
 Analyze current market sentiment around AI stocks:
 1. Search for recent AI industry news and developments
 2. Get financial data for key AI companies (NVDA, GOOGL, MSFT, AMD)
-3. Assess sentiment impact on stock performance
-4. Calculate momentum and trend indicators
-5. Provide outlook for AI sector investing
+3. Provide outlook for AI sector investing
 
 5. EARNINGS SEASON ANALYSIS:
 Prepare for upcoming earnings season - analyze Microsoft (MSFT):
 1. Get current financial metrics and analyst expectations
 2. Research recent news and market sentiment
 3. Calculate historical earnings impact on stock price
-4. Assess risk/reward for holding through earnings
-5. Provide trading strategy recommendation
+4. Provide trading strategy recommendation
 """
 # *******************************
