@@ -12,7 +12,6 @@ class AirflowTools(Toolkit):
         """
         quick start to work with airflow : https://airflow.apache.org/docs/apache-airflow/stable/start.html
         """
-        super().__init__(name="AirflowTools", **kwargs)
 
         _dags_dir: Optional[Path] = None
         if dags_dir is not None:
@@ -21,10 +20,14 @@ class AirflowTools(Toolkit):
             else:
                 _dags_dir = dags_dir
         self.dags_dir: Path = _dags_dir or Path.cwd()
+
+        tools = []
         if save_dag:
-            self.register(self.save_dag_file, sanitize_arguments=False)
+            tools.append(self.save_dag_file)
         if read_dag:
-            self.register(self.read_dag_file)
+            tools.append(self.read_dag_file)
+
+        super().__init__(name="AirflowTools", tools=tools, **kwargs)
 
     def save_dag_file(self, contents: str, dag_file: str) -> str:
         """Saves python code for an Airflow DAG to a file called `dag_file` and returns the file path if successful.

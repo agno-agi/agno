@@ -10,11 +10,22 @@ class AWSLambdaTools(Toolkit):
     name: str = "AWSLambdaTool"
     description: str = "A tool for interacting with AWS Lambda functions"
 
-    def __init__(self, region_name: str = "us-east-1", **kwargs):
-        super().__init__(name="aws-lambda", **kwargs)
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        enable_list_functions: bool = True,
+        enable_invoke_function: bool = True,
+        **kwargs,
+    ):
         self.client = boto3.client("lambda", region_name=region_name)
-        self.register(self.list_functions)
-        self.register(self.invoke_function)
+
+        tools = []
+        if enable_list_functions:
+            tools.append(self.list_functions)
+        if enable_invoke_function:
+            tools.append(self.invoke_function)
+
+        super().__init__(name="aws-lambda", tools=tools, **kwargs)
 
     def list_functions(self) -> str:
         try:
