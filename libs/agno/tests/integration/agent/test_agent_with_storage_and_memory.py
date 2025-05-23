@@ -5,9 +5,11 @@ import uuid
 import pytest
 
 from agno.agent.agent import Agent
+from agno.memory.agent import AgentMemory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 
@@ -69,12 +71,63 @@ def chat_agent(agent_storage, memory):
         model=OpenAIChat(id="gpt-4o-mini"),
         storage=agent_storage,
         memory=memory,
+    )
+
+
+@pytest.fixture
+def memory_agent(agent_storage, memory):
+    """Create an agent that creates memories."""
+    return Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        memory=memory,
         enable_user_memories=True,
     )
 
 
+def test_agent_runs_in_memory(chat_agent):
+    session_id = "test_session"
+    response = chat_agent.run("Hello, how are you?", session_id=session_id)
+    assert response is not None
+    assert response.content is not None
+    assert response.run_id is not None
+
+    assert len(chat_agent.memory.runs[session_id]) == 1
+    stored_run_response = chat_agent.memory.runs[session_id][0]
+    assert stored_run_response.run_id == response.run_id
+    assert len(stored_run_response.messages) == 2
+
+    # Check that the run is also stored in the agent session
+    assert len(chat_agent.agent_session.memory["runs"]) == 1
+
+
+def test_agent_runs_in_memory_legacy(chat_agent):
+    chat_agent.memory = AgentMemory()
+    session_id = "test_session"
+    response = chat_agent.run(
+        "What can you do?",
+        messages=[
+            Message(role="user", content="Hello, how are you?"),
+            Message(role="assistant", content="I'm good, thank you!"),
+        ],
+        session_id=session_id,
+    )
+    assert response is not None
+    assert response.content is not None
+    assert response.run_id is not None
+
+    assert len(chat_agent.memory.runs) == 1
+    stored_agent_run = chat_agent.memory.runs[0]
+    assert stored_agent_run.response.run_id == response.run_id
+    assert len(stored_agent_run.response.messages) == 4
+    assert len(stored_agent_run.messages) == 2
+
+    # Check that the run is also stored in the agent session
+    assert len(chat_agent.agent_session.memory["runs"]) == 1
+
+
 @pytest.mark.asyncio
-async def test_multi_user_multi_session_chat(chat_agent, agent_storage, memory):
+async def test_multi_user_multi_session_chat(memory_agent, agent_storage, memory):
     """Test multi-user multi-session chat with storage and memory."""
     # Define user and session IDs
     user_1_id = "user_1@example.com"
@@ -90,26 +143,26 @@ async def test_multi_user_multi_session_chat(chat_agent, agent_storage, memory):
     memory.clear()
 
     # Chat with user 1 - Session 1
-    await chat_agent.arun(
+    await memory_agent.arun(
         "My name is Mark Gonzales and I like anime and video games.", user_id=user_1_id, session_id=user_1_session_1_id
     )
-    await chat_agent.arun(
+    await memory_agent.arun(
         "I also enjoy reading manga and playing video games.", user_id=user_1_id, session_id=user_1_session_1_id
     )
 
     # Chat with user 1 - Session 2
-    await chat_agent.arun("I'm going to the movies tonight.", user_id=user_1_id, session_id=user_1_session_2_id)
+    await memory_agent.arun("I'm going to the movies tonight.", user_id=user_1_id, session_id=user_1_session_2_id)
 
     # Chat with user 2
-    await chat_agent.arun("Hi my name is John Doe.", user_id=user_2_id, session_id=user_2_session_1_id)
-    await chat_agent.arun("I'm planning to hike this weekend.", user_id=user_2_id, session_id=user_2_session_1_id)
+    await memory_agent.arun("Hi my name is John Doe.", user_id=user_2_id, session_id=user_2_session_1_id)
+    await memory_agent.arun("I'm planning to hike this weekend.", user_id=user_2_id, session_id=user_2_session_1_id)
 
     # Chat with user 3
-    await chat_agent.arun("Hi my name is Jane Smith.", user_id=user_3_id, session_id=user_3_session_1_id)
-    await chat_agent.arun("I'm going to the gym tomorrow.", user_id=user_3_id, session_id=user_3_session_1_id)
+    await memory_agent.arun("Hi my name is Jane Smith.", user_id=user_3_id, session_id=user_3_session_1_id)
+    await memory_agent.arun("I'm going to the gym tomorrow.", user_id=user_3_id, session_id=user_3_session_1_id)
 
     # Continue the conversation with user 1
-    await chat_agent.arun("What do you suggest I do this weekend?", user_id=user_1_id, session_id=user_1_session_1_id)
+    await memory_agent.arun("What do you suggest I do this weekend?", user_id=user_1_id, session_id=user_1_session_1_id)
 
     # Verify storage DB has the right sessions
     all_session_ids = agent_storage.get_all_session_ids()
