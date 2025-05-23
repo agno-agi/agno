@@ -48,6 +48,15 @@ class UserInputField:
             "value": self.value,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        return cls(
+            name=data["name"],
+            field_type=eval(data["field_type"]),  # Convert string type name to actual type
+            description=data["description"],
+            value=data["value"],
+        )
+
 
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
