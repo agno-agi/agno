@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -12,6 +13,7 @@ from agno.models.message import Citations, DocumentCitation, Message, UrlCitatio
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
 from agno.utils.models.claude import format_messages
+from agno.media import File
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -55,6 +57,7 @@ class Claude(Model):
     # Client parameters
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
+    default_headers: Optional[Dict[str, Any]] = None
 
     # Anthropic clients
     client: Optional[AnthropicClient] = None
@@ -72,6 +75,8 @@ class Claude(Model):
         # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
+        if self.default_headers is not None:
+            client_params["default_headers"] = self.default_headers
         return client_params
 
     def get_client(self) -> AnthropicClient:
@@ -196,6 +201,7 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages)
+            print('--> chat_messages', chat_messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return self.get_client().messages.create(

@@ -116,6 +116,17 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "application/pdf": "base64",
         "text/plain": "text",
     }
+    # Case 0: File is an Anthropic uploaded file
+    print('file.external:', file.external)
+    if file.external is not None and hasattr(file.external, 'id'):
+        print('file.external.id:', file.external.id)
+        return {
+            "type": "document", 
+            "source": {
+                "type": "file",
+                "file_id": file.external.id,
+            }
+        }
 
     # Case 1: Document is a URL
     if file.url is not None:
@@ -129,6 +140,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
+        print('--------')
         import base64
         from pathlib import Path
 
