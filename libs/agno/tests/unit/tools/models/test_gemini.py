@@ -8,7 +8,6 @@ import pytest
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
 from agno.tools.models.gemini import GeminiTools
-from agno.models.message import Message
 
 
 # Fixture for mock agent
