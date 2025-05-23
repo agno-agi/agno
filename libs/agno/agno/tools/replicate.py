@@ -24,12 +24,15 @@ class ReplicateTools(Toolkit):
         model: str = "minimax/video-01",
         **kwargs,
     ):
-        super().__init__(name="replicate_toolkit", **kwargs)
         self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
         if not self.api_key:
             logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
         self.model = model
-        self.register(self.generate_media)
+
+        tools = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 
     def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """

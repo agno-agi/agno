@@ -20,12 +20,6 @@ class ReasoningTools(Toolkit):
         **kwargs,
     ):
         """A toolkit that provides step-by-step reasoning tools: Think and Analyze."""
-        super().__init__(
-            name="reasoning_tools",
-            instructions=instructions,
-            add_instructions=add_instructions,
-            **kwargs,
-        )
 
         # Add instructions for using this toolkit
         if instructions is None:
@@ -37,11 +31,19 @@ class ReasoningTools(Toolkit):
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
             self.instructions += "\n</reasoning_instructions>\n"
 
-        # Register each tool based on the init flags
+        tools = []
         if think:
-            self.register(self.think)
+            tools.append(self.think)
         if analyze:
-            self.register(self.analyze)
+            tools.append(self.analyze)
+
+        super().__init__(
+            name="reasoning_tools",
+            instructions=instructions,
+            add_instructions=add_instructions,
+            tools=tools,
+            **kwargs,
+        )
 
     def think(
         self, agent: Union[Agent, Team], title: str, thought: str, action: Optional[str] = None, confidence: float = 0.8

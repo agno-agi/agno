@@ -27,28 +27,29 @@ class PythonTools(Toolkit):
         safe_locals: Optional[dict] = None,
         **kwargs,
     ):
-        super().__init__(name="python_tools", **kwargs)
-
         self.base_dir: Path = base_dir or Path.cwd()
 
         # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
+        tools = []
         if run_code:
-            self.register(self.run_python_code, sanitize_arguments=False)
+            tools.append(self.run_python_code, sanitize_arguments=False)
         if save_and_run:
-            self.register(self.save_to_file_and_run, sanitize_arguments=False)
+            tools.append(self.save_to_file_and_run, sanitize_arguments=False)
         if pip_install:
-            self.register(self.pip_install_package)
+            tools.append(self.pip_install_package)
         if uv_pip_install:
-            self.register(self.uv_pip_install_package)
+            tools.append(self.uv_pip_install_package)
         if run_files:
-            self.register(self.run_python_file_return_variable)
+            tools.append(self.run_python_file_return_variable)
         if read_files:
-            self.register(self.read_file)
+            tools.append(self.read_file)
         if list_files:
-            self.register(self.list_files)
+            tools.append(self.list_files)
+
+        super().__init__(name="python_tools", tools=tools, **kwargs)
 
     def save_to_file_and_run(
         self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
