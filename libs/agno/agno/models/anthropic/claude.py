@@ -199,7 +199,6 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            print('--> chat_messages', chat_messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             return self.get_client().messages.create(

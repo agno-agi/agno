@@ -53,7 +53,7 @@ class ToolExecution:
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
-            
+
         return _dict
 
 

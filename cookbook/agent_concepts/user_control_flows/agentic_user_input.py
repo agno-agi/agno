@@ -1,6 +1,6 @@
 """🤝 Human-in-the-Loop: Allowing users to provide input externally
 
-This example shows how to use the UserControlFlowTools to allow the agent to get user input dynamically.  
+This example shows how to use the UserControlFlowTools to allow the agent to get user input dynamically.
 If the agent doesn't have enough information to complete a task, it will use the toolkit to get the information it needs from the user.
 """
 
