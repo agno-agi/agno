@@ -19,6 +19,7 @@ class VideoArtifact(Media):
 
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {
+            "id": self.id,
             "url": self.url,
             "content": self.content
             if isinstance(self.content, str)
@@ -39,6 +40,7 @@ class ImageArtifact(Media):
 
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {
+            "id": self.id,
             "url": self.url,
             "content": self.content.decode("utf-8")
             if self.content and isinstance(self.content, bytes)
@@ -68,6 +70,7 @@ class AudioArtifact(Media):
 
     def to_dict(self) -> Dict[str, Any]:
         response_dict = {
+            "id": self.id,
             "url": self.url,
             "content": self.base64_audio,
             "mime_type": self.mime_type,
