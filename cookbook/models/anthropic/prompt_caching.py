@@ -10,7 +10,7 @@ You can check more about prompt caching with Anthropic models here: https://docs
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.anthropic import Claude
 
-# Update this string with the actual contents of the book
+# Update this string with the actual contents of the book (or any other book!)
 system_prompt = """
         You are an AI assistant specialized in literature, specifically in 'Pride and Prejudice'.
         You have the entire contents of the book here: <entire contents of 'Pride and Prejudice'>
