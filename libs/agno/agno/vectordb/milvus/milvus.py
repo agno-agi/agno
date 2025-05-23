@@ -389,11 +389,16 @@ class Milvus(VectorDb):
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": document.meta_data,
+                    "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
                 }
@@ -401,7 +406,7 @@ class Milvus(VectorDb):
                     collection_name=self.collection,
                     data=data,
                 )
-                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Inserted document: {document.name} ({meta_data})")
 
         log_info(f"Inserted {len(documents)} documents")
 
@@ -417,11 +422,16 @@ class Milvus(VectorDb):
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": document.meta_data,
+                    "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
                 }
@@ -531,7 +541,7 @@ class Milvus(VectorDb):
         results = self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            # filter=self._build_expr(filters),
+            filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )
@@ -568,7 +578,7 @@ class Milvus(VectorDb):
         results = await self.async_client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            # filter=self._build_expr(filters),
+            filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )
@@ -720,18 +730,38 @@ class Milvus(VectorDb):
             return True
         return False
 
-    def _build_expr(self, filters: Optional[Dict[str, Any]]) -> str:
-        if filters:
-            kv_list = []
-            for k, v in filters.items():
-                if not isinstance(v, str):
-                    kv_list.append(f"({k} == {v})")
-                else:
-                    kv_list.append(f"({k} == '{v}')")
-            expr = " and ".join(kv_list)
-        else:
-            expr = ""
-        return expr
+    def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Build Milvus expression from filters."""
+        if not filters:
+            return None
+
+        expressions = []
+        for k, v in filters.items():
+            if isinstance(v, (list, tuple)):
+                # For array values, use json_contains_any
+                values_str = json.dumps(v)
+                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+            elif isinstance(v, str):
+                # For string values
+                expr = f'meta_data["{k}"] == "{v}"'
+            elif isinstance(v, bool):
+                # For boolean values
+                expr = f'meta_data["{k}"] == {str(v).lower()}'
+            elif isinstance(v, (int, float)):
+                # For numeric values
+                expr = f'meta_data["{k}"] == {v}'
+            elif v is None:
+                # For null values
+                expr = f'meta_data["{k}"] is null'
+            else:
+                # For other types, convert to string
+                expr = f'meta_data["{k}"] == "{str(v)}"'
+
+            expressions.append(expr)
+
+        if expressions:
+            return " and ".join(expressions)
+        return None
 
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

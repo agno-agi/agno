@@ -5,7 +5,8 @@ from os import getenv
 from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
-from agno.eval.utils import store_result_in_file
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import log_eval_run, store_result_in_file
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -177,6 +178,8 @@ class PerformanceEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
+    # Log the results to the Agno platform. On by default.
+    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
     def _measure_time(self) -> float:
         """Measure execution time for a single run."""
@@ -243,6 +246,7 @@ class PerformanceEval:
         4. Collect results
         5. Save results if requested
         6. Print results as requested
+        7. Log results to the Agno platform if requested
         """
         from rich.console import Console
         from rich.live import Live
@@ -320,6 +324,35 @@ class PerformanceEval:
             self.result.print_results(console)
         if self.print_summary or print_summary:
             self.result.print_summary(console)
+
+        # 7. Log results to the Agno platform if requested
+        if self.monitoring:
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data={
+                    "result": {
+                        "avg_run_time": self.result.avg_run_time,
+                        "min_run_time": self.result.min_run_time,
+                        "max_run_time": self.result.max_run_time,
+                        "std_dev_run_time": self.result.std_dev_run_time,
+                        "median_run_time": self.result.median_run_time,
+                        "p95_run_time": self.result.p95_run_time,
+                        "avg_memory_usage": self.result.avg_memory_usage,
+                        "min_memory_usage": self.result.min_memory_usage,
+                        "max_memory_usage": self.result.max_memory_usage,
+                        "std_dev_memory_usage": self.result.std_dev_memory_usage,
+                        "median_memory_usage": self.result.median_memory_usage,
+                        "p95_memory_usage": self.result.p95_memory_usage,
+                    },
+                    "runs": [
+                        {"runtime": runtime, "memory": memory_usage}
+                        for runtime, memory_usage in zip(self.result.run_times, self.result.memory_usages)
+                    ],
+                },
+                eval_type=EvalType.PERFORMANCE,
+                name=self.name if self.name is not None else None,
+                evaluated_entity_name=self.func.__name__,
+            )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result

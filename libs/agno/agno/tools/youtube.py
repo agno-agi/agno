@@ -24,16 +24,18 @@ class YouTubeTools(Toolkit):
         proxies: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
-        super().__init__(name="youtube_tools", **kwargs)
-
         self.languages: Optional[List[str]] = languages
         self.proxies: Optional[Dict[str, Any]] = proxies
+
+        tools: List[Any] = []
         if get_video_captions:
-            self.register(self.get_youtube_video_captions)
+            tools.append(self.get_youtube_video_captions)
         if get_video_data:
-            self.register(self.get_youtube_video_data)
+            tools.append(self.get_youtube_video_data)
         if get_video_timestamps:
-            self.register(self.get_video_timestamps)
+            tools.append(self.get_video_timestamps)
+
+        super().__init__(name="youtube_tools", tools=tools, **kwargs)
 
     def get_youtube_video_id(self, url: str) -> Optional[str]:
         """Function to get the video ID from a YouTube URL.

@@ -1,6 +1,7 @@
 import datetime
 import json
 import os.path
+import uuid
 from functools import wraps
 
 from agno.tools import Toolkit
@@ -56,7 +57,12 @@ def authenticated(func):
 
 
 class GoogleCalendarTools(Toolkit):
-    def __init__(self, credentials_path: Optional[str] = None, token_path: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        credentials_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        **kwargs,
+    ):
         """
         Google Calendar Tool.
 
@@ -64,7 +70,6 @@ class GoogleCalendarTools(Toolkit):
         :param token_path: Path of the file token.json which stores the user's access and refresh tokens, and is created automatically when the authorization flow completes for the first time.
 
         """
-        super().__init__(name="google_calendar_tools", **kwargs)
 
         if not credentials_path:
             logger.error(
@@ -87,8 +92,12 @@ class GoogleCalendarTools(Toolkit):
         self.service = None
         self.token_path = token_path
         self.creds_path = credentials_path
-        self.register(self.list_events)
-        self.register(self.create_event)
+
+        tools = []
+        tools.append(self.list_events)
+        tools.append(self.create_event)
+
+        super().__init__(name="google_calendar_tools", tools=tools, **kwargs)
 
     @authenticated
     def list_events(self, limit: int = 10, date_from: str = datetime.date.today().isoformat()) -> str:
@@ -138,6 +147,7 @@ class GoogleCalendarTools(Toolkit):
         timezone: Optional[str] = None,
         attendees: List[str] = [],
         send_updates: Optional[str] = "all",
+        add_google_meet_link: Optional[bool] = False,
     ) -> str:
         """
         Create a new event in the user's primary calendar.
@@ -150,6 +160,7 @@ class GoogleCalendarTools(Toolkit):
             end_datetime (Optional[str]) : end date and time of the event
             attendees (Optional[List[str]]) : List of emails of the attendees
             send_updates (Optional[str]): Whether to send updates to attendees. Options: 'all' (default), 'externalOnly', 'none'
+            add_google_meet_link (Optional[bool]): Whether to add a google meet link to the event
         """
 
         attendees_list = [{"email": attendee} for attendee in attendees] if attendees else []
@@ -166,9 +177,20 @@ class GoogleCalendarTools(Toolkit):
                 "end": {"dateTime": end_time, "timeZone": timezone},
                 "attendees": attendees_list,
             }
+            if add_google_meet_link:
+                event["conferenceData"] = {
+                    "createRequest": {"requestId": str(uuid.uuid4()), "conferenceSolutionKey": {"type": "hangoutsMeet"}}  # type: ignore
+                }
             if self.service:
                 event_result = (
-                    self.service.events().insert(calendarId="primary", body=event, sendUpdates=send_updates).execute()
+                    self.service.events()
+                    .insert(
+                        calendarId="primary",
+                        body=event,
+                        sendUpdates=send_updates,
+                        conferenceDataVersion=1 if add_google_meet_link else 0,
+                    )
+                    .execute()
                 )
                 return json.dumps(event_result)
             else:

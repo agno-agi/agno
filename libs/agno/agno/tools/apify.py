@@ -66,8 +66,6 @@ class ApifyTools(Toolkit):
                 markdown=True
             )
         """
-        super().__init__(name="ApifyTools")
-
         # Get API token from args or environment
         self.apify_api_token = apify_api_token or os.getenv("APIFY_API_TOKEN")
         if not self.apify_api_token:
@@ -75,11 +73,13 @@ class ApifyTools(Toolkit):
 
         self.client = create_apify_client(self.apify_api_token)
 
-        # Register specific Actors if provided
+        tools: List[Any] = []
         if actors:
             actor_list = [actors] if isinstance(actors, str) else actors
             for actor_id in actor_list:
-                self.register_actor(actor_id)
+                tools.append(actor_id)
+
+        super().__init__(name="ApifyTools", tools=tools)
 
     def register_actor(self, actor_id: str) -> None:
         """Register an Apify Actor as a function in the toolkit.

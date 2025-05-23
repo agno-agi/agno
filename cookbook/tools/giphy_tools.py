@@ -12,7 +12,6 @@ gif_agent = Agent(
     instructions=[
         "When the user asks you to create a gif, come up with the appropriate Giphy query and use the `search_gifs` tool to find the appropriate gif.",
     ],
-    debug_mode=True,
     show_tool_calls=True,
 )
 
