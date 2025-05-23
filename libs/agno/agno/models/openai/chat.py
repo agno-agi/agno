@@ -599,7 +599,6 @@ class OpenAIChat(Model):
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
 
-        log_error(f"Tool calls: {tool_calls}")
         return tool_calls
 
     def parse_provider_response(
