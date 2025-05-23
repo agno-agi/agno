@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, List, Any
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -45,7 +45,7 @@ class XTools(Toolkit):
             access_token_secret=self.access_token_secret,
         )
 
-        tools = []
+        tools: List[Any] = []
         tools.append(self.create_post)
         tools.append(self.reply_to_post)
         tools.append(self.send_dm)

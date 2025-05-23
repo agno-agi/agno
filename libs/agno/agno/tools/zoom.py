@@ -2,7 +2,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Optional
+from typing import Optional, List, Any
 
 import requests
 
@@ -39,7 +39,8 @@ class ZoomTools(Toolkit):
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
-        tools = []
+        tools: List[Any] = []
+        
         tools.append(self.schedule_meeting)
         tools.append(self.get_upcoming_meetings)
         tools.append(self.list_meetings)
