@@ -1,7 +1,7 @@
 import uuid
 from os import getenv
 from textwrap import dedent
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
@@ -43,8 +43,6 @@ class ZepTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -66,13 +64,17 @@ class ZepTools(Toolkit):
 
         self.initialize()
 
-        # Register methods as tools conditionally
+        tools: List[Any] = []
         if add_zep_message:
-            self.register(self.add_zep_message)
+            tools.append(self.add_zep_message)
         if get_zep_memory:
-            self.register(self.get_zep_memory)
+            tools.append(self.get_zep_memory)
         if search_zep_memory:
-            self.register(self.search_zep_memory)
+            tools.append(self.search_zep_memory)
+
+        super().__init__(
+            name="zep_tools", instructions=instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     def initialize(self) -> bool:
         """

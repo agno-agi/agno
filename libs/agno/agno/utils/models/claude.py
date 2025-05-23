@@ -50,6 +50,10 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        # Case 0: Image is an Anthropic uploaded file
+        if image.content is not None and hasattr(image.content, "id"):
+            return {"type": "image", "source": {"type": "file", "file_id": image.content.id}}
+
         # Case 1: Image is a URL
         if image.url is not None:
             return {"type": "image", "source": {"type": "url", "url": image.url}}
@@ -116,6 +120,16 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "application/pdf": "base64",
         "text/plain": "text",
     }
+
+    # Case 0: File is an Anthropic uploaded file
+    if file.external is not None and hasattr(file.external, "id"):
+        return {
+            "type": "document",
+            "source": {
+                "type": "file",
+                "file_id": file.external.id,
+            },
+        }
 
     # Case 1: Document is a URL
     if file.url is not None:
