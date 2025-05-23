@@ -180,7 +180,12 @@ class RunResponse:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if self.tools is not None:
-            _dict["tools"] = [tool.to_dict() for tool in self.tools]
+            _dict["tools"] = []
+            for tool in self.tools:
+                if isinstance(tool, ToolExecution):
+                    _dict["tools"].append(tool.to_dict())
+                else:
+                    _dict["tools"].append(tool)
 
         return _dict
 
@@ -200,7 +205,10 @@ class RunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        return cls(messages=messages, **data)
+        tools = data.pop("tools", None)
+        tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
+        return cls(messages=messages, tools=tools, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
