@@ -31,7 +31,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageAr
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.models.base import Model
-from agno.models.message import Citations, Message, MessageReferences
+from agno.models.message import Citations, Message, MessageMetrics, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
@@ -2166,6 +2166,27 @@ class Agent:
                 tool.tool_args = {}
             tool.tool_args[field.name] = field.value
 
+    def _handle_get_user_input_tool_update(self, run_messages: RunMessages, tool: ToolExecution):
+        import json
+
+        self.model = cast(Model, self.model)
+
+        user_input_result = [
+            {"name": user_input_field.name, "value": user_input_field.value}
+            for user_input_field in tool.user_input_schema or []
+        ]
+        # Add the tool call result to the run_messages
+        run_messages.messages.append(
+            Message(
+                role=self.model.tool_message_role,
+                content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+                tool_call_id=tool.tool_call_id,
+                tool_name=tool.tool_name,
+                tool_args=tool.tool_args,
+                metrics=MessageMetrics(time=0),
+            )
+        )
+
     def _run_tool(
         self, run_messages: RunMessages, tool: ToolExecution, session_id: Optional[str] = None
     ) -> Iterator[RunResponse]:
@@ -2244,7 +2265,16 @@ class Agent:
             if _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            # Case 3: Handle user input required tools
+            # Case 3: Agentic user input required
+            if (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+
+            # Case 4: Handle user input required tools
             if _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
                 _t.requires_user_input = False
@@ -2269,7 +2299,16 @@ class Agent:
             if _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            # Case 3: Handle user input required tools
+            # Case 3: Agentic user input required
+            if (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+
+            # Case 4: Handle user input required tools
             if _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
 
@@ -2293,7 +2332,16 @@ class Agent:
             if _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            # Case 3: Handle user input required tools
+            # Case 3: Agentic user input required
+            if (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+
+            # Case 4: Handle user input required tools
             if _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
 
@@ -2320,7 +2368,16 @@ class Agent:
             if _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
-            # Case 3: Handle user input required tools
+            # Case 3: Agentic user input required
+            if (
+                _t.tool_name == "get_user_input"
+                and _t.requires_user_input is not None
+                and _t.requires_user_input is True
+            ):
+                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                _t.requires_user_input = False
+
+            # Case 4: Handle user input required tools
             if _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
 

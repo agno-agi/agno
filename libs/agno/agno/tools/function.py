@@ -40,6 +40,14 @@ class UserInputField:
     description: Optional[str] = None
     value: Optional[Any] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "field_type": str(self.field_type.__name__),
+            "description": self.description,
+            "value": self.value,
+        }
+
 
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""

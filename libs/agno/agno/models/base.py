@@ -12,7 +12,7 @@ from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.tools.function import Function, FunctionCall, FunctionExecutionResult
+from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
@@ -1195,6 +1195,32 @@ class Model(ABC):
                         user_input_schema=user_input_schema,
                     )
                 )
+            # If the function is from the user control flow tools, we handle it here
+            if fc.function.name == "get_user_input" and fc.arguments and fc.arguments.get("user_input_fields"):
+                user_input_schema = []
+                for input_field in fc.arguments.get("user_input_fields", []):
+                    field_type = input_field.get("field_type")
+                    try:
+                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
+                    except (NameError, SyntaxError):
+                        python_type = str  # Default to str if type is invalid
+                    user_input_schema.append(
+                        UserInputField(
+                            name=input_field.get("field_name"),
+                            field_type=python_type,
+                            description=input_field.get("field_description"),
+                        )
+                    )
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
             # If the function requires external execution, we yield a message to the user
             if fc.function.external_execution:
                 paused_tool_executions.append(
@@ -1305,6 +1331,38 @@ class Model(ABC):
                         for user_input_field in user_input_schema:
                             if user_input_field.name == name:
                                 user_input_field.value = value
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
+            # If the function is from the user control flow tools, we handle it here
+            if (
+                fc.function.name == "get_user_input"
+                and fc.arguments
+                and fc.arguments.get("user_input_fields")
+                and not skip_pause_check
+            ):
+                fc.function.requires_user_input = True
+                user_input_schema = []
+                for input_field in fc.arguments.get("user_input_fields", []):
+                    field_type = input_field.get("field_type")
+                    try:
+                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
+                    except (NameError, SyntaxError):
+                        python_type = str  # Default to str if type is invalid
+                    user_input_schema.append(
+                        UserInputField(
+                            name=input_field.get("field_name"),
+                            field_type=python_type,
+                            description=input_field.get("field_description"),
+                        )
+                    )
 
                 paused_tool_executions.append(
                     ToolExecution(
