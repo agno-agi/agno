@@ -140,7 +140,6 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
-        print('--------')
         import base64
         from pathlib import Path
 
