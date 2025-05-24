@@ -65,7 +65,9 @@ class OpenAIChat(Model):
     top_p: Optional[float] = None
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
+    extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
+    repetition_penalty: Optional[float] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -175,7 +177,9 @@ class OpenAIChat(Model):
             "top_p": self.top_p,
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
+            "extra_body": self.extra_body,
             "metadata": self.metadata,
+            "repetition_penalty": self.repetition_penalty,
         }
 
         # Filter out None values
@@ -220,6 +224,8 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "extra_body": self.extra_body,
+                "repetition_penalty": self.repetition_penalty,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
