@@ -256,3 +256,12 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
     assert result == "Failed to generate video: API error"
     mock_agent.add_video.assert_not_called()
+
+
+def test_empty_response_handling(mock_gemini_tools, mock_agent):
+    """Test that empty responses from Gemini are handled correctly."""
+    mock_response = MagicMock()
+    mock_response.generated_images = []
+    mock_gemini_tools.client.models.generate_images.return_value = mock_response
+    response = mock_gemini_tools.generate_image(mock_agent, "Test prompt")
+    assert response == "Failed to generate image: No images were generated."
