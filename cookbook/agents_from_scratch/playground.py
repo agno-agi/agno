@@ -23,4 +23,18 @@ app = Playground(
 
 if __name__ == "__main__":
     # Run the playground app
-    serve_playground_app("playground:app", reload=True)
+    playground = Playground(
+        agents=[
+            simple_agent,
+            agent_with_tools,
+            agent_with_knowledge,
+            agent_with_storage,
+            agno_assist,
+        ],
+        app_id="agents-from-scratch-playground-app",
+        name="Agents from Scratch Playground",
+    )
+app = playground.get_app()
+
+if __name__ == "__main__":
+    playground.serve(app="playground:app", reload=True)

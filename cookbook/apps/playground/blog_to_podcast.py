@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
+from agno.playground import Playground
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.tools.firecrawl import FirecrawlTools
@@ -42,11 +42,13 @@ blog_to_podcast_agent = Agent(
     ),
 )
 
-app = Playground(
-    agents=[
-        blog_to_podcast_agent,
-    ]
-).get_app(use_async=False)
+playground = Playground(
+    agents=[blog_to_podcast_agent],
+    app_id="blog-to-podcast-playground-app",
+    name="Blog to Podcast Playground",
+    description="A playground for blog to podcast",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("blog_to_podcast:app", reload=True)
+    playground.serve(app="blog_to_podcast:app", reload=True)

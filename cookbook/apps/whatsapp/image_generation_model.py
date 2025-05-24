@@ -3,7 +3,7 @@ from agno.app.whatsapp.app import WhatsappAPI
 from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.models.google import Gemini
 
-image_agentg = Agent(
+image_agent = Agent(
     model=Gemini(
         id="gemini-2.0-flash-exp-image-generation",
         response_modalities=["Text", "Image"],
@@ -11,9 +11,14 @@ image_agentg = Agent(
     debug_mode=True,
 )
 
-app = WhatsappAPI(
-    agent=image_agentg,
-).get_app()
+whatsapp_app = WhatsappAPI(
+    agent=image_agent,
+    name="Image Generation Model",
+    app_id="image_generation_model",
+    description="A model that generates images using the Gemini API.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("image_generation_model:app", port=8000, reload=True)
+    whatsapp_app.serve(app="image_generation_model:app", port=8000, reload=True)
