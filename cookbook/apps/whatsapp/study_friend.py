@@ -1,14 +1,12 @@
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.app.serve import serve_app
 from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
-from agno.memory import memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
 from agno.models.google import Gemini
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
@@ -103,4 +101,4 @@ app = WhatsappAPI(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("study_friend:app", port=8000, reload=True)
+    serve_app("study_friend:app", port=8000, reload=True)

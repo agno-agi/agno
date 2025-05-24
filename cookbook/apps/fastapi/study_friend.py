@@ -2,7 +2,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.app.fastapi.app import FastAPIApp
-from agno.app.fastapi.serve import serve_fastapi_app
+from agno.app.serve import serve_app
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -89,4 +89,4 @@ app = FastAPIApp(
 ).get_app()
 
 if __name__ == "__main__":
-    serve_fastapi_app("study_friend:app", port=8001, reload=True)
+    serve_app("study_friend:app", port=8001, reload=True)
