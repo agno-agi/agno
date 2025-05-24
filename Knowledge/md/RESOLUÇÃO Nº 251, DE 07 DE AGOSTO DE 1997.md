@@ -1,0 +1,164 @@
+## ADVERTÊNCIA
+
+Este texto n�o substitui o publicado no Diário Oficial da União
+
+## Minist�rio da Sa�de Conselho Nacional de Saúde
+
+## RESOLUÇÃO Nº 251, DE 07 DE AGOSTO DE 1997
+
+Plenário do Conselho Nacional de Saúde em sua Décima Quinta Reunião Extraordinária, realizada no dia 05 de agosto de 1997, no uso de suas competências regimentais e atribuições conferidas pela Lei nº 8.080, de 19 de setembro de 1990, e pela Lei nº 8.142, de 28 de dezembro de 1990, Resolve:
+
+Aprovar  as  seguintes  normas  de  pesquisa  envolvendo  seres  humanos  para  a  área  temática  de  pesquisa  com novos fármacos, medicamentos, vacinas e testes diagnósticos:
+
+## I - PREÂMBULO
+
+- I.1 - A presente Resolução incorpora todas as disposições contidas na Resolução 196/96 do Conselho Nacional de Saúde, sobre Diretrizes e Normas Regulamentadoras de Pesquisa Envolvendo Seres Humanos, da qual esta é parte complementar  da  área  temática  específica  de  pesquisa  com  novos  fármacos,  medicamentos,  vacinas  e  testes diagnósticos.
+- I.2 - Reporta-se ainda à Resolução do Grupo Mercado Comum (GMC) N.º 129/96, da qual o Brasil é signatário, que dispõe acerca de regulamento técnico sobre a verificação de boas práticas de pesquisa clínica.
+- I.3 - Deverão ser obedecidas as normas , resoluções e regulamentações emanadas da SVS/MS, subordinando-se à sua autorização para execução e subsequente acompanhamento e controle, o desenvolvimento técnico dos projetos de pesquisa de Farmacologia Clínica (Fases I, II, III e IV de produtos não registrados no país) e de Biodisponibilidade e de Bioequivalência. Os projetos de pesquisa nesta área devem obedecer ao disposto na Lei 6.360 (23 de setembro de 1976) regulamentada pelo Decreto nº 79.094 (5 de janeiro de 1977).
+- I.4 - Em qualquer ensaio clínico e particularmente nos conflitos de interesses envolvidos na pesquisa com novos produtos, a dignidade e o bem estar do sujeito incluído na pesquisa devem prevalecer sobre outros interesses, sejam econômicos, da ciência ou da comunidade.
+- I.5  -  É  fundamental  que  toda  pesquisa  na  área  temática  deva  estar  alicerçada  em  normas  e  conhecimentos cientificamente consagrados em experiências laboratoriais, in vitro e conhecimento da literatura pertinente.
+- I.6 - É necessário que a investigação de novos produtos seja justificada e que os mesmos efetivamente acarretem avanços significativos em relação aos já existentes.
+
+## II - TERMOS E DEFINIÇÕES
+
+- II.1  -  Pesquisas  com  novos  fármacos,  medicamentos, vacinas ou testes diagnósticos - Refere-se às pesquisas com estes tipos de produtos em fase I, II ou III, ou não registrados no país, ainda que fase IV quando a pesquisa for referente ao seu uso com modalidades, indicações, doses ou vias de administração diferentes daquelas estabelecidas quando da autorização do registro, incluindo seu emprego em combinações, bem como os estudos de biodisponibilidade e ou bioequivalência.
+- II.2  -  Ficam  incorporados,  passando  a  fazer  parte  da  presente  Resolução  os  termos  a  seguir  referidos  que constam da Resolução do Grupo Mercado Comum (GMC nº 129/96):
+
+## a - Fase I
+
+- É o primeiro estudo em seres humanos em pequenos grupos de pessoas voluntárias, em geral sadias de um novo princípio  ativo,  ou  nova  formulação  pesquisado  geralmente  em  pessoas  voluntárias.  Estas  pesquisas  se  propõem estabelecer uma  evolução  preliminar  da  segurança  e  do  perfil farmacocinético e quando  possível,  um  perfil farmacodinâmico.
+
+## b - Fase II
+
+## (Estudo Terapêutico Piloto)
+
+Os objetivos do Estudo Terapêutico Piloto visam demonstrar a atividade e estabelecer a segurança a curto prazo do  princípio  ativo,  em  pacientes  afetados  por  uma  determinada  enfermidade  ou  condição  patológica.  As  pesquisas realizam-se  em  um  número  limitado  (pequeno)  de  pessoas  e  frequentemente  são  seguidas  de  um  estudo  de administração. Deve ser possível, também, estabelecer-se as relações dose-resposta, com o objetivo de obter sólidos antecedentes para a descrição de estudos terapêuticos ampliados (Fase III).
+
+## c - Fase III
+
+São estudos realizados em grandes e variados grupos de pacientes, com o objetivo de determinar:
+
+- • o resultado do risco/benefício a curto e longo prazos das formulações do princípio ativo.
+- • de maneira global (geral) o valor terapêutico relativo.
+
+Exploram-se  nesta  fase  o  tipo  e  perfil  das  reações  adversas  mais  frequentes,  assim  como  características especiais  do  medicamento  e/ou  especialidade  medicinal,  por  exemplo:  interações  clinicamente  relevantes,  principais fatores modificatórios do efeito tais como idade etc.
+
+## d - Fase IV
+
+São pesquisas realizadas depois de comercializado o produto e/ou especialidade medicinal.
+
+Estas  pesquisas  são  executadas  com  base  nas  características  com  que  foi  autorizado  o  medicamento  e/ou especialidade medicinal. Geralmente  são  estudos  de vigilância pós-comercialização, para estabelecer o valor terapêutico, o surgimento de novas reações adversas e/ou confirmação da freqüência de surgimento das já conhecidas, e as estratégias de tratamento.
+
+Nas pesquisas de fase IV devem-se seguir as mesmas normas éticas e científicas aplicadas às pesquisas de fases anteriores.
+
+Depois  que  um  medicamento  e/ou  especialidade  medicinal  tenha  sido  comercializado,  as  pesquisas  clínicas desenvolvidas para explorar novas indicações, novos métodos de administração ou novas combinações (associações) etc. são consideradas como pesquisa de novo medicamento e/ou especialidade medicinal.
+
+## e - Farmacocinética
+
+Em geral, são todas as modificações que um sistema biológico produz em um princípio ativo.
+
+Operativamente, é o estudo da cinética  (relação  quantitativa  entre  a  variável  independente  tempo  e  a  variável dependente concentração) dos processos de absorção, distribuição, biotransformação e excreção dos medicamentos (princípios ativos e/ou seus metabolitos).
+
+## f - Farmacodinâmica
+
+São todas as modificações que um princípio ativo produz em um sistema biológico. Do ponto de vista prático, é o estudo dos efeitos bioquímicos e fisiológicos dos medicamentos e seus mecanismos de ação.
+
+## g - Margem de Segurança
+
+Indicador famacodinâmico que expressa a diferença entre a dose tóxica (por exemplo DL 50) e a dose efetiva (por exemplo DE 50).
+
+## h - Margem Terapêutica
+
+É a relação entre a dose máxima tolerada, ou também tóxica, e a dose terapêutica (Dose tóxica/dose terapêutica).
+
+Em farmacologia clínica se emprega como equivalente de Índice Terapêutico.
+
+## III - RESPONSABILIDADE DO PESQUISADOR
+
+III.1  -  Reafirma-se  a  responsabilidade  indelegável  e  intransferível  do  pesquisador  nos  termos  da  Resolução 196/96.  Da  mesma  forma  reafirmam-se  todas  as  responsabilidades  previstas  na  referida  Resolução,  em  particular  a garantia de condições para o atendimento dos sujeitos da pesquisa.
+
+## III.2 - O pesquisador responsável deverá:
+
+- a - Apresentar ao Comitê de Ética em Pesquisa - CEP - o projeto de pesquisa completo, nos termos da Resolução, 196/96 e desta Resolução.
+- b  -  Manter  em  arquivo,  respeitando  a  confidencialidade  e  o  sigilo  as  fichas  correspondentes  a  cada  sujeito  incluído  na pesquisa, por 5 anos, após o término da pesquisa.
+- c  -  Apresentar  relatório  detalhado  sempre  que  solicitado  ou  estabelecido  pelo  CEP,  pela  Comissão  Nacional  de  Ética  em Pesquisa - CONEP ou pela Secretaria de Vigilância Sanitária - SVS/MS.
+- d - Comunicar ao CEP a ocorrência de efeitos colaterais e ou de reações adversas não esperadas.
+- e  -  Comunicar  também  propostas  de  eventuais  modificações  no  projeto  e  ou  justificativa  de  interrupção,  aguardando  a apreciação  do  CEP,  exceto  em  caso  urgente  para  salvaguardar  a  proteção  dos  sujeitos  da  pesquisa,  devendo  então  ser comunicado o CEP a posteriori, na primeira oportunidade.
+- f - Colocar à disposição, do CEP, da CONEP e da SVS/MS toda informação devidamente requerida.
+- g - Proceder à análise contínua dos resultados, à medida que prossegue a pesquisa, com o objetivo de detectar o mais cedo possível benefícios de um tratamento sobre outro ou para evitar efeitos adversos em sujeitos de pesquisa.
+- h - Apresentar relatórios periódicos dentro de prazos estipulados pelo CEP havendo no mínimo, relatório semestral e relatório final.
+
+- i  -  Dar  acesso  aos  resultados  de  exames  e  de  tratamento  ao  médico  do  paciente  e  ou  ao  próprio  paciente  sempre  que solicitado e ou indicado
+- J  -  Recomendar  que  a  mesma  pessoa  não  seja  sujeito  de  pesquisa  em  novo  projeto  antes  de  decorrido  um  ano  de  sua participação em pesquisa anterior, a menos que possa haver benefício direto ao sujeito da pesquisa.
+
+## IV - PROTOCOLO DE PESQUISA
+
+- IV.1 - O protocolo deve conter todos os itens referidos no Cap. VI da Resolução 196/96 e ainda as informações farmacológicas básicas adequadas à fase do projeto, em cumprimento da Res. GMC 129/96 - Mercosul - incluindo:
+- a  -  Especificação  e  fundamentação  da  fase  de  pesquisa  clínica  na  qual  se  realizará  o  estudo,  demonstrando  que  fases anteriores já foram cumpridas.
+- b - Descrição da substância farmacológica ou produto em investigação, incluindo a fórmula química e ou estrutural e um breve sumário  das  propriedades  físicas,  químicas  e  farmacêuticas  relevantes.  Quaisquer  semelhanças  estruturais  com  outros compostos conhecidos devem ser também mencionadas.
+- c - Apresentação detalhada da informação pré clínica necessária para justificar a fase do projeto, contendo relato dos estudos experimentais (materiais e métodos, animais utilizados, testes laboratoriais, dados referentes a farmacodinâmica, margem de segurança, margem terapêutica, farmacocinética e toxicologia, no caso de drogas, medicamentos ou vacinas). Os resultados pré  clínicos  devem  ser  acompanhados  de  uma  discussão  quanto  à  relevância  dos  achados  em  conexão  com  os  efeitos terapêuticos esperados e possíveis efeitos indesejados em humanos.
+- d - Os dados referentes à toxicologia pré clinica compreendem o estudo da toxicidade aguda, sub aguda a doses repetidas e toxicidade crônica (doses repetidas).
+- e - Os estudos de toxicidade deverão ser realizados pelo menos em 3 espécies animais, de ambos os sexos das quais uma deverá ser de mamíferos não roedores.
+- f  -  No  estudo  da  toxicidade  aguda  deverão  ser  utilizadas  duas  vias  de  administração,  sendo  que  uma  delas  deverá  estar relacionada com a recomendada para o uso terapêutico proposto e a outra deverá ser uma via que assegure a absorção do fármaco.
+- g  -  No  estudo  da  toxicidade  sub  aguda  e  a  doses  repetidas  e  da  toxicidade  crônica,  a  via  de  administração  deverá  estar relacionada com a proposta de emprego terapêutico: a duração do experimento deverá ser de no mínimo 24 semanas.
+- h  -  Na  fase  pré-clínica,  os  estudos  da  toxicidade  deverão  abranger  também  a  análise  dos  efeitos  sobre  a  fertilidade, embriotoxicidade,  atividade  mutagênica,  potencial  oncogênico  (carcinogênico)  e  ainda  outros  estudos,  de  acordo  com  a natureza do fármaco e da proposta terapêutica.
+- i  -  De  acordo  com  a  importância  do  projeto,  tendo  em  vista  a  premência  de  tempo,  e  na  ausência  de  outros  métodos terapêuticos, o CEP poderá aprovar projetos sem cumprimento de todas as fases da farmacologia clínica; neste caso deverá haver também aprovação da CONEP e da SVS/MS.
+- j - Informação quanto à situação das pesquisas e do registro do produto no país de origem.
+- k  -  Apresentação  das  informações  clínicas  detalhadas  obtidas  durante  as  fases  prévias,  relacionadas  à  segurança, farmacodinâmica, eficácia, dose-resposta, observadas em estudos no ser humano, seja voluntários sadios ou pacientes. Se possível,  cada  ensaio  deve  ser  resumido  individualmente,  com  descrição  de  objetivos,  desenho,  método,  resultados (segurança e eficácia) e conclusões. Quando o número de estudos for grande, resumir em grupos por fase para facilitar a discussão dos resultados e de suas implicações.
+- l - Justificativa para o uso de placebo e eventual suspensão de tratamento (washout).
+- m - Assegurar por parte do patrocinador ou, na sua inexistência, por parte da instituição, pesquisador ou promotor, acesso ao medicamento em teste, caso se comprove sua superioridade em relação ao tratamento convencional.
+- n - Em estudos multicêntricos o pesquisador deve, na medida do possível, participar do delineamento do projeto antes de ser iniciado. Caso não seja possível, deve declarar que concorda com o delineamento já elaborado e que o seguirá.
+- o - O pesquisador deve receber do patrocinador todos os dados referentes ao fármaco.
+- p - O financiamento não deve estar vinculado a pagamento per capita dos sujeitos efetivamente recrutados.
+- q - O protocolo deve ser acompanhado do termo de consentimento: quando se tratar de sujeitos cuja capacidade de auto determinação não seja plena, além do consentimento do responsável legal, deve ser levada em conta a manifestação do próprio sujeito, ainda que com capacidade reduzida (por exemplo, idoso) ou não desenvolvida (por exemplo, criança).
+- r - Pesquisa em pacientes psiquiátricos: o consentimento, sempre que possível, deve ser obtido do próprio paciente.
+- É imprescindível que, para cada paciente psiquiátrico candidato a participar da pesquisa, se estabeleça o grau de capacidade  de  expressar  o  consentimento  livre  e  esclarecido,  avaliado  por  profissional  psiquiatra  e  que  não  seja pesquisador envolvido no projeto.
+
+No caso de drogas com ação psicofarmacológica deve ser feita análise crítica quanto aos riscos eventuais de se criar dependência.
+
+- IV.2 - Inclusão na pesquisa de sujeitos sadios:
+
+- a - Justificar a necessidade de sua inclusão no projeto de pesquisa. analisar criticamente os riscos envolvidos.
+- b - Descrever as formas de recrutamento, não devendo haver situação de dependência.
+- c - No caso de drogas com ação psicofarmacológica, analisar criticamente os riscos de se criar dependência.
+
+## V - ATRIBUIÇÕES DO CEP
+
+- V.1 - O CEP assumirá com o pesquisador a co-resonsabilidade pela preservação de condutas eticamente corretas no projeto e no desenvolvimento da pesquisa, cabendo-lhe ainda:
+- a - Emitir parecer consubstanciado apreciando o embasamento científico e a adequação dos estudos das fases anteriores, inclusive pré-clínica, com ênfase na segurança, toxicidade, reações ou efeitos adversos, eficácia e resultados;
+- b - Aprovar a justificativa do uso de placebo e 'washout';
+- c - Solicitar ao pesquisador principal os relatórios parciais e final, estabelecendo os prazos (no mínimo um relatório semestral) de acordo como as características da pesquisa. Cópias dos relatórios devem ser enviadas à SVS/MS.
+- d - No caso em que, para o recrutamento de sujeitos da pesquisa, se utilizem avisos em meios de comunicação, os mesmos deverão ser autorizados pelo CEP. Não se deverá indicar de forma implícita ou explícita, que o produto em investigação é eficaz e/ou seguro ou que é equivalente ou melhor que outros produtos existentes.
+- e - Convocar sujeitos da pesquisa para acompanhamento e avaliação.
+- f - Requerer à direção da instituição a instalação de sindicância, a suspensão ou interrupção da pesquisa, comunicando o fato à CONEP e à SVS/MS;
+- g  -  Qualquer  indício  de  fraude  ou  infringência  ética  de  qualquer  natureza  deve  levar  o  CEP  a  solicitar  a  instalação  de Comissão de Sindicância  e  comunicar  à  CONEP,  SVS/MS  e  demais  órgãos  (direção  da  Instituição,  Conselhos  Regionais pertinentes), os resultados.
+- h - Comunicar à CONEP e a SVS/MS a ocorrência de eventos adversos graves;
+- i - Comunicar à instituição a ocorrência ou existência de problemas de responsabilidade administrativa que possam interferir com a ética da pesquisa: em seguida dar ciência à CONEP e à SVS/MS, e, se for o caso, aos Conselhos Regionais;
+- V.2  -  Fica  delegado  ao  CEP  a  aprovação  do  ponto  de  vista  da  ética,  dos  projetos  de  pesquisa  com  novos fármacos, medicamentos e testes diagnósticos, devendo porém ser encaminhado à CONEP, e à SVS/MS:
+- a - Cópia do parecer consubstanciado de aprovação, com folha de rosto preenchida;
+- b - Parecer sobre os relatórios parciais e final da pesquisa;
+- c - Outros documentos que, eventualmente, o próprio CEP, a CONEP ou a SVS considerem necessários.
+- V.3 - Em pesquisas que abrangem pacientes submetidos a situações de emergência ou de urgência, caberá ao CEP  aprovar  previamente  as  condições  ou  limites  em  que  se  dará  o  consentimento  livre  e  esclarecido,  devendo  o pesquisador comunicar oportunamente ao sujeito da pesquisa sua participação no projeto.'
+- V.4  -  Avaliar  se  estão  sendo  asseguradas  todas  as  medidas  adequadas,  nos  casos  de  pesquisas  em  seres humanos cuja capacidade de autodeterminação seja ou esteja reduzida ou limitada.
+
+## VI - OPERACIONALIZAÇÃO
+
+- VI.1  - A  CONEP exercerá suas atribuições nos termos da Resolução 196/96, com destaque para as seguintes atividades:
+- a  -  organizar,  com  base  nos  dados  fornecidos  pelos  CEPs  (parecer  consubstanciado  de  aprovação,  folha  de  rosto devidamente  preenchida,  relatórios  parciais  e  final,  etc)  o  sistema  de  informação  e  acompanhamento  (item  VIII.9.g,  da Resolução 196/96).
+- b - organizar sistema de avaliação e acompanhamento das atividades dos CEP. Tal sistema, que deverá também servir para o intercâmbio de informações e para a troca de experiências entre os CEP, será disciplinado por normas específicas da CONEP, tendo,  porém,  a  característica  de  atuação  inter-pares,  isto  e,  realizado  por  membros  dos  diversos  CEP,  com  relatório  à CONEP.
+- c - comunicar às autoridades competentes, em particular à Secretária de Vigilância Sanitária/MS, para as medidas cabíveis, os casos de infração ética apurados na execução dos projetos de pesquisa.
+- d - prestar as informações necessárias aos órgãos do Ministério da Saúde, em particular à Secretaria de Vigilância Sanitária, para o pleno exercício das suas respectivas atribuições, no que se refere às pesquisas abrangidas pela presente Resolução.
+- VI.2 - A Secretaria de Vigilância Sanitária/MS exercerá suas atribuições nos termos da Resolução 196/96, com destaque para as seguintes atividades:
+- a  -  Comunicar,  por  escrito,  à  CONEP  os  eventuais  indícios  de  infrações  de  natureza  ética  que  sejam  observados  ou detectados durante a execução dos projetos de pesquisa abrangidos pela presente Resolução.
+
+- b - Prestar, quando solicitado ou julgado pertinente, as informações necessárias para o pleno exercício das atribuições da CONEP.
+- c - Nos casos de pesquisas envolvendo situações para as quais não há tratamento consagrado ('uso humanitário' ou 'por compaixão')  poderá  vir  a  ser  autorizada  a  liberação  do  produto,  em  caráter  de  emergência,  desde  que  tenha  havido aprovação pelo CEP, ratificada pela CONEP e pela SVS/MS.
+- d - Normatizar seus procedimentos operacionais internos, visando o efetivo controle sanitário dos produtos objeto de pesquisa clínica.
+
+## CARLOS CÉSAR S. DE ALBUQUERQUE Ministro de Estado da Saúde
+
+Homologo  a  Resolução  CNS  nº  251,  de  07  de  Agosto  de  1997,  nos  termos  do  Decreto  de  Delegação  de Competência de 12 de novembro de 1991.
+
+CARLOS CÉSAR S. DE ALBUQUERQUE Presidente do Conselho Nacional de Saúde
+
+Sa�de Legis - Sistema de Legisla��o da Sa�de
