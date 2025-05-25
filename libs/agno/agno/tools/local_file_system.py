@@ -20,7 +20,6 @@ class LocalFileSystemTools(Toolkit):
             target_directory (Optional[str]): Default directory to write files to. Creates if doesn't exist.
             default_extension (str): Default file extension to use if none specified.
         """
-        super().__init__(name="write_to_local", **kwargs)
 
         self.target_directory = target_directory or os.getcwd()
         self.default_extension = default_extension.lstrip(".")
@@ -28,7 +27,10 @@ class LocalFileSystemTools(Toolkit):
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
-        self.register(self.write_file)
+        tools = []
+        tools.append(self.write_file)
+
+        super().__init__(name="write_to_local", tools=tools, **kwargs)
 
     def write_file(
         self,
