@@ -195,7 +195,7 @@ def test_get_active_tasks_success(todoist_tools, mock_todoist_api):
     mock_task2.labels = []
     mock_task2.due = None
 
-    mock_todoist_api.get_tasks.return_value = [mock_task1, mock_task2]
+    mock_todoist_api.get_tasks.return_value = [[mock_task1, mock_task2]]
 
     result = todoist_tools.get_active_tasks()
     result_data = json.loads(result)

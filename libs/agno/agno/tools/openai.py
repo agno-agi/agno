@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Literal, Optional
+from typing import Any, List, Literal, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -37,8 +37,6 @@ class OpenAITools(Toolkit):
         image_style: Optional[Literal["vivid", "natural"]] = None,
         **kwargs,
     ):
-        super().__init__(name="openai_tools", **kwargs)
-
         self.api_key = api_key or getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
@@ -53,12 +51,15 @@ class OpenAITools(Toolkit):
         self.image_style = image_style
         self.image_size = image_size
 
+        tools: List[Any] = []
         if enable_transcription:
-            self.register(self.transcribe_audio)
+            tools.append(self.transcribe_audio)
         if enable_image_generation:
-            self.register(self.generate_image)
+            tools.append(self.generate_image)
         if enable_speech_generation:
-            self.register(self.generate_speech)
+            tools.append(self.generate_speech)
+
+        super().__init__(name="openai_tools", tools=tools, **kwargs)
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio file using OpenAI's Whisper API
@@ -104,14 +105,14 @@ class OpenAITools(Toolkit):
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             else:
                 response = OpenAIClient().images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             data = None
             if hasattr(response, "data") and response.data:

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.1"
+version = "1.5.4"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -83,6 +83,7 @@ cerebras = ["cerebras-cloud-sdk"]
 apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
+mem0 = ["mem0ai"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
@@ -101,6 +102,7 @@ browserbase = ["browserbase", "playwright"]
 agentql = ["agentql"]
 confluence = ["atlassian-python-api"]
 zep = ["zep-cloud"]
+google_bigquery = ["google-cloud-bigquery"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -114,6 +116,7 @@ pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
+couchbase = ["couchbase"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
@@ -178,7 +181,9 @@ tools = [
   "agno[agentql]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
-  "agno[zep]"
+  "agno[zep]",
+  "agno[mem0]",
+  "agno[google_bigquery]",
 ]
 
 # All storage
@@ -196,6 +201,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[couchbase]",
   "agno[cassandra]",
   "agno[mongodb]",
   "agno[singlestore]",
@@ -376,8 +382,11 @@ module = [
   "weaviate.*",
   "webexpythonsdk.*",
   "wikipedia.*",
+  "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "couchbase.*",
+  "acouchbase.*",
   "zep_cloud.*"
 ]
 ignore_missing_imports = true

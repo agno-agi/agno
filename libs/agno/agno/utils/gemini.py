@@ -133,8 +133,8 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
             else:
                 filtered_any_of.append(schema)
 
-        any_of = filtered_any_of
-        if len(any_of) == 1:
+        any_of = filtered_any_of  # type: ignore
+        if len(any_of) == 1 and any_of[0] is not None:
             any_of[0].nullable = is_nullable
             return any_of[0]
         else:

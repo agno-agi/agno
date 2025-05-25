@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -15,15 +15,17 @@ class FileTools(Toolkit):
         list_files: bool = True,
         **kwargs,
     ):
-        super().__init__(name="file_tools", **kwargs)
-
         self.base_dir: Path = base_dir or Path.cwd()
+
+        tools: List[Any] = []
         if save_files:
-            self.register(self.save_file, sanitize_arguments=False)
+            tools.append(self.save_file)
         if read_files:
-            self.register(self.read_file)
+            tools.append(self.read_file)
         if list_files:
-            self.register(self.list_files)
+            tools.append(self.list_files)
+
+        super().__init__(name="file_tools", tools=tools, **kwargs)
 
     def save_file(self, contents: str, file_name: str, overwrite: bool = True) -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
