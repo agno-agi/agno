@@ -9,3 +9,5 @@ agent = Agent(model=v0(id="v0-1.0-md"), markdown=True)
 
 # Print the response in the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# agent.print_response("Create a simple web app that displays a random number between 1 and 100.")
