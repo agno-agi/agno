@@ -11,7 +11,7 @@ agent = Agent(
     add_history_to_messages=True,
     num_history_runs=3,
     search_previous_sessions_history=True,
-    num_history_sessions=3,
+    num_history_sessions=2,
     show_tool_calls=True,
 )
 
@@ -27,4 +27,4 @@ agent.print_response("What is the capital of France?", session_id=session_3_id)
 agent.print_response("What is the capital of Japan?", session_id=session_4_id)
 agent.print_response(
     "What did I discuss in my previous conversations?", session_id=session_5_id
-)  # It should only include the last 3 sessions
+)  # It should only include the last 2 sessions

@@ -236,6 +236,11 @@ class SingleStoreStorage(Storage):
             log_debug(f"Table does not exist: {self.table.name}")
         return sessions
 
+    def get_last_n_sessions(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> List[Session]:
+        raise NotImplementedError
+
     def upgrade_schema(self) -> None:
         """
         Upgrade the schema to the latest version.
