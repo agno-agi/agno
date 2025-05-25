@@ -34,7 +34,7 @@ This also provides a Redis Insights UI at `http://localhost:8001` for managing y
 """
 
 from agno.agent import Agent
-from agno.knowledge.csv import CSVKnowledgeBase
+from agno.knowledge.csv import CSVKnowledgeBase, CSVReader
 from agno.vectordb.mongodb import MongoDb
 from agno.vectordb.redisvl import RedisVL
 from libs.agno.agno.embedder.openai import OpenAIEmbedder
@@ -47,25 +47,37 @@ Example connection strings:
 
 Replace <password> and <host> with your actual Redis credentials from Redis Cloud or local setup.
 """
+
+"""
+This cookbook demonstrates how to use RedisVL as a vector database for a knowledge base in Agno.
+The dataset used is: 
+https://www.kaggle.com/datasets/quora/question-pairs-dataset.
+"""
 redis_connection_string = "redis://default:<password>@your-redis-host:6379/0"
 
 knowledge_base = CSVKnowledgeBase(
-    path="data/csvs",
+    path="data/csvs/questions_set.csv",
+    reader=CSVReader(chunk_size=50),
     vector_db=RedisVL(
         db_url=redis_connection_string,
         search_index_name="questions_set",
-        field_names=["question1", "question_2"],
+        field_names=["question1", "question_2", "is_duplicate"],
         embedder=OpenAIEmbedder()
     ),
     num_documents=5,  # Number of documents to return on search
 )
-# Load the knowledge base
-knowledge_base.load(recreate=False)
 
-# Initialize the Agent with the knowledge_base
-agent = Agent(
-    knowledge=knowledge_base,
-    search_knowledge=True,
-)
+# Comment out after first run
+knowledge_base.load(recreate=True, upsert=False, skip_existing=False)
 
-agent.print_response("Ask me about something from the knowledge base", markdown=True)
+# Create and use the agent
+query = "I'm a triple Capricorn (Sun, Moon and ascendant in Capricorn) What does that say about me?"
+agent = Agent(description="An agent that finds if the query is a duplicate of ingested documents or not.",
+              instructions=[
+                    "Is the user query a duplicate to any queries stored in knowledge base? Return True if duplicate, otherwise False."],
+              knowledge=knowledge_base,  # previously defined
+              search_knowledge=True,
+              show_tool_calls=True,
+              markdown=True)
+
+agent.print_response(query, markdown=True)
