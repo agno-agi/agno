@@ -55,7 +55,6 @@ finance_agent = Agent(
             stock_fundamentals=True,
             key_financial_ratios=True,
             analyst_recommendations=True,
-            company_news=True,
         )
     ],
     storage=PostgresAgentStorage(

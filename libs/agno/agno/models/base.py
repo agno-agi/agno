@@ -87,6 +87,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
             assistant_message.metrics.cached_tokens = response_usage.cached_tokens
+        # Anthropic prompt caching specific metric
+        if (
+            hasattr(response_usage, "cache_creation_input_tokens")
+            and response_usage.cache_creation_input_tokens is not None
+        ):
+            assistant_message.metrics.cache_creation_input_tokens = response_usage.cache_creation_input_tokens
+        # Anthropic prompt caching specific metric
+        if hasattr(response_usage, "cache_read_input_tokens") and response_usage.cache_read_input_tokens is not None:
+            assistant_message.metrics.cache_read_input_tokens = response_usage.cache_read_input_tokens
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
