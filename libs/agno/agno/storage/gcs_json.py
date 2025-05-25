@@ -144,9 +144,66 @@ class GCSJsonStorage(JsonStorage):
         return sessions
 
     def get_last_n_sessions(
-        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None, entity_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
     ) -> List[Session]:
-        raise NotImplementedError
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        sessions: List[Session] = []
+        # List of (created_at, data) tuples for sorting
+        session_data: List[tuple[int, dict]] = []
+
+        try:
+            # Get all blobs with the specified prefix
+            for blob in self.client.list_blobs(self.bucket, prefix=self.prefix):
+                if not blob.name.endswith(".json"):
+                    continue
+
+                try:
+                    data_str = blob.download_as_bytes().decode("utf-8")
+                    data = self.deserialize(data_str)
+
+                    # Apply filters
+                    if user_id and data.get("user_id") != user_id:
+                        continue
+
+                    # Store with created_at for sorting
+                    created_at = data.get("created_at", 0)
+                    session_data.append((created_at, data))
+
+                except Exception as e:
+                    logger.error(f"Error reading session from blob {blob.name}: {e}")
+                    continue
+
+            # Sort by created_at descending and take only num_history_sessions
+            session_data.sort(key=lambda x: x[0], reverse=True)
+            if num_history_sessions is not None:
+                session_data = session_data[:num_history_sessions]
+
+            # Convert filtered and sorted data to Session objects
+            for _, data in session_data:
+                session: Optional[Session] = None
+                if self.mode == "agent":
+                    session = AgentSession.from_dict(data)
+                elif self.mode == "team":
+                    session = TeamSession.from_dict(data)
+                elif self.mode == "workflow":
+                    session = WorkflowSession.from_dict(data)
+
+                if session is not None:
+                    sessions.append(session)
+
+        except Exception as e:
+            logger.error(f"Error getting last {num_history_sessions} sessions: {e}")
+
+        return sessions
 
     def upsert(self, session: Session) -> Optional[Session]:
         """
