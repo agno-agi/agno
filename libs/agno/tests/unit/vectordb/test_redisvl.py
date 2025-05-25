@@ -1,14 +1,16 @@
+import types
+import uuid
+from typing import Any, Dict, Generator, List
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import numpy as np
 import pytest
 import redis
 import redis.asyncio as redis_async
-from typing import Any, Dict, Generator, List
-from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 from libs.agno.agno.vectordb.redisvl.redisvl import RedisVL
-from agno.document import Document
-import numpy as np
 from redisvl.exceptions import RedisSearchError
-import types
+
+from agno.document import Document
 
 
 @pytest.fixture
@@ -20,20 +22,21 @@ def mock_embedder() -> MagicMock:
     embedder.embedding_dim = 384
     return embedder
 
+
 @pytest.fixture(scope="function")
 def mock_redisvl_client() -> Generator[MagicMock, None, None]:
     """Create a mock RedisVector client."""
     with patch("redis.Redis") as mock_redis_class:
         # Create mock instance for Redis client
         mock_redis_instance = MagicMock(spec=redis.Redis)
-        
+
         # Setup the mock class to return the mock instance
         mock_redis_class.return_value = mock_redis_instance
 
         # Mock Redis commands used in RedisVector context
         mock_redis_instance.ping = MagicMock(return_value=True)
         mock_redis_instance.ft = MagicMock()  # For Redisearch module commands
-        
+
         # Mock FT.CREATE, FT.DROPINDEX, FT.SEARCH, etc.
         mock_redis_instance.ft.create_index = MagicMock(return_value=None)
         mock_redis_instance.ft.drop_index = MagicMock(return_value=None)
@@ -48,8 +51,10 @@ def mock_redisvl_client() -> Generator[MagicMock, None, None]:
 
         yield mock_redis_instance
 
+
 class AsyncCursor:
     """Helper async iterator for mocking async cursor results."""
+
     def __init__(self, items):
         self._items = items
         self._index = 0
@@ -63,6 +68,7 @@ class AsyncCursor:
         item = self._items[self._index]
         self._index += 1
         return item
+
 
 @pytest.fixture(scope="function")
 def mock_async_redisvl_client() -> Generator[AsyncMock, None, None]:
@@ -82,7 +88,7 @@ def mock_async_redisvl_client() -> Generator[AsyncMock, None, None]:
         # Async mocks for Redisearch FT commands
         mock_redis_instance.ft.create_index = AsyncMock(return_value=None)
         mock_redis_instance.ft.drop_index = AsyncMock(return_value=None)
-        
+
         # Simulate async search returning a dict with total and documents
         mock_redis_instance.ft.search = AsyncMock(return_value={"total": 0, "documents": []})
 
@@ -101,7 +107,7 @@ def mock_async_redisvl_client() -> Generator[AsyncMock, None, None]:
 
         yield mock_redis_instance
 
-    
+
 @pytest.fixture(scope="function")
 def vector_db(mock_redisvl_client: MagicMock, mock_embedder: MagicMock) -> RedisVL:
     """Create a RedisVL instance."""
@@ -138,19 +144,22 @@ def async_vector_db(mock_async_redisvl_client: AsyncMock, mock_embedder: MagicMo
         db._async_index_name = index_name
 
         yield db
-    
+
 
 @pytest.fixture
 def mock_document():
     return {"content": "This is a test document."}
 
+
 @pytest.fixture
 def mock_query():
     return "test"
 
+
 # --------------------------
 # Synchronous Tests
 # --------------------------
+
 
 def test_insert_document():
     # Create a RedisVL instance with mocks
@@ -165,6 +174,7 @@ def test_insert_document():
     # Mock prepare_doc to return a dict with "_id"
     def prepare_doc_side_effect(doc, filters=None):
         return {"_id": doc.name, "content": doc.content, "filters": filters}
+
     db.prepare_doc = MagicMock(side_effect=prepare_doc_side_effect)
 
     # Mock index.load method to just return a string (simulate loaded data)
@@ -243,6 +253,7 @@ def test_search_method():
         results = db.search(query, limit=2)
         mock_index.query.assert_called_once()
 
+
 def test_search_embedding_none():
     # Setup RedisVL with embedder that returns None embedding
     mock_embedder = MagicMock()
@@ -252,6 +263,7 @@ def test_search_embedding_none():
     # Call search, expect empty list returned due to None embedding
     results = db.search("some query")
     assert results == []
+
 
 @patch("redisvl.index.SearchIndex")  # Patch the SearchIndex class
 @patch("time.sleep", return_value=None)  # Patch time.sleep to skip real delays
@@ -271,6 +283,7 @@ def test_drop_success(mock_sleep, mock_search_index):
     mock_search_index.from_existing.assert_called_once
     mock_index_instance.delete.assert_called_once
 
+
 @patch("redisvl.index.SearchIndex")
 @patch("time.sleep", return_value=None)
 def test_drop_index_does_not_exist(mock_sleep, mock_search_index):
@@ -283,9 +296,11 @@ def test_drop_index_does_not_exist(mock_sleep, mock_search_index):
     mock_search_index.from_existing.assert_not_called()
     assert mock_sleep.call_count == 1  # Final sleep still occurs
 
+
 # --------------------------
 # Async Tests
 # --------------------------
+
 
 @pytest.mark.asyncio
 @patch("redisvl.index.AsyncSearchIndex.from_existing")
@@ -293,22 +308,13 @@ async def test_async_search_success(mock_from_existing):
     # Prepare mocks
     mock_index = AsyncMock()
     mock_query_result = [
-        Document(
-            id="doc_1",
-            content="This is a test document",
-            meta_data={"type": "test"},
-            name="test_doc"
-        )
+        Document(id="doc_1", content="This is a test document", meta_data={"type": "test"}, name="test_doc")
     ]
     mock_index.query = AsyncMock(return_value=mock_query_result)
     mock_from_existing.return_value = mock_index
 
     # Create instance of the class you're testing
-    db = RedisVL(
-        embedder=AsyncMock(),
-        db_url="redis://localhost:6379",
-        search_index_name="test_index"
-    )
+    db = RedisVL(embedder=AsyncMock(), db_url="redis://localhost:6379", search_index_name="test_index")
 
     # Mock embedding
     fake_embedding = np.random.rand(1536).tolist()
@@ -331,6 +337,7 @@ async def test_async_search_success(mock_from_existing):
         assert results[0].id == "doc_1"
     mock_index.query.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 @patch("redisvl.index.AsyncSearchIndex.from_existing")
 async def test_async_drop_success(mock_from_existing, caplog):
@@ -340,10 +347,7 @@ async def test_async_drop_success(mock_from_existing, caplog):
     mock_from_existing.return_value = mock_index
 
     # Create instance of the class under test
-    db = RedisVL(
-        db_url="redis://localhost:6379",
-        search_index_name="test_index"
-    )
+    db = RedisVL(db_url="redis://localhost:6379", search_index_name="test_index")
 
     # Mock _async_search_index_exists to True
     db._async_search_index_exists = AsyncMock(return_value=True)
@@ -361,10 +365,7 @@ async def test_async_drop_success(mock_from_existing, caplog):
 @patch("redisvl.index.AsyncSearchIndex.from_existing")
 async def test_async_drop_index_not_exists(mock_from_existing, caplog):
     # Create instance
-    db = RedisVL(
-        db_url="redis://localhost:6379",
-        search_index_name="test_index"
-    )
+    db = RedisVL(db_url="redis://localhost:6379", search_index_name="test_index")
     # Return False to simulate index doesn't exist
     db._async_search_index_exists = AsyncMock(return_value=False)
 

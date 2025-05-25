@@ -1,31 +1,28 @@
+import asyncio
+import json
+import os
+import time
 from hashlib import md5
 from typing import Any, Dict, List, Optional
-import time
-import os
-import json
+
 import numpy as np
-import asyncio
 
 try:
     import redisvl
+    from redisvl.index import AsyncSearchIndex, SearchIndex
+    from redisvl.query import HybridQuery, RangeQuery, TextQuery, VectorQuery
     from redisvl.query.filter import Text
-    from redisvl.index import SearchIndex, AsyncSearchIndex
-    from redisvl.query import VectorQuery, HybridQuery, TextQuery, RangeQuery
 
 except ImportError:
-    raise ImportError(
-        "The `redisvl` package is not installed. Please install it via `pip install -U redisvl`."
-    )
+    raise ImportError("The `redisvl` package is not installed. Please install it via `pip install -U redisvl`.")
 
 try:
     import redis
     from redis.asyncio import Redis as aioredis  # for async redis
     from redis.exceptions import ConnectionError, TimeoutError
-    
+
 except ImportError:
-    raise ImportError(
-        "The `redis` package is not installed. Please install it via `pip install redis`."
-    )
+    raise ImportError("The `redis` package is not installed. Please install it via `pip install redis`.")
 
 from agno.document import Document
 from agno.embedder import Embedder
@@ -44,11 +41,11 @@ class RedisVL(VectorDb):
         self,
         db_url: str,
         client: Optional[redis.Redis] = None,
-        host: Optional[str]= None,
+        host: Optional[str] = None,
         port: Optional[str] = None,
         database: str = "agno",
         embedding_name: Optional[str] = "embedding",
-        embedder: Optional[Embedder]= None,
+        embedder: Optional[Embedder] = None,
         openai_api_key: str = os.getenv("OPENAI_API_KEY"),
         distance_metric: str = Distance.cosine,
         field_names: Optional[List[str]] = [],
@@ -83,19 +80,19 @@ class RedisVL(VectorDb):
             retry_writes (bool): Whether to retry write operations.
             filter_expression (Optional[Text]): Expression on which the filters can be made for index search.
             return_fields (Optional[List[str]]): Name of the fields to be returned after index search.
-            distance_threshold (Optional[float]): Distance threshold to perform redisvl RangeQuery.      
+            distance_threshold (Optional[float]): Distance threshold to perform redisvl RangeQuery.
             **kwargs: Additional arguments for Redis Instance.
         """
         if not database:
             raise ValueError("Database name must not be empty.")
-       
+
         self.database = database
         self.search_index_name = search_index_name
         self.embedding_name = embedding_name
         self.open_ai_api_key = openai_api_key
         self.field_names = field_names
         self.return_fields = return_fields
-        self.db_url =  db_url
+        self.db_url = db_url
         self.host = host
         self.port = port
         self.filter_expression = filter_expression
@@ -154,14 +151,14 @@ class RedisVL(VectorDb):
             log_debug("Creating Async Redis Client")
             if self.host and self.port and self.database:
                 self._async_client = await aioredis.create_redis_pool(
-                (self.host, self.port),
-                db=self.database,
-                minsize=1,
-                maxsize=10,
-                timeout=5,
-                retry_attempts=5,
-                retry_delay=0.5,
-            )
+                    (self.host, self.port),
+                    db=self.database,
+                    minsize=1,
+                    maxsize=10,
+                    timeout=5,
+                    retry_attempts=5,
+                    retry_delay=0.5,
+                )
             else:
                 self._async_client = await aioredis.from_url(self.db_url)
             # Verify connection
@@ -179,7 +176,7 @@ class RedisVL(VectorDb):
                 logger.error(f"An error occurred while connecting to Redis asynchronously: {e}")
                 raise
         return self._async_client
-    
+
     def _search_index_exists(self) -> bool:
         """Check if the search index exists."""
         index_name = self.search_index_name
@@ -193,7 +190,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking search index existence: {e}")
             return False
-        
+
     async def _async_search_index_exists(self) -> bool:
         """Async Check if the search index exists."""
         index_name = self.search_index_name
@@ -205,7 +202,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking search index existence: {e}")
             return False
-        
+
     def _drop_search_index(self):
         """Drop the search index."""
         if self._search_index_exists():
@@ -240,7 +237,7 @@ class RedisVL(VectorDb):
             except Exception as e:
                 logger.error(f"Error dropping index: {e}")
                 raise
-    
+
     def _wait_for_index_ready(self) -> None:
         """Wait until the Redis Search index is ready."""
         index_name = self.search_index_name
@@ -289,40 +286,40 @@ class RedisVL(VectorDb):
 
                 field_name_list = []
                 field_name_list.append({"name": "_id", "type": "tag"})
-                
+
                 for field_name in self.field_names:
                     field_name_list.append({"name": field_name, "type": "text"})
 
                 """field_name_list.append(RedisVectorField(name=self.embedding_name, algorithm="flat", attributes={
                     "dims": embedding_dim, "distance_metric": self.distance_metric, "datatype": "float32"}))"""
-                
-                    #dims=embedding_dim, distance_metric=self.distance_metric,  datatype="float32")
 
-                field_name_list.append({
-                                        "name": self.embedding_name,
-                                        "type": "vector",
-                                        "attrs": {
-                                            "dims": embedding_dim,
-                                            "distance_metric": self.distance_metric,
-                                            "algorithm": "flat",
-                                            "datatype": "float32"
-                                        }
+                # dims=embedding_dim, distance_metric=self.distance_metric,  datatype="float32")
 
-                                    })
+                field_name_list.append(
+                    {
+                        "name": self.embedding_name,
+                        "type": "vector",
+                        "attrs": {
+                            "dims": embedding_dim,
+                            "distance_metric": self.distance_metric,
+                            "algorithm": "flat",
+                            "datatype": "float32",
+                        },
+                    }
+                )
 
                 search_index = SearchIndex.from_dict(
                     schema_dict={
-                                "index": {
-                                    "name": self.search_index_name,
-                                    "prefix": "rvl",
-                                    "storage_type": "hash", # default setting -- HASH
-                                },
-                                "fields": field_name_list
-                            },
-                        redis_url = self.db_url
-                            
-                    )
-                
+                        "index": {
+                            "name": self.search_index_name,
+                            "prefix": "rvl",
+                            "storage_type": "hash",  # default setting -- HASH
+                        },
+                        "fields": field_name_list,
+                    },
+                    redis_url=self.db_url,
+                )
+
                 search_index.create(overwrite=True)
 
                 if self.wait_until_index_ready:
@@ -370,29 +367,27 @@ class RedisVL(VectorDb):
 
                 search_index = AsyncSearchIndex.from_dict(
                     schema_dict={
-                                "index": {
-                                    "name": self.search_index_name,
-                                    "prefix": "rvl",
-                                    "storage_type": "hash", # default setting -- HASH
+                        "index": {
+                            "name": self.search_index_name,
+                            "prefix": "rvl",
+                            "storage_type": "hash",  # default setting -- HASH
+                        },
+                        "fields": [
+                            {"name": "_id", "type": "tag"},
+                            {
+                                "name": self.embedding_name,
+                                "type": "vector",
+                                "attrs": {
+                                    "dims": embedding_dim,
+                                    "distance_metric": self.distance_metric,
+                                    "algorithm": "flat",
+                                    "datatype": "float32",
                                 },
-                                "fields": [
-                                    {"name": "_id", "type": "tag"},
-                                    {
-                                        "name": self.embedding_name,
-                                        "type": "vector",
-                                        "attrs": {
-                                            "dims": embedding_dim,
-                                            "distance_metric": self.distance_metric,
-                                            "algorithm": "flat",
-                                            "datatype": "float32"
-                                        }
+                            },
+                        ],
+                    }
+                )
 
-                                    }
-
-                                ]
-                            }
-                    )
-                
                 await search_index.create(overwrite=True)
 
                 if self.wait_until_index_ready:
@@ -408,7 +403,7 @@ class RedisVL(VectorDb):
     def create(self) -> None:
         """Create the Redis index if they do not exist."""
         self._create_search_index()
-    
+
     async def async_create(self):
         """Async Create the Redis index if they do not exist."""
         await self._async_create_search_index()
@@ -419,7 +414,7 @@ class RedisVL(VectorDb):
         if exists:
             return True
         return False
-    
+
     async def async_exists(self) -> bool:
         """Async Check if Redis Search Index exists."""
         exists = await self._async_search_index_exists()
@@ -433,7 +428,7 @@ class RedisVL(VectorDb):
             index = self.get_index()
             # Use content hash as document ID
             doc_id = md5(document.content.encode("utf-8")).hexdigest()
-            result = index.fetch(id = doc_id)
+            result = index.fetch(id=doc_id)
             exists = result is not None
             log_info(f"Document {'exists' if exists else 'does not exist'}: {doc_id}")
             return exists
@@ -441,7 +436,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking document existence: {e}")
             return False
-    
+
     async def async_doc_exists(self, document: Document) -> bool:
         """Async Check if a document exists in the Redis index based on its content."""
         doc_id = document.id
@@ -457,7 +452,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking document existence: {e}")
             return False
-    
+
     def name_exists(self, index_name: str) -> bool:
         """Check if a document with a given name exists in the database."""
         try:
@@ -467,7 +462,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking document name existence: {e}")
             return False
-        
+
     async def async_name_exists(self, index_name: str) -> bool:
         """Async Check if a document with a given name exists in the database."""
         try:
@@ -477,7 +472,7 @@ class RedisVL(VectorDb):
         except Exception as e:
             logger.error(f"Error checking document name existence: {e}")
             return False
-    
+
     def id_exists(self, id: str) -> bool:
         """TODO: not implemented"""
         pass
@@ -515,7 +510,7 @@ class RedisVL(VectorDb):
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
-    
+
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the Redis index."""
         log_info(f"Inserting {len(documents)} documents")
@@ -525,17 +520,14 @@ class RedisVL(VectorDb):
         try:
             for document in documents:
                 doc_data = self.prepare_doc(document, filters)
-                log_info(f"Prepared document: {doc_data["_id"]}")
+                log_info(f"Prepared document: {doc_data['_id']}")
                 all_documents.append(doc_data)
 
-            log_info(f"All docs list: {all_documents[-1]}")    
-            loaded_data = index.load(
-                    data = all_documents
-            )
+            log_info(f"All docs list: {all_documents[-1]}")
+            loaded_data = index.load(data=all_documents)
             log_info(f"Inserted document: {loaded_data}")
         except Exception as e:
-                logger.error(f"Error inserting document '{document.name}': {e}")
-
+            logger.error(f"Error inserting document '{document.name}': {e}")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Async Insert documents into the Redis index."""
@@ -551,16 +543,14 @@ class RedisVL(VectorDb):
         try:
             for document in documents:
                 doc_data = self.prepare_doc(document, filters)
-                log_info(f"Prepared document: {doc_data["_id"]}")
+                log_info(f"Prepared document: {doc_data['_id']}")
                 all_documents.append(doc_data)
 
-            log_info(f"All docs list: {all_documents[-1]}")    
-            loaded_data = index.load(
-                    data = all_documents
-            )
+            log_info(f"All docs list: {all_documents[-1]}")
+            loaded_data = index.load(data=all_documents)
             log_info(f"Upserted document: {loaded_data}")
         except Exception as e:
-                logger.error(f"Error upserting document '{document.name}': {e}")
+            logger.error(f"Error upserting document '{document.name}': {e}")
 
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
@@ -584,7 +574,7 @@ class RedisVL(VectorDb):
                 log_info(f"Deleted {index_name} index successfully.")
             except Exception as e:
                 logger.error(f"Error deleting index: {e}")
-        
+
         return True  # Return True if index doesn't exist (nothing to delete)
 
     async def async_delete(self, index_name):
@@ -595,7 +585,7 @@ class RedisVL(VectorDb):
             log_info(f"Deleted {index_name} index successfully.")
         except Exception as e:
             logger.error(f"Error deleting index: {e}")
-    
+
     def drop(self) -> None:
         """Drop the index and clean up indexes."""
         try:
@@ -639,17 +629,17 @@ class RedisVL(VectorDb):
         log_debug("Performing search.")
 
         query_embedding = self.embedder.get_embedding(query)
-        
+
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
             return []
-        
+
         query_embedding_bytes = np.array(query_embedding, dtype=np.float32).tobytes()
         try:
             index_name = self.search_index_name
             index = None
             if self._search_index_exists():
-                index = SearchIndex.from_existing(index_name,redis_url=self.db_url)
+                index = SearchIndex.from_existing(index_name, redis_url=self.db_url)
             else:
                 log_info("Search index does not exist.")
                 raise
@@ -660,14 +650,14 @@ class RedisVL(VectorDb):
                     vector_field_name=self.embedding_name,
                     return_fields=self.return_fields,
                     distance_threshold=self.distance_threshold,
-                    num_results=limit
+                    num_results=limit,
                 )
             else:
                 query_to_be_run = VectorQuery(
                     vector=query_embedding_bytes,
                     vector_field_name=self.embedding_name,
                     return_fields=self.return_fields,
-                    num_results=limit
+                    num_results=limit,
                 )
 
             results = index.query(query_to_be_run)
@@ -675,10 +665,12 @@ class RedisVL(VectorDb):
             return results
         except Exception as e:
             import traceback
+
             logger.error(f"Error during search: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None, min_score: float = 0.0
     ) -> List[Document]:
         """Perform a vector-based search."""
         log_debug("Performing vector search.")
@@ -720,30 +712,31 @@ class RedisVL(VectorDb):
             if query_embedding is None:
                 logger.error(f"Failed to generate embedding for query: {query}")
                 return []
-            
+
             query_embedding_bytes = np.array(query_embedding, dtype=np.float32).tobytes()
 
             query_to_be_run = HybridQuery(
-                    text=query_embedding_bytes,
-                    text_field_name="text_field",
-                    vector=query_embedding,
-                    vector_field_name="vector_field",
-                    text_scorer="BM25STD",
-                    filter_expression=self.filter_expression,
-                    alpha=0.7,
-                    dtype="float32",
-                    num_results=limit,
-                    return_fields=self.return_fields,
-                    stopwords="english",
-                    dialect=2,
-                )
+                text=query_embedding_bytes,
+                text_field_name="text_field",
+                vector=query_embedding,
+                vector_field_name="vector_field",
+                text_scorer="BM25STD",
+                filter_expression=self.filter_expression,
+                alpha=0.7,
+                dtype="float32",
+                num_results=limit,
+                return_fields=self.return_fields,
+                stopwords="english",
+                dialect=2,
+            )
 
             results = index.query(query_to_be_run)
             return results
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
 
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Async Search against the query"""
         log_info(f"Searching against the query {query} asynchronously.")
@@ -752,17 +745,17 @@ class RedisVL(VectorDb):
             self._async_client = await self._get_async_client()
 
         query_embedding = await self.embedder.get_embedding(query)
-        
+
         if query_embedding is None:
             logger.error(f"Failed to generate embedding for query: {query}")
             return []
-        
+
         query_embedding_bytes = np.array(query_embedding, dtype=np.float32).tobytes()
         try:
             index_name = self.search_index_name
             index = None
             if await self._async_search_index_exists():
-                index = await AsyncSearchIndex.from_existing(index_name,redis_url=self.db_url)
+                index = await AsyncSearchIndex.from_existing(index_name, redis_url=self.db_url)
             else:
                 log_info("Search index does not exist.")
                 raise
@@ -773,14 +766,14 @@ class RedisVL(VectorDb):
                     vector_field_name=self.embedding_name,
                     return_fields=self.return_fields,
                     distance_threshold=self.distance_threshold,
-                    num_results=limit
+                    num_results=limit,
                 )
             else:
                 query_to_be_run = VectorQuery(
                     vector=query_embedding_bytes,
                     vector_field_name=self.embedding_name,
                     return_fields=self.return_fields,
-                    num_results=limit
+                    num_results=limit,
                 )
 
             results = await index.query(query_to_be_run)
@@ -788,6 +781,6 @@ class RedisVL(VectorDb):
             return results
         except Exception as e:
             import traceback
+
             logger.error(f"Error during search: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-

@@ -37,6 +37,7 @@ from agno.agent import Agent
 from agno.knowledge.csv import CSVKnowledgeBase, CSVReader
 from agno.vectordb.mongodb import MongoDb
 from agno.vectordb.redisvl import RedisVL
+
 from libs.agno.agno.embedder.openai import OpenAIEmbedder
 
 # Redis connection string
@@ -62,7 +63,7 @@ knowledge_base = CSVKnowledgeBase(
         db_url=redis_connection_string,
         search_index_name="questions_set",
         field_names=["question1", "question_2", "is_duplicate"],
-        embedder=OpenAIEmbedder()
+        embedder=OpenAIEmbedder(),
     ),
     num_documents=5,  # Number of documents to return on search
 )
@@ -72,12 +73,15 @@ knowledge_base.load(recreate=True, upsert=False, skip_existing=False)
 
 # Create and use the agent
 query = "I'm a triple Capricorn (Sun, Moon and ascendant in Capricorn) What does that say about me?"
-agent = Agent(description="An agent that finds if the query is a duplicate of ingested documents or not.",
-              instructions=[
-                    "Is the user query a duplicate to any queries stored in knowledge base? Return True if duplicate, otherwise False."],
-              knowledge=knowledge_base,  # previously defined
-              search_knowledge=True,
-              show_tool_calls=True,
-              markdown=True)
+agent = Agent(
+    description="An agent that finds if the query is a duplicate of ingested documents or not.",
+    instructions=[
+        "Is the user query a duplicate to any queries stored in knowledge base? Return True if duplicate, otherwise False."
+    ],
+    knowledge=knowledge_base,  # previously defined
+    search_knowledge=True,
+    show_tool_calls=True,
+    markdown=True,
+)
 
 agent.print_response(query, markdown=True)

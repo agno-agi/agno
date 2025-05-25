@@ -782,7 +782,7 @@ class Agent:
                         event=RunEvent.tool_call_started,
                         session_id=session_id,
                         run_response=run_response,
-                        )
+                    )
 
                 # If the model response is a tool_call_completed, update the existing tool call in the run_response
                 elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:

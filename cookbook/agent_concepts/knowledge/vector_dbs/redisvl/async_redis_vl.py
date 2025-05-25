@@ -39,6 +39,7 @@ from agno.agent import Agent
 from agno.knowledge.csv import CSVKnowledgeBase
 from agno.vectordb.mongodb import MongoDb
 from agno.vectordb.redisvl import RedisVL
+
 from libs.agno.agno.embedder.openai import OpenAIEmbedder
 
 # Redis connection string
@@ -57,7 +58,7 @@ knowledge_base = CSVKnowledgeBase(
         db_url=redis_connection_string,
         search_index_name="questions_set",
         field_names=["question1", "question_2"],
-        embedder=OpenAIEmbedder()
+        embedder=OpenAIEmbedder(),
     ),
     num_documents=5,  # Number of documents to return on search
 )
@@ -72,6 +73,8 @@ if __name__ == "__main__":
     # Comment out after the first run
     asyncio.run(knowledge_base.aload(recreate=False))
 
-    asyncio.run(agent.aprint_response("Ask me about something from the knowledge base", markdown=True))
-
-
+    asyncio.run(
+        agent.aprint_response(
+            "Ask me about something from the knowledge base", markdown=True
+        )
+    )
