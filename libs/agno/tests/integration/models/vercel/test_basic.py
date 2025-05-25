@@ -111,4 +111,4 @@ def test_history():
     agent.run("Hello 3")
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8 
+    assert len(agent.run_response.messages) == 8
