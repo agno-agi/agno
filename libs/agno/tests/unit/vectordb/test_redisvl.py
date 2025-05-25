@@ -1,6 +1,5 @@
-import types
 import uuid
-from typing import Any, Dict, Generator, List
+from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -8,7 +7,6 @@ import pytest
 import redis
 import redis.asyncio as redis_async
 from libs.agno.agno.vectordb.redisvl.redisvl import RedisVL
-from redisvl.exceptions import RedisSearchError
 
 from agno.document import Document
 
