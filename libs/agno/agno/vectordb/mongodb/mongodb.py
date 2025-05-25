@@ -31,6 +31,7 @@ class MongoDb(VectorDb):
     def __init__(
         self,
         collection_name: str,
+        dimension: int = 1536,
         db_url: Optional[str] = "mongodb://localhost:27017/",
         database: str = "agno",
         embedder: Optional[Embedder] = None,
@@ -54,6 +55,7 @@ class MongoDb(VectorDb):
 
         Args:
             collection_name (str): Name of the MongoDB collection.
+            dimension (int): The dimension of the embeddings. Default to 1536 for OpenAI small
             db_url (Optional[str]): MongoDB connection string.
             database (str): Database name.
             embedder (Embedder): Embedder instance for generating embeddings.
@@ -77,6 +79,7 @@ class MongoDb(VectorDb):
         if not database:
             raise ValueError("Database name must not be empty.")
         self.collection_name = collection_name
+        self.dimension = dimension
         self.database = database
         self.search_index_name = search_index_name
         self.cosmos_compatibility = cosmos_compatibility
@@ -237,7 +240,6 @@ class MongoDb(VectorDb):
                     log_info(f"Dropping existing index '{index_name}'")
                     collection.drop_index(index_name)
 
-                embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
                 log_info(f"Creating vector search index '{index_name}'")
 
                 # Create vector search index using Cosmos DB IVF format
@@ -247,7 +249,7 @@ class MongoDb(VectorDb):
                     cosmosSearchOptions={
                         "kind": "vector-ivf",
                         "numLists": 1,
-                        "dimensions": embedding_dim,
+                        "dimensions": self.dimension,
                         "similarity": self._get_cosmos_similarity_metric(),
                     },
                 )
@@ -283,15 +285,12 @@ class MongoDb(VectorDb):
 
                     log_info(f"Creating search index '{index_name}'.")
 
-                    # Get embedding dimension from embedder
-                    embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
-
                     search_index_model = SearchIndexModel(
                         definition={
                             "fields": [
                                 {
                                     "type": "vector",
-                                    "numDimensions": embedding_dim,
+                                    "numDimensions": self.dimension,
                                     "path": "embedding",
                                     "similarity": self.distance_metric,
                                 },
@@ -331,15 +330,12 @@ class MongoDb(VectorDb):
             try:
                 collection = await self._get_async_collection()
 
-                # Get embedding dimension from embedder
-                embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
-
                 search_index_model = SearchIndexModel(
                     definition={
                         "fields": [
                             {
                                 "type": "vector",
-                                "numDimensions": embedding_dim,
+                                "numDimensions": self.dimension,
                                 "path": "embedding",
                                 "similarity": self.distance_metric,
                             },
