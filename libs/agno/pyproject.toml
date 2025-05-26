@@ -130,7 +130,7 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
-markdown = ["unstructured", "aiofiles"]
+markdown = ["unstructured", "markdown", "aiofiles"]
 
 # Dependencies for Embedders
 huggingface = [
