@@ -196,7 +196,8 @@ class SurrealDb(VectorDb):
         with self.connect() as client:
             for doc in documents:
                 doc.embed(embedder=self.embedder)
-                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
+                meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+                data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Inserting document: {doc.name} ({doc.meta_data})")
@@ -207,7 +208,8 @@ class SurrealDb(VectorDb):
         with self.connect() as client:
             for doc in documents:
                 doc.embed(embedder=self.embedder)
-                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
+                meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+                data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document: {doc.name} ({doc.meta_data})")
@@ -312,7 +314,8 @@ class SurrealDb(VectorDb):
         async with self.async_connect() as client:
             for doc in documents:
                 doc.embed(embedder=self.embedder)
-                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
+                meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+                data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Inserting document asynchronously: {doc.name} ({doc.meta_data})")
@@ -323,7 +326,8 @@ class SurrealDb(VectorDb):
         async with self.async_connect() as client:
             for doc in documents:
                 doc.embed(embedder=self.embedder)
-                data = {"content": doc.content, "embedding": doc.embedding, "meta_data": doc.meta_data or {}}
+                meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+                data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
