@@ -57,8 +57,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
-        pre_hook: Optional[Callable] - Hook that runs before the function is executed (deprecated, use tool_execution_hook instead).
-        post_hook: Optional[Callable] - Hook that runs after the function is executed (deprecated, use tool_execution_hook instead).
+        pre_hook: Optional[Callable] - Hook that runs before the function is executed.
+        post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
