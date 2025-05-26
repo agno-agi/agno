@@ -323,17 +323,19 @@ class Qdrant(VectorDb):
             else:
                 vector = document.embedding
 
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                if isinstance(vector, dict):
-                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
-                else:
-                    vector = {
-                        self.dense_vector_name: vector,
-                        self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
-                    }
+            if self.search_type == SearchType.vector:
+                # For vector search, maintain backward compatibility with unnamed vectors
+                document.embed(embedder=self.embedder)
+                vector = document.embedding
+            else:
+                # For other search types, use named vectors
+                vector = {}
+                if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                    document.embed(embedder=self.embedder)
+                    vector[self.dense_vector_name] = document.embedding
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
 
             # Create payload with document properties
             payload = {
@@ -376,21 +378,20 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            # TODO(v2.0.0): Remove conditional vector naming logic
-            if self.use_named_vectors:
-                vector = {self.dense_vector_name: document.embedding}
-            else:
-                vector = document.embedding
-
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+            if self.search_type == SearchType.vector:
+                # For vector search, maintain backward compatibility with unnamed vectors
                 document.embed(embedder=self.embedder)
-                if isinstance(vector, dict):
-                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
-                else:
-                    vector = {
-                        self.dense_vector_name: vector,
-                        self.sparse_vector_name: next(self.sparse_encoder.embed([document.content])).as_object(),
-                    }
+                vector = document.embedding
+            else:
+                # For other search types, use named vectors
+                vector = {}
+                if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                    document.embed(embedder=self.embedder)
+                    vector[self.dense_vector_name] = document.embedding
+
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                    vector[self.sparse_vector_name] = next(
+                        self.sparse_encoder.embed([document.content])).as_object()
 
             if self.search_type in [SearchType.keyword, SearchType.hybrid]:
                 vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
