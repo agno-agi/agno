@@ -52,7 +52,7 @@ class AgentGetResponse(BaseModel):
                 memory_dict = None
         else:
             memory_dict = None
-        tools = agent.get_tools(session_id=str(uuid4()))
+        tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
         return AgentGetResponse(
             agent_id=agent.agent_id,
             name=agent.name,
