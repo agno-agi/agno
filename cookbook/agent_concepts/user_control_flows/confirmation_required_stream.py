@@ -74,7 +74,7 @@ for run_response in agent.run("Fetch the top 2 hackernews stories", stream=True)
             )
 
             if message == "n":
-                break
+                tool.confirmed = False
             else:
                 # We update the tools in place
                 tool.confirmed = True

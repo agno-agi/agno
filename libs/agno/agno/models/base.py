@@ -12,7 +12,7 @@ from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.tools.function import Function, FunctionCall, FunctionExecutionResult
+from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
@@ -87,6 +87,15 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
             assistant_message.metrics.cached_tokens = response_usage.cached_tokens
+        # Anthropic prompt caching specific metric
+        if (
+            hasattr(response_usage, "cache_creation_input_tokens")
+            and response_usage.cache_creation_input_tokens is not None
+        ):
+            assistant_message.metrics.cache_creation_input_tokens = response_usage.cache_creation_input_tokens
+        # Anthropic prompt caching specific metric
+        if hasattr(response_usage, "cache_read_input_tokens") and response_usage.cache_read_input_tokens is not None:
+            assistant_message.metrics.cache_read_input_tokens = response_usage.cache_read_input_tokens
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -337,8 +346,7 @@ class Model(ABC):
                         function_call_response.event
                         in [
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_confirmation_required.value,
-                            ModelResponseEvent.tool_call_external_execution_required.value,
+                            ModelResponseEvent.tool_call_paused.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -370,6 +378,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -430,8 +442,7 @@ class Model(ABC):
                         function_call_response.event
                         in [
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_confirmation_required.value,
-                            ModelResponseEvent.tool_call_external_execution_required.value,
+                            ModelResponseEvent.tool_call_paused.value,
                         ]
                         and function_call_response.tool_executions is not None
                     ):
@@ -462,6 +473,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
                     break
 
                 # Continue loop to get next response
@@ -784,6 +799,10 @@ class Model(ABC):
                 if any(fc.function.external_execution for fc in function_calls_to_run):
                     break
 
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
+
                 # Continue loop to get next response
                 continue
 
@@ -906,6 +925,10 @@ class Model(ABC):
 
                 # If we have any tool calls that require external execution, break the loop
                 if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
                     break
 
                 # Continue loop to get next response
@@ -1046,19 +1069,26 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
-    def _create_function_call_result(
-        self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+    def create_function_call_result(
+        self,
+        function_call: FunctionCall,
+        success: bool,
+        output: Optional[Union[List[Any], str]] = None,
+        timer: Optional[Timer] = None,
     ) -> Message:
         """Create a function call result message."""
+        kwargs = {}
+        if timer is not None:
+            kwargs["metrics"] = MessageMetrics(time=timer.elapsed)
         return Message(
             role=self.tool_message_role,
-            content=output if success else fc.error,
-            tool_call_id=fc.call_id,
-            tool_name=fc.function.name,
-            tool_args=fc.arguments,
+            content=output if success else function_call.error,
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
             tool_call_error=not success,
-            stop_after_tool_call=fc.function.stop_after_tool_call,
-            metrics=MessageMetrics(time=timer.elapsed),
+            stop_after_tool_call=function_call.function.stop_after_tool_call,
+            **kwargs,
         )
 
     def run_function_call(
@@ -1114,7 +1144,7 @@ class Model(ABC):
                 yield ModelResponse(content=function_call_output)
 
         # Create and yield function call result
-        function_call_result = self._create_function_call_result(
+        function_call_result = self.create_function_call_result(
             function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
         )
         yield ModelResponse(
@@ -1151,36 +1181,79 @@ class Model(ABC):
             additional_messages = []
 
         for fc in function_calls:
+            paused_tool_executions = []
+
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            requires_confirmation=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_confirmation=True,
+                    )
                 )
-                # We don't execute the function call here, we wait for the user to confirm
-                continue
+            # If the function requires user input, we yield a message to the user
+            if fc.function.requires_user_input:
+                user_input_schema = fc.function.user_input_schema
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
 
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
+            # If the function is from the user control flow tools, we handle it here
+            if fc.function.name == "get_user_input" and fc.arguments and fc.arguments.get("user_input_fields"):
+                user_input_schema = []
+                for input_field in fc.arguments.get("user_input_fields", []):
+                    field_type = input_field.get("field_type")
+                    try:
+                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
+                    except (NameError, SyntaxError):
+                        python_type = str  # Default to str if type is invalid
+                    user_input_schema.append(
+                        UserInputField(
+                            name=input_field.get("field_name"),
+                            field_type=python_type,
+                            description=input_field.get("field_description"),
+                        )
+                    )
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
             # If the function requires external execution, we yield a message to the user
             if fc.function.external_execution:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            external_execution_required=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        external_execution_required=True,
+                    )
                 )
-                # We don't execute the function call here, it is executed outside of the agent's control
+
+            if paused_tool_executions:
+                yield ModelResponse(
+                    tool_executions=paused_tool_executions,
+                    event=ModelResponseEvent.tool_call_paused.value,
+                )
+                # We don't execute the function calls here
                 continue
 
             yield from self.run_function_call(
@@ -1244,6 +1317,7 @@ class Model(ABC):
         function_call_results: List[Message],
         tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         if self._function_call_stack is None:
             self._function_call_stack = []
@@ -1254,36 +1328,84 @@ class Model(ABC):
 
         # Yield tool_call_started events for all function calls
         for fc in function_calls:
-            # Function cannot be executed without user confirmation
-            if fc.function.requires_confirmation:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            requires_confirmation=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_confirmation_required.value,
+            paused_tool_executions = []
+            # The function cannot be executed without user confirmation
+            if fc.function.requires_confirmation and not skip_pause_check:
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_confirmation=True,
+                    )
                 )
-                # We don't execute the function call here, we wait for the user to confirm
-                continue
+            # If the function requires user input, we yield a message to the user
+            if fc.function.requires_user_input and not skip_pause_check:
+                user_input_schema = fc.function.user_input_schema
+                if fc.arguments and user_input_schema:
+                    for name, value in fc.arguments.items():
+                        for user_input_field in user_input_schema:
+                            if user_input_field.name == name:
+                                user_input_field.value = value
 
-            # If the function requires external execution, we yield a message to the user
-            if fc.function.external_execution:
-                yield ModelResponse(
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=fc.call_id,
-                            tool_name=fc.function.name,
-                            tool_args=fc.arguments,
-                            external_execution_required=True,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_external_execution_required.value,
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
                 )
-                # We don't execute the function call here, it is executed outside of the agent's control
+            # If the function is from the user control flow tools, we handle it here
+            if (
+                fc.function.name == "get_user_input"
+                and fc.arguments
+                and fc.arguments.get("user_input_fields")
+                and not skip_pause_check
+            ):
+                fc.function.requires_user_input = True
+                user_input_schema = []
+                for input_field in fc.arguments.get("user_input_fields", []):
+                    field_type = input_field.get("field_type")
+                    try:
+                        python_type = eval(field_type) if isinstance(field_type, str) else field_type
+                    except (NameError, SyntaxError):
+                        python_type = str  # Default to str if type is invalid
+                    user_input_schema.append(
+                        UserInputField(
+                            name=input_field.get("field_name"),
+                            field_type=python_type,
+                            description=input_field.get("field_description"),
+                        )
+                    )
+
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        requires_user_input=True,
+                        user_input_schema=user_input_schema,
+                    )
+                )
+            # If the function requires external execution, we yield a message to the user
+            if fc.function.external_execution and not skip_pause_check:
+                paused_tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=fc.call_id,
+                        tool_name=fc.function.name,
+                        tool_args=fc.arguments,
+                        external_execution_required=True,
+                    )
+                )
+
+            if paused_tool_executions:
+                yield ModelResponse(
+                    tool_executions=paused_tool_executions,
+                    event=ModelResponseEvent.tool_call_paused.value,
+                )
+                # We don't execute the function calls here
                 continue
 
             yield ModelResponse(
@@ -1299,9 +1421,19 @@ class Model(ABC):
             )
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
-        function_calls_to_run = [
-            fc for fc in function_calls if not (fc.function.requires_confirmation or fc.function.external_execution)
-        ]
+        if skip_pause_check:
+            function_calls_to_run = function_calls
+        else:
+            function_calls_to_run = [
+                fc
+                for fc in function_calls
+                if not (
+                    fc.function.requires_confirmation
+                    or fc.function.external_execution
+                    or fc.function.requires_user_input
+                )
+            ]
+
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
@@ -1342,7 +1474,7 @@ class Model(ABC):
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
-            function_call_result = self._create_function_call_result(
+            function_call_result = self.create_function_call_result(
                 fc, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(

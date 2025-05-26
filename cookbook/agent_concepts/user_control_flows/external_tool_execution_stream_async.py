@@ -53,7 +53,6 @@ async def main():
                     result = execute_shell_command.entrypoint(**tool.tool_args)
                     # We have to set the result on the tool execution object so that the agent can continue
                     tool.result = result
-            print("HERE", run_response.tools)
             run_response = await agent.acontinue_run(
                 run_response=run_response, stream=True
             )

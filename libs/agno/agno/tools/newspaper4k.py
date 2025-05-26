@@ -22,12 +22,14 @@ class Newspaper4kTools(Toolkit):
     def __init__(
         self, read_article: bool = True, include_summary: bool = False, article_length: Optional[int] = None, **kwargs
     ):
-        super().__init__(name="newspaper4k_tools", **kwargs)
-
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
+
+        tools = []
         if read_article:
-            self.register(self.read_article)
+            tools.append(self.read_article)
+
+        super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)
 
     def get_article_data(self, url: str) -> Optional[Dict[str, Any]]:
         """Read and get article data from a URL.

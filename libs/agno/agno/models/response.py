@@ -1,17 +1,17 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, MessageMetrics
+from agno.tools.function import UserInputField
 
 
 class ModelResponseEvent(str, Enum):
     """Events that can be sent by the model provider"""
 
-    tool_call_confirmation_required = "ToolCallConfirmationRequired"
-    tool_call_external_execution_required = "ToolCallExternalExecutionRequired"
+    tool_call_paused = "ToolCallPaused"
     tool_call_started = "ToolCallStarted"
     tool_call_completed = "ToolCallCompleted"
     assistant_response = "AssistantResponse"
@@ -35,8 +35,44 @@ class ToolExecution:
 
     requires_confirmation: Optional[bool] = None
     confirmed: Optional[bool] = None
+    confirmation_note: Optional[str] = None
+
+    requires_user_input: Optional[bool] = None
+    user_input_schema: Optional[List[UserInputField]] = None
 
     external_execution_required: Optional[bool] = None
+
+    @property
+    def is_paused(self) -> bool:
+        return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
+
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = asdict(self)
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics._to_dict()
+
+        if self.user_input_schema is not None:
+            _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
+
+        return _dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ToolExecution":
+        return cls(
+            tool_call_id=data.get("tool_call_id"),
+            tool_name=data.get("tool_name"),
+            tool_args=data.get("tool_args"),
+            tool_call_error=data.get("tool_call_error"),
+            result=data.get("result"),
+            stop_after_tool_call=data.get("stop_after_tool_call", False),
+            requires_confirmation=data.get("requires_confirmation"),
+            confirmed=data.get("confirmed"),
+            confirmation_note=data.get("confirmation_note"),
+            requires_user_input=data.get("requires_user_input"),
+            user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema", [])],
+            external_execution_required=data.get("external_execution_required"),
+            metrics=MessageMetrics(**data.get("metrics", {})),
+        )
 
 
 @dataclass
