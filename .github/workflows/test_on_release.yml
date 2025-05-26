@@ -427,6 +427,31 @@ jobs:
         run: |
           ./scripts/run_model_tests.sh xai
 
+  # Run tests for v0
+  test-v0:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      V0_API_KEY: ${{ secrets.V0_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup and Vercel V0 tests
+        working-directory: .
+        run: |
+          ./scripts/run_model_tests.sh vercel
+
   test-ibm-watsonx:
     if: false # Our account is not working
     runs-on: ubuntu-latest
