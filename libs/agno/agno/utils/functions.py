@@ -30,8 +30,9 @@ def get_function_call(
         try:
             try:
                 _arguments = json.loads(arguments)
-            except Exception as e:
+            except Exception:
                 import ast
+
                 _arguments = ast.literal_eval(arguments)
         except Exception as e:
             log_error(f"Unable to decode function arguments:\n{arguments}\nError: {e}")
