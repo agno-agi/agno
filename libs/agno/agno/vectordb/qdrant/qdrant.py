@@ -390,8 +390,7 @@ class Qdrant(VectorDb):
                     vector[self.dense_vector_name] = document.embedding
 
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                    vector[self.sparse_vector_name] = next(
-                        self.sparse_encoder.embed([document.content])).as_object()
+                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
 
             if self.search_type in [SearchType.keyword, SearchType.hybrid]:
                 vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
@@ -478,6 +477,32 @@ class Qdrant(VectorDb):
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
         return self._build_search_results(results, query)
+
+    def _run_hybrid_search_sync(
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[models.ScoredPoint]:
+        dense_embedding = self.embedder.get_embedding(query)
+        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        call = self.client.query_points(
+            collection_name=self.collection,
+            prefetch=[
+                models.Prefetch(
+                    query=models.SparseVector(**sparse_embedding),
+                    limit=limit,
+                    using=self.sparse_vector_name,
+                ),
+                models.Prefetch(query=dense_embedding, limit=limit, using=self.dense_vector_name),
+            ],
+            query=models.FusionQuery(fusion=self.hybrid_fusion_strategy),
+            with_vectors=True,
+            with_payload=True,
+            limit=limit,
+            query_filter=filters,
+        )
+        return call.points
 
     def _run_vector_search_sync(
         self,
