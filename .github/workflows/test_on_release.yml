@@ -640,6 +640,7 @@ jobs:
       - name: Run embedder tests
         working-directory: libs/agno
         run: |
+          source .venv/bin/activate
           python -m pytest ./tests/integration/embedder
 
   test-knowledge:
@@ -699,5 +700,5 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams 
+          python -m pytest --ignore=./cookbooks --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams
           --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration
