@@ -114,7 +114,7 @@ class GoogleSheetsTools(Toolkit):
             update (bool): Enable update operations. Defaults to False.
             duplicate (bool): Enable duplicate operations. Defaults to False.
         """
-        super().__init__(name="google_sheets_tools", **kwargs)
+
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         self.creds = creds
@@ -145,14 +145,17 @@ class GoogleSheetsTools(Toolkit):
                     f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
                 )
 
+        tools: List[Any] = []
         if read:
-            self.register(self.read_sheet)
+            tools.append(self.read_sheet)
         if create:
-            self.register(self.create_sheet)
+            tools.append(self.create_sheet)
         if update:
-            self.register(self.update_sheet)
+            tools.append(self.update_sheet)
         if duplicate:
-            self.register(self.create_duplicate_sheet)
+            tools.append(self.create_duplicate_sheet)
+
+        super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
 
     def _auth(self) -> None:
         """

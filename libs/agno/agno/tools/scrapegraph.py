@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
@@ -18,8 +18,6 @@ class ScrapeGraphTools(Toolkit):
         markdownify: bool = False,
         **kwargs,
     ):
-        super().__init__(name="scrapegraph_tools", **kwargs)
-
         self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)
 
@@ -28,10 +26,13 @@ class ScrapeGraphTools(Toolkit):
         if not smartscraper:
             markdownify = True
 
+        tools: List[Any] = []
         if smartscraper:
-            self.register(self.smartscraper)
+            tools.append(self.smartscraper)
         if markdownify:
-            self.register(self.markdownify)
+            tools.append(self.markdownify)
+
+        super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
     def smartscraper(self, url: str, prompt: str) -> str:
         """Use this function to extract structured data from a webpage using LLM.

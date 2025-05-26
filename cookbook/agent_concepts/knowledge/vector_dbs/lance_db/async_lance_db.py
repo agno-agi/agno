@@ -18,7 +18,7 @@ knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=vector_db,
 )
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True, debug_mode=True)
+agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
 
 if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))  # Comment out after first run
