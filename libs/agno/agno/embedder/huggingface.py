@@ -40,10 +40,10 @@ class HuggingfaceCustomEmbedder(Embedder):
         response = self._response(text=text)
         try:
             # If already a list, return directly
-            if isinstance(response, list):  
+            if isinstance(response, list):
                 return response
             # If numpy array, convert to list
-            elif hasattr(response, 'tolist'):  
+            elif hasattr(response, "tolist"):
                 return response.tolist()
             else:
                 return list(response)
