@@ -66,6 +66,7 @@ class OpenAIChat(Model):
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
+    role_map: Optional[Dict[str, str]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -79,7 +80,7 @@ class OpenAIChat(Model):
     client_params: Optional[Dict[str, Any]] = None
 
     # The role to map the message role to.
-    role_map = {
+    default_role_map = {
         "system": "developer",
         "user": "user",
         "assistant": "assistant",
@@ -236,7 +237,7 @@ class OpenAIChat(Model):
             Dict[str, Any]: The formatted message.
         """
         message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
+            "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
             "content": message.content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
@@ -317,7 +318,6 @@ class OpenAIChat(Model):
                     messages=[self._format_message(m) for m in messages],  # type: ignore
                     **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
                 )
-
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
