@@ -38,7 +38,7 @@ def sync_demo():
     knowledge_base.load(recreate=True)
 
     # Create agent and query synchronously
-    agent = Agent(knowledge=knowledge_base, show_tool_calls=True, debug_mode=True)
+    agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
     agent.print_response(
         "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
         markdown=True,

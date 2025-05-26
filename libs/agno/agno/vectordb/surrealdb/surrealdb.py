@@ -1,11 +1,11 @@
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Dict, Final, List, Optional
 
-from surrealdb import AsyncSurrealDB, SurrealDB
+from surrealdb import AsyncSurreal, Surreal
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_info, log_debug, log_error
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -53,7 +53,6 @@ class SurrealDb(VectorDb):
     """
 
     SEARCH_QUERY: Final[str] = """
-        LET $query_embedding = $embedding;
         SELECT
             content,
             meta_data,
@@ -140,9 +139,8 @@ class SurrealDb(VectorDb):
     def connect(self):
         """Context manager for synchronous database connection"""
         try:
-            self.sync_client = SurrealDB(self.url)
-            self.sync_client.connect()
-            self.sync_client.sign_in(self.username, self.password)
+            self.sync_client = Surreal(self.url)
+            self.sync_client.signin({"username": self.username, "password": self.password})
             self.sync_client.use(self.namespace, self.database)
             yield self
         finally:
@@ -153,9 +151,8 @@ class SurrealDb(VectorDb):
     async def async_connect(self):
         """Context manager for asynchronous database connection"""
         try:
-            self.async_client = AsyncSurrealDB(self.url)
-            await self.async_client.connect()
-            await self.async_client.sign_in(self.username, self.password)
+            self.async_client = AsyncSurreal(self.url)
+            await self.async_client.signin({"username": self.username, "password": self.password})
             await self.async_client.use(self.namespace, self.database)
             yield self
         finally:
@@ -220,22 +217,21 @@ class SurrealDb(VectorDb):
         with self.connect():
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             filter_condition = self._build_filter_condition(filters)
+            log_debug(f"Filter condition: {filter_condition}")
             query = self.SEARCH_QUERY.format(
                 collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
             )
             response = self.sync_client.query(
-                query, {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding}
+                query, {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
             )
             log_debug(f"Search response: {response}")
 
             documents = []
-            items = response[-1]["result"]
-            log_debug(f"Items: {items}")
-            for item in items:
+            for item in response:
                 if isinstance(item, dict):
                     doc = Document(
                         content=item.get("content"),
@@ -267,9 +263,15 @@ class SurrealDb(VectorDb):
             self.sync_client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
             return True
 
-    def _extract_result(self, query_result: List[Dict[str, Any]]) -> List[Any]:
+    def _extract_result(self, query_result: List[Dict[str, Any]] | Dict[str, Any]) -> List[Any] | Dict[str, Any]:
         """Extract the actual result from SurrealDB query response"""
-        return query_result[0].get("result", [])
+        log_debug(f"Query result: {query_result}")
+        if isinstance(query_result, dict):
+            return query_result
+        if isinstance(query_result, list):
+            if len(query_result) > 0:
+                return query_result[0].get("result", {})
+            return []
 
     # Asynchronous methods
     async def async_create(self) -> None:
@@ -331,24 +333,27 @@ class SurrealDb(VectorDb):
         async with self.async_connect():
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             filter_condition = self._build_filter_condition(filters)
-            response = await self.async_client.query(
-                self.SEARCH_QUERY.format(
-                    collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
-                ),
-                {"embedding": query_embedding, **filters} if filters else {"embedding": query_embedding},
+            query = self.SEARCH_QUERY.format(
+                collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
             )
-
+            if self.async_client is None:
+                log_error("Async client is not initialized")
+                return []
+            response = await self.async_client.query(
+                query,
+                {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
+            )
+            log_debug(f"Search response: {response}")
             documents = []
-            items = response[-1]["result"]
-            for item in items:
+            for item in response:
                 if isinstance(item, dict):
                     doc = Document(
-                        content=item.get("content"),
-                        embedding=item.get("embedding"),
+                        content=item.get("content", ""),
+                        embedding=item.get("embedding", []),
                         meta_data=item.get("meta_data", {}),
                         embedder=self.embedder,
                     )
