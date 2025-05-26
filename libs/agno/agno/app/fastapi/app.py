@@ -1,6 +1,6 @@
 import logging
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import uvicorn
@@ -16,7 +16,6 @@ from agno.api.app import AppCreate, create_app
 from agno.app.fastapi.async_router import get_async_router
 from agno.app.fastapi.sync_router import get_sync_router
 from agno.app.settings import APIAppSettings
-from agno.app.utils import generate_id
 from agno.team.team import Team
 from agno.utils.log import log_debug
 

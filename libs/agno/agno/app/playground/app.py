@@ -1,7 +1,5 @@
-import asyncio
-import threading
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 

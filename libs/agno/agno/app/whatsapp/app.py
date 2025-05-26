@@ -1,6 +1,6 @@
 import logging
 from os import getenv
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
 import uvicorn
@@ -13,7 +13,6 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.api.app import AppCreate, create_app
 from agno.app.settings import APIAppSettings
-from agno.app.utils import generate_id
 from agno.app.whatsapp.async_router import get_async_router
 from agno.app.whatsapp.sync_router import get_sync_router
 from agno.team.team import Team
