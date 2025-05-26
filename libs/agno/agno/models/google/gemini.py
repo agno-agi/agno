@@ -745,7 +745,7 @@ class Gemini(Model):
             }
 
         # If we have no content but have a role, add a default empty content
-        if model_response.role and not model_response.content and not model_response.tool_calls:
+        if model_response.role and model_response.content is None and not model_response.tool_calls:
             model_response.content = ""
 
         return model_response
