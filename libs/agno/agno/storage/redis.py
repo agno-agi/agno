@@ -52,7 +52,7 @@ class RedisStorage(Storage):
             decode_responses=True,  # Automatically decode responses to str
             ssl=ssl,
         )
-        log_debug(f"Created RedisStorage with prefix: '{self.prefix}', expire: {self.expire}")
+        log_debug(f"Created RedisStorage with prefix: '{self.prefix}'")
 
     def _get_key(self, session_id: str) -> str:
         """Generate Redis key for a session."""

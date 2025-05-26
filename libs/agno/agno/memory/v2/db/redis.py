@@ -42,7 +42,7 @@ class RedisMemoryDb(MemoryDb):
             password=password,
             decode_responses=True,  # Automatically decode responses to str
         )
-        log_debug(f"Created RedisMemoryDb with prefix: '{self.prefix}', expire: {self.expire}")
+        log_debug(f"Created RedisMemoryDb with prefix: '{self.prefix}'")
 
     def __dict__(self) -> Dict[str, Any]:
         return {
@@ -136,7 +136,7 @@ class RedisMemoryDb(MemoryDb):
                 self.redis_client.set(key, json.dumps(memory_data), ex=self.expire)
             else:
                 self.redis_client.set(key, json.dumps(memory_data))
-            
+
             return memory
 
         except Exception as e:
