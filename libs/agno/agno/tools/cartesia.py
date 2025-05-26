@@ -1,7 +1,7 @@
 import json
 from base64 import b64encode
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -25,9 +25,8 @@ class CartesiaTools(Toolkit):
         text_to_speech_enabled: bool = True,
         list_voices_enabled: bool = True,
         voice_localize_enabled: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="cartesia_tools")
-
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
 
         if not self.api_key:
@@ -37,12 +36,15 @@ class CartesiaTools(Toolkit):
         self.model_id = model_id
         self.default_voice_id = default_voice_id
 
+        tools: List[Any] = []
         if voice_localize_enabled:
-            self.register(self.localize_voice)
+            tools.append(self.localize_voice)
         if text_to_speech_enabled:
-            self.register(self.text_to_speech)
+            tools.append(self.text_to_speech)
         if list_voices_enabled:
-            self.register(self.list_voices)
+            tools.append(self.list_voices)
+
+        super().__init__(name="cartesia_tools", tools=tools, **kwargs)
 
     def list_voices(self) -> str:
         """List available voices from Cartesia (first page).

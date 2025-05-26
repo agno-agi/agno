@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -35,7 +35,6 @@ class FinancialDatasetsTools(Toolkit):
             enable_crypto: Enable cryptocurrency related functions
             enable_search: Enable search related functions
         """
-        super().__init__(name="financial_datasets_tools", **kwargs)
 
         self.api_key: Optional[str] = api_key or getenv("FINANCIAL_DATASETS_API_KEY")
         if not self.api_key:
@@ -45,36 +44,34 @@ class FinancialDatasetsTools(Toolkit):
 
         self.base_url = "https://api.financialdatasets.ai"
 
-        # Register functions based on feature flags
+        tools: List[Any] = []
+
         if enable_financial_statements:
-            self.register(self.get_income_statements)
-            self.register(self.get_balance_sheets)
-            self.register(self.get_cash_flow_statements)
-            self.register(self.get_segmented_financials)
-            self.register(self.get_financial_metrics)
-
+            tools.extend(
+                [
+                    self.get_income_statements,
+                    self.get_balance_sheets,
+                    self.get_cash_flow_statements,
+                    self.get_segmented_financials,
+                    self.get_financial_metrics,
+                ]
+            )
         if enable_company_info:
-            self.register(self.get_company_info)
-
+            tools.append(self.get_company_info)
         if enable_market_data:
-            self.register(self.get_stock_prices)
-            self.register(self.get_earnings)
-
+            tools.extend([self.get_stock_prices, self.get_earnings])
         if enable_ownership_data:
-            self.register(self.get_insider_trades)
-            self.register(self.get_institutional_ownership)
-
+            tools.extend([self.get_insider_trades, self.get_institutional_ownership])
         if enable_news:
-            self.register(self.get_news)
-
+            tools.append(self.get_news)
         if enable_sec_filings:
-            self.register(self.get_sec_filings)
-
+            tools.append(self.get_sec_filings)
         if enable_crypto:
-            self.register(self.get_crypto_prices)
-
+            tools.append(self.get_crypto_prices)
         if enable_search:
-            self.register(self.search_tickers)
+            tools.append(self.search_tickers)
+
+        super().__init__(name="financial_datasets_tools", tools=tools, **kwargs)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any]) -> str:
         """
