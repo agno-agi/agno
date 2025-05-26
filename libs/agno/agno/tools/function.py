@@ -202,7 +202,7 @@ class Function(BaseModel):
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
-        from inspect import getdoc, isasyncgenfunction, signature
+        from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -322,6 +322,7 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         from inspect import isasyncgenfunction
+
         # Don't wrap async generator with validate_call
         if isasyncgenfunction(func):
             return func
@@ -331,8 +332,6 @@ class Function(BaseModel):
         # Wrap the callable with validate_call
         else:
             return validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-
-
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
@@ -732,7 +731,7 @@ class FunctionCall(BaseModel):
 
         # Build the chain from inside out - reverse the hooks to start from the innermost
         hooks = list(reversed(self.function.tool_hooks))
-        
+
         # Handle async and sync entrypoints
         if iscoroutinefunction(self.function.entrypoint):
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
