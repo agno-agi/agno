@@ -685,7 +685,7 @@ class Gemini(Model):
             model_response.role = self.role_map[response_message.role]
 
         # Add content
-        if response_message.parts is not None:
+        if response_message.parts is not None and len(response_message.parts) > 0:
             for part in response_message.parts:
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
@@ -743,6 +743,10 @@ class Gemini(Model):
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
+
+        # If we have no content but have a role, add a default empty content
+        if model_response.role and model_response.content is None and not model_response.tool_calls:
+            model_response.content = ""
 
         return model_response
 
