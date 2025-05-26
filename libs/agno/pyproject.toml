@@ -43,6 +43,7 @@ dependencies = [
   "tomli",
   "typer",
   "typing-extensions",
+  "meilisearch",
 ]
 
 [project.optional-dependencies]
@@ -124,6 +125,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+meilisearch = ["meilisearch==0.34.1"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -208,7 +210,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[meilisearch]"
 ]
 
 # All knowledge
@@ -329,6 +332,7 @@ module = [
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
+  "meilisearch.*",
   "mlx_whisper.*",
   "nest_asyncio.*",
   "newspaper.*",
