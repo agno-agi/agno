@@ -321,6 +321,7 @@ class Function(BaseModel):
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
+        """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction
 
         # Don't wrap async generator with validate_call
