@@ -132,6 +132,11 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
+
 # Dependencies for Performance
 performance = ["memory_profiler"]
 
@@ -221,6 +226,11 @@ knowledge = [
   "agno[csv]"
 ]
 
+# All embedders
+embedders = [
+  "agno[huggingface]"
+]
+
 # All libraries for testing
 tests = [
     "agno[dev]",
@@ -229,6 +239,7 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
     "twine",
