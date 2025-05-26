@@ -2,10 +2,12 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 
+# Remove the tmp db file before running the script
+import os
+os.remove("tmp/data.db")
+
 agent = Agent(
-    model=OpenAIChat(id="gpt-4.1"),
-    # Fix the session id to continue the same session across execution cycles
-    session_id="fixed_id_for_demo_2",
+    model=OpenAIChat(id="gpt-4o-mini"),
     user_id="user_1",
     storage=SqliteStorage(table_name="agent_sessions_new", db_file="tmp/data.db"),
     add_history_to_messages=True,

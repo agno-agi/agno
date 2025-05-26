@@ -7219,7 +7219,7 @@ class Agent:
         return effective_filters
 
     def get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
     ) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
@@ -7234,9 +7234,6 @@ class Agent:
         def get_previous_session_messages() -> str:
             """Use this function to retrieve messages from previous chat sessions.
             USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
-
-            Args:
-            max_messages_per_session: The number of messages to retrieve from each session (To avoid context length issues)
 
             Returns:
                 str: JSON formatted list of message pairs from previous sessions
