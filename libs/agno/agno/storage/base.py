@@ -35,8 +35,11 @@ class Storage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_last_n_sessions(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None, limit: Optional[int] = 2, 
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
     ) -> List[Session]:
         raise NotImplementedError
 

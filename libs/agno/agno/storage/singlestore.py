@@ -236,8 +236,11 @@ class SingleStoreStorage(Storage):
             log_debug(f"Table does not exist: {self.table.name}")
         return sessions
 
-    def get_last_n_sessions(
-        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
     ) -> List[Session]:
         """Get the last N sessions, ordered by created_at descending.
 
@@ -268,8 +271,8 @@ class SingleStoreStorage(Storage):
 
                 # Order by created_at desc and limit results
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                if num_history_sessions is not None:
-                    stmt = stmt.limit(num_history_sessions)
+                if limit is not None:
+                    stmt = stmt.limit(limit)
 
                 # Execute query
                 rows = sess.execute(stmt).fetchall()

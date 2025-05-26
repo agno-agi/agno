@@ -7243,9 +7243,7 @@ class Agent:
             if self.storage is None:
                 return "Storage not available"
 
-            selected_sessions = self.storage.get_last_n_sessions(
-                num_history_sessions=num_history_sessions, user_id=user_id
-            )
+            selected_sessions = self.storage.get_recent_sessions(limit=num_history_sessions, user_id=user_id)
 
             all_messages = []
             seen_message_pairs = set()

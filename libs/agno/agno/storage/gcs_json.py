@@ -143,8 +143,11 @@ class GCSJsonStorage(JsonStorage):
                     continue
         return sessions
 
-    def get_last_n_sessions(
-        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
     ) -> List[Session]:
         """Get the last N sessions, ordered by created_at descending.
 
@@ -184,8 +187,8 @@ class GCSJsonStorage(JsonStorage):
 
             # Sort by created_at descending and take only num_history_sessions
             session_data.sort(key=lambda x: x[0], reverse=True)
-            if num_history_sessions is not None:
-                session_data = session_data[:num_history_sessions]
+            if limit is not None:
+                session_data = session_data[:limit]
 
             # Convert filtered and sorted data to Session objects
             for _, data in session_data:
@@ -201,7 +204,7 @@ class GCSJsonStorage(JsonStorage):
                     sessions.append(session)
 
         except Exception as e:
-            logger.error(f"Error getting last {num_history_sessions} sessions: {e}")
+            logger.error(f"Error getting last {limit} sessions: {e}")
 
         return sessions
 

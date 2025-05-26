@@ -394,8 +394,11 @@ class DynamoDbStorage(Storage):
             logger.error(f"Error retrieving sessions: {e}")
         return sessions
 
-    def get_last_n_sessions(
-        self, num_history_sessions: Optional[int] = 3, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
     ) -> List[Session]:
         """Get the last N sessions, ordered by created_at descending.
 
@@ -416,7 +419,7 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("user_id").eq(user_id),
                         ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "team":
                     response = self.table.query(
@@ -424,7 +427,7 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("user_id").eq(user_id),
                         ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "workflow":
                     response = self.table.query(
@@ -432,7 +435,7 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("user_id").eq(user_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
             elif entity_id is not None:
                 if self.mode == "agent":
@@ -441,7 +444,7 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("agent_id").eq(entity_id),
                         ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "team":
                     response = self.table.query(
@@ -449,7 +452,7 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("team_id").eq(entity_id),
                         ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "workflow":
                     response = self.table.query(
@@ -457,24 +460,24 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("workflow_id").eq(entity_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
             else:
                 # If no filters, scan the table and sort by created_at
                 if self.mode == "agent":
                     response = self.table.scan(
                         ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "team":
                     response = self.table.scan(
                         ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
                 elif self.mode == "workflow":
                     response = self.table.scan(
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
-                        Limit=num_history_sessions if num_history_sessions is not None else None,
+                        Limit=limit if limit is not None else None,
                     )
 
             items = response.get("Items", [])
@@ -493,7 +496,7 @@ class DynamoDbStorage(Storage):
                     sessions.append(session)
 
         except Exception as e:
-            logger.error(f"Error getting last {num_history_sessions} sessions: {e}")
+            logger.error(f"Error getting last {limit} sessions: {e}")
 
         return sessions
 
