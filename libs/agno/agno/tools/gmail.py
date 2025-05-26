@@ -46,7 +46,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
@@ -131,7 +131,6 @@ class GmailTools(Toolkit):
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
         """
-        super().__init__(name="gmail_tools", **kwargs)
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -161,28 +160,31 @@ class GmailTools(Toolkit):
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for email reading operations")
 
+        tools: List[Any] = []
         if get_latest_emails:
-            self.register(self.get_latest_emails)
+            tools.append(self.get_latest_emails)
         if get_emails_from_user:
-            self.register(self.get_emails_from_user)
+            tools.append(self.get_emails_from_user)
         if get_unread_emails:
-            self.register(self.get_unread_emails)
+            tools.append(self.get_unread_emails)
         if get_starred_emails:
-            self.register(self.get_starred_emails)
+            tools.append(self.get_starred_emails)
         if get_emails_by_context:
-            self.register(self.get_emails_by_context)
+            tools.append(self.get_emails_by_context)
         if get_emails_by_date:
-            self.register(self.get_emails_by_date)
+            tools.append(self.get_emails_by_date)
         if get_emails_by_thread:
-            self.register(self.get_emails_by_thread)
+            tools.append(self.get_emails_by_thread)
         if create_draft_email:
-            self.register(self.create_draft_email)
+            tools.append(self.create_draft_email)
         if send_email:
-            self.register(self.send_email)
+            tools.append(self.send_email)
         if send_email_reply:
-            self.register(self.send_email_reply)
+            tools.append(self.send_email_reply)
         if search_emails:
-            self.register(self.search_emails)
+            tools.append(self.search_emails)
+
+        super().__init__(name="gmail_tools", tools=tools, **kwargs)
 
     def _auth(self) -> None:
         """Authenticate with Gmail API"""

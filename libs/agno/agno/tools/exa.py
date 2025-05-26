@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,7 @@ class ExaTools(Toolkit):
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
         show_results (bool): Log search results for debugging. Default is False.
         model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
+        timeout (int): Maximum time in seconds to wait for API responses. Default is 30 seconds.
     """
 
     def __init__(
@@ -61,16 +63,16 @@ class ExaTools(Toolkit):
         exclude_domains: Optional[List[str]] = None,
         show_results: bool = False,
         model: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
-        super().__init__(name="exa", **kwargs)
-
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
             logger.error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
 
         self.exa = Exa(self.api_key)
         self.show_results = show_results
+        self.timeout = timeout
 
         self.text: bool = text
         self.text_length_limit: int = text_length_limit
@@ -89,14 +91,28 @@ class ExaTools(Toolkit):
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
 
+        tools: List[Any] = []
         if search:
-            self.register(self.search_exa)
+            tools.append(self.search_exa)
         if get_contents:
-            self.register(self.get_contents)
+            tools.append(self.get_contents)
         if find_similar:
-            self.register(self.find_similar)
+            tools.append(self.find_similar)
         if answer:
-            self.register(self.exa_answer)
+            tools.append(self.exa_answer)
+
+        super().__init__(name="exa", tools=tools, **kwargs)
+
+    def _execute_with_timeout(self, func, *args, **kwargs):
+        """Execute a function with a timeout using a temporary ThreadPoolExecutor."""
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=self.timeout)
+            except TimeoutError:
+                raise TimeoutError(f"Operation timed out after {self.timeout} seconds")
+            except Exception as e:
+                raise e
 
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
@@ -156,13 +172,18 @@ class ExaTools(Toolkit):
             }
             # Clean up the kwargs
             search_kwargs = {k: v for k, v in search_kwargs.items() if v is not None}
-            exa_results = self.exa.search_and_contents(query, **search_kwargs)
+
+            # Execute search with timeout
+            exa_results = self._execute_with_timeout(self.exa.search_and_contents, query, **search_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             # Extract search results
             if self.show_results:
                 log_info(parsed_results)
             return parsed_results
+        except TimeoutError as e:
+            logger.error(f"Search timed out after {self.timeout} seconds")
+            return f"Error: {str(e)}"
         except Exception as e:
             logger.error(f"Failed to search exa {e}")
             return f"Error: {e}"
@@ -188,13 +209,17 @@ class ExaTools(Toolkit):
             if self.show_results:
                 log_info(f"Fetching contents for URLs: {urls}")
 
-            exa_results = self.exa.get_contents(urls=urls, **query_kwargs)
+            # Execute get_contents with timeout
+            exa_results = self._execute_with_timeout(self.exa.get_contents, urls=urls, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
                 log_info(parsed_results)
 
             return parsed_results
+        except TimeoutError as e:
+            logger.error(f"Get contents timed out after {self.timeout} seconds")
+            return f"Error: {str(e)}"
         except Exception as e:
             logger.error(f"Failed to get contents from Exa: {e}")
             return f"Error: {e}"
@@ -228,13 +253,17 @@ class ExaTools(Toolkit):
             if self.show_results:
                 log_info(f"Finding similar links to: {url}")
 
-            exa_results = self.exa.find_similar_and_contents(url=url, **query_kwargs)
+            # Execute find_similar with timeout
+            exa_results = self._execute_with_timeout(self.exa.find_similar_and_contents, url=url, **query_kwargs)
 
             parsed_results = self._parse_results(exa_results)
             if self.show_results:
                 log_info(parsed_results)
 
             return parsed_results
+        except TimeoutError as e:
+            logger.error(f"Find similar timed out after {self.timeout} seconds")
+            return f"Error: {str(e)}"
         except Exception as e:
             logger.error(f"Failed to get similar links from Exa: {e}")
             return f"Error: {e}"
@@ -260,7 +289,10 @@ class ExaTools(Toolkit):
                 "text": text,
             }
             answer_kwargs = {k: v for k, v in answer_kwargs.items() if v is not None}
-            answer = self.exa.answer(query=query, **answer_kwargs)
+
+            # Execute answer with timeout
+            answer = self._execute_with_timeout(self.exa.answer, query=query, **answer_kwargs)
+
             result = {
                 "answer": answer.answer,  # type: ignore
                 "citations": [
@@ -280,6 +312,9 @@ class ExaTools(Toolkit):
 
             return json.dumps(result, indent=4)
 
+        except TimeoutError as e:
+            logger.error(f"Answer generation timed out after {self.timeout} seconds")
+            return f"Error: {str(e)}"
         except Exception as e:
             logger.error(f"Failed to get answer from Exa: {e}")
             return f"Error: {e}"
