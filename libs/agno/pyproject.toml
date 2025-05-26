@@ -315,6 +315,7 @@ module = [
   "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "fastembed.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",

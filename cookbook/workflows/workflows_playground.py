@@ -48,14 +48,23 @@ startup_idea_validator = StartupIdeaValidator(
 )
 
 # Initialize the Playground with the workflows
-app = Playground(
+playground = Playground(
     workflows=[
         blog_post_generator,
         personalised_email_generator,
         investment_report_generator,
         startup_idea_validator,
-    ]
-).get_app()
+    ],
+    app_id="workflows-playground-app",
+    name="Workflows Playground",
+)
+app = playground.get_app(use_async=False)
 
 if __name__ == "__main__":
-    serve_playground_app("workflows_playground:app", reload=True)
+    # Start the playground server
+    playground.serve(
+        app="workflows_playground:app",
+        host="localhost",
+        port=7777,
+        reload=True,
+    )
