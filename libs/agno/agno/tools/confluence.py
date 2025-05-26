@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -63,12 +63,15 @@ class ConfluenceTools(Toolkit):
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        self.register(self.get_page_content)
-        self.register(self.get_space_key)
-        self.register(self.create_page)
-        self.register(self.update_page)
-        self.register(self.get_all_space_detail)
-        self.register(self.get_all_page_from_space)
+        tools: List[Any] = []
+        tools.append(self.get_page_content)
+        tools.append(self.get_space_key)
+        tools.append(self.create_page)
+        tools.append(self.update_page)
+        tools.append(self.get_all_space_detail)
+        tools.append(self.get_all_page_from_space)
+
+        super().__init__(name="confluence_tools", tools=tools, **kwargs)
 
     def get_page_content(self, space_name: str, page_title: str, expand: Optional[str] = "body.storage"):
         """Retrieve the content of a specific page in a Confluence space.

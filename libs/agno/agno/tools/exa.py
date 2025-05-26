@@ -66,8 +66,6 @@ class ExaTools(Toolkit):
         timeout: int = 30,
         **kwargs,
     ):
-        super().__init__(name="exa", **kwargs)
-
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
             logger.error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
@@ -94,14 +92,17 @@ class ExaTools(Toolkit):
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
 
+        tools: List[Any] = []
         if search:
-            self.register(self.search_exa)
+            tools.append(self.search_exa)
         if get_contents:
-            self.register(self.get_contents)
+            tools.append(self.get_contents)
         if find_similar:
-            self.register(self.find_similar)
+            tools.append(self.find_similar)
         if answer:
-            self.register(self.exa_answer)
+            tools.append(self.exa_answer)
+
+        super().__init__(name="exa", tools=tools, **kwargs)
 
     def _execute_with_timeout(self, func, *args, **kwargs):
         """Execute a function with a timeout using a temporary ThreadPoolExecutor."""
