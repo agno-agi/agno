@@ -607,7 +607,7 @@ def get_async_playground_router(
         if teams is None:
             return []
 
-        return [TeamGetResponse.from_team(team) for team in teams]
+        return [TeamGetResponse.from_team(team, async_mode=True) for team in teams]
 
     @playground_router.get("/teams/{team_id}")
     async def get_team(team_id: str):
@@ -615,7 +615,7 @@ def get_async_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamGetResponse.from_team(team)
+        return TeamGetResponse.from_team(team, async_mode=True)
 
     @playground_router.post("/teams/{team_id}/runs")
     async def create_team_run(
