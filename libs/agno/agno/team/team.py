@@ -7092,7 +7092,17 @@ class Team:
                 "model": self.model.id,
                 "provider": self.model.provider,
             }
+        tools = []
+        if self.tools is not None:
+            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
+                model = self.model
+                session_id = self.session_id
+                self.determine_tools_for_model(model=model, session_id=session_id)
 
+            tools = []
+            for tool in self._tools_for_model:
+                if isinstance(tool, dict) and tool.get("type") == "function":
+                    tools.append(tool["function"])
         payload = {
             "members": [
                 {
@@ -7130,6 +7140,7 @@ class Team:
             ],
             "mode": self.mode,
             "model": model,
+            "tools": tools,
             "name": self.name,
             "instructions": self.instructions,
             "description": self.description,

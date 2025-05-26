@@ -7315,11 +7315,15 @@ class Agent:
     def get_agent_config_dict(self) -> Dict[str, Any]:
         tools = []
         if self.tools is not None:
-            for tool in self.tools:
-                functions = []
-                for function in tool.functions.keys():
-                    functions.append({"name": function, "parameters": tool.functions[function].to_dict()})
-                tools.append({"name": tool.name, "functions": functions})
+            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
+                model = self.model
+                session_id = self.session_id
+                self.determine_tools_for_model(model=model, session_id=session_id)
+
+            tools = []
+            for tool in self._tools_for_model:
+                if isinstance(tool, dict) and tool.get("type") == "function":
+                    tools.append(tool["function"])
 
         model = None
         if self.model is not None:
