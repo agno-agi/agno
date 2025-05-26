@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -31,8 +31,6 @@ class XTools(Toolkit):
             access_token Optional[str]: The access token for Twitter API.
             access_token_secret Optional[str]: The access token secret for Twitter API.
         """
-        super().__init__(name="x", **kwargs)
-
         self.bearer_token = bearer_token or os.getenv("X_BEARER_TOKEN")
         self.consumer_key = consumer_key or os.getenv("X_CONSUMER_KEY")
         self.consumer_secret = consumer_secret or os.getenv("X_CONSUMER_SECRET")
@@ -47,11 +45,14 @@ class XTools(Toolkit):
             access_token_secret=self.access_token_secret,
         )
 
-        self.register(self.create_post)
-        self.register(self.reply_to_post)
-        self.register(self.send_dm)
-        self.register(self.get_user_info)
-        self.register(self.get_home_timeline)
+        tools: List[Any] = []
+        tools.append(self.create_post)
+        tools.append(self.reply_to_post)
+        tools.append(self.send_dm)
+        tools.append(self.get_user_info)
+        tools.append(self.get_home_timeline)
+
+        super().__init__(name="x", tools=tools, **kwargs)
 
     def create_post(self, text: str) -> str:
         """

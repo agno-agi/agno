@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -23,8 +23,6 @@ class TavilyTools(Toolkit):
         use_search_context: bool = False,
         **kwargs,
     ):
-        super().__init__(name="tavily_tools", **kwargs)
-
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
             logger.error("TAVILY_API_KEY not provided")
@@ -35,11 +33,14 @@ class TavilyTools(Toolkit):
         self.include_answer: bool = include_answer
         self.format: Literal["json", "markdown"] = format
 
+        tools: List[Any] = []
         if search:
             if use_search_context:
-                self.register(self.web_search_with_tavily)
+                tools.append(self.web_search_with_tavily)
             else:
-                self.register(self.web_search_using_tavily)
+                tools.append(self.web_search_using_tavily)
+
+        super().__init__(name="tavily_tools", tools=tools, **kwargs)
 
     def web_search_using_tavily(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web for a given query.
