@@ -57,6 +57,11 @@ integration-tests = [
     "Pillow",
 ]
 
+# Add these dependencies for embedder tests
+embedder-tests = [
+    "huggingface-hub",
+]
+
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]
