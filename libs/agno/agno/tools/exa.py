@@ -73,7 +73,6 @@ class ExaTools(Toolkit):
         self.exa = Exa(self.api_key)
         self.show_results = show_results
         self.timeout = timeout
-        self._executor = ThreadPoolExecutor(max_workers=1)  # Single worker for API calls
 
         self.text: bool = text
         self.text_length_limit: int = text_length_limit
@@ -319,8 +318,3 @@ class ExaTools(Toolkit):
         except Exception as e:
             logger.error(f"Failed to get answer from Exa: {e}")
             return f"Error: {e}"
-
-    def __del__(self):
-        """Clean up the thread pool executor when the object is destroyed."""
-        if hasattr(self, "_executor"):
-            self._executor.shutdown(wait=False)
