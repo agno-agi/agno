@@ -81,6 +81,8 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
+    search_previous_sessions_history: Optional[bool] = False
+    num_history_sessions: Optional[int] = None
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -289,6 +291,8 @@ class Agent:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        search_previous_sessions_history: Optional[bool] = False,
+        num_history_sessions: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -371,6 +375,8 @@ class Agent:
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
+        self.search_previous_sessions_history = search_previous_sessions_history
+        self.num_history_sessions = num_history_sessions
 
         self.context = context
         self.add_context = add_context
@@ -3298,6 +3304,12 @@ class Agent:
             agent_tools.append(self.get_chat_history_function(session_id=session_id))
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
+        if self.search_previous_sessions_history:
+            agent_tools.append(
+                self.get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
+            )
 
         if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
@@ -4393,6 +4405,7 @@ class Agent:
                 history = self.memory.get_messages_from_last_n_runs(
                     session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role
                 )
+
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
                 history_copy = [deepcopy(msg) for msg in history]
@@ -7204,6 +7217,66 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
+        """Factory function to create a get_previous_session_messages function.
+
+        Args:
+            user_id: The user ID to get sessions for
+            num_history_sessions: The last n sessions to be taken from db
+
+        Returns:
+            Callable: A function that retrieves messages from previous sessions
+        """
+
+        def get_previous_session_messages() -> str:
+            """Use this function to retrieve messages from previous chat sessions.
+            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+
+            Returns:
+                str: JSON formatted list of message pairs from previous sessions
+            """
+            import json
+
+            if self.storage is None:
+                return "Storage not available"
+
+            selected_sessions = self.storage.get_recent_sessions(limit=num_history_sessions, user_id=user_id)
+
+            all_messages = []
+            seen_message_pairs = set()
+
+            for session in selected_sessions:
+                if isinstance(session, AgentSession) and session.memory:
+                    message_count = 0
+                    for run in session.memory.get("runs", []):
+                        messages = run.get("messages", [])
+                        for i in range(0, len(messages) - 1, 2):
+                            if i + 1 < len(messages):
+                                try:
+                                    user_msg = messages[i]
+                                    assistant_msg = messages[i + 1]
+                                    user_content = user_msg.get("content")
+                                    assistant_content = assistant_msg.get("content")
+
+                                    if user_content is None or assistant_content is None:
+                                        continue  # Skip this pair if either message has no content
+
+                                    msg_pair_id = f"{user_content}:{assistant_content}"
+                                    if msg_pair_id not in seen_message_pairs:
+                                        seen_message_pairs.add(msg_pair_id)
+                                        all_messages.append(Message.model_validate(user_msg))
+                                        all_messages.append(Message.model_validate(assistant_msg))
+                                        message_count += 1
+                                except Exception as e:
+                                    log_warning(f"Error processing message pair: {e}")
+                                    continue
+
+            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+
+        return get_previous_session_messages
 
     def cli_app(
         self,

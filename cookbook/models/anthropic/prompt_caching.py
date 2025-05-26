@@ -14,7 +14,7 @@ from agno.models.anthropic import Claude
 from agno.utils.media import download_file
 
 # Load an example large system message from S3. A large prompt like this would benefit from caching.
-txt_path = Path(__file__).parent.joinpath("system_promt.txt")
+txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
 download_file(
     "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
     str(txt_path),
