@@ -137,16 +137,16 @@ class Claude(Model):
             Dict[str, Any]: The request keyword arguments.
         """
         request_kwargs = self.request_kwargs.copy()
-
-        if self.cache_system_prompt:
-            cache_control = (
-                {"type": "ephemeral", "ttl": "1h"}
-                if self.extended_cache_time is not None and self.extended_cache_time is True
-                else {"type": "ephemeral"}
-            )
-            request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-        else:
-            request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        if system_message:
+            if self.cache_system_prompt:
+                cache_control = (
+                    {"type": "ephemeral", "ttl": "1h"}
+                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    else {"type": "ephemeral"}
+                )
+                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+            else:
+                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
@@ -212,7 +212,6 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
             return self.get_client().messages.create(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
