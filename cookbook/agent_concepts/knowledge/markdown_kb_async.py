@@ -3,18 +3,20 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.markdown import MarkdownKnowledgeBase
-from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.pgvector.pgvector import PgVector
 
-COLLECTION_NAME = "essay-markdown"
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
-# Initialize the TextKnowledgeBase
 knowledge_base = MarkdownKnowledgeBase(
-    path=Path("data/mds"),  # Path to your markdown files
-    vector_db=vector_db,
-    num_documents=5,
+    path=Path("README.md"),  # Path to your markdown file(s)
+    vector_db=PgVector(
+        table_name="markdown_documents",
+        db_url=db_url,
+    ),
+    num_documents=5,  # Number of documents to return on search
 )
+
 
 # Initialize the Assistant with the knowledge_base
 agent = Agent(

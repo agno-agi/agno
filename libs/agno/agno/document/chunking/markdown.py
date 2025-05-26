@@ -2,8 +2,11 @@ import os
 import tempfile
 from typing import List
 
-from unstructured.chunking.title import chunk_by_title
-from unstructured.partition.md import partition_md
+try:
+    from unstructured.chunking.title import chunk_by_title
+    from unstructured.partition.md import partition_md
+except ImportError:
+    raise ImportError("`unstructured` not installed. Please install it using `pip install unstructured markdown`")
 
 from agno.document.base import Document
 from agno.document.chunking.strategy import ChunkingStrategy
