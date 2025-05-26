@@ -296,7 +296,7 @@ class SingleStoreStorage(Storage):
                 log_debug(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                logger.error(f"Error getting last {num_history_sessions} sessions: {e}")
+                logger.error(f"Error getting last {limit} sessions: {e}")
 
         return sessions
 
