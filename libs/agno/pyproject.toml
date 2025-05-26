@@ -57,11 +57,6 @@ integration-tests = [
     "Pillow",
 ]
 
-# Add these dependencies for embedder tests
-embedder-tests = [
-    "huggingface-hub",
-]
-
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
 weave = ["weave"]
@@ -135,6 +130,11 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
+
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -224,6 +224,11 @@ knowledge = [
   "agno[csv]"
 ]
 
+# All embedders
+embedders = [
+  "agno[huggingface]"
+]
+
 # All libraries for testing
 tests = [
     "agno[dev]",
@@ -232,6 +237,7 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
     "twine",
