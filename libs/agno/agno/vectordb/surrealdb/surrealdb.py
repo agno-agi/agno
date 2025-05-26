@@ -1,12 +1,19 @@
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, Dict, Final, List, Optional
-from collections.abc import Generator, AsyncGenerator
+from typing import Any, Dict, Final, List, Optional, Union
 
-from surrealdb import AsyncSurreal, Surreal, BlockingWsSurrealConnection, BlockingHttpSurrealConnection, AsyncWsSurrealConnection, AsyncHttpSurrealConnection
+from surrealdb import (
+    AsyncHttpSurrealConnection,
+    AsyncSurreal,
+    AsyncWsSurrealConnection,
+    BlockingHttpSurrealConnection,
+    BlockingWsSurrealConnection,
+    Surreal,
+)
 
 from agno.document import Document
 from agno.embedder import Embedder
-from agno.utils.log import log_info, log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -119,8 +126,8 @@ class SurrealDb(VectorDb):
         ]
         self.username = username
         self.password = password
-        self.sync_client: BlockingHttpSurrealConnection | BlockingWsSurrealConnection | None = None
-        self.async_client: AsyncWsSurrealConnection | AsyncHttpSurrealConnection | None = None
+        self.sync_client: Union[BlockingHttpSurrealConnection, BlockingWsSurrealConnection, None] = None
+        self.async_client: Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection, None] = None
 
         # HNSW index parameters
         self.efc = efc
@@ -137,7 +144,7 @@ class SurrealDb(VectorDb):
         return "AND " + " AND ".join(conditions)
 
     @contextmanager
-    def connect(self) -> Generator[BlockingHttpSurrealConnection | BlockingWsSurrealConnection, None]:
+    def connect(self) -> Generator[Union[BlockingHttpSurrealConnection, BlockingWsSurrealConnection], None]:
         """Context manager for synchronous database connection"""
         try:
             self.sync_client = Surreal(self.url)
@@ -149,7 +156,7 @@ class SurrealDb(VectorDb):
                 self.sync_client.close()
 
     @asynccontextmanager
-    async def async_connect(self) -> AsyncGenerator[AsyncWsSurrealConnection | AsyncHttpSurrealConnection, None]:
+    async def async_connect(self) -> AsyncGenerator[Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection], None]:
         """Context manager for asynchronous database connection"""
         try:
             self.async_client = AsyncSurreal(self.url)
@@ -229,7 +236,8 @@ class SurrealDb(VectorDb):
                 collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
             )
             response = client.query(
-                query, {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
+                query,
+                {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
             )
             log_debug(f"Search response: {response}")
 
@@ -304,9 +312,7 @@ class SurrealDb(VectorDb):
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously"""
         async with self.async_connect() as client:
-            response = await client.query(
-                self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name}
-            )
+            response = await client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
             return bool(self._extract_result(response))
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
