@@ -33,26 +33,49 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         # Process other event types (e.g., message events) asynchronously
         if "event" in data:
             event = data["event"]
-            background_tasks.add_task(process_slack_event, event)
+            if event.get("bot_id"):
+                log_info("bot event")
+                pass
+            else:
+                background_tasks.add_task(process_slack_event, event)
 
         return {"status": "ok"}
 
     def process_slack_event(event: dict):
         log_info(f"Processing event: {event}")
         if event.get("type") == "message":
-            if event.get("bot_id"):
-                pass
-            else:
-                user = None
-                message_text = event.get("text")
-                channel_id = event.get("channel", "")
-                if event.get("channel_type") == "im":
-                    user = event.get("user")
-                if agent:
-                    response = agent.run(message_text, user_id=user if user else None)
-                elif team:
-                    response = team.run(message_text, user_id=user if user else None)  # type: ignore
+            user = None
+            message_text = event.get("text")
+            channel_id = event.get("channel", "")
+            if event.get("channel_type") == "im":
+                user = event.get("user")
+            if agent:
+                response = agent.run(message_text, user_id=user if user else None)
+            elif team:
+                response = team.run(message_text, user_id=user if user else None)  # type: ignore
 
-                SlackTools().send_message(channel=channel_id, text=response.content or "")
+            SlackTools().send_message(channel=channel_id, text=response.content or "")
+    def _send_slack_message(channel: str, ts:str, message: str, italics: bool = False):
+        if len(message) <= 40000:
+            if italics:
+                # Handle multi-line messages by making each line italic
+                formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
+                SlackTools().send_message_thread(channel=channel, text=formatted_message or "",ts=ts)
+            else:
+                SlackTools().send_message_thread(channel=channel, text=message or "",ts=ts)
+            return
+
+        # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
+        message_batches = [message[i : i + 40000] for i in range(0, len(message), 40000)]
+
+        # Add a prefix with the batch number
+        for i, batch in enumerate(message_batches, 1):
+            batch_message = f"[{i}/{len(message_batches)}] {batch}"
+            if italics:
+                # Handle multi-line messages by making each line italic
+                formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
+                SlackTools().send_message_thread(channel=channel, text=batch_message or "",ts=ts)
+            else:
+                SlackTools().send_message_thread(channel=channel, text=message or "",ts=ts)
 
     return router
