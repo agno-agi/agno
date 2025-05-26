@@ -689,10 +689,8 @@ class Workflow:
             )
 
             log_debug(f"Successfully registered workflow: {self.name} (ID: {self.workflow_id})")
-            return True
         except Exception as e:
             log_warning(f"Failed to register workflow: {e}")
-            return False
 
     def to_config_dict(self) -> Dict[str, Any]:
         """Convert the workflow to a config dictionary including all agents and teams.
@@ -701,7 +699,7 @@ class Workflow:
             Dict[str, Any]: Dictionary representation of the workflow config.
         """
         # Basic workflow information
-        config = {
+        config: Dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "type": "workflow",
@@ -711,8 +709,8 @@ class Workflow:
             },
         }
 
-        agents = []
-        teams = []
+        agents: List[Dict[str, Any]] = []
+        teams: List[Dict[str, Any]] = []
 
         for attr_name in dir(self.__class__):
             # Skip private/special attributes and methods

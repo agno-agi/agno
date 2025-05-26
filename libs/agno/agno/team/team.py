@@ -7092,17 +7092,17 @@ class Team:
                 "model": self.model.id,
                 "provider": self.model.provider,
             }
-        tools = []
+        tools: List[Dict[str, Any]] = []
         if self.tools is not None:
             if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
-                model = self.model
-                session_id = self.session_id
-                self.determine_tools_for_model(model=model, session_id=session_id)
+                team_model = self.model
+                if team_model is not None:
+                    self.determine_tools_for_model(model=team_model, tools=self.tools)
 
-            tools = []
-            for tool in self._tools_for_model:
-                if isinstance(tool, dict) and tool.get("type") == "function":
-                    tools.append(tool["function"])
+            if self._tools_for_model is not None:
+                for tool in self._tools_for_model:
+                    if isinstance(tool, dict) and tool.get("type") == "function":
+                        tools.append(tool["function"])
         payload = {
             "members": [
                 {

@@ -46,7 +46,7 @@ class Playground:
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
-        self.endpoints_created: Dict[str, Dict[str, str]] = {}
+        self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
@@ -231,7 +231,7 @@ class Playground:
             ]
             if self.workflows
             else [],
-            "endpointData": self.endpoints_created,
+            "endpointData": self.endpoints_created.model_dump(exclude_none=True) if self.endpoints_created else {},
             "type": "playground",
             "description": self.description,
         }
