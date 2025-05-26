@@ -641,7 +641,7 @@ jobs:
         working-directory: libs/agno
         run: |
           source .venv/bin/activate
-          python -m pytest ./tests/integration/embedder
+          python -m pytest ./libs/agno/tests/integration/embedder
 
   test-knowledge:
     runs-on: ubuntu-latest
