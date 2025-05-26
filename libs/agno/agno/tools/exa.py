@@ -72,7 +72,7 @@ class ExaTools(Toolkit):
         if not self.api_key:
             logger.error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
 
-        self.exa = Exa(self.api_key)  # Remove timeout from constructor
+        self.exa = Exa(self.api_key)
         self.show_results = show_results
         self.timeout = timeout
         self._executor = ThreadPoolExecutor(max_workers=1)  # Single worker for API calls
@@ -104,14 +104,15 @@ class ExaTools(Toolkit):
             self.register(self.exa_answer)
 
     def _execute_with_timeout(self, func, *args, **kwargs):
-        """Execute a function with a timeout using ThreadPoolExecutor."""
-        future = self._executor.submit(func, *args, **kwargs)
-        try:
-            return future.result(timeout=self.timeout)
-        except TimeoutError:
-            raise TimeoutError(f"Operation timed out after {self.timeout} seconds")
-        except Exception as e:
-            raise e
+        """Execute a function with a timeout using a temporary ThreadPoolExecutor."""
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(func, *args, **kwargs)
+            try:
+                return future.result(timeout=self.timeout)
+            except TimeoutError:
+                raise TimeoutError(f"Operation timed out after {self.timeout} seconds")
+            except Exception as e:
+                raise e
 
     def _parse_results(self, exa_results: SearchResponse) -> str:
         exa_results_parsed = []
