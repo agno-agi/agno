@@ -199,7 +199,7 @@ class Qdrant(VectorDb):
 
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config=vectors_config if self.search_type == SearchType.vector else vectors_config,
+                vectors_config=vectors_config,
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
@@ -227,7 +227,7 @@ class Qdrant(VectorDb):
 
             await self.async_client.create_collection(
                 collection_name=self.collection,
-                vectors_config=vectors_config if self.search_type == SearchType.vector else vectors_config,
+                vectors_config=vectors_config,
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
@@ -330,7 +330,7 @@ class Qdrant(VectorDb):
             else:
                 # For other search types, use named vectors
                 vector = {}
-                if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                if self.search_type in [SearchType.hybrid]:
                     document.embed(embedder=self.embedder)
                     vector[self.dense_vector_name] = document.embedding
 
@@ -385,7 +385,7 @@ class Qdrant(VectorDb):
             else:
                 # For other search types, use named vectors
                 vector = {}
-                if self.search_type in [SearchType.vector, SearchType.hybrid]:
+                if self.search_type in [SearchType.hybrid]:
                     document.embed(embedder=self.embedder)
                     vector[self.dense_vector_name] = document.embedding
 
