@@ -21,17 +21,20 @@ class SlackTools(Toolkit):
         get_channel_history: bool = True,
         **kwargs,
     ):
-        super().__init__(name="slack", **kwargs)
         self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
+
+        tools: List[Any] = []
         if send_message:
-            self.register(self.send_message)
+            tools.append(self.send_message)
         if list_channels:
-            self.register(self.list_channels)
+            tools.append(self.list_channels)
         if get_channel_history:
-            self.register(self.get_channel_history)
+            tools.append(self.get_channel_history)
+
+        super().__init__(name="slack", tools=tools, **kwargs)
 
     def send_message(self, channel: str, text: str) -> str:
         """

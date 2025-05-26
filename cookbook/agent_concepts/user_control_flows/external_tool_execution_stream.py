@@ -53,7 +53,7 @@ for run_response in agent.run(
                 tool.result = result
 
         run_response = agent.continue_run(run_response=run_response, stream=True)
-    pprint.pprint_run_response(run_response)
+        pprint.pprint_run_response(run_response)
 
 
 # Or for simple debug flow
