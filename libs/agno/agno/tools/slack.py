@@ -53,6 +53,24 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
             return json.dumps({"error": str(e)})
+    def send_message_thread(self, channel: str, text: str, ts: str) -> str:
+        """
+        Send a message to a Slack channel.
+
+        Args:
+            channel (str): The channel ID or name to send the message to.
+            text (str): The text of the message to send.
+            ts (ts): The thread to reply to
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
+        try:
+            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=ts)
+            return json.dumps(response.data)
+        except SlackApiError as e:
+            logger.error(f"Error sending message: {e}")
+            return json.dumps({"error": str(e)})
 
     def list_channels(self) -> str:
         """

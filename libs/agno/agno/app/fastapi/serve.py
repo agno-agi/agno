@@ -2,7 +2,7 @@ from typing import Union
 
 from fastapi import FastAPI
 
-from agno.utils.log import logger
+from agno.app.serve import serve_app
 
 
 def serve_fastapi_app(
@@ -13,8 +13,4 @@ def serve_fastapi_app(
     reload: bool = False,
     **kwargs,
 ):
-    import uvicorn
-
-    logger.info(f"Starting API on {host}:{port}")
-
-    uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+    serve_app(app, host=host, port=port, reload=reload, **kwargs)

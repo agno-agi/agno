@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.app.serve import serve_app
-from agno.app.whatsapp.app import WhatsappAPI
+from agno.app.slack.app import SlackAPI
 from agno.models.anthropic.claude import Claude
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
@@ -22,7 +22,7 @@ reasoning_finance_agent = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+app = SlackAPI(
     agent=reasoning_finance_agent,
 ).get_app()
 
