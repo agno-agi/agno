@@ -21,7 +21,17 @@ def sample_functions() -> Dict[str, Function]:
                     "param3": {"type": "boolean"},
                 },
             },
-        )
+        ),
+        "test_function_2": Function(
+            name="test_function_2",
+            description="A test function 2",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string"},
+                },
+            },
+        ),
     }
 
 
@@ -119,7 +129,7 @@ def test_get_function_call_argument(sample_functions):
     }
 
 
-def test_get_function_call_argument_2(sample_functions):
+def test_get_function_call_argument_advanced(sample_functions):
     """Test function call without argument sanitization."""
     arguments = '{"param1": None, "param2": True, "param3": False, "param4": "test"}'
 
@@ -137,20 +147,17 @@ def test_get_function_call_argument_2(sample_functions):
         "param4": "test",
     }
 
-    arguments = '{"param1": "none", "param2": "false", "param3": "true", "param4": "test"}'
+    arguments = '{"code": "x = True; y = False; z = None;"}'
 
     result = get_function_call(
-        name="test_function",
+        name="test_function_2",
         arguments=arguments,
         functions=sample_functions,
     )
 
     assert result is not None
     assert result.arguments == {
-        "param1": None,
-        "param2": False,
-        "param3": True,
-        "param4": "test",
+        "code": "x = True; y = False; z = None;",
     }
 
 
