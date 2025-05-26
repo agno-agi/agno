@@ -119,6 +119,10 @@ class Qdrant(VectorDb):
         self.sparse_vector_name = sparse_vector_name
         self.hybrid_fusion_strategy = hybrid_fusion_strategy
 
+        # TODO(v2.0.0): Remove backward compatibility for unnamed vectors
+        # TODO(v2.0.0): Make named vectors mandatory and simplify the codebase
+        self.use_named_vectors = search_type in [SearchType.hybrid]
+
         if self.search_type in [SearchType.keyword, SearchType.hybrid]:
             try:
                 from fastembed import SparseTextEmbedding
@@ -131,7 +135,7 @@ class Qdrant(VectorDb):
 
             except ImportError as e:
                 raise ImportError(
-                    "To use keyword/hybrid search, install the `fastembed` extra with `pip install 'qdrant-client[fastembed]'`."
+                    "To use keyword/hybrid search, install the `fastembed` extra with `pip install fastembed`."
                 ) from e
 
     @property
@@ -176,7 +180,6 @@ class Qdrant(VectorDb):
         return self._async_client
 
     def create(self) -> None:
-        # Collection distance
         _distance = models.Distance.COSINE
         if self.distance == Distance.l2:
             _distance = models.Distance.EUCLID
@@ -185,11 +188,18 @@ class Qdrant(VectorDb):
 
         if not self.exists():
             log_debug(f"Creating collection: {self.collection}")
+
+            # Configure vectors based on search type
+            if self.search_type == SearchType.vector:
+                # Maintain backward compatibility with unnamed vectors
+                vectors_config = models.VectorParams(size=self.dimensions, distance=_distance)
+            else:
+                # Use named vectors for hybrid search
+                vectors_config = {self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}
+
             self.client.create_collection(
                 collection_name=self.collection,
-                vectors_config={self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}
-                if self.search_type in [SearchType.vector, SearchType.hybrid]
-                else {},
+                vectors_config=vectors_config,
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
@@ -206,11 +216,18 @@ class Qdrant(VectorDb):
 
         if not await self.async_exists():
             log_debug(f"Creating collection asynchronously: {self.collection}")
+
+            # Configure vectors based on search type
+            if self.search_type == SearchType.vector:
+                # Maintain backward compatibility with unnamed vectors
+                vectors_config = models.VectorParams(size=self.dimensions, distance=_distance)
+            else:
+                # Use named vectors for hybrid search
+                vectors_config = {self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}
+
             await self.async_client.create_collection(
                 collection_name=self.collection,
-                vectors_config={self.dense_vector_name: models.VectorParams(size=self.dimensions, distance=_distance)}
-                if self.search_type in [SearchType.vector, SearchType.hybrid]
-                else {},
+                vectors_config=vectors_config,
                 sparse_vectors_config={self.sparse_vector_name: models.SparseVectorParams()}
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
@@ -300,13 +317,25 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            vector = {}
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
-                document.embed(embedder=self.embedder)
-                vector[self.dense_vector_name] = document.embedding
+            # TODO(v2.0.0): Remove conditional vector naming logic
+            if self.use_named_vectors:
+                vector = {self.dense_vector_name: document.embedding}
+            else:
+                vector = document.embedding  # type: ignore
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
+            if self.search_type == SearchType.vector:
+                # For vector search, maintain backward compatibility with unnamed vectors
+                document.embed(embedder=self.embedder)
+                vector = document.embedding  # type: ignore
+            else:
+                # For other search types, use named vectors
+                vector = {}
+                if self.search_type in [SearchType.hybrid]:
+                    document.embed(embedder=self.embedder)
+                    vector[self.dense_vector_name] = document.embedding
+
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
 
             # Create payload with document properties
             payload = {
@@ -349,11 +378,19 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
 
-            vector = {}
-
-            if self.search_type in [SearchType.vector, SearchType.hybrid]:
+            if self.search_type == SearchType.vector:
+                # For vector search, maintain backward compatibility with unnamed vectors
                 document.embed(embedder=self.embedder)
-                vector[self.dense_vector_name] = document.embedding
+                vector = document.embedding
+            else:
+                # For other search types, use named vectors
+                vector = {}
+                if self.search_type in [SearchType.hybrid]:
+                    document.embed(embedder=self.embedder)
+                    vector[self.dense_vector_name] = document.embedding
+
+                if self.search_type in [SearchType.keyword, SearchType.hybrid]:
+                    vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
 
             if self.search_type in [SearchType.keyword, SearchType.hybrid]:
                 vector[self.sparse_vector_name] = next(self.sparse_encoder.embed([document.content])).as_object()
@@ -441,42 +478,6 @@ class Qdrant(VectorDb):
 
         return self._build_search_results(results, query)
 
-    def _run_vector_search_sync(
-        self,
-        query: str,
-        limit: int,
-        filters: Optional[Dict[str, Any]],
-    ) -> List[models.ScoredPoint]:
-        dense_embedding = self.embedder.get_embedding(query)
-        call = self.client.query_points(
-            collection_name=self.collection,
-            query=dense_embedding,
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-            query_filter=filters,
-            using=self.dense_vector_name,
-        )
-        return call.points
-
-    def _run_keyword_search_sync(
-        self,
-        query: str,
-        limit: int,
-        filters: Optional[Dict[str, Any]],
-    ) -> List[models.ScoredPoint]:
-        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
-        call = self.client.query_points(
-            collection_name=self.collection,
-            query=models.SparseVector(**sparse_embedding),
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-            using=self.sparse_vector_name,
-            query_filter=filters,
-        )
-        return call.points
-
     def _run_hybrid_search_sync(
         self,
         query: str,
@@ -503,6 +504,55 @@ class Qdrant(VectorDb):
         )
         return call.points
 
+    def _run_vector_search_sync(
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[models.ScoredPoint]:
+        dense_embedding = self.embedder.get_embedding(query)
+
+        # TODO(v2.0.0): Remove this conditional and always use named vectors
+        if self.use_named_vectors:
+            call = self.client.query_points(
+                collection_name=self.collection,
+                query=dense_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                query_filter=filters,
+                using=self.dense_vector_name,
+            )
+        else:
+            # Backward compatibility mode - use unnamed vector
+            call = self.client.query_points(
+                collection_name=self.collection,
+                query=dense_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                query_filter=filters,
+            )
+        return call.points
+
+    def _run_keyword_search_sync(
+        self,
+        query: str,
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[models.ScoredPoint]:
+        sparse_embedding = next(self.sparse_encoder.embed([query])).as_object()
+        call = self.client.query_points(
+            collection_name=self.collection,
+            query=models.SparseVector(**sparse_embedding),
+            with_vectors=True,
+            with_payload=True,
+            limit=limit,
+            using=self.sparse_vector_name,
+            query_filter=filters,
+        )
+        return call.points
+
     async def _run_vector_search_async(
         self,
         query: str,
@@ -510,15 +560,28 @@ class Qdrant(VectorDb):
         filters: Optional[Dict[str, Any]],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
-        call = await self.async_client.query_points(
-            collection_name=self.collection,
-            query=dense_embedding,
-            with_vectors=True,
-            with_payload=True,
-            limit=limit,
-            query_filter=filters,
-            using=self.dense_vector_name,
-        )
+
+        # TODO(v2.0.0): Remove this conditional and always use named vectors
+        if self.use_named_vectors:
+            call = await self.async_client.query_points(
+                collection_name=self.collection,
+                query=dense_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                query_filter=filters,
+                using=self.dense_vector_name,
+            )
+        else:
+            # Backward compatibility mode - use unnamed vector
+            call = await self.async_client.query_points(
+                collection_name=self.collection,
+                query=dense_embedding,
+                with_vectors=True,
+                with_payload=True,
+                limit=limit,
+                query_filter=filters,
+            )
         return call.points
 
     async def _run_keyword_search_async(

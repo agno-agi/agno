@@ -26,6 +26,7 @@ class RedisStorage(Storage):
         password: Optional[str] = None,
         mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
         ssl: Optional[bool] = False,
+        expire: Optional[int] = None,
     ):
         """
         Initialize Redis storage for sessions.
@@ -38,9 +39,11 @@ class RedisStorage(Storage):
             password (Optional[str]): Redis password if authentication is required
             mode (Optional[Literal["agent", "team", "workflow"]]): Storage mode
             ssl (Optional[bool]): Whether to use SSL for Redis connection
+            expire (Optional[int]): TTL (time to live) in seconds for Redis keys. None means no expiration.
         """
         super().__init__(mode)
         self.prefix = prefix
+        self.expire = expire
         self.redis_client = Redis(
             host=host,
             port=port,
@@ -267,7 +270,10 @@ class RedisStorage(Storage):
                 data["created_at"] = data["updated_at"]
 
             key = self._get_key(session.session_id)
-            self.redis_client.set(key, self.serialize(data))
+            if self.expire is not None:
+                self.redis_client.set(key, self.serialize(data), ex=self.expire)
+            else:
+                self.redis_client.set(key, self.serialize(data))
             return session
         except Exception as e:
             logger.error(f"Error upserting session: {e}")

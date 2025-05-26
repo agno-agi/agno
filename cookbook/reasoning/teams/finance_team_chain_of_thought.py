@@ -60,9 +60,9 @@ async def run_team(task: str):
 
 
 if __name__ == "__main__":
-
-    asyncio.run(run_team(
-        dedent("""\
+    asyncio.run(
+        run_team(
+            dedent("""\
     Analyze the impact of recent US tariffs on market performance across these key sectors:
     - Steel & Aluminum: (X, NUE, AA)
     - Technology Hardware: (AAPL, DELL, HPQ)
@@ -75,4 +75,5 @@ if __name__ == "__main__":
     3. Analyze companies' strategic responses (reshoring, price adjustments, supplier diversification)
     4. Assess analyst outlook changes directly attributed to tariff policies
     """)
-    ))
+        )
+    )
