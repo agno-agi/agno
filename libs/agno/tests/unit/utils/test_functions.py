@@ -29,6 +29,7 @@ def sample_functions() -> Dict[str, Function]:
                 "type": "object",
                 "properties": {
                     "param1": {"type": "string"},
+                    "param2": {"type": "boolean"},
                 },
             },
             sanitize_arguments=False,
@@ -133,6 +134,26 @@ def test_get_function_call_no_sanitization(sample_functions):
     arguments = json.dumps({
         "param1": "None",
         "param2": "True",
+    })
+    
+    result = get_function_call(
+        name="no_sanitize_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    
+    assert result is not None
+    assert result.arguments == {
+        "param1": None,
+        "param2": True,
+    }
+
+
+def test_get_function_call_no_sanitization_2(sample_functions):
+    """Test function call without argument sanitization."""
+    arguments = json.dumps({
+        "param1": "none",
+        "param2": "true",
     })
     
     result = get_function_call(
