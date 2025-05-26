@@ -147,7 +147,7 @@ def get_async_playground_router(
             return agent_list
 
         for agent in agents:
-            agent_tools = agent.get_tools(session_id=str(uuid4()))
+            agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
             formatted_tools = format_tools(agent_tools)
 
             name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
