@@ -7153,26 +7153,34 @@ class Team:
             "memory": (
                 {
                     "name": self.memory.__class__.__name__,
-                    "model": {
-                        "name": self.memory.model.__class__.__name__,
-                        "model": self.memory.model.id,
-                        "provider": self.memory.model.provider,
-                    }
-                    if self.memory.model
-                    else {
-                        "name": self.model.__class__.__name__,
-                        "model": self.model.id,
-                        "provider": self.model.provider,
-                    },
-                    "db": {
-                        "name": self.memory.db.__class__.__name__,
-                        "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
-                        "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
-                    }
-                    if self.memory.db
-                    else None,
+                    "model": (
+                        {
+                            "name": self.memory.model.__class__.__name__,
+                            "model": self.memory.model.id,
+                            "provider": self.memory.model.provider,
+                        }
+                        if hasattr(self.memory, "model") and self.memory.model is not None
+                        else (
+                            {
+                                "name": self.model.__class__.__name__,
+                                "model": self.model.id,
+                                "provider": self.model.provider,
+                            }
+                            if self.model is not None
+                            else None
+                        )
+                    ),
+                    "db": (
+                        {
+                            "name": self.memory.db.__class__.__name__,
+                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
+                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
+                        }
+                        if hasattr(self.memory, "db") and self.memory.db is not None
+                        else None
+                    ),
                 }
-                if self.memory and self.memory.db
+                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
                 else None
             ),
         }

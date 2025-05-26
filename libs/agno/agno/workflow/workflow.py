@@ -154,7 +154,7 @@ class Workflow:
         self.initialize_memory()
 
         # Update workflow_id for all agents before registration
-        for value in self.__class__.__dict__.items():
+        for field_name, value in self.__class__.__dict__.items():
             if isinstance(value, Agent):
                 value.initialize_agent()
                 value.workflow_id = self.workflow_id
@@ -709,21 +709,6 @@ class Workflow:
             "storage": {
                 "name": self.storage.__class__.__name__ if self.storage is not None else None,
             },
-            "memory": (
-                {
-                    "name": self.memory.__class__.__name__,
-                    "model": {
-                        "name": self.memory.model.__class__.__name__,
-                        "model": self.memory.model.id,
-                        "provider": self.memory.model.provider,
-                    }
-                    if self.memory.model
-                    else None,
-                    "db": self.memory.db.__dict__() if self.memory.db else None,
-                }
-                if self.memory and self.memory.db
-                else None
-            ),
         }
 
         agents = []
