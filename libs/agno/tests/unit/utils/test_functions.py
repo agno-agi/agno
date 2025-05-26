@@ -151,7 +151,7 @@ def test_get_function_call_no_sanitization(sample_functions):
 
 def test_get_function_call_no_sanitization_2(sample_functions):
     """Test function call without argument sanitization."""
-    arguments = "{'param1': 'None', 'param2': 'True'}"
+    arguments = '{"param1": "None", "param2": "True"}'
     
     result = get_function_call(
         name="no_sanitize_function",
@@ -163,6 +163,20 @@ def test_get_function_call_no_sanitization_2(sample_functions):
     assert result.arguments == {
         "param1": None,
         "param2": True,
+    }
+    
+    arguments = '{"param1": "none", "param2": "false"}'
+    
+    result = get_function_call(
+        name="no_sanitize_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    
+    assert result is not None
+    assert result.arguments == {
+        "param1": None,
+        "param2": False,
     }
 
 
