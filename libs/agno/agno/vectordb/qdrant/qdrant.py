@@ -135,7 +135,7 @@ class Qdrant(VectorDb):
 
             except ImportError as e:
                 raise ImportError(
-                    "To use keyword/hybrid search, install the `fastembed` extra with `pip install 'qdrant-client[fastembed]'`."
+                    "To use keyword/hybrid search, install the `fastembed` extra with `pip install fastembed`."
                 ) from e
 
     @property
@@ -321,12 +321,12 @@ class Qdrant(VectorDb):
             if self.use_named_vectors:
                 vector = {self.dense_vector_name: document.embedding}
             else:
-                vector = document.embedding
+                vector = document.embedding  # type: ignore
 
             if self.search_type == SearchType.vector:
                 # For vector search, maintain backward compatibility with unnamed vectors
                 document.embed(embedder=self.embedder)
-                vector = document.embedding
+                vector = document.embedding  # type: ignore
             else:
                 # For other search types, use named vectors
                 vector = {}
