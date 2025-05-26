@@ -7346,7 +7346,13 @@ class Agent:
                         "model": self.model.id,
                         "provider": self.model.provider,
                     },
-                    "db": self.memory.db.__dict__() if self.memory.db else None,
+                    "db": {
+                        "name": self.memory.db.__class__.__name__,
+                        "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
+                        "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
+                    }
+                    if self.memory.db
+                    else None,
                 }
                 if self.memory and self.memory.db
                 else None
