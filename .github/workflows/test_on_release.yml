@@ -638,7 +638,7 @@ jobs:
         run: |
           ./scripts/dev_setup.sh
       - name: Run embedder tests
-        working-directory: libs/agno
+        working-directory: .
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/embedder
