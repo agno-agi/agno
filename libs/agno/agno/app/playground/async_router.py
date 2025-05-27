@@ -7,7 +7,6 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.params import Body
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
 
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.operator import (
