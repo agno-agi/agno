@@ -1,7 +1,8 @@
 import tempfile
 from pathlib import Path
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from agno.tools.python import PythonTools
 
@@ -46,7 +47,7 @@ def test_save_to_file_and_run_no_overwrite(python_tools, temp_dir):
     # Test file overwrite prevention
     file_path = temp_dir / "test.py"
     file_path.write_text("original")
-    
+
     result = python_tools.save_to_file_and_run("test.py", "new code", overwrite=False)
     assert "already exists" in result
     assert file_path.read_text() == "original"
@@ -56,7 +57,7 @@ def test_run_python_file_return_variable(python_tools, temp_dir):
     # Test running existing file and returning variable
     file_path = temp_dir / "test.py"
     file_path.write_text("x = 42")
-    
+
     result = python_tools.run_python_file_return_variable("test.py", "x")
     assert result == "42"
 
@@ -65,7 +66,7 @@ def test_run_python_file_return_variable_not_found(python_tools, temp_dir):
     # Test running file with non-existent variable
     file_path = temp_dir / "test.py"
     file_path.write_text("x = 42")
-    
+
     result = python_tools.run_python_file_return_variable("test.py", "y")
     assert "Variable y not found" in result
 
@@ -75,7 +76,7 @@ def test_read_file(python_tools, temp_dir):
     file_path = temp_dir / "test.txt"
     content = "Hello, World!"
     file_path.write_text(content)
-    
+
     result = python_tools.read_file("test.txt")
     assert result == content
 
@@ -90,7 +91,7 @@ def test_list_files(python_tools, temp_dir):
     # Test listing files in directory
     (temp_dir / "file1.txt").touch()
     (temp_dir / "file2.txt").touch()
-    
+
     result = python_tools.list_files()
     assert "file1.txt" in result
     assert "file2.txt" in result
@@ -101,6 +102,7 @@ def test_run_python_code(python_tools):
     code = "x = 42"
     result = python_tools.run_python_code(code, "x")
     assert result == "42"
+
 
 def test_run_python_code_advanced(python_tools):
     # Test running Python code directly
@@ -117,6 +119,7 @@ result = fibonacci(10, print_steps=True)
     """
     result = python_tools.run_python_code(code, "result")
     assert result == "55"
+
 
 def test_run_python_code_error(python_tools):
     # Test running invalid Python code
@@ -155,4 +158,3 @@ def test_uv_pip_install_package_error(mock_check_call, python_tools):
     mock_check_call.side_effect = Exception("Installation failed")
     result = python_tools.uv_pip_install_package("requests")
     assert "Error installing package requests" in result
-

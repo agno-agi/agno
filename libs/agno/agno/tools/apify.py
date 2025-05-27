@@ -156,7 +156,7 @@ Returns:
             actor_function.__doc__ = docstring
 
             # Register the function with the toolkit
-            self.register(actor_function, sanitize_arguments=False)
+            self.register(actor_function)
             # Fix params schema
             self.functions[tool_name].parameters = props_to_json_schema(properties, required)
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")

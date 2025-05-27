@@ -104,8 +104,12 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             )
 
     # If you didn't capture any total tokens
-    if (assistant_message.metrics.input_tokens or assistant_message.metrics.output_tokens) and not assistant_message.metrics.total_tokens:
-        assistant_message.metrics.total_tokens = assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+    if (
+        assistant_message.metrics.input_tokens or assistant_message.metrics.output_tokens
+    ) and not assistant_message.metrics.total_tokens:
+        assistant_message.metrics.total_tokens = (
+            assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+        )
 
     # Additional metrics (e.g., from Groq, Ollama)
     if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
