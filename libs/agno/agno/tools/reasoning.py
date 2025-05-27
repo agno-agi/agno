@@ -30,6 +30,8 @@ class ReasoningTools(Toolkit):
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
             self.instructions += "\n</reasoning_instructions>\n"
+        else:
+            self.instructions = instructions
 
         tools: List[Any] = []
         if think:
