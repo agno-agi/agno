@@ -18,6 +18,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Tell me about https://github.com/ysolanky/football_visualization. Use deepwiki to find the information.",
+    "Tell me about https://github.com/agno-agi/agno",
     stream=True,
 )
