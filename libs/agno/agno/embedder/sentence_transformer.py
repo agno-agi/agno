@@ -29,7 +29,7 @@ class SentenceTransformerEmbedder(Embedder):
         model = SentenceTransformer(model_name_or_path=self.id)
         embedding = model.encode(text)
         try:
-            return embedding  # type: ignore
+            return embedding.tolist() # type: ignore
         except Exception as e:
             logger.warning(e)
             return []
