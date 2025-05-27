@@ -61,7 +61,7 @@ def create_agent(agent: AgentCreate) -> None:
                 ApiRoutes.AGENT_CREATE,
                 json=agent.model_dump(exclude_none=True),
             )
-            
+
             log_debug(f"Created Agent on Platform. ID: {agent.agent_id}")
         except Exception as e:
             log_debug(f"Could not create Agent: {e}")

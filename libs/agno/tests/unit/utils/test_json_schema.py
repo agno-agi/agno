@@ -12,14 +12,14 @@ from agno.utils.json_schema import (
 
 
 # Test models and dataclasses
-class TestPydanticModel(BaseModel):
+class MockPydanticModel(BaseModel):
     name: str
     age: int
     is_active: bool = True
 
 
 @dataclass
-class TestDataclass:
+class MockDataclass:
     name: str
     age: int
     is_active: bool = True
@@ -115,7 +115,7 @@ def test_get_json_schema_for_arg_collections():
 def test_get_json_schema_for_arg_union():
     # Test Optional type (Union with None)
     optional_schema = get_json_schema_for_arg(Optional[str])
-    assert optional_schema == {'anyOf': [{'type': 'string'}, {'type': 'null'}]}
+    assert optional_schema == {"anyOf": [{"type": "string"}, {"type": "null"}]}
 
     # Test Union type
     union_schema = get_json_schema_for_arg(Union[str, int])
@@ -146,7 +146,7 @@ def test_get_json_schema_basic():
 
 
 def test_get_json_schema_with_pydantic_model():
-    type_hints = {"user": TestPydanticModel}
+    type_hints = {"user": MockPydanticModel}
     schema = get_json_schema(type_hints)
     assert schema["type"] == "object"
     assert "properties" in schema
@@ -161,7 +161,7 @@ def test_get_json_schema_with_pydantic_model():
 
 
 def test_get_json_schema_with_dataclass():
-    type_hints = {"user": TestDataclass}
+    type_hints = {"user": MockDataclass}
     schema = get_json_schema(type_hints)
     assert schema["type"] == "object"
     assert "properties" in schema
@@ -226,7 +226,7 @@ def test_get_json_schema_with_nested_pydantic_models():
 
     # Verify optional phone field
     assert "phone" in contact_info["properties"]
-    assert contact_info["properties"]["phone"]["default"] == None
+    assert contact_info["required"] == ["email", "address"]
 
     # Verify preferences dictionary
     assert "preferences" in user_profile["properties"]

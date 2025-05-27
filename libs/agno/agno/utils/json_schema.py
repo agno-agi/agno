@@ -143,7 +143,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     elif issubclass(type_hint, BaseModel):
         # Get the schema and inline it
         schema = type_hint.model_json_schema()
-        return inline_pydantic_schema(schema)
+        return inline_pydantic_schema(schema)  # type: ignore
     elif hasattr(type_hint, "__dataclass_fields__"):
         # Convert dataclass to JSON schema
         properties = {}
@@ -152,9 +152,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         for field_name, field in type_hint.__dataclass_fields__.items():
             field_type = field.type
             field_schema = get_json_schema_for_arg(field_type)
-            
-            if "anyOf" in field_schema and any(schema["type"] == "null" for schema in field_schema["anyOf"]):
-                field_schema["type"] = next(schema["type"] for schema in field_schema["anyOf"] if schema["type"] != "null")
+
+            if (
+                field_schema
+                and "anyOf" in field_schema
+                and any(schema["type"] == "null" for schema in field_schema["anyOf"])
+            ):
+                field_schema["type"] = next(
+                    schema["type"] for schema in field_schema["anyOf"] if schema["type"] != "null"
+                )
                 field_schema.pop("anyOf")
             else:
                 required.append(field_name)
@@ -162,11 +168,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             if field_schema:
                 properties[field_name] = field_schema
 
-        arg_json_schema = {
-            "type": "object",
-            "properties": properties,
-            "additionalProperties": False
-        }
+        arg_json_schema = {"type": "object", "properties": properties, "additionalProperties": False}
 
         if required:
             arg_json_schema["required"] = required
