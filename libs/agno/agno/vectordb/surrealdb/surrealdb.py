@@ -50,14 +50,10 @@ class SurrealDb(VectorDb):
     """
 
     UPSERT_QUERY: Final[str] = """
-        INSERT INTO {collection}
+        UPSERT {thing}
         SET content = $content,
             embedding = $embedding,
             meta_data = $meta_data
-        ON DUPLICATE KEY UPDATE
-            content = $content,
-            embedding = $embedding,
-            meta_data = $meta_data;
     """
 
     SEARCH_QUERY: Final[str] = """
