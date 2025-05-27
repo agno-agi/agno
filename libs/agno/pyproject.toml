@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.3"
+version = "1.5.5"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -83,6 +83,7 @@ cerebras = ["cerebras-cloud-sdk"]
 apify = ["apify-client"]
 cartesia = ["cartesia"]
 exa = ["exa_py"]
+mem0 = ["mem0ai"]
 yfinance = ["yfinance"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
@@ -129,6 +130,12 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
+markdown = ["unstructured", "markdown", "aiofiles"]
+
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -181,7 +188,8 @@ tools = [
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
   "agno[zep]",
-  "agno[google_bigquery]"
+  "agno[mem0]",
+  "agno[google_bigquery]",
 ]
 
 # All storage
@@ -214,7 +222,13 @@ knowledge = [
   "agno[pdf]",
   "agno[docx]",
   "agno[text]",
-  "agno[csv]"
+  "agno[csv]",
+  "agno[markdown]"
+]
+
+# All embedders
+embedders = [
+  "agno[huggingface]"
 ]
 
 # All libraries for testing
@@ -225,6 +239,7 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
     "twine",
@@ -302,6 +317,7 @@ module = [
   "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "fastembed.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",

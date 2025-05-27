@@ -165,6 +165,63 @@ class MongoDbStorage(Storage):
             logger.error(f"Error getting sessions: {e}")
             return []
 
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        try:
+            # Build the query
+            query = {}
+            if user_id is not None:
+                query["user_id"] = user_id
+            if entity_id is not None:
+                if self.mode == "agent":
+                    query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
+                elif self.mode == "workflow":
+                    query["workflow_id"] = entity_id
+
+            # Execute query with sort and limit
+            cursor = self.collection.find(query)
+            cursor = cursor.sort("created_at", -1)  # Sort by created_at descending
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            sessions: List[Session] = []
+            for doc in cursor:
+                # Remove MongoDB _id before converting to Session object
+                doc.pop("_id", None)
+                session: Optional[Session] = None
+
+                if self.mode == "agent":
+                    session = AgentSession.from_dict(doc)
+                elif self.mode == "team":
+                    session = TeamSession.from_dict(doc)
+                elif self.mode == "workflow":
+                    session = WorkflowSession.from_dict(doc)
+
+                if session is not None:
+                    sessions.append(session)
+
+            return sessions
+
+        except PyMongoError as e:
+            logger.error(f"Error getting last {limit} sessions: {e}")
+            return []
+
     def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
         """Upsert a session
         Args:

@@ -1,5 +1,5 @@
 import json
-from typing import List, Optional, Union, cast
+from typing import Any, List, Optional, Union, cast
 
 from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
@@ -10,16 +10,18 @@ from agno.utils.log import log_debug
 
 class WebsiteTools(Toolkit):
     def __init__(self, knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = None, **kwargs):
-        super().__init__(name="website_tools", **kwargs)
         self.knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = knowledge_base
 
+        tools: List[Any] = []
         if self.knowledge_base is not None:
             if isinstance(self.knowledge_base, WebsiteKnowledgeBase):
-                self.register(self.add_website_to_knowledge_base)
+                tools.append(self.add_website_to_knowledge_base)
             elif isinstance(self.knowledge_base, CombinedKnowledgeBase):
-                self.register(self.add_website_to_combined_knowledge_base)
+                tools.append(self.add_website_to_combined_knowledge_base)
         else:
-            self.register(self.read_url)
+            tools.append(self.read_url)
+
+        super().__init__(name="website_tools", tools=tools, **kwargs)
 
     def add_website_to_knowledge_base(self, url: str) -> str:
         """This function adds a websites content to the knowledge base.
