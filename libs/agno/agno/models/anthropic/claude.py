@@ -472,7 +472,7 @@ class Claude(Model):
         return model_response
 
     def parse_provider_response_delta(
-        self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
+        self, response: Union[ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent]
     ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
@@ -542,12 +542,12 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
-            if response.message.usage is not None:
-                model_response.response_usage = {
-                    "cache_write_tokens": response.usage.cache_creation_input_tokens,
-                    "cached_tokens": response.usage.cache_read_input_tokens,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                }
+        if hasattr(response, "usage") and response.usage is not None:
+            model_response.response_usage = {
+                "cache_write_tokens": response.usage.cache_creation_input_tokens or 0,
+                "cached_tokens": response.usage.cache_read_input_tokens or 0,
+                "input_tokens": response.usage.input_tokens or 0,
+                "output_tokens": response.usage.output_tokens or 0,
+            }
 
         return model_response

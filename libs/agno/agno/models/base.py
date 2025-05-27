@@ -93,9 +93,12 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
 
     # If you didn't capture any total tokens
-    if (
-        assistant_message.metrics.input_tokens or assistant_message.metrics.output_tokens
-    ) and not assistant_message.metrics.total_tokens:
+    if not assistant_message.metrics.total_tokens:
+        if assistant_message.metrics.input_tokens is None:
+            assistant_message.metrics.input_tokens = 0
+        if assistant_message.metrics.output_tokens is None:
+            assistant_message.metrics.output_tokens = 0
+        
         assistant_message.metrics.total_tokens = (
             assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
         )

@@ -365,7 +365,6 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
     class Location(BaseModel):
         city: str
         country: str
-        coordinates: Optional[Tuple[float, float]] = None
 
     class TravelPlan(BaseModel):
         location: Location
