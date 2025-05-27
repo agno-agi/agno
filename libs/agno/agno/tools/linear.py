@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 import requests
 
@@ -19,7 +19,6 @@ class LinearTools(Toolkit):
         get_high_priority_issues: bool = True,
         **kwargs,
     ):
-        super().__init__(name="linear tools", **kwargs)
         self.api_token = getenv("LINEAR_API_KEY")
 
         if not self.api_token:
@@ -29,20 +28,23 @@ class LinearTools(Toolkit):
         self.endpoint = "https://api.linear.app/graphql"
         self.headers = {"Authorization": f"{self.api_token}"}
 
+        tools: List[Any] = []
         if get_user_details:
-            self.register(self.get_user_details)
+            tools.append(self.get_user_details)
         if get_issue_details:
-            self.register(self.get_issue_details)
+            tools.append(self.get_issue_details)
         if create_issue:
-            self.register(self.create_issue)
+            tools.append(self.create_issue)
         if update_issue:
-            self.register(self.update_issue)
+            tools.append(self.update_issue)
         if get_user_assigned_issues:
-            self.register(self.get_user_assigned_issues)
+            tools.append(self.get_user_assigned_issues)
         if get_workflow_issues:
-            self.register(self.get_workflow_issues)
+            tools.append(self.get_workflow_issues)
         if get_high_priority_issues:
-            self.register(self.get_high_priority_issues)
+            tools.append(self.get_high_priority_issues)
+
+        super().__init__(name="linear tools", tools=tools, **kwargs)
 
     def _execute_query(self, query, variables=None):
         """Helper method to execute GraphQL queries with optional variables."""

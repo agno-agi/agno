@@ -7,7 +7,6 @@ agent = Agent(
         default_headers={
             "anthropic-beta": "code-execution-2025-05-22"
         }
-
     ),
     tools=[
         {
@@ -18,4 +17,7 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Calculate the mean and standard deviation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]", stream=True)
+agent.print_response(
+    "Calculate the mean and standard deviation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]",
+    stream=True,
+)

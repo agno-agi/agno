@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, 
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
+from pydantic._internal._validate_call import ValidateCallWrapper
 
 from agno.exceptions import AgentRunException
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
@@ -40,6 +41,23 @@ class UserInputField:
     description: Optional[str] = None
     value: Optional[Any] = None
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "field_type": str(self.field_type.__name__),
+            "description": self.description,
+            "value": self.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
+        return cls(
+            name=data["name"],
+            field_type=eval(data["field_type"]),  # Convert string type name to actual type
+            description=data["description"],
+            value=data["value"],
+        )
+
 
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
@@ -65,19 +83,17 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
-    # If True, the arguments are sanitized before being passed to the function.
-    sanitize_arguments: bool = True
+    # If True, the arguments are sanitized before being passed to the function. (Deprecated)
+    sanitize_arguments: bool = False
     # If True, the function call will show the result along with sending it to the model.
     show_result: bool = False
     # If True, the agent will stop after the function call.
     stop_after_tool_call: bool = False
     # Hook that runs before the function is executed.
     # If defined, can accept the FunctionCall instance as a parameter.
-    # Deprecated: Use tool_hooks instead.
     pre_hook: Optional[Callable] = None
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
-    # Deprecated: Use tool_hooks instead.
     post_hook: Optional[Callable] = None
 
     # A list of hooks to run around tool calls.
@@ -115,7 +131,7 @@ class Function(BaseModel):
 
     @classmethod
     def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
-        from inspect import getdoc, isasyncgenfunction, signature
+        from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -175,11 +191,8 @@ class Function(BaseModel):
         except Exception as e:
             log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
 
-        # Don't wrap async generator with validate_call
-        if isasyncgenfunction(c):
-            entrypoint = c
-        else:
-            entrypoint = validate_call(c, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        entrypoint = cls._wrap_callable(c)
+
         return cls(
             name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),
@@ -189,7 +202,7 @@ class Function(BaseModel):
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
-        from inspect import getdoc, isasyncgenfunction, signature
+        from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -302,11 +315,24 @@ class Function(BaseModel):
             self.parameters = parameters
 
         try:
-            # Don't wrap async generator with validate_call
-            if not isasyncgenfunction(self.entrypoint):
-                self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
             log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+
+    @staticmethod
+    def _wrap_callable(func: Callable) -> Callable:
+        """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
+        from inspect import isasyncgenfunction
+
+        # Don't wrap async generator with validate_call
+        if isasyncgenfunction(func):
+            return func
+        # Don't wrap ValidateCallWrapper with validate_call
+        elif isinstance(func, ValidateCallWrapper):
+            return func
+        # Wrap the callable with validate_call
+        else:
+            return validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
@@ -379,6 +405,8 @@ class Function(BaseModel):
 
 class FunctionExecutionResult(BaseModel):
     status: Literal["success", "failure"]
+    result: Optional[Any] = None
+    error: Optional[str] = None
 
 
 class FunctionCall(BaseModel):
@@ -539,7 +567,7 @@ class FunctionCall(BaseModel):
         from inspect import isgenerator
 
         if self.function.entrypoint is None:
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
 
         log_debug(f"Running: {self.get_call_str()}")
 
@@ -557,7 +585,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                return FunctionExecutionResult(status="success")
+                return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
         try:
@@ -590,12 +618,12 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error=str(e))
 
         # Execute post-hook if it exists
         self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success")
+        return FunctionExecutionResult(status="success", result=self.result)
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -710,7 +738,6 @@ class FunctionCall(BaseModel):
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
         else:
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
-
         return chain
 
     async def aexecute(self) -> FunctionExecutionResult:
@@ -718,7 +745,7 @@ class FunctionCall(BaseModel):
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
 
         log_debug(f"Running: {self.get_call_str()}")
 
@@ -740,7 +767,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                return FunctionExecutionResult(status="success")
+                return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
         try:
@@ -773,7 +800,7 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error=str(e))
 
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):
@@ -781,4 +808,4 @@ class FunctionCall(BaseModel):
         else:
             self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success")
+        return FunctionExecutionResult(status="success", result=self.result)

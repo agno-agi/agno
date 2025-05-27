@@ -80,7 +80,7 @@ async def main():
                 )
 
                 if message == "n":
-                    break
+                    tool.confirmed = False
                 else:
                     # We update the tools in place
                     tool.confirmed = True

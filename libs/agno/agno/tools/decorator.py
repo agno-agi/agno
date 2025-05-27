@@ -48,7 +48,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         name: Optional[str] - Override for the function name
         description: Optional[str] - Override for the function description
         strict: Optional[bool] - Flag for strict parameter checking
-        sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function
+        sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function (Deprecated)
         instructions: Optional[str] - Instructions for using the tool
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
@@ -57,8 +57,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
-        pre_hook: Optional[Callable] - Hook that runs before the function is executed (deprecated, use tool_execution_hook instead).
-        post_hook: Optional[Callable] - Hook that runs after the function is executed (deprecated, use tool_execution_hook instead).
+        pre_hook: Optional[Callable] - Hook that runs before the function is executed.
+        post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files

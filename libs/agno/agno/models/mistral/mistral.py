@@ -26,6 +26,7 @@ try:
     from mistralai.models.chatcompletionresponse import ChatCompletionResponse
     from mistralai.models.deltamessage import DeltaMessage
     from mistralai.types.basemodel import Unset
+    from mistralai.extra import response_format_from_pydantic_model
 
     MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
@@ -176,10 +177,10 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                response = self.get_client().chat.parse(
+                response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=response_format,  # type: ignore
+                    response_format=response_format_from_pydantic_model(response_format),
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
@@ -243,7 +244,7 @@ class MistralChat(Model):
                 response = await self.get_client().chat.parse_async(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=response_format,  # type: ignore
+                    response_format=response_format_from_pydantic_model(response_format),
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:

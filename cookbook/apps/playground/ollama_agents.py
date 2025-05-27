@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.playground import Playground, serve_playground_app
+from agno.playground import Playground
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
@@ -88,7 +88,14 @@ youtube_agent = Agent(
     markdown=True,
 )
 
-app = Playground(agents=[web_agent, finance_agent, youtube_agent]).get_app()
+playground = Playground(
+    agents=[web_agent, finance_agent, youtube_agent],
+    name="Ollama Agents",
+    description="A playground for ollama agents",
+    app_id="ollama-agents",
+)
+app = playground.get_app(use_async=False)
+
 
 if __name__ == "__main__":
-    serve_playground_app("ollama_agents:app", reload=True)
+    playground.serve(app="ollama_agents:app", reload=True)

@@ -1,11 +1,12 @@
 """🤝 Human-in-the-Loop: Allowing users to provide input externally"""
 
 import asyncio
-from typing import Any, Dict
+from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
+from agno.tools.function import UserInputField
 from agno.utils import pprint
 
 
@@ -34,7 +35,7 @@ asyncio.run(
 )
 if agent.is_paused:  # Or agent.run_response.is_paused
     for tool in agent.run_response.tools_requiring_user_input:
-        input_schema: Dict[str, Any] = tool.user_input_schema
+        input_schema: List[UserInputField] = tool.user_input_schema
 
         for field in input_schema:
             # Get user input for each field in the schema
