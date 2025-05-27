@@ -68,6 +68,8 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
         if "cached_tokens" in response_usage:
             assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
+        if "cache_write_tokens" in response_usage:
+            assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
