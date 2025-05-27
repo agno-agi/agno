@@ -1,6 +1,8 @@
-"""🏠 MCP Brave Agent - Search for Brave listings!
+"""MCP Brave Agent - Search for Brave 
 
-This example shows how to create an agent that uses Anthropic to search for Brave listings.
+This example shows how to create an agent that uses Anthropic to search for information using the Brave MCP server.
+
+You can get the Brave API key from https://brave.com/search/api/
 
 Run: `pip install anthropic mcp agno` to install the dependencies
 """
