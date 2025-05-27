@@ -21,7 +21,6 @@ from agno.vectordb.distance import Distance
 class SurrealDb(VectorDb):
     """SurrealDB Vector Database implementation supporting both sync and async operations"""
 
-    # TODO: Improve the vector index creation
     # SQL Query Constants
     CREATE_TABLE_QUERY: Final[str] = """
         DEFINE TABLE IF NOT EXISTS {collection} SCHEMAFUL;
@@ -62,7 +61,7 @@ class SurrealDb(VectorDb):
             meta_data,
             vector::distance::knn() as distance
         FROM {collection}
-        WHERE embedding <|{limit},{ef}|> $query_embedding
+        WHERE embedding <|{limit},{distance}|> $query_embedding
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit};
@@ -229,7 +228,7 @@ class SurrealDb(VectorDb):
             filter_condition = self._build_filter_condition(filters)
             log_debug(f"Filter condition: {filter_condition}")
             query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
+                collection=self.collection, limit=limit, filter_condition=filter_condition, distance=self.distance
             )
             response = client.query(
                 query,
@@ -335,7 +334,7 @@ class SurrealDb(VectorDb):
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-                client.query(self.UPSERT_QUERY.format(thing=doc.id if doc.id else self.collection), data)
+                await client.query(self.UPSERT_QUERY.format(thing=doc.id if doc.id else self.collection), data)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -349,7 +348,7 @@ class SurrealDb(VectorDb):
 
             filter_condition = self._build_filter_condition(filters)
             query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, filter_condition=filter_condition, ef=self.search_ef
+                collection=self.collection, limit=limit, filter_condition=filter_condition, distance=self.distance
             )
             if self.async_client is None:
                 log_error("Async client is not initialized")
