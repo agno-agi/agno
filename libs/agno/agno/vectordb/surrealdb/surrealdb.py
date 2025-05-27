@@ -339,7 +339,7 @@ class SurrealDb(VectorDb):
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-                await client.query(self.UPSERT_QUERY.format(collection=self.collection), data)
+                client.query(self.UPSERT_QUERY.format(thing=doc.id if doc.id else self.collection), data)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
