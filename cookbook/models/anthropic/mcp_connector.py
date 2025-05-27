@@ -1,7 +1,8 @@
+from os import getenv
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.utils.models.claude import MCPServerConfiguration, MCPToolConfiguration
-from os import getenv
+from agno.utils.models.claude import MCPServerConfiguration
 
 agent = Agent(
     model=Claude(
@@ -10,9 +11,8 @@ agent = Agent(
         mcp_servers=[
             MCPServerConfiguration(
                 type="url",
-                name="brave-search",
-                url="https://api.brave.com/mcp",
-                authorization_token=getenv("BRAVE_API_KEY"),
+                name="deepwiki",
+                url="https://mcp.deepwiki.com/sse",
             )
         ],
     ),
@@ -20,30 +20,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Tell me which tools you have access to",
+    "Tell me about https://github.com/ysolanky/football_visualization. Use deepwiki to find the information.",
     stream=True,
 )
-
-
-# agent = Agent(
-#     model=Claude(
-#         id="claude-sonnet-4-20250514",
-#         default_headers={"anthropic-beta": "mcp-client-2025-04-04"},
-#         mcp_servers=[
-#             {
-#                 "type": "mcp-server-brave-search",
-#                 "name": "brave-search",
-#                 "url": "https://api.brave.com/mcp",
-#                 "env": {
-#                     "BRAVE_API_KEY": getenv("BRAVE_API_KEY"),
-#                 },
-#             }
-#         ],
-#     ),
-#     markdown=True,
-# )
-
-# agent.print_response(
-#     "What is the weather in Tokyo?",
-#     stream=True,
-# )

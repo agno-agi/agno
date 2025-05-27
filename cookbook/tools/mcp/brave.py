@@ -32,8 +32,4 @@ async def run_agent(message: str) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(
-        run_agent(
-            "What is the weather in Tokyo?"
-        )
-    )
+    asyncio.run(run_agent("What is the weather in Tokyo?"))

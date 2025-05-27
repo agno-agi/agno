@@ -14,21 +14,43 @@ from agno.utils.log import log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
 try:
-    from anthropic import Anthropic as AnthropicClient
-    from anthropic import APIConnectionError, APIStatusError, RateLimitError
-    from anthropic import AsyncAnthropic as AsyncAnthropicClient
+    from anthropic import (
+        Anthropic as AnthropicClient,
+    )
+    from anthropic import (
+        APIConnectionError,
+        APIStatusError,
+        RateLimitError,
+    )
+    from anthropic import (
+        AsyncAnthropic as AsyncAnthropicClient,
+    )
     from anthropic.types import (
         CitationPageLocation,
         CitationsWebSearchResultLocation,
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
-        # MessageDeltaEvent, # Broken at the moment
+        # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
     )
-    from anthropic.types import Message as AnthropicMessage
-except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+    from anthropic.types import (
+        Message as AnthropicMessage,
+    )
+except ImportError as e:
+    raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
+
+# Import Beta types
+try:
+    from anthropic.types.beta import (
+        BetaMessage,
+        BetaRawContentBlockDeltaEvent,
+        BetaTextDelta,
+    )
+except ImportError as e:
+    raise ImportError(
+        "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
+    ) from e
 
 
 @dataclass
@@ -210,18 +232,26 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
+    ) -> Union[AnthropicMessage, BetaMessage]:
         """
         Send a request to the Anthropic API to generate a response.
         """
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-            return self.get_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
+
+            if self.mcp_servers is not None:
+                return self.get_client().beta.messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **self.request_kwargs,
+                )
+            else:
+                return self.get_client().messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -262,15 +292,26 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
-            return (
-                self.get_client()
-                .beta.messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
+            if self.mcp_servers is not None:
+                return (
+                    self.get_client()
+                    .beta.messages.stream(
+                        model=self.id,
+                        messages=chat_messages,  # type: ignore
+                        **request_kwargs,
+                    )
+                    .__enter__()
                 )
-                .__enter__()
-            )
+            else:
+                return (
+                    self.get_client()
+                    .messages.stream(
+                        model=self.id,
+                        messages=chat_messages,  # type: ignore
+                        **request_kwargs,
+                    )
+                    .__enter__()
+                )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -292,7 +333,7 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
+    ) -> Union[AnthropicMessage, BetaMessage]:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
@@ -300,11 +341,18 @@ class Claude(Model):
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
-            return await self.get_async_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
+            if self.mcp_servers is not None:
+                return await self.get_async_client().beta.messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **self.request_kwargs,
+                )
+            else:
+                return await self.get_async_client().messages.create(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                )
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -344,13 +392,23 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-            async with self.get_async_client().messages.stream(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            ) as stream:
-                async for chunk in stream:
-                    yield chunk
+
+            if self.mcp_servers is not None:
+                async with self.get_async_client().beta.messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    async for chunk in stream:
+                        yield chunk
+            else:
+                async with self.get_async_client().messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
+                ) as stream:
+                    async for chunk in stream:  # type: ignore
+                        yield chunk
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -532,7 +590,7 @@ class Claude(Model):
         elif isinstance(response, MessageStopEvent):
             model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
-            for block in response.message.content:
+            for block in response.message.content:  # type: ignore
                 citations = getattr(block, "citations", None)
                 if not citations:
                     continue
@@ -554,5 +612,14 @@ class Claude(Model):
                 "input_tokens": response.usage.input_tokens or 0,
                 "output_tokens": response.usage.output_tokens or 0,
             }
+
+        # Capture the Beta response
+        try:
+            if isinstance(response, BetaRawContentBlockDeltaEvent):
+                if isinstance(response.delta, BetaTextDelta):
+                    if response.delta.text is not None:
+                        model_response.content = response.delta.text
+        except Exception as e:
+            log_error(f"Error parsing Beta response: {str(e)}")
 
         return model_response
