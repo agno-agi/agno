@@ -1,7 +1,7 @@
 from typing import Optional
 
 from agno.agent import Agent
-from agno.eval.reliability import ReliabilityEval, ReliabilityResult
+from agno.eval.reliability import ExpectedToolCall, ReliabilityEval, ReliabilityResult
 from agno.models.openai import OpenAIChat
 from agno.run.team import TeamRunResponse
 from agno.team.team import Team
@@ -23,8 +23,14 @@ team = Team(
 )
 
 expected_tool_calls = [
-    "transfer_task_to_member",  # Tool call used to transfer a task to a Team member
-    "get_current_stock_price",  # Tool call used to get the current stock price of a stock
+    ExpectedToolCall(
+        tool_name="transfer_task_to_member",
+        tool_call_args={"member_id": "stock-searcher"},
+    ),
+    ExpectedToolCall(
+        tool_name="get_current_stock_price",
+        tool_call_args={"symbol": "NVDA"},
+    ),
 ]
 
 
@@ -33,6 +39,7 @@ def evaluate_team_reliability():
     evaluation = ReliabilityEval(
         team_response=response,
         expected_tool_calls=expected_tool_calls,
+        strict_args_check=False,  # Check if the arguments provided in the ExpectedToolCall are used
     )
     result: Optional[ReliabilityResult] = evaluation.run(print_results=True)
     result.assert_passed()
