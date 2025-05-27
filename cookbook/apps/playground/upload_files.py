@@ -76,7 +76,13 @@ video_agent = Agent(
     markdown=True,
 )
 
-app = Playground(agents=[file_agent, audio_agent, video_agent]).get_app()
+playground = Playground(
+    agents=[file_agent, audio_agent, video_agent],
+    name="Upload Files Playground",
+    description="Upload files and ask questions about them",
+    app_id="upload-files-playground",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("upload_files:app", reload=True)
+    playground.serve(app="upload_files:app", reload=True)

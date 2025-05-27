@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
@@ -268,6 +270,13 @@ class Agent:
     team_session_id: Optional[str] = None
     # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
+
+    # Optional app ID. Indicates this agent is part of an app.
+    app_id: Optional[str] = None
+
+    # Optional workflow ID. Indicates this agent is part of a workflow.
+    workflow_id: Optional[str] = None
+
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
 
@@ -369,7 +378,6 @@ class Agent:
         self.name = name
         self.agent_id = agent_id
         self.introduction = introduction
-
         self.user_id = user_id
 
         self.session_id = session_id
@@ -913,6 +921,10 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Register Agent
+        thread = threading.Thread(target=self.register_agent)
+        thread.start()
+
         for attempt in range(num_attempts):
             try:
                 # Create a new run_response for this attempt
@@ -1305,6 +1317,9 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Register Agent
+        asyncio.create_task(self._aregister_agent())
 
         for attempt in range(num_attempts):
             try:
@@ -6129,6 +6144,57 @@ class Agent:
 
         return run_data
 
+    def register_agent(self) -> None:
+        """Register this agent with Agno's platform."""
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        from agno.api.agent import AgentCreate, create_agent
+
+        try:
+            # Ensure we have a valid session_id
+            if not self.session_id:
+                self.session_id = str(uuid4())
+
+            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
+            create_agent(
+                agent=AgentCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
+                    team_id=self.team_id,
+                    app_id=self.app_id,
+                    config=self.get_agent_config_dict(),
+                )
+            )
+            log_debug(f"Agent created: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
+        except Exception as e:
+            log_warning(f"Could not create Agent: {e}")
+
+    async def _aregister_agent(self) -> None:
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        from agno.api.agent import AgentCreate, acreate_agent
+
+        try:
+            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id},")
+            await acreate_agent(
+                agent=AgentCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
+                    team_id=self.team_id,
+                    app_id=self.app_id,
+                    config=self.get_agent_config_dict(),
+                )
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
+        log_debug(f"Agent app created: {self.name}, {self.agent_id}, {self.team_id},")
+
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()
 
@@ -7318,6 +7384,80 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+
+    def get_agent_config_dict(self) -> Dict[str, Any]:
+        tools: List[Dict[str, Any]] = []
+        if self.tools is not None:
+            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
+                team_model = self.model
+                session_id = self.session_id
+                if team_model and session_id is not None:
+                    self.determine_tools_for_model(model=team_model, session_id=session_id)
+
+            if self._tools_for_model is not None:
+                for tool in self._tools_for_model:
+                    if isinstance(tool, dict) and tool.get("type") == "function":
+                        tools.append(tool["function"])
+        model = None
+        if self.model is not None:
+            model = {
+                "name": str(self.model.__class__.__name__),
+                "model": str(self.model.id),
+                "provider": str(self.model.provider),
+            }
+
+        payload = {
+            "instructions": self.instructions if self.instructions is not None else [],
+            "tools": tools,
+            "memory": (
+                {
+                    "name": self.memory.__class__.__name__,
+                    "model": (
+                        {
+                            "name": self.memory.model.__class__.__name__,
+                            "model": self.memory.model.id,
+                            "provider": self.memory.model.provider,
+                        }
+                        if hasattr(self.memory, "model") and self.memory.model is not None
+                        else (
+                            {
+                                "name": self.model.__class__.__name__,
+                                "model": self.model.id,
+                                "provider": self.model.provider,
+                            }
+                            if self.model is not None
+                            else None
+                        )
+                    ),
+                    "db": (
+                        {
+                            "name": self.memory.db.__class__.__name__,
+                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
+                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
+                        }
+                        if hasattr(self.memory, "db") and self.memory.db is not None
+                        else None
+                    ),
+                }
+                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
+                else None
+            ),
+            "storage": {
+                "name": self.storage.__class__.__name__,
+            }
+            if self.storage is not None
+            else None,
+            "knowledge": {
+                "name": self.knowledge.__class__.__name__,
+            }
+            if self.knowledge is not None
+            else None,
+            "model": model,
+            "name": self.name,
+            "description": self.description,
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return payload
 
     async def acli_app(
         self,

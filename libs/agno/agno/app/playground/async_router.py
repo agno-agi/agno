@@ -120,7 +120,10 @@ async def team_chat_response_streamer(
 
 
 def get_async_playground_router(
-    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None
+    agents: Optional[List[Agent]] = None,
+    workflows: Optional[List[Workflow]] = None,
+    teams: Optional[List[Team]] = None,
+    active_app_id: Optional[str] = None,
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
 
@@ -128,8 +131,14 @@ def get_async_playground_router(
         raise ValueError("Either agents, teams or workflows must be provided.")
 
     @playground_router.get("/status")
-    async def playground_status():
-        return {"playground": "available"}
+    async def playground_status(app_id: Optional[str] = None):
+        if app_id is None:
+            return {"playground": "available"}
+        else:
+            if active_app_id == app_id:
+                return {"playground": "available"}
+            else:
+                raise HTTPException(status_code=404, detail="Playground not available")
 
     @playground_router.get("/agents", response_model=List[AgentGetResponse])
     async def get_agents():
@@ -138,7 +147,7 @@ def get_async_playground_router(
             return agent_list
 
         for agent in agents:
-            agent_tools = agent.get_tools(session_id=str(uuid4()))
+            agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
             formatted_tools = format_tools(agent_tools)
 
             name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
@@ -607,7 +616,7 @@ def get_async_playground_router(
         if teams is None:
             return []
 
-        return [TeamGetResponse.from_team(team) for team in teams]
+        return [TeamGetResponse.from_team(team, async_mode=True) for team in teams]
 
     @playground_router.get("/teams/{team_id}")
     async def get_team(team_id: str):
@@ -615,7 +624,7 @@ def get_async_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamGetResponse.from_team(team)
+        return TeamGetResponse.from_team(team, async_mode=True)
 
     @playground_router.post("/teams/{team_id}/runs")
     async def create_team_run(

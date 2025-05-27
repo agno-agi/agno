@@ -464,12 +464,12 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            model_response.response_usage = response.usage
-            if response.usage.cache_creation_input_tokens is not None:
-                model_response.response_usage.cache_creation_input_tokens = response.usage.cache_creation_input_tokens
-            if response.usage.cache_read_input_tokens is not None:
-                model_response.response_usage.cache_read_input_tokens += response.usage.cache_read_input_tokens
-
+            model_response.response_usage = {
+                "cache_write_tokens": response.usage.cache_creation_input_tokens,
+                "cached_tokens": response.usage.cache_read_input_tokens,
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
         return model_response
 
     def parse_provider_response_delta(
@@ -544,14 +544,11 @@ class Claude(Model):
                         )
 
             if response.message.usage is not None:
-                model_response.response_usage = response.message.usage
-                if response.message.usage.cache_creation_input_tokens is not None:
-                    model_response.response_usage.cache_creation_input_tokens = (
-                        response.message.usage.cache_creation_input_tokens
-                    )
-                if response.message.usage.cache_read_input_tokens is not None:
-                    model_response.response_usage.cache_read_input_tokens += (
-                        response.message.usage.cache_read_input_tokens
-                    )
+                model_response.response_usage = {
+                    "cache_write_tokens": response.usage.cache_creation_input_tokens,
+                    "cached_tokens": response.usage.cache_read_input_tokens,
+                    "input_tokens": response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                }
 
         return model_response

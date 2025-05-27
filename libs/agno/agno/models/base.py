@@ -68,6 +68,8 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
         if "cached_tokens" in response_usage:
             assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
+        if "cache_write_tokens" in response_usage:
+            assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -87,19 +89,8 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
             assistant_message.metrics.cached_tokens = response_usage.cached_tokens
-        # Anthropic prompt caching specific metric
-        if (
-            hasattr(response_usage, "cache_creation_input_tokens")
-            and response_usage.cache_creation_input_tokens is not None
-        ):
-            assistant_message.metrics.cache_creation_input_tokens = response_usage.cache_creation_input_tokens
-        # Anthropic prompt caching specific metric
-        if hasattr(response_usage, "cache_read_input_tokens") and response_usage.cache_read_input_tokens is not None:
-            assistant_message.metrics.cache_read_input_tokens = response_usage.cache_read_input_tokens
-        else:
-            assistant_message.metrics.total_tokens = (
-                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-            )
+        if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
+            assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
 
     # Additional metrics (e.g., from Groq, Ollama)
     if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
