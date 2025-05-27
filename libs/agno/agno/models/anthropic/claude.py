@@ -466,9 +466,9 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = response.usage
             if response.usage.cache_creation_input_tokens is not None:
-                model_response.response_usage.cache_creation_input_tokens = response.usage.cache_creation_input_tokens
+                model_response.response_usage.cache_write_tokens = response.usage.cache_creation_input_tokens
             if response.usage.cache_read_input_tokens is not None:
-                model_response.response_usage.cache_read_input_tokens += response.usage.cache_read_input_tokens
+                model_response.response_usage.cached_tokens = response.usage.cache_read_input_tokens
 
         return model_response
 
@@ -546,12 +546,10 @@ class Claude(Model):
             if response.message.usage is not None:
                 model_response.response_usage = response.message.usage
                 if response.message.usage.cache_creation_input_tokens is not None:
-                    model_response.response_usage.cache_creation_input_tokens = (
+                    model_response.response_usage.cache_write_tokens = (
                         response.message.usage.cache_creation_input_tokens
                     )
                 if response.message.usage.cache_read_input_tokens is not None:
-                    model_response.response_usage.cache_read_input_tokens += (
-                        response.message.usage.cache_read_input_tokens
-                    )
+                    model_response.response_usage.cached_tokens += response.message.usage.cache_read_input_tokens
 
         return model_response
