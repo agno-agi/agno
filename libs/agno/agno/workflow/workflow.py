@@ -680,7 +680,6 @@ class Workflow:
             from agno.api.workflows import create_workflow
 
             workflow_config = self.to_config_dict()
-            log_debug(f"Registering workflow: {self.name} (ID: {self.workflow_id})")
             # Register the workflow as an app
             create_workflow(
                 workflow=WorkflowCreate(
@@ -688,7 +687,7 @@ class Workflow:
                 )
             )
 
-            log_debug(f"Successfully registered workflow: {self.name} (ID: {self.workflow_id})")
+            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
         except Exception as e:
             log_warning(f"Failed to register workflow: {e}")
 
