@@ -98,7 +98,7 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.input_tokens = 0
         if assistant_message.metrics.output_tokens is None:
             assistant_message.metrics.output_tokens = 0
-        
+
         assistant_message.metrics.total_tokens = (
             assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
         )
