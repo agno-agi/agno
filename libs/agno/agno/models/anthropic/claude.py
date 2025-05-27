@@ -23,7 +23,7 @@ try:
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
-        MessageDeltaEvent,
+        # MessageDeltaEvent, # Broken at the moment
         MessageStopEvent,
     )
     from anthropic.types import Message as AnthropicMessage
