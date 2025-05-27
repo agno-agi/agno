@@ -1,8 +1,7 @@
-import os
 import tempfile
 from pathlib import Path
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agno.tools.python import PythonTools
 
