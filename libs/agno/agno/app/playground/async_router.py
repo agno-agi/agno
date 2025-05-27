@@ -68,7 +68,6 @@ async def chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback

@@ -1,7 +1,7 @@
 import os
 import tempfile
-from textwrap import dedent
 import uuid
+from textwrap import dedent
 
 import pytest
 
@@ -13,8 +13,8 @@ from agno.models.openai.chat import OpenAIChat
 from agno.run.response import RunEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.decorator import tool
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 
 @pytest.fixture
@@ -74,21 +74,18 @@ def test_basic_events():
         telemetry=False,
         monitoring=False,
     )
-    
-    response_generator = agent.run("Hello, how are you?", 
-                                      stream=True,
-                                      stream_intermediate_steps=False)
-    
+
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=False)
+
     event_counts = {}
     for run_response in response_generator:
-        
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
+
     assert event_counts.keys() == {RunEvent.run_response}
-    
+
     assert event_counts[RunEvent.run_response] > 1
-    
-    
+
+
 @pytest.mark.asyncio
 async def test_async_basic_events():
     """Test that the agent streams events."""
@@ -97,18 +94,16 @@ async def test_async_basic_events():
         telemetry=False,
         monitoring=False,
     )
-    response_generator = await agent.arun("Hello, how are you?", 
-                                      stream=True,
-                                      stream_intermediate_steps=False)
-    
+    response_generator = await agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False)
+
     event_counts = {}
     async for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
+
     assert event_counts.keys() == {RunEvent.run_response}
-    
+
     assert event_counts[RunEvent.run_response] > 1
-    
+
 
 def test_basic_intermediate_steps_events():
     """Test that the agent streams events."""
@@ -116,57 +111,62 @@ def test_basic_intermediate_steps_events():
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
         monitoring=False,
-        debug_mode=True,
     )
-    
-    response_generator = agent.run("Hello, how are you?", 
-                                      stream=True,
-                                      stream_intermediate_steps=True)
-    
-    event_counts = {}
-    for run_response in response_generator:
-        print(run_response)
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
-    assert event_counts.keys() == {RunEvent.run_started, RunEvent.run_response, RunEvent.run_completed}
-    
-    assert event_counts[RunEvent.run_started] == 1
-    assert event_counts[RunEvent.run_response] > 1
-    assert event_counts[RunEvent.run_completed] == 1
 
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
 
+    events = {}
+    for run_response_delta in response_generator:
+        if not run_response_delta.event in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_response, RunEvent.run_completed}
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert events[RunEvent.run_started][0].model == "gpt-4o-mini"
+    assert events[RunEvent.run_started][0].model_provider == "OpenAI"
+    assert events[RunEvent.run_started][0].session_id is not None
+    assert events[RunEvent.run_started][0].agent_id is not None
+    assert events[RunEvent.run_started][0].run_id is not None
+    assert events[RunEvent.run_started][0].created_at is not None
+    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
 
 
 def test_intermediate_steps_with_tools():
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
         monitoring=False,
     )
-    
-    response_generator = agent.run("What is news in the world?", 
-                                    stream=True,
-                                    stream_intermediate_steps=True)
-    
-    event_counts = {}
-    for run_response in response_generator:
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
-    assert event_counts.keys() == {RunEvent.run_started, 
-                                   RunEvent.tool_call_started, 
-                                   RunEvent.tool_call_completed,
-                                   RunEvent.run_response, 
-                                   RunEvent.run_completed}
-    
-    assert event_counts[RunEvent.run_started] == 1
-    assert event_counts[RunEvent.run_response] > 1
-    assert event_counts[RunEvent.run_completed] == 1
-    assert event_counts[RunEvent.tool_call_started] == 1
-    assert event_counts[RunEvent.tool_call_completed] == 1
 
+    response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
 
+    events = {}
+    for run_response_delta in response_generator:
+        if not run_response_delta.event in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert events[RunEvent.tool_call_completed][0].content is not None
+    assert events[RunEvent.tool_call_completed][0].tool.result is not None
 
 
 def test_intermediate_steps_with_reasoning():
@@ -182,96 +182,108 @@ def test_intermediate_steps_with_reasoning():
         telemetry=False,
         monitoring=False,
     )
-    
-    response_generator = agent.run("What is the sum of the first 10 natural numbers?", 
-                                    stream=True,
-                                    stream_intermediate_steps=True)
-    
-    event_counts = {}
-    for run_response in response_generator:
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
-    assert event_counts.keys() == {RunEvent.run_started, 
-                                   RunEvent.tool_call_started, 
-                                   RunEvent.tool_call_completed,
-                                   RunEvent.reasoning_started, 
-                                   RunEvent.reasoning_completed,
-                                   RunEvent.reasoning_step, 
-                                   RunEvent.run_response, 
-                                   RunEvent.run_completed}
-    
-    assert event_counts[RunEvent.run_started] == 1
-    assert event_counts[RunEvent.run_response] > 1
-    assert event_counts[RunEvent.run_completed] == 1
-    assert event_counts[RunEvent.tool_call_started] > 1
-    assert event_counts[RunEvent.tool_call_completed] > 1
-    assert event_counts[RunEvent.reasoning_started] == 1
-    assert event_counts[RunEvent.reasoning_completed] == 1
-    assert event_counts[RunEvent.reasoning_step] > 1
 
+    response_generator = agent.run(
+        "What is the sum of the first 10 natural numbers?", stream=True, stream_intermediate_steps=True
+    )
 
+    events = {}
+    for run_response_delta in response_generator:
+        if not run_response_delta.event in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.reasoning_started,
+        RunEvent.reasoning_completed,
+        RunEvent.reasoning_step,
+        RunEvent.run_response,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.reasoning_started]) == 1
+    assert len(events[RunEvent.reasoning_completed]) == 1
+    assert events[RunEvent.reasoning_completed][0].content is not None
+    assert events[RunEvent.reasoning_completed][0].content_type == "ReasoningSteps"
+    assert len(events[RunEvent.reasoning_step]) > 1
+    assert events[RunEvent.reasoning_step][0].content is not None
+    assert events[RunEvent.reasoning_step][0].content_type == "ReasoningStep"
+    assert events[RunEvent.reasoning_step][0].reasoning_content is not None
 
 
 def test_intermediate_steps_with_user_confirmation():
     """Test that the agent streams events."""
-    
+
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
-    
+
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         telemetry=False,
         monitoring=False,
     )
-    
-    response_generator = agent.run("What is the weather in Tokyo?", 
-                                    stream=True,
-                                    stream_intermediate_steps=True)
-    
+
+    response_generator = agent.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
+
     # First until we hit a pause
-    event_counts = {}
-    for run_response in response_generator:
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
-    assert event_counts.keys() == {RunEvent.run_started, 
-                                   RunEvent.run_paused}
-    
-    assert event_counts[RunEvent.run_started] == 1
-    assert event_counts[RunEvent.run_paused] == 1
-    
+    events = {}
+    for run_response_delta in response_generator:
+        if not run_response_delta.event in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_paused}
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_paused]) == 1
+    assert events[RunEvent.run_paused][0].tools[0].requires_confirmation is True
+
     assert agent.is_paused
     assert agent.run_response.tools[0].requires_confirmation
-    
+
     # Mark the tool as confirmed
     agent.run_response.tools[0].confirmed = True
-    
+
     # Then we continue the run
-    response_generator = agent.continue_run(stream=True,
-                                    stream_intermediate_steps=True)
-    
-    event_counts = {}
-    for run_response in response_generator:
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
+    response_generator = agent.continue_run(stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if not run_response_delta.event in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
     assert agent.run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
-    
-    assert event_counts.keys() == {RunEvent.run_continued, 
-                                   RunEvent.tool_call_started,
-                                   RunEvent.tool_call_completed,
-                                   RunEvent.run_response,
-                                   RunEvent.run_completed}
-    
-    assert event_counts[RunEvent.run_continued] == 1
-    assert event_counts[RunEvent.tool_call_started] == 1
-    assert event_counts[RunEvent.tool_call_completed] == 1
-    assert event_counts[RunEvent.run_response] > 1
-    assert event_counts[RunEvent.run_completed] == 1
-    
+
+    assert events.keys() == {
+        RunEvent.run_continued,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_continued]) == 1
+    assert len(events[RunEvent.tool_call_started]) == 1
+    assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_the_weather"
+    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert events[RunEvent.tool_call_completed][0].content is not None
+    assert events[RunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+
     assert agent.run_response.is_paused is False
 
-    
 
 def test_intermediate_steps_with_memory(agent_storage, memory):
     """Test that the agent streams events."""
@@ -283,17 +295,20 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
         telemetry=False,
         monitoring=False,
     )
-    
-    response_generator = agent.run("Hello, how are you?", 
-                                      stream=True,
-                                      stream_intermediate_steps=True)
-    
+
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
     event_counts = {}
     for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
-    
-    assert event_counts.keys() == {RunEvent.run_started, RunEvent.run_response, RunEvent.run_completed, RunEvent.updating_memory}
-    
+
+    assert event_counts.keys() == {
+        RunEvent.run_started,
+        RunEvent.run_response,
+        RunEvent.run_completed,
+        RunEvent.updating_memory,
+    }
+
     assert event_counts[RunEvent.run_started] == 1
     assert event_counts[RunEvent.run_response] > 1
     assert event_counts[RunEvent.run_completed] == 1
