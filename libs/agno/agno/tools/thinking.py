@@ -30,7 +30,6 @@ class ThinkingTools(Toolkit):
         else:
             self.instructions = instructions
 
-
         tools = []
         if think:
             tools.append(self.think)

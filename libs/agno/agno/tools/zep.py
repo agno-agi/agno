@@ -291,11 +291,13 @@ class ZepAsyncTools(Toolkit):
         if add_zep_message:
             tools.append(self.add_zep_message)
         if get_zep_memory:
-            tools.append(self.get_zep_memory)
+            tools.append(self.get_zep_memory)  # type: ignore
         if search_zep_memory:
-            tools.append(self.search_zep_memory)
+            tools.append(self.search_zep_memory)  # type: ignore
 
-        super().__init__(name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs)
+        super().__init__(
+            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     async def initialize(self) -> bool:
         """
