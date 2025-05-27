@@ -119,7 +119,6 @@ class Claude(Model):
         if self.top_k:
             _request_params["top_k"] = self.top_k
         if self.mcp_servers:
-            _request_params["betas"] = ["mcp-client-2025-04-04"]
             _request_params["mcp_servers"] = [
                 {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
             ]
