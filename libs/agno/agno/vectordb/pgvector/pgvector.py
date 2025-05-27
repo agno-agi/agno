@@ -154,7 +154,7 @@ class PgVector(VectorDb):
             Column("usage", postgresql.JSONB),
             Column("created_at", DateTime(timezone=True), server_default=func.now()),
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
-            Column("content_hash", String, index=True),
+            Column("content_hash", String),
             extend_existing=True,
         )
 
