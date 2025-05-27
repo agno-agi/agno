@@ -705,7 +705,7 @@ class Agent:
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
-        # 1. Start the Run by yielding a RunStarted event
+        # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
             yield self._create_run_response_started_event(run_response)
 
@@ -955,7 +955,7 @@ class Agent:
                 self.run_messages = run_messages
 
                 if stream and self.is_streamable:
-                    response_iterator = self._run_stream(
+                    yield from self._run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=message,
@@ -965,7 +965,6 @@ class Agent:
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-                    return response_iterator
                 else:
                     response = self._run(
                         run_response=run_response,

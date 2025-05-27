@@ -116,6 +116,7 @@ def test_basic_intermediate_steps_events():
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
         monitoring=False,
+        debug_mode=True,
     )
     
     response_generator = agent.run("Hello, how are you?", 
@@ -124,6 +125,7 @@ def test_basic_intermediate_steps_events():
     
     event_counts = {}
     for run_response in response_generator:
+        print(run_response)
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
     
     assert event_counts.keys() == {RunEvent.run_started, RunEvent.run_response, RunEvent.run_completed}

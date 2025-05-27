@@ -95,7 +95,7 @@ class BaseRunResponseEvent:
 
 class RunResponseStartedEvent(BaseRunResponseEvent):
     """Event sent when the run starts"""
-    event: str = RunEvent.run_started.value
+    event = RunEvent.run_started.value
     model: str
     model_provider: str
 
