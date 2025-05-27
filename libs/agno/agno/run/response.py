@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -37,6 +37,7 @@ class RunEvent(str, Enum):
     workflow_completed = "WorkflowCompleted"
 
 
+
 @dataclass
 class RunResponseExtraData:
     references: Optional[List[MessageReferences]] = None
@@ -59,18 +60,20 @@ class RunResponseExtraData:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
         add_messages = data.pop("add_messages", None)
-        add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
+        if add_messages is not None:
+            add_messages = [Message.model_validate(message) for message in add_messages]
 
         reasoning_steps = data.pop("reasoning_steps", None)
-        reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
+        if reasoning_steps is not None:
+            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
 
         reasoning_messages = data.pop("reasoning_messages", None)
-        reasoning_messages = (
-            [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
-        )
+        if reasoning_messages is not None:
+            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
-        references = [MessageReferences.model_validate(reference) for reference in references] if references else None
+        if references is not None:
+            references = [MessageReferences.model_validate(reference) for reference in references]
 
         return cls(
             add_messages=add_messages,
@@ -80,10 +83,77 @@ class RunResponseExtraData:
         )
 
 
+
+@dataclass
+class BaseRunResponseEvent:
+    event: str
+    run_id: str
+    session_id: str
+    agent_id: str
+    created_at: int = field(default_factory=lambda: int(time()))
+
+
+class RunResponseStartedEvent(BaseRunResponseEvent):
+    """Event sent when the run starts"""
+    event: str = RunEvent.run_started.value
+    model: str
+    model_provider: str
+
+class RunResponseEvent(BaseRunResponseEvent):
+    """ Main event for each delta of the RunResponse"""
+    event: str = RunEvent.run_response.value
+
+    content: Optional[Any] = None
+    reasoning_content: Optional[str] = None
+
+    messages: Optional[List[Message]] = None
+    metrics: Optional[Dict[str, Any]] = None
+
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+    tools: Optional[List[ToolExecution]] = None
+    formatted_tool_calls: Optional[List[str]] = None
+    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
+    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
+    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+    citations: Optional[Citations] = None
+
+    extra_data: Optional[RunResponseExtraData] = None
+
+
+
+class RunResponseCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_completed.value
+
+    content: Optional[Any] = None
+    reasoning_content: Optional[str] = None
+
+
+
+class RunResponseErrorEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_error.value
+
+    error: Optional[str] = None
+
+
+
+class RunResponseCancelledEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_cancelled.value
+
+    reason: Optional[str] = None
+
+
+
+RunResponseEvent = Union[RunResponseStartedEvent, RunResponseEvent, RunResponseCompletedEvent, RunResponseErrorEvent, RunResponseCancelledEvent]
+
+
+
+
 @dataclass
 class RunResponse:
     """Response returned by Agent.run() or Workflow.run() functions"""
-
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
