@@ -34,6 +34,8 @@ class KnowledgeTools(Toolkit):
                     self.instructions += "\n" + few_shot_examples
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
+        else:
+            self.instructions = instructions
 
         # The knowledge to search
         self.knowledge: AgentKnowledge = knowledge
@@ -48,7 +50,7 @@ class KnowledgeTools(Toolkit):
 
         super().__init__(
             name="knowledge_tools",
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             tools=tools,
             **kwargs,

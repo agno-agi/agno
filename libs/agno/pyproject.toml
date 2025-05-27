@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.4"
+version = "1.5.5"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -131,6 +131,7 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
+markdown = ["unstructured", "markdown", "aiofiles"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -223,7 +224,8 @@ knowledge = [
   "agno[pdf]",
   "agno[docx]",
   "agno[text]",
-  "agno[csv]"
+  "agno[csv]",
+  "agno[markdown]"
 ]
 
 # All embedders

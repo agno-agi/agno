@@ -56,20 +56,20 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
 
     # Standard token metrics
     if isinstance(response_usage, dict):
-        if "input_tokens" in response_usage:
+        if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
             assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-        if "output_tokens" in response_usage:
+        if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
             assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-        if "prompt_tokens" in response_usage:
+        if "prompt_tokens" in response_usage and response_usage.get("prompt_tokens") is not None:
             assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
-        if "completion_tokens" in response_usage:
+        if "completion_tokens" in response_usage and response_usage.get("completion_tokens") is not None:
             assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
-        if "total_tokens" in response_usage:
-            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-        if "cached_tokens" in response_usage:
+        if "cached_tokens" in response_usage and response_usage.get("cached_tokens") is not None:
             assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
-        if "cache_write_tokens" in response_usage:
+        if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
             assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
+        if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
+            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -91,6 +91,17 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.cached_tokens = response_usage.cached_tokens
         if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
             assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
+
+    # If you didn't capture any total tokens
+    if not assistant_message.metrics.total_tokens:
+        if assistant_message.metrics.input_tokens is None:
+            assistant_message.metrics.input_tokens = 0
+        if assistant_message.metrics.output_tokens is None:
+            assistant_message.metrics.output_tokens = 0
+
+        assistant_message.metrics.total_tokens = (
+            assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+        )
 
     # Additional metrics (e.g., from Groq, Ollama)
     if isinstance(response_usage, dict) and "additional_metrics" in response_usage:

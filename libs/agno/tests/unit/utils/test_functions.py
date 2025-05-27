@@ -39,14 +39,12 @@ def test_get_function_call_basic(sample_functions):
     """Test basic function call creation with valid arguments."""
     arguments = json.dumps({"param1": "test", "param2": 42, "param3": True})
     call_id = "test-call-123"
-
     result = get_function_call(
         name="test_function",
         arguments=arguments,
         call_id=call_id,
         functions=sample_functions,
     )
-
     assert result is not None
     assert isinstance(result, FunctionCall)
     assert result.function == sample_functions["test_function"]
@@ -62,7 +60,6 @@ def test_get_function_call_invalid_name(sample_functions):
         arguments='{"param1": "test"}',
         functions=sample_functions,
     )
-
     assert result is None
 
 
@@ -73,7 +70,6 @@ def test_get_function_call_no_functions():
         arguments='{"param1": "test"}',
         functions=None,
     )
-
     assert result is None
 
 
@@ -84,7 +80,6 @@ def test_get_function_call_invalid_json(sample_functions):
         arguments="invalid json",
         functions=sample_functions,
     )
-
     assert result is not None
     assert result.error is not None
     assert "Error while decoding function arguments" in result.error
@@ -97,7 +92,6 @@ def test_get_function_call_non_dict_arguments(sample_functions):
         arguments='["not", "a", "dict"]',
         functions=sample_functions,
     )
-
     assert result is not None
     assert result.error is not None
     assert "Function arguments are not a valid JSON object" in result.error
@@ -119,7 +113,6 @@ def test_get_function_call_argument(sample_functions):
         arguments=arguments,
         functions=sample_functions,
     )
-
     assert result is not None
     assert result.arguments == {
         "param1": None,
@@ -168,7 +161,6 @@ def test_get_function_call_empty_arguments(sample_functions):
         arguments="",
         functions=sample_functions,
     )
-
     assert result is not None
     assert result.arguments is None
     assert result.error is None

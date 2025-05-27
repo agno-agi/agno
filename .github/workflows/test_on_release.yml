@@ -638,9 +638,10 @@ jobs:
         run: |
           ./scripts/dev_setup.sh
       - name: Run embedder tests
-        working-directory: libs/agno
+        working-directory: .
         run: |
-          python -m pytest ./tests/integration/embedder
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/embedder
 
   test-knowledge:
     runs-on: ubuntu-latest
@@ -699,5 +700,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams 
-          --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration

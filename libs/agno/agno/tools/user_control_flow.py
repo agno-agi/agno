@@ -13,11 +13,15 @@ class UserControlFlowTools(Toolkit):
     ):
         """A toolkit that provides the ability for the agent to interrupt the agent run and interact with the user."""
 
+        if instructions is None:
+            self.instructions = self.DEFAULT_INSTRUCTIONS
+        else:
+            self.instructions = instructions
         tools = [self.get_user_input]
 
         super().__init__(
             name="user_control_flow_tools",
-            instructions=instructions or self.DEFAULT_INSTRUCTIONS,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             tools=tools,
             **kwargs,
