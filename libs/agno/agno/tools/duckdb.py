@@ -24,26 +24,28 @@ class DuckDbTools(Toolkit):
         export_tables: bool = False,
         **kwargs,
     ):
-        super().__init__(name="duckdb_tools", **kwargs)
-
         self.db_path: Optional[str] = db_path
         self.read_only: bool = read_only
         self.config: Optional[dict] = config
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        self.register(self.show_tables)
-        self.register(self.describe_table)
+        tools: List[Any] = []
+        tools.append(self.show_tables)
+        tools.append(self.describe_table)
+
         if inspect_queries:
-            self.register(self.inspect_query)
+            tools.append(self.inspect_query)
         if run_queries:
-            self.register(self.run_query)
+            tools.append(self.run_query)
         if create_tables:
-            self.register(self.create_table_from_path)
+            tools.append(self.create_table_from_path)
         if summarize_tables:
-            self.register(self.summarize_table)
+            tools.append(self.summarize_table)
         if export_tables:
-            self.register(self.export_table_to_path)
+            tools.append(self.export_table_to_path)
+
+        super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 
     @property
     def connection(self) -> duckdb.DuckDBPyConnection:

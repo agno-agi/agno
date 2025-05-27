@@ -7,13 +7,14 @@ from agno.utils.log import log_debug, log_info, logger
 
 class ShellTools(Toolkit):
     def __init__(self, base_dir: Optional[Union[Path, str]] = None, **kwargs):
-        super().__init__(name="shell_tools", **kwargs)
-
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
-        self.register(self.run_shell_command)
+        tools = []
+        tools.append(self.run_shell_command)
+
+        super().__init__(name="shell_tools", tools=tools, **kwargs)
 
     def run_shell_command(self, args: List[str], tail: int = 100) -> str:
         """Runs a shell command and returns the output or error.

@@ -108,6 +108,9 @@ async def team_chat_response_streamer(
             run_response_chunk = cast(TeamRunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
         error_response = TeamRunResponse(
             content=str(e),
             event=RunEvent.run_error,
@@ -117,7 +120,10 @@ async def team_chat_response_streamer(
 
 
 def get_async_playground_router(
-    agents: Optional[List[Agent]] = None, workflows: Optional[List[Workflow]] = None, teams: Optional[List[Team]] = None
+    agents: Optional[List[Agent]] = None,
+    workflows: Optional[List[Workflow]] = None,
+    teams: Optional[List[Team]] = None,
+    active_app_id: Optional[str] = None,
 ) -> APIRouter:
     playground_router = APIRouter(prefix="/playground", tags=["Playground"])
 
@@ -125,8 +131,14 @@ def get_async_playground_router(
         raise ValueError("Either agents, teams or workflows must be provided.")
 
     @playground_router.get("/status")
-    async def playground_status():
-        return {"playground": "available"}
+    async def playground_status(app_id: Optional[str] = None):
+        if app_id is None:
+            return {"playground": "available"}
+        else:
+            if active_app_id == app_id:
+                return {"playground": "available"}
+            else:
+                raise HTTPException(status_code=404, detail="Playground not available")
 
     @playground_router.get("/agents", response_model=List[AgentGetResponse])
     async def get_agents():
@@ -135,7 +147,7 @@ def get_async_playground_router(
             return agent_list
 
         for agent in agents:
-            agent_tools = agent.get_tools(session_id=str(uuid4()))
+            agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
             formatted_tools = format_tools(agent_tools)
 
             name = agent.model.name or agent.model.__class__.__name__ if agent.model else None

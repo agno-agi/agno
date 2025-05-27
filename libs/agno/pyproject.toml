@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.3"
+version = "1.5.4"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -131,6 +131,11 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
+
 # Dependencies for Performance
 performance = ["memory_profiler"]
 
@@ -219,6 +224,11 @@ knowledge = [
   "agno[csv]"
 ]
 
+# All embedders
+embedders = [
+  "agno[huggingface]"
+]
+
 # All libraries for testing
 tests = [
     "agno[dev]",
@@ -227,6 +237,7 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
     "twine",
@@ -304,6 +315,7 @@ module = [
   "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "fastembed.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",

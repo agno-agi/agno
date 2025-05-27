@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import psycopg2
@@ -29,7 +29,6 @@ class PostgresTools(Toolkit):
         table_schema: str = "public",
         **kwargs,
     ):
-        super().__init__(name="postgres_tools", **kwargs)
         self._connection: Optional[psycopg2.extensions.connection] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
@@ -38,16 +37,19 @@ class PostgresTools(Toolkit):
         self.port: Optional[int] = port
         self.table_schema: str = table_schema
 
-        self.register(self.show_tables)
-        self.register(self.describe_table)
+        tools: List[Any] = []
+        tools.append(self.show_tables)
+        tools.append(self.describe_table)
         if inspect_queries:
-            self.register(self.inspect_query)
+            tools.append(self.inspect_query)
         if run_queries:
-            self.register(self.run_query)
+            tools.append(self.run_query)
         if summarize_tables:
-            self.register(self.summarize_table)
+            tools.append(self.summarize_table)
         if export_tables:
-            self.register(self.export_table_to_path)
+            tools.append(self.export_table_to_path)
+
+        super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
     @property
     def connection(self) -> psycopg2.extensions.connection:
