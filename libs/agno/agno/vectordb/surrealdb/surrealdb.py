@@ -276,7 +276,9 @@ class SurrealDb(VectorDb):
             client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
             return True
 
-    def _extract_result(self, query_result: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Union[List[Any], Dict[str, Any]]:
+    def _extract_result(
+        self, query_result: Union[List[Dict[str, Any]], Dict[str, Any]]
+    ) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response"""
         log_debug(f"Query result: {query_result}")
         if isinstance(query_result, dict):
