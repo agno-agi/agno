@@ -20,7 +20,7 @@ knowledge_base = WebsiteKnowledgeBase(
 )
 
 # Load all documents into the vector database
-# knowledge_base.load(recreate=True)
+knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
