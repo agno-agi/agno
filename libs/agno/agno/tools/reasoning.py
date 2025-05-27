@@ -39,7 +39,7 @@ class ReasoningTools(Toolkit):
 
         super().__init__(
             name="reasoning_tools",
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             tools=tools,
             **kwargs,
