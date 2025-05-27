@@ -21,7 +21,7 @@ Basic Agno A2A Agent example that uses A2A to send and receive messages to/from 
 4. Run the test client in a different terminal
 
    ```bash
-   python cookbook/examples/a2a/basic_agent/test_client.py
+   python cookbook/examples/a2a/basic_agent/client.py
    ```
 
 ## Notes

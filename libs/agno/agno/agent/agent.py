@@ -6157,7 +6157,6 @@ class Agent:
             if not self.session_id:
                 self.session_id = str(uuid4())
 
-            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
             create_agent(
                 agent=AgentCreate(
                     name=self.name,
@@ -6168,7 +6167,6 @@ class Agent:
                     config=self.get_agent_config_dict(),
                 )
             )
-            log_debug(f"Agent created: {self.name}, {self.agent_id}, {self.team_id}, {self.workflow_id}")
         except Exception as e:
             log_warning(f"Could not create Agent: {e}")
 
@@ -6180,7 +6178,6 @@ class Agent:
         from agno.api.agent import AgentCreate, acreate_agent
 
         try:
-            log_debug(f"Creating Agent on Platform: {self.name}, {self.agent_id}, {self.team_id},")
             await acreate_agent(
                 agent=AgentCreate(
                     name=self.name,
@@ -6193,7 +6190,6 @@ class Agent:
             )
         except Exception as e:
             log_debug(f"Could not create Agent app: {e}")
-        log_debug(f"Agent app created: {self.name}, {self.agent_id}, {self.team_id},")
 
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()

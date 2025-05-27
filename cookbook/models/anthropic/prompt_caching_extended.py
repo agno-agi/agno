@@ -35,14 +35,10 @@ agent = Agent(
 response = agent.run(
     "Explain the difference between REST and GraphQL APIs with examples"
 )
-print(
-    f"First run cache creation input tokens = {response.metrics['cache_creation_input_tokens']}"
-)  # type: ignore
+print(f"First run cache write tokens = {response.metrics['cache_write_tokens']}")  # type: ignore
 
 # Second run - this will use the cached system prompt
 response = agent.run(
     "What are the key principles of clean code and how do I apply them in Python?"
 )
-print(
-    f"Second run cache read input tokens = {response.metrics['cache_read_input_tokens']}"
-)  # type: ignore
+print(f"Second run cache read tokens = {response.metrics['cached_tokens']}")  # type: ignore
