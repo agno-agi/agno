@@ -1,6 +1,7 @@
 from typing import Optional
 
 import pytest
+from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.mistral import MistralChat
@@ -56,6 +57,26 @@ def test_tool_use_stream():
         full_content += r.content or ""
     assert "TSLA" in full_content
 
+
+def test_tool_use_with_native_structured_outputs():
+    class StockPrice(BaseModel):
+        price: float = Field(..., description="The price of the stock")
+        currency: str = Field(..., description="The currency of the stock")
+
+    agent = Agent(
+        model=MistralChat(id="mistral-large-latest"),
+        tools=[YFinanceTools(cache_results=True)],
+        show_tool_calls=True,
+        markdown=True,
+        response_model=StockPrice,
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("What is the current price of TSLA?")
+    assert isinstance(response.content, StockPrice)
+    assert response.content is not None
+    assert response.content.price is not None
+    assert response.content.currency is not None
 
 @pytest.mark.asyncio
 async def test_async_tool_use():

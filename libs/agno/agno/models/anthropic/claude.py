@@ -23,7 +23,7 @@ try:
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
-        MessageDeltaEvent,
+        # MessageDeltaEvent, # Broken at the moment
         MessageStopEvent,
     )
     from anthropic.types import Message as AnthropicMessage
@@ -137,16 +137,16 @@ class Claude(Model):
             Dict[str, Any]: The request keyword arguments.
         """
         request_kwargs = self.request_kwargs.copy()
-
-        if self.cache_system_prompt:
-            cache_control = (
-                {"type": "ephemeral", "ttl": "1h"}
-                if self.extended_cache_time is not None and self.extended_cache_time is True
-                else {"type": "ephemeral"}
-            )
-            request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-        else:
-            request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        if system_message:
+            if self.cache_system_prompt:
+                cache_control = (
+                    {"type": "ephemeral", "ttl": "1h"}
+                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    else {"type": "ephemeral"}
+                )
+                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+            else:
+                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
@@ -212,7 +212,6 @@ class Claude(Model):
         try:
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
             return self.get_client().messages.create(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
@@ -473,7 +472,7 @@ class Claude(Model):
         return model_response
 
     def parse_provider_response_delta(
-        self, response: Union[ContentBlockDeltaEvent, ContentBlockStopEvent, MessageDeltaEvent]
+        self, response: Union[ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent]
     ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
@@ -543,12 +542,12 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
-            if response.message.usage is not None:
-                model_response.response_usage = {
-                    "cache_write_tokens": response.usage.cache_creation_input_tokens,
-                    "cached_tokens": response.usage.cache_read_input_tokens,
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                }
+        if hasattr(response, "usage") and response.usage is not None:
+            model_response.response_usage = {
+                "cache_write_tokens": response.usage.cache_creation_input_tokens or 0,
+                "cached_tokens": response.usage.cache_read_input_tokens or 0,
+                "input_tokens": response.usage.input_tokens or 0,
+                "output_tokens": response.usage.output_tokens or 0,
+            }
 
         return model_response

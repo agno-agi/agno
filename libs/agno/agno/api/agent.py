@@ -48,6 +48,7 @@ async def acreate_agent_run(run: AgentRunCreate, monitor: bool = False) -> None:
             )
         except Exception as e:
             log_debug(f"Could not create Agent run: {e}")
+    return
 
 
 def create_agent(agent: AgentCreate) -> None:
@@ -60,8 +61,11 @@ def create_agent(agent: AgentCreate) -> None:
                 ApiRoutes.AGENT_CREATE,
                 json=agent.model_dump(exclude_none=True),
             )
+
+            log_debug(f"Created Agent on Platform. ID: {agent.agent_id}")
         except Exception as e:
             log_debug(f"Could not create Agent: {e}")
+    return
 
 
 async def acreate_agent(agent: AgentCreate) -> None:
@@ -74,5 +78,7 @@ async def acreate_agent(agent: AgentCreate) -> None:
                 ApiRoutes.AGENT_CREATE,
                 json=agent.model_dump(exclude_none=True),
             )
+            log_debug(f"Created Agent on Platform. ID: {agent.agent_id}")
         except Exception as e:
             log_debug(f"Could not create Agent: {e}")
+    return
