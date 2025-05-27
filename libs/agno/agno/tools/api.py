@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -24,8 +24,6 @@ class CustomApiTools(Toolkit):
         make_request: bool = True,
         **kwargs,
     ):
-        super().__init__(name="api_tools", **kwargs)
-
         self.base_url = base_url
         self.username = username
         self.password = password
@@ -34,8 +32,11 @@ class CustomApiTools(Toolkit):
         self.verify_ssl = verify_ssl
         self.timeout = timeout
 
+        tools: List[Any] = []
         if make_request:
-            self.register(self.make_request)
+            tools.append(self.make_request)
+
+        super().__init__(name="api_tools", tools=tools, **kwargs)
 
     def _get_auth(self) -> Optional[HTTPBasicAuth]:
         """Get authentication object if credentials are provided."""

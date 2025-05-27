@@ -82,6 +82,7 @@ def get_json_schema(
     if strict:
         json_schema["additionalProperties"] = False
 
+    # We only include the fields in the type_hints dict
     for k, v in type_hints.items():
         # log_info(f"Parsing arg: {k} | {v}")
         if k == "return":

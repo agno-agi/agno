@@ -5,7 +5,7 @@ import tempfile
 import time
 from os import fdopen, getenv
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -48,7 +48,6 @@ class E2BTools(Toolkit):
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
             sandbox_options: Additional options to pass to the Sandbox constructor
         """
-        super().__init__(name="e2b_tools", **kwargs)
 
         self.api_key = api_key or getenv("E2B_API_KEY")
         if not self.api_key:
@@ -68,39 +67,28 @@ class E2BTools(Toolkit):
         self.last_execution = None
         self.downloaded_files: Dict[int, str] = {}
 
-        # Register the functions based on the parameters
+        tools: List[Any] = []
+
         if run_code:
-            self.register(self.run_python_code)
-
+            tools.append(self.run_python_code)
         if upload_file:
-            self.register(self.upload_file)
-
+            tools.append(self.upload_file)
         if download_result:
-            self.register(self.download_png_result)
-            self.register(self.download_chart_data)
-            self.register(self.download_file_from_sandbox)
-
+            tools.extend([self.download_png_result, self.download_chart_data, self.download_file_from_sandbox])
         if filesystem:
-            self.register(self.list_files)
-            self.register(self.read_file_content)
-            self.register(self.write_file_content)
-            self.register(self.watch_directory)
-
+            tools.extend([self.list_files, self.read_file_content, self.write_file_content, self.watch_directory])
         if internet_access:
-            self.register(self.get_public_url)
-            self.register(self.run_server)
-
+            tools.extend([self.get_public_url, self.run_server])
         if sandbox_management:
-            self.register(self.set_sandbox_timeout)
-            self.register(self.get_sandbox_status)
-            self.register(self.shutdown_sandbox)
-            self.register(self.list_running_sandboxes)
-
+            tools.extend(
+                [self.set_sandbox_timeout, self.get_sandbox_status, self.shutdown_sandbox, self.list_running_sandboxes]
+            )
         if command_execution:
-            self.register(self.run_command)
-            self.register(self.stream_command)
-            self.register(self.run_background_command)
-            self.register(self.kill_background_command)
+            tools.extend(
+                [self.run_command, self.stream_command, self.run_background_command, self.kill_background_command]
+            )
+
+        super().__init__(name="e2b_tools", tools=tools, **kwargs)
 
     # Code Execution Functions
     def run_python_code(self, code: str) -> str:

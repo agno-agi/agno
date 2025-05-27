@@ -45,7 +45,13 @@ thinking_finance_agent = Agent(
     markdown=True,
 )
 
-app = Playground(agents=[thinking_web_agent, thinking_finance_agent]).get_app()
+playground = Playground(
+    agents=[thinking_web_agent, thinking_finance_agent],
+    name="Thinking Playground",
+    description="A playground for thinking",
+    app_id="thinking-playground",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("thinking_playground:app", reload=True)
+    playground.serve(app="thinking_playground:app", reload=True)

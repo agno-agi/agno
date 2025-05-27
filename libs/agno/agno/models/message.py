@@ -59,6 +59,7 @@ class MessageMetrics:
     input_audio_tokens: int = 0
     output_audio_tokens: int = 0
     cached_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -109,6 +110,7 @@ class MessageMetrics:
             input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
             output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
@@ -365,6 +367,8 @@ class Message(BaseModel):
                 token_metrics.append(f"total={self.metrics.total_tokens}")
             if self.metrics.cached_tokens:
                 token_metrics.append(f"cached={self.metrics.cached_tokens}")
+            if self.metrics.cache_write_tokens:
+                token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
             if self.metrics.reasoning_tokens:
                 token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
             if self.metrics.audio_tokens:

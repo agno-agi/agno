@@ -11,7 +11,9 @@ from qdrant_client import QdrantClient
 # Define the embedder
 embedder = OpenAIEmbedder(id="text-embedding-3-small")
 # Initialize vector database connection
-vector_db = Qdrant(collection="thai-recipes", path="tmp/qdrant", embedder=embedder)
+vector_db = Qdrant(
+    collection="thai-recipes", url="http://localhost:6333", embedder=embedder
+)
 # Load the knowledge base
 knowledge_base = PDFUrlKnowledgeBase(
     urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
@@ -42,7 +44,7 @@ def retriever(
         Optional[list[dict]]: List of retrieved documents or None if search fails
     """
     try:
-        qdrant_client = QdrantClient(path="tmp/qdrant")
+        qdrant_client = QdrantClient(url="http://localhost:6333")
         query_embedding = embedder.get_embedding(query)
         results = qdrant_client.query_points(
             collection_name="thai-recipes",
@@ -66,7 +68,6 @@ def main():
     # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
         retriever=retriever,
-        knowledge=knowledge_base,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
         show_tool_calls=True,
