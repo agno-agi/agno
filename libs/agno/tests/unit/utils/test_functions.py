@@ -1,6 +1,6 @@
 import json
 import pytest
-from typing import Dict, Optional
+from typing import Dict
 
 from agno.tools.function import Function, FunctionCall
 from agno.utils.functions import get_function_call
