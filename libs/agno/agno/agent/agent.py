@@ -1422,6 +1422,7 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1436,6 +1437,7 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1542,7 +1544,7 @@ class Agent:
             # The run is continued from a run_id. This requires the updated tools to be passed.
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
-            
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -1616,7 +1618,7 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
-            
+
             # Reset the event to run_response
             run_response.event = RunEvent.run_response
 
@@ -1785,7 +1787,7 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
-        
+
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
             yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
@@ -1962,7 +1964,7 @@ class Agent:
             # The run is continued from a run_id. This requires the updated tools to be passed.
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
-            
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -2036,7 +2038,7 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
-            
+
             # Reset the event to run_response
             run_response.event = RunEvent.run_response
 
@@ -2299,7 +2301,7 @@ class Agent:
 
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
-        
+
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
@@ -2320,7 +2322,7 @@ class Agent:
     ) -> Iterator[RunResponse]:
         # Set the run response to paused
         run_response.event = RunEvent.run_paused
-        
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
