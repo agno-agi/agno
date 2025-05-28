@@ -410,13 +410,13 @@ class Workflow:
             # Store the original run methods bound to the instance
             if self.__class__.run is not Workflow.run:
                 self._subclass_run = self.__class__.run.__get__(self)
+                # Get the parameters of the sync run method
+                sig = inspect.signature(self.__class__.run)
             if self.__class__.arun is not Workflow.arun:
                 self._subclass_run = self.__class__.arun.__get__(self)
+                # Get the parameters of the async run method
+                sig = inspect.signature(self.__class__.arun)
 
-            # Get the parameters of the run method
-            sig = inspect.signature(
-                self.__class__.run if self.__class__.run is not Workflow.run else self.__class__.arun
-            )
             # Convert parameters to a serializable format
             self._run_parameters = {
                 param_name: {
@@ -779,7 +779,7 @@ class Workflow:
 
         # For other types, return as is
         return field_value
-    
+
     async def aregister_workflow(self, force: bool = False) -> None:
         """Async version of register_workflow"""
         self.set_monitoring()
