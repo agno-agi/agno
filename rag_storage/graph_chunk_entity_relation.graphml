@@ -1,0 +1,334 @@
+<?xml version='1.0' encoding='utf-8'?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd"><key id="d11" for="edge" attr.name="created_at" attr.type="long"/>
+<key id="d10" for="edge" attr.name="file_path" attr.type="string"/>
+<key id="d9" for="edge" attr.name="source_id" attr.type="string"/>
+<key id="d8" for="edge" attr.name="keywords" attr.type="string"/>
+<key id="d7" for="edge" attr.name="description" attr.type="string"/>
+<key id="d6" for="edge" attr.name="weight" attr.type="double"/>
+<key id="d5" for="node" attr.name="created_at" attr.type="long"/>
+<key id="d4" for="node" attr.name="file_path" attr.type="string"/>
+<key id="d3" for="node" attr.name="source_id" attr.type="string"/>
+<key id="d2" for="node" attr.name="description" attr.type="string"/>
+<key id="d1" for="node" attr.name="entity_type" attr.type="string"/>
+<key id="d0" for="node" attr.name="entity_id" attr.type="string"/>
+<graph edgedefault="undirected"><node id="Taylor Brooks">
+  <data key="d0">Taylor Brooks</data>
+  <data key="d1">person</data>
+  <data key="d2">Taylor Brooks is a Software Engineer based in Austin, TX, with experience in building RESTful APIs and dynamic web applications.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="NeoCode Labs">
+  <data key="d0">NeoCode Labs</data>
+  <data key="d1">organization</data>
+  <data key="d2">NeoCode Labs is the organization where Taylor Brooks is currently employed as a Software Engineer, contributing to software architecture and deployment processes.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="Innovent Solutions">
+  <data key="d0">Innovent Solutions</data>
+  <data key="d1">organization</data>
+  <data key="d2">Innovent Solutions is the organization where Taylor Brooks previously worked as a Junior Developer, focusing on front-end development and database maintenance.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="Austin, TX">
+  <data key="d0">Austin, TX</data>
+  <data key="d1">geo</data>
+  <data key="d2">Austin, TX, is the geographical location where Taylor Brooks resides and works.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="University of Texas at Austin">
+  <data key="d0">University of Texas at Austin</data>
+  <data key="d1">organization</data>
+  <data key="d2">The University of Texas at Austin is where Taylor Brooks obtained a BSc in Software Engineering.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="Software Engineering">
+  <data key="d0">Software Engineering</data>
+  <data key="d1">category</data>
+  <data key="d2">Software Engineering is the field of study and work for Taylor Brooks, involving the development of software systems.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="RESTful APIs">
+  <data key="d0">RESTful APIs</data>
+  <data key="d1">category</data>
+  <data key="d2">RESTful APIs are a type of software architecture that Taylor Brooks has experience in building, facilitating communication between software systems.</data>
+  <data key="d3">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435888</data>
+</node>
+<node id="Morgan Lee">
+  <data key="d0">Morgan Lee</data>
+  <data key="d1">person</data>
+  <data key="d2">Morgan Lee is a Senior Software Engineer with over 8 years of experience in backend systems, cloud computing, and scalability.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="CloudNova Inc.">
+  <data key="d0">CloudNova Inc.</data>
+  <data key="d1">organization</data>
+  <data key="d2">CloudNova Inc. is an organization where Morgan Lee has worked as a Senior Software Engineer since 2020, focusing on scalable cloud infrastructure design.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="Seattle, WA">
+  <data key="d0">Seattle, WA</data>
+  <data key="d1">geo</data>
+  <data key="d2">Seattle, WA, is the location where Morgan Lee worked professionally, both at CloudNova Inc. and CodePeak Systems.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="CodePeak Systems">
+  <data key="d0">CodePeak Systems</data>
+  <data key="d1">organization</data>
+  <data key="d2">CodePeak Systems is an organization where Morgan Lee worked from 2015 to 2020, focusing on analytics platform development and security protocol enhancements.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="University of Washington">
+  <data key="d0">University of Washington</data>
+  <data key="d1">organization</data>
+  <data key="d2">The University of Washington is where Morgan Lee completed a Bachelor of Science in Computer Engineering from 2011 to 2015.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="AWS">
+  <data key="d0">AWS</data>
+  <data key="d1">category</data>
+  <data key="d2">AWS refers to Amazon Web Services, which Morgan Lee uses to architect scalable cloud infrastructure.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="Java">
+  <data key="d0">Java</data>
+  <data key="d1">category</data>
+  <data key="d2">Java is a programming language that Morgan Lee is skilled in.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="Terraform">
+  <data key="d0">Terraform</data>
+  <data key="d1">category</data>
+  <data key="d2">Terraform is an infrastructure as code software tool utilized by Morgan Lee for cloud management.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="MySQL">
+  <data key="d0">MySQL</data>
+  <data key="d1">category</data>
+  <data key="d2">MySQL is a relational database management system that Morgan Lee has expertise in.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="Python">
+  <data key="d0">Python</data>
+  <data key="d1">category</data>
+  <data key="d2">Python is a high-level programming language included in Morgan Lee’s skillset.</data>
+  <data key="d3">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435911</data>
+</node>
+<node id="Jordan Mitchell">
+  <data key="d0">Jordan Mitchell</data>
+  <data key="d1">person</data>
+  <data key="d2">Jordan Mitchell is a Junior Software Engineer and a recent Computer Science graduate with a focus on web development and data structures.</data>
+  <data key="d3">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435924</data>
+</node>
+<node id="SnapTech Solutions">
+  <data key="d0">SnapTech Solutions</data>
+  <data key="d1">organization</data>
+  <data key="d2">SnapTech Solutions is an organization where Jordan Mitchell worked as a Software Engineering Intern, focusing on front-end components and optimizing internal tools.</data>
+  <data key="d3">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435924</data>
+</node>
+<node id="San Francisco, CA">
+  <data key="d0">San Francisco, CA</data>
+  <data key="d1">geo</data>
+  <data key="d2">San Francisco, CA is the location where Jordan Mitchell has professional experience.</data>
+  <data key="d3">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435924</data>
+</node>
+<node id="University of California, Berkeley">
+  <data key="d0">University of California, Berkeley</data>
+  <data key="d1">organization</data>
+  <data key="d2">The University of California, Berkeley is the institution where Jordan Mitchell completed his BSc in Computer Science.</data>
+  <data key="d3">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435924</data>
+</node>
+<node id="Computer Science">
+  <data key="d0">Computer Science</data>
+  <data key="d1">category</data>
+  <data key="d2">Computer Science is the academic discipline that Jordan Mitchell studied, providing foundational knowledge for his career in software engineering.</data>
+  <data key="d3">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d4">unknown_source</data>
+  <data key="d5">1748435924</data>
+</node>
+<edge source="Taylor Brooks" target="NeoCode Labs">
+  <data key="d6">9.0</data>
+  <data key="d7">Taylor Brooks is currently employed at NeoCode Labs as a Software Engineer.</data>
+  <data key="d8">employment,software development</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Taylor Brooks" target="Innovent Solutions">
+  <data key="d6">8.0</data>
+  <data key="d7">Taylor Brooks previously worked at Innovent Solutions as a Junior Developer.</data>
+  <data key="d8">career growth,employment history</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Taylor Brooks" target="Austin, TX">
+  <data key="d6">7.0</data>
+  <data key="d7">Taylor Brooks lives and works in Austin, TX.</data>
+  <data key="d8">location,residency</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Taylor Brooks" target="University of Texas at Austin">
+  <data key="d6">9.0</data>
+  <data key="d7">Taylor Brooks completed their degree in Software Engineering at the University of Texas at Austin.</data>
+  <data key="d8">alma mater,education</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Taylor Brooks" target="Software Engineering">
+  <data key="d6">10.0</data>
+  <data key="d7">Taylor Brooks is specialized in Software Engineering, both as a field of study and career.</data>
+  <data key="d8">academic background,professional specialization</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Taylor Brooks" target="RESTful APIs">
+  <data key="d6">8.0</data>
+  <data key="d7">Taylor Brooks has extensive experience in building RESTful APIs as part of his work.</data>
+  <data key="d8">expertise,technical skill</data>
+  <data key="d9">chunk-d51f9b2acfa3647638c55495cc101acf</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435888</data>
+</edge>
+<edge source="Morgan Lee" target="CloudNova Inc.">
+  <data key="d6">9.0</data>
+  <data key="d7">Morgan Lee currently works as a Senior Software Engineer at CloudNova Inc., architecting scalable cloud infrastructure.</data>
+  <data key="d8">cloud infrastructure,employment</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="Seattle, WA">
+  <data key="d6">8.0</data>
+  <data key="d7">Seattle, WA, is the city where Morgan Lee has worked at both CloudNova Inc. and CodePeak Systems.</data>
+  <data key="d8">professional experience,work location</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="CodePeak Systems">
+  <data key="d6">8.0</data>
+  <data key="d7">Morgan Lee was employed at CodePeak Systems, where they developed analytics platforms and enhanced security protocols.</data>
+  <data key="d8">employment,software development</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="University of Washington">
+  <data key="d6">9.0</data>
+  <data key="d7">Morgan Lee graduated with a BSc in Computer Engineering from the University of Washington.</data>
+  <data key="d8">academic background,education</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="AWS">
+  <data key="d6">7.0</data>
+  <data key="d7">Morgan Lee uses AWS to design scalable cloud architectures as part of his professional expertise.</data>
+  <data key="d8">cloud computing,technical skill</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="Java">
+  <data key="d6">7.0</data>
+  <data key="d7">Java is one of the programming languages Morgan Lee is proficient in, supporting his software engineering tasks.</data>
+  <data key="d8">programming language,technical skill</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="Terraform">
+  <data key="d6">6.0</data>
+  <data key="d7">Terraform is part of Morgan Lee’s skill set for managing cloud infrastructure.</data>
+  <data key="d8">cloud management,technical tool</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="MySQL">
+  <data key="d6">7.0</data>
+  <data key="d7">Morgan Lee uses MySQL for database management in his software engineering projects.</data>
+  <data key="d8">database management,technical skill</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Morgan Lee" target="Python">
+  <data key="d6">7.0</data>
+  <data key="d7">Python is a programming language that Morgan Lee is skilled in, utilized in various software development projects.</data>
+  <data key="d8">programming language,technical skill</data>
+  <data key="d9">chunk-f509dab243138be6ec018358f6e19c25</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435911</data>
+</edge>
+<edge source="Jordan Mitchell" target="SnapTech Solutions">
+  <data key="d6">8.0</data>
+  <data key="d7">Jordan Mitchell worked as a Software Engineering Intern at SnapTech Solutions, contributing to front-end component development and tool optimization.</data>
+  <data key="d8">employment,software development</data>
+  <data key="d9">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435924</data>
+</edge>
+<edge source="Jordan Mitchell" target="University of California, Berkeley">
+  <data key="d6">9.0</data>
+  <data key="d7">Jordan Mitchell obtained his BSc in Computer Science from the University of California, Berkeley.</data>
+  <data key="d8">academic qualification,education</data>
+  <data key="d9">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435924</data>
+</edge>
+<edge source="Jordan Mitchell" target="San Francisco, CA">
+  <data key="d6">7.0</data>
+  <data key="d7">Jordan Mitchell's professional experience, specifically at SnapTech Solutions, is located in San Francisco, CA.</data>
+  <data key="d8">professional experience location</data>
+  <data key="d9">chunk-6a3dcdb873c123bd3d8ab3f9a9ca9e81</data>
+  <data key="d10">unknown_source</data>
+  <data key="d11">1748435924</data>
+</edge>
+</graph></graphml>

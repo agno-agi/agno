@@ -1,0 +1,58 @@
+2025-05-27 12:46:56,139 - lightrag - INFO - Created new empty graph
+2025-05-27 12:46:56,144 - lightrag - INFO - Process 50032 KV load full_docs with 0 records
+2025-05-27 12:46:56,144 - lightrag - INFO - Process 50032 KV load text_chunks with 0 records
+2025-05-27 12:46:56,144 - lightrag - INFO - Process 50032 KV load llm_response_cache with 0 records
+2025-05-27 12:46:56,144 - lightrag - INFO - Process 50032 doc status load doc_status with 0 records
+2025-05-27 12:46:56,145 - lightrag - INFO - Storage Initialization completed!
+2025-05-27 12:46:56,145 - lightrag - INFO - Storage Finalization completed!
+2025-05-27 12:47:03,102 - lightrag - INFO - Created new empty graph
+2025-05-27 12:47:03,105 - lightrag - INFO - Process 50073 KV load full_docs with 0 records
+2025-05-27 12:47:03,105 - lightrag - INFO - Process 50073 KV load text_chunks with 0 records
+2025-05-27 12:47:03,105 - lightrag - INFO - Process 50073 KV load llm_response_cache with 0 records
+2025-05-27 12:47:03,105 - lightrag - INFO - Process 50073 doc status load doc_status with 0 records
+2025-05-27 12:47:03,106 - lightrag - INFO - Storage Initialization completed!
+2025-05-27 12:47:03,106 - lightrag - INFO - Storage Finalization completed!
+2025-05-27 12:47:24,397 - lightrag - INFO - Created new empty graph
+2025-05-27 12:47:24,400 - lightrag - INFO - Process 50116 KV load full_docs with 0 records
+2025-05-27 12:47:24,400 - lightrag - INFO - Process 50116 KV load text_chunks with 0 records
+2025-05-27 12:47:24,400 - lightrag - INFO - Process 50116 KV load llm_response_cache with 0 records
+2025-05-27 12:47:24,400 - lightrag - INFO - Process 50116 doc status load doc_status with 0 records
+2025-05-27 12:47:24,400 - lightrag - INFO - Storage Initialization completed!
+2025-05-27 12:47:24,401 - lightrag - INFO - Storage Finalization completed!
+2025-05-27 12:50:18,961 - lightrag - INFO - Created new empty graph
+2025-05-27 12:50:18,967 - lightrag - INFO - Process 50213 KV load full_docs with 0 records
+2025-05-27 12:50:18,967 - lightrag - INFO - Process 50213 KV load text_chunks with 0 records
+2025-05-27 12:50:18,967 - lightrag - INFO - Process 50213 KV load llm_response_cache with 0 records
+2025-05-27 12:50:18,967 - lightrag - INFO - Process 50213 doc status load doc_status with 0 records
+2025-05-27 12:50:18,968 - lightrag - INFO - Storage Initialization completed!
+2025-05-27 12:50:18,968 - lightrag - INFO - Storage Finalization completed!
+2025-05-27 12:51:06,770 - lightrag - INFO - Created new empty graph
+2025-05-27 12:51:06,776 - lightrag - INFO - Process 50296 KV load full_docs with 0 records
+2025-05-27 12:51:06,776 - lightrag - INFO - Process 50296 KV load text_chunks with 0 records
+2025-05-27 12:51:06,776 - lightrag - INFO - Process 50296 KV load llm_response_cache with 0 records
+2025-05-27 12:51:06,776 - lightrag - INFO - Process 50296 doc status load doc_status with 0 records
+2025-05-27 12:51:06,776 - lightrag - INFO - Stored 1 new unique documents
+2025-05-27 12:51:06,777 - lightrag - INFO - Storage Initialization completed!
+2025-05-27 12:51:06,777 - lightrag - INFO - Processing 1 document(s)
+2025-05-27 12:51:06,777 - lightrag - INFO - Extracting stage 1/1: unknown_source
+2025-05-27 12:51:06,777 - lightrag - INFO - Processing d-id: doc-12f55314b1f554202e6d01eed8c0dfc8
+2025-05-27 12:51:06,779 - lightrag - INFO - limit_async: 16 new workers initialized
+2025-05-27 12:51:06,779 - lightrag - INFO - limit_async: 4 new workers initialized
+2025-05-27 12:51:08,833 - lightrag - INFO -  == LLM cache == saving default: 31287acceca7683840fdbea9bfd8d0b9
+2025-05-27 12:51:14,049 - lightrag - INFO -  == LLM cache == saving default: ebdd8407dfb998b439a2fbef2d4ec557
+2025-05-27 12:51:14,056 - lightrag - INFO - Chunk 1 of 1 extracted 3 Ent + 2 Rel
+2025-05-27 12:51:14,056 - lightrag - INFO - Merging stage 1/1: unknown_source
+2025-05-27 12:51:14,057 - lightrag - INFO - Updating 3 entities  1/1: unknown_source
+2025-05-27 12:51:15,436 - lightrag - INFO - Updating 2 relations 1/1: unknown_source
+2025-05-27 12:51:16,714 - lightrag - INFO - Writing graph with 3 nodes, 2 edges
+2025-05-27 12:51:16,738 - lightrag - INFO - In memory DB persist to disk
+2025-05-27 12:51:16,738 - lightrag - INFO - Completed processing file 1/1: unknown_source
+2025-05-27 12:51:16,738 - lightrag - INFO - Document processing pipeline completed
+2025-05-27 12:51:18,249 - lightrag - INFO -  == LLM cache == saving hybrid: 5066a025ebd905a25b68c64b5972e236
+2025-05-27 12:51:18,249 - lightrag - INFO - Process 50296 building query context...
+2025-05-27 12:51:18,249 - lightrag - INFO - Query nodes: Name, Curriculum Vitae, top_k: 60, cosine: 0.2
+2025-05-27 12:51:19,146 - lightrag - INFO - Local query uses 2 entites, 2 relations, 1 chunks
+2025-05-27 12:51:19,146 - lightrag - INFO - Query edges: CV analysis, Person identification, top_k: 60, cosine: 0.2
+2025-05-27 12:51:20,302 - lightrag - INFO - Global query uses 2 entites, 1 relations, 1 chunks
+2025-05-27 12:51:22,335 - lightrag - INFO -  == LLM cache == saving hybrid: 81f8a20a770487805fa90f43a1643b73
+2025-05-27 12:51:22,337 - lightrag - INFO - Storage Finalization completed!
