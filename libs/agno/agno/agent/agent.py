@@ -5170,7 +5170,6 @@ class Agent:
             if num_documents is None:
                 num_documents = self.knowledge.num_documents
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
                 query=query, num_documents=num_documents, filters=filters
             )
