@@ -38,6 +38,7 @@ if [ -z "$1" ]; then
     echo "- sambanova"
     echo "- together"
     echo "- xai"
+    echo "- vercel"
     exit 1
 fi
 
@@ -207,6 +208,12 @@ case $MODEL_NAME in
     "deepinfra")
         if [ -z "${DEEPINFRA_API_KEY}" ]; then
             print_heading "Error: DEEPINFRA_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "vercel")
+        if [ -z "${V0_API_KEY}" ]; then
+            print_heading "Error: V0_API_KEY environment variable is not set"
             exit 1
         fi
         ;;

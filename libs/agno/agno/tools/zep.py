@@ -1,7 +1,7 @@
 import uuid
 from os import getenv
 from textwrap import dedent
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
@@ -43,8 +43,6 @@ class ZepTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -53,6 +51,8 @@ class ZepTools(Toolkit):
 
         if instructions is None:
             self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+        else:
+            self.instructions = instructions
 
         self.zep_client: Optional[Zep] = None
         self._initialized = False
@@ -66,13 +66,17 @@ class ZepTools(Toolkit):
 
         self.initialize()
 
-        # Register methods as tools conditionally
+        tools: List[Any] = []
         if add_zep_message:
-            self.register(self.add_zep_message)
+            tools.append(self.add_zep_message)
         if get_zep_memory:
-            self.register(self.get_zep_memory)
+            tools.append(self.get_zep_memory)
         if search_zep_memory:
-            self.register(self.search_zep_memory)
+            tools.append(self.search_zep_memory)
+
+        super().__init__(
+            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     def initialize(self) -> bool:
         """
@@ -259,8 +263,6 @@ class ZepAsyncTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -269,6 +271,8 @@ class ZepAsyncTools(Toolkit):
 
         if instructions is None:
             self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+        else:
+            self.instructions = instructions
 
         self.zep_client: Optional[AsyncZep] = None
         self._initialized = False
@@ -283,12 +287,17 @@ class ZepAsyncTools(Toolkit):
         self._initialized = False
 
         # Register methods as tools conditionally
+        tools = []
         if add_zep_message:
-            self.register(self.add_zep_message)
+            tools.append(self.add_zep_message)
         if get_zep_memory:
-            self.register(self.get_zep_memory)
+            tools.append(self.get_zep_memory)  # type: ignore
         if search_zep_memory:
-            self.register(self.search_zep_memory)
+            tools.append(self.search_zep_memory)  # type: ignore
+
+        super().__init__(
+            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     async def initialize(self) -> bool:
         """

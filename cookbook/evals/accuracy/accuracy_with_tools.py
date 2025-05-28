@@ -6,13 +6,13 @@ from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 
 evaluation = AccuracyEval(
+    model=OpenAIChat(id="o4-mini"),
     agent=Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[CalculatorTools(factorial=True)],
     ),
-    prompt="What is 10!?",
-    expected_answer="3628800",
-    num_iterations=1,
+    input="What is 10!?",
+    expected_output="3628800",
 )
 
 result: Optional[AccuracyResult] = evaluation.run(print_results=True)
