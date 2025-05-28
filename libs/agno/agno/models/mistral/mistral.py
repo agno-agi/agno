@@ -14,6 +14,7 @@ from agno.utils.models.mistral import format_messages
 try:
     from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
+    from mistralai.extra import response_format_from_pydantic_model
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
     from mistralai.models import (
         AssistantMessage,
@@ -26,7 +27,6 @@ try:
     from mistralai.models.chatcompletionresponse import ChatCompletionResponse
     from mistralai.models.deltamessage import DeltaMessage
     from mistralai.types.basemodel import Unset
-    from mistralai.extra import response_format_from_pydantic_model
 
     MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
