@@ -1,0 +1,373 @@
+import json
+import os
+from typing import Any, Dict, List, Optional, Union
+
+from agno.tools import Toolkit
+from agno.utils.log import log_info, logger
+
+
+class VisualizationTools(Toolkit):
+    def __init__(
+        self,
+        bar_chart: bool = True,
+        line_chart: bool = True,
+        pie_chart: bool = True,
+        scatter_plot: bool = True,
+        histogram: bool = True,
+        enable_all: bool = False,
+        output_dir: str = "charts",
+        **kwargs,
+    ):
+        """
+        Initialize the VisualizationTools toolkit.
+
+        Args:
+            bar_chart (bool): Enable bar chart creation. Default is True.
+            line_chart (bool): Enable line chart creation. Default is True.
+            pie_chart (bool): Enable pie chart creation. Default is True.
+            scatter_plot (bool): Enable scatter plot creation. Default is True.
+            histogram (bool): Enable histogram creation. Default is True.
+            enable_all (bool): Enable all chart types. Default is False.
+            output_dir (str): Directory to save chart images. Default is "charts".
+        """
+        # Check if matplotlib is available
+        try:
+            import matplotlib
+            import matplotlib.pyplot as plt
+            # Use non-interactive backend to avoid display issues
+            matplotlib.use('Agg')
+        except ImportError:
+            raise ImportError(
+                "The `matplotlib` package is not installed. Please install it via `pip install matplotlib`."
+            )
+
+        self.output_dir = output_dir
+        
+        # Create output directory if it doesn't exist
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
+        # Build the tools list based on enabled functions
+        tools = []
+        if bar_chart or enable_all:
+            tools.append(self.create_bar_chart)
+        if line_chart or enable_all:
+            tools.append(self.create_line_chart)
+        if pie_chart or enable_all:
+            tools.append(self.create_pie_chart)
+        if scatter_plot or enable_all:
+            tools.append(self.create_scatter_plot)
+        if histogram or enable_all:
+            tools.append(self.create_histogram)
+
+        # Initialize the toolkit
+        super().__init__(name="visualization_tools", tools=tools, **kwargs)
+
+    def create_bar_chart(
+        self, 
+        data: Dict[str, Union[int, float]], 
+        title: str = "Bar Chart",
+        x_label: str = "Categories",
+        y_label: str = "Values",
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Create a bar chart from the provided data.
+
+        Args:
+            data (Dict[str, Union[int, float]]): Dictionary with categories as keys and values as numbers
+            title (str): Title of the chart
+            x_label (str): Label for x-axis
+            y_label (str): Label for y-axis
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Prepare data
+            categories = list(data.keys())
+            values = list(data.values())
+            
+            # Create the chart
+            plt.figure(figsize=(10, 6))
+            plt.bar(categories, values)
+            plt.title(title)
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
+            
+            # Save the chart
+            if filename is None:
+                filename = f"bar_chart_{len(os.listdir(self.output_dir)) + 1}.png"
+            
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            log_info(f"Bar chart created and saved to {file_path}")
+            
+            return json.dumps({
+                "chart_type": "bar_chart",
+                "title": title,
+                "file_path": file_path,
+                "data_points": len(data),
+                "status": "success"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating bar chart: {str(e)}")
+            return json.dumps({
+                "chart_type": "bar_chart",
+                "error": str(e),
+                "status": "error"
+            })
+
+    def create_line_chart(
+        self,
+        data: Dict[str, Union[int, float]],
+        title: str = "Line Chart",
+        x_label: str = "X-axis",
+        y_label: str = "Y-axis",
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Create a line chart from the provided data.
+
+        Args:
+            data (Dict[str, Union[int, float]]): Dictionary with x-values as keys and y-values as numbers
+            title (str): Title of the chart
+            x_label (str): Label for x-axis
+            y_label (str): Label for y-axis
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Prepare data
+            x_values = list(data.keys())
+            y_values = list(data.values())
+            
+            # Create the chart
+            plt.figure(figsize=(10, 6))
+            plt.plot(x_values, y_values, marker='o', linewidth=2, markersize=6)
+            plt.title(title)
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.xticks(rotation=45, ha='right')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            
+            # Save the chart
+            if filename is None:
+                filename = f"line_chart_{len(os.listdir(self.output_dir)) + 1}.png"
+                
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            log_info(f"Line chart created and saved to {file_path}")
+            
+            return json.dumps({
+                "chart_type": "line_chart", 
+                "title": title,
+                "file_path": file_path,
+                "data_points": len(data),
+                "status": "success"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating line chart: {str(e)}")
+            return json.dumps({
+                "chart_type": "line_chart",
+                "error": str(e),
+                "status": "error"
+            })
+
+    def create_pie_chart(
+        self,
+        data: Dict[str, Union[int, float]],
+        title: str = "Pie Chart",
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Create a pie chart from the provided data.
+
+        Args:
+            data (Dict[str, Union[int, float]]): Dictionary with labels as keys and values as numbers
+            title (str): Title of the chart
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Prepare data
+            labels = list(data.keys())
+            values = list(data.values())
+            
+            # Create the chart
+            plt.figure(figsize=(10, 8))
+            plt.pie(values, labels=labels, autopct='%1.1f%%', startangle=90)
+            plt.title(title)
+            plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle
+            
+            # Save the chart
+            if filename is None:
+                filename = f"pie_chart_{len(os.listdir(self.output_dir)) + 1}.png"
+                
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            log_info(f"Pie chart created and saved to {file_path}")
+            
+            return json.dumps({
+                "chart_type": "pie_chart",
+                "title": title,
+                "file_path": file_path,
+                "data_points": len(data),
+                "status": "success"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating pie chart: {str(e)}")
+            return json.dumps({
+                "chart_type": "pie_chart",
+                "error": str(e),
+                "status": "error"
+            })
+
+    def create_scatter_plot(
+        self,
+        x_data: List[Union[int, float]],
+        y_data: List[Union[int, float]],
+        title: str = "Scatter Plot",
+        x_label: str = "X-axis",
+        y_label: str = "Y-axis",
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Create a scatter plot from the provided x and y data.
+
+        Args:
+            x_data (List[Union[int, float]]): List of x-coordinates
+            y_data (List[Union[int, float]]): List of y-coordinates
+            title (str): Title of the chart
+            x_label (str): Label for x-axis
+            y_label (str): Label for y-axis
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            if len(x_data) != len(y_data):
+                raise ValueError("x_data and y_data must have the same length")
+            
+            # Create the chart
+            plt.figure(figsize=(10, 6))
+            plt.scatter(x_data, y_data, alpha=0.6)
+            plt.title(title)
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            
+            # Save the chart
+            if filename is None:
+                filename = f"scatter_plot_{len(os.listdir(self.output_dir)) + 1}.png"
+                
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            log_info(f"Scatter plot created and saved to {file_path}")
+            
+            return json.dumps({
+                "chart_type": "scatter_plot",
+                "title": title,
+                "file_path": file_path,
+                "data_points": len(x_data),
+                "status": "success"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating scatter plot: {str(e)}")
+            return json.dumps({
+                "chart_type": "scatter_plot",
+                "error": str(e),
+                "status": "error"
+            })
+
+    def create_histogram(
+        self,
+        data: List[Union[int, float]],
+        bins: int = 10,
+        title: str = "Histogram",
+        x_label: str = "Values",
+        y_label: str = "Frequency",
+        filename: Optional[str] = None
+    ) -> str:
+        """
+        Create a histogram from the provided data.
+
+        Args:
+            data (List[Union[int, float]]): List of numerical values
+            bins (int): Number of bins for the histogram
+            title (str): Title of the chart
+            x_label (str): Label for x-axis
+            y_label (str): Label for y-axis
+            filename (Optional[str]): Custom filename for the chart image
+
+        Returns:
+            str: JSON string with chart information and file path
+        """
+        try:
+            import matplotlib.pyplot as plt
+            
+            # Create the chart
+            plt.figure(figsize=(10, 6))
+            plt.hist(data, bins=bins, alpha=0.7, edgecolor='black')
+            plt.title(title)
+            plt.xlabel(x_label)
+            plt.ylabel(y_label)
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            
+            # Save the chart
+            if filename is None:
+                filename = f"histogram_{len(os.listdir(self.output_dir)) + 1}.png"
+                
+            file_path = os.path.join(self.output_dir, filename)
+            plt.savefig(file_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            log_info(f"Histogram created and saved to {file_path}")
+            
+            return json.dumps({
+                "chart_type": "histogram",
+                "title": title,
+                "file_path": file_path,
+                "data_points": len(data),
+                "bins": bins,
+                "status": "success"
+            })
+            
+        except Exception as e:
+            logger.error(f"Error creating histogram: {str(e)}")
+            return json.dumps({
+                "chart_type": "histogram",
+                "error": str(e),
+                "status": "error"
+            }) 
