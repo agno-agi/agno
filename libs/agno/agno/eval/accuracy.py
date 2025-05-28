@@ -45,7 +45,7 @@ class AccuracyEvalMode(str, Enum):
 class AccuracyEvaluation:
     input: str
     output: str
-    expected_output: str
+    expected_output: Union[str, list[str]]
     score: int
     reason: str
 
@@ -68,7 +68,7 @@ class AccuracyEvaluation:
         )
         results_table.add_row("Input", self.input)
         results_table.add_row("Output", self.output)
-        results_table.add_row("Expected Output", self.expected_output)
+        results_table.add_row("Expected Output", str(self.expected_output))
         results_table.add_row("Accuracy Score", f"{str(self.score)}/10")
         results_table.add_row("Accuracy Reason", Markdown(self.reason))
         console.print(results_table)
@@ -140,7 +140,7 @@ class AccuracyResult:
         for result in self.results:
             results_table.add_row("Input", result.input)
             results_table.add_row("Output", result.output)
-            results_table.add_row("Expected Output", result.expected_output)
+            results_table.add_row("Expected Output(s)", str(result.expected_output))
             results_table.add_row("Accuracy Score", f"{str(result.score)}/10")
             if result.reason:
                 results_table.add_row("Accuracy Reason", result.reason)
@@ -154,7 +154,7 @@ class AccuracyEval:
     # Input to evaluate
     input: Union[str, Callable]
     # Expected answer to the input
-    expected_output: Union[str, Callable]
+    expected_output: Union[str, Callable, list[str]]
     # Agent to evaluate
     agent: Optional[Agent] = None
     # Mode defining how the evaluation is performed
@@ -250,7 +250,7 @@ class AccuracyEval:
             structured_outputs=True,
         )
 
-    def get_eval_expected_output(self) -> str:
+    def get_eval_expected_output(self) -> Union[str, list[str]]:
         """Return the eval expected answer. If it is a callable, call it and return the resulting string"""
         if callable(self.expected_output):
             _output = self.expected_output()
@@ -274,14 +274,17 @@ class AccuracyEval:
         self,
         input: str,
         evaluator_input: str,
-        expected_output: str,
+        expected_output: Union[str, list[str]],
         agent_output: str,
         evaluator_agent: Optional[Agent] = None,
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process."""
         try:
             if self.mode == AccuracyEvalMode.BASIC:
-                score = 10 if agent_output == expected_output else 0
+                if isinstance(expected_output, list):
+                    score = 10 if agent_output in expected_output else 0
+                else:
+                    score = 10 if agent_output == expected_output else 0
                 return AccuracyEvaluation(
                     input=input, output=agent_output, expected_output=expected_output, score=score, reason=""
                 )
@@ -337,7 +340,7 @@ class AccuracyEval:
                     continue
 
                 evaluator_input = accuracy_evaluator_input.substitute(
-                    agent_input=eval_input, expected_output=eval_expected_output, agent_output=agent_output
+                    eval_input=eval_input, eval_expected_output=str(eval_expected_output), agent_output=agent_output
                 )
                 logger.debug(f"Agent output #{i + 1}: {agent_output}")
                 result = self.evaluate_answer(
@@ -409,7 +412,7 @@ class AccuracyEval:
         eval_expected_output = self.get_eval_expected_output()
 
         evaluator_input = accuracy_evaluator_input.substitute(
-            agent_input=eval_input, expected_output=eval_expected_output, agent_output=output
+            eval_input=eval_input, eval_expected_output=str(eval_expected_output), agent_output=output
         )
         result = self.evaluate_answer(
             input=eval_input,
