@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.params import Body
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.operator import (
@@ -88,6 +89,7 @@ async def agent_acontinue_run_streamer(
     agent: Agent,
     run_response: Optional[RunResponse] = None,
     run_id: Optional[str] = None,
+    updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
@@ -95,6 +97,7 @@ async def agent_acontinue_run_streamer(
         continue_response = await agent.acontinue_run(
             run_response=run_response,
             run_id=run_id,
+            updated_tools=updated_tools,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -417,24 +420,23 @@ def get_async_playground_router(
         else:
             logger.debug(f"Continuing run within session: {payload.session_id}")
 
-        parsed_run_response = None
-        if payload.run_response_data:
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if payload.tools:
             try:
-                # If run_response_data is a dict from Body(None), use it directly
-                parsed_run_response = RunResponse.from_dict(payload.run_response_data)
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in payload.tools]
             except Exception as e:
-                raise HTTPException(
-                    status_code=400, detail=f"Invalid structure or content for run_response_data: {str(e)}"
-                )
-        elif not run_id:  # run_id is still a path parameter and crucial
-            raise HTTPException(status_code=400, detail="run_id is required to continue a run.")
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
         if payload.stream and agent.is_streamable:
             return StreamingResponse(
                 agent_acontinue_run_streamer(
                     agent,
-                    run_response=parsed_run_response,
+                    run_response=None,
                     run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
                     session_id=payload.session_id,
                     user_id=payload.user_id,
                 ),
@@ -444,8 +446,8 @@ def get_async_playground_router(
             run_response_obj = cast(
                 RunResponse,
                 await agent.acontinue_run(
-                    run_response=parsed_run_response,
                     run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
                     session_id=payload.session_id,
                     user_id=payload.user_id,
                     stream=False,
@@ -497,7 +499,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.is_paused:
+                if "content" in first_run or first_run.get("is_paused", False):
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -872,7 +874,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.is_paused:
+                if "content" in first_run or first_run.get("is_paused", False):
                     team_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None

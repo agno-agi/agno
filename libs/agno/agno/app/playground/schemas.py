@@ -81,6 +81,13 @@ class AgentRunRequest(BaseModel):
     files: Optional[List[UploadFile]] = None
 
 
+class ContinueRunRequest(BaseModel):
+    tools: Optional[List[dict]] = None  # List of tool dictionaries instead of full run_response_data
+    stream: bool = True
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
 class AgentRenameRequest(BaseModel):
     name: str
     user_id: str
@@ -219,10 +226,3 @@ class TeamSessionResponse(BaseModel):
 class TeamRenameRequest(BaseModel):
     name: str
     user_id: str
-
-
-class ContinueRunRequest(BaseModel):
-    run_response_data: Optional[dict] = None
-    stream: bool = True
-    session_id: Optional[str] = None
-    user_id: Optional[str] = None
