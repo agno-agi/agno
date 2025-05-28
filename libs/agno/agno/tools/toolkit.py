@@ -105,12 +105,11 @@ class Toolkit:
         for tool in self.tools:
             self.register(tool)
 
-    def register(self, function: Callable[..., Any], sanitize_arguments: bool = True, name: Optional[str] = None):
+    def register(self, function: Callable[..., Any], name: Optional[str] = None):
         """Register a function with the toolkit.
 
         Args:
             function: The callable to register
-            sanitize_arguments: Whether to sanitize arguments before passing to the function
             name: Optional custom name for the function
 
         Returns:
@@ -126,7 +125,6 @@ class Toolkit:
             f = Function(
                 name=tool_name,
                 entrypoint=function,
-                sanitize_arguments=sanitize_arguments,
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,

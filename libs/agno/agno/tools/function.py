@@ -83,8 +83,8 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
-    # If True, the arguments are sanitized before being passed to the function.
-    sanitize_arguments: bool = True
+    # If True, the arguments are sanitized before being passed to the function. (Deprecated)
+    sanitize_arguments: bool = False
     # If True, the function call will show the result along with sending it to the model.
     show_result: bool = False
     # If True, the agent will stop after the function call.

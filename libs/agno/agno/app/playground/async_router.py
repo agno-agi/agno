@@ -497,7 +497,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run:
+                if "content" in first_run or first_run.is_paused:
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -706,7 +706,7 @@ def get_async_playground_router(
         if teams is None:
             return []
 
-        return [TeamGetResponse.from_team(team) for team in teams]
+        return [TeamGetResponse.from_team(team, async_mode=True) for team in teams]
 
     @playground_router.get("/teams/{team_id}")
     async def get_team(team_id: str):
@@ -714,7 +714,7 @@ def get_async_playground_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamGetResponse.from_team(team)
+        return TeamGetResponse.from_team(team, async_mode=True)
 
     @playground_router.post("/teams/{team_id}/runs")
     async def create_team_run(
@@ -872,7 +872,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run:
+                if "content" in first_run or first_run.is_paused:
                     team_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None

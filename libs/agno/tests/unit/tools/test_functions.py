@@ -533,7 +533,6 @@ def test_tool_decorator_with_config():
         strict=True,
         instructions="Custom instructions",
         add_instructions=False,
-        sanitize_arguments=False,
         show_result=True,
         stop_after_tool_call=True,
         requires_confirmation=True,
@@ -551,7 +550,6 @@ def test_tool_decorator_with_config():
     assert configured_func.strict is True
     assert configured_func.instructions == "Custom instructions"
     assert configured_func.add_instructions is False
-    assert configured_func.sanitize_arguments is False
     assert configured_func.show_result is True
     assert configured_func.stop_after_tool_call is True
     assert configured_func.requires_confirmation is True
