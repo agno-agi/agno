@@ -171,7 +171,10 @@ class MCPTools(Toolkit):
             if "url" not in streamable_http_params:
                 streamable_http_params["url"] = self.url
             self._context = streamablehttp_client(**streamable_http_params)
-            client_timeout = min(self.timeout_seconds, streamable_http_params.get("timeout", self.timeout_seconds))
+            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
+            if isinstance(params_timeout, timedelta):
+                params_timeout = int(params_timeout.total_seconds())
+            client_timeout = min(self.timeout_seconds, params_timeout)
         else:
             if self.server_params is None:
                 raise ValueError("server_params must be provided when using stdio transport.")

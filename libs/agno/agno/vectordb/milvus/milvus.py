@@ -379,7 +379,7 @@ class Milvus(VectorDb):
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents based on search type."""
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
@@ -412,7 +412,7 @@ class Milvus(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously based on search type."""
-        log_info(f"Inserting {len(documents)} documents asynchronously")
+        log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
