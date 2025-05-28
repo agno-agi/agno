@@ -31,7 +31,8 @@ class RunEvent(str, Enum):
     reasoning_step = "ReasoningStep"
     reasoning_completed = "ReasoningCompleted"
 
-    updating_memory = "UpdatingMemory"
+    memory_update_started = "MemoryUpdateStarted"
+    memory_update_completed = "MemoryUpdateCompleted"
 
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
@@ -89,8 +90,8 @@ class BaseRunResponseEvent:
     agent_id: str
     event: str
     created_at: int = field(default_factory=lambda: int(time()))
-    
-    
+
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -119,7 +120,7 @@ class BaseRunResponseEvent:
                 _dict["image"] = self.image.to_dict()
             else:
                 _dict["image"] = self.image
-        
+
         if self.videos is not None:
             _dict["videos"] = []
             for vid in self.videos:
@@ -164,7 +165,7 @@ class BaseRunResponseEvent:
                 _dict["tool"] = self.tool.to_dict()
             else:
                 _dict["tool"] = self.tool
-        
+
         return _dict
 
     def to_json(self) -> str:
@@ -177,7 +178,7 @@ class BaseRunResponseEvent:
             raise
 
         return json.dumps(_dict, indent=2)
-    
+
     @property
     def is_paused(self):
         return False
@@ -202,7 +203,7 @@ class RunResponseDeltaEvent(BaseRunResponseEvent):
     content_type: str = "str"
     thinking: Optional[str] = None
     citations: Optional[Citations] = None
-    
+
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
 
@@ -215,16 +216,16 @@ class RunResponseCompletedEvent(BaseRunResponseEvent):
 
     content: Optional[Any] = None
     content_type: str = "str"
-    
+
     reasoning_content: Optional[str] = None
 
 
 @dataclass(kw_only=True)
 class RunResponsePausedEvent(BaseRunResponseEvent):
     event: str = RunEvent.run_paused.value
-    
+
     tools: List[ToolExecution]
-    
+
     @property
     def is_paused(self):
         return True
@@ -248,11 +249,17 @@ class RunResponseCancelledEvent(BaseRunResponseEvent):
     event: str = RunEvent.run_cancelled.value
 
     reason: Optional[str] = None
-    
+
 
 @dataclass(kw_only=True)
-class UpdatingMemoryEvent(BaseRunResponseEvent):
-    event: str = RunEvent.updating_memory.value
+class MemoryUpdateStartedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.memory_update_started.value
+
+
+@dataclass(kw_only=True)
+class MemoryUpdateCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.memory_update_completed.value
+
 
 
 @dataclass(kw_only=True)
@@ -263,7 +270,7 @@ class ReasoningStartedEvent(BaseRunResponseEvent):
 @dataclass(kw_only=True)
 class ReasoningStepEvent(BaseRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
-    
+
     content: Any
     content_type: str = "str"
     reasoning_content: str
@@ -271,25 +278,25 @@ class ReasoningStepEvent(BaseRunResponseEvent):
 @dataclass(kw_only=True)
 class ReasoningCompletedEvent(BaseRunResponseEvent):
     event: str = RunEvent.reasoning_completed.value
-    
+
     content: Any
     content_type: str = "str"
-    
+
 
 
 @dataclass(kw_only=True)
 class ToolCallStartedEvent(BaseRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
-    
+
     tool: ToolExecution
-    
+
 @dataclass(kw_only=True)
 class ToolCallCompletedEvent(BaseRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
-    
+
     tool: ToolExecution
     content: str
-    
+
 
 
 
@@ -304,7 +311,8 @@ RunResponseEvent = Union[
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
-    UpdatingMemoryEvent,
+    MemoryUpdateStartedEvent,
+    MemoryUpdateCompletedEvent,
 ]
 
 

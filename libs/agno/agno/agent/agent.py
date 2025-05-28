@@ -49,7 +49,8 @@ from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.events import create_reasoning_completed_event, create_reasoning_step_event, create_reasoning_started_event, create_tool_call_started_event, create_tool_call_completed_event, create_run_response_delta_event, create_run_response_completed_event, create_run_response_cancelled_event, create_run_response_started_event, create_run_response_error_event, create_run_response_continued_event, create_run_response_paused_event, create_memory_update_event
+from agno.utils.events import create_reasoning_completed_event, create_reasoning_step_event, create_reasoning_started_event, create_tool_call_started_event, create_tool_call_completed_event, create_run_response_delta_event, create_run_response_completed_event, create_run_response_cancelled_event, create_run_response_started_event, create_run_response_error_event, create_run_response_continued_event, create_run_response_paused_event, create_memory_update_started_event, \
+    create_memory_update_completed_event
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -655,12 +656,14 @@ class Agent:
             )
 
         # 4. Update Agent Memory
-        self._update_memory(
+        response_iterator = self._update_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
             messages=messages,
         )
+        # Consume the response iterator to ensure the memory is updated before the run is completed
+        deque(response_iterator, maxlen=0)
 
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
@@ -994,7 +997,7 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 if stream and self.is_streamable:
-                    yield create_run_response_cancelled_event(run_response, "Operation cancelled by user")
+                    return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
                 else:
                     return self.create_run_response(
                         event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1006,12 +1009,12 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                yield create_run_response_error_event(run_response, error=str(last_exception))
+                return self._generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                yield create_run_response_error_event(run_response, error=str(last_exception))
+                return self._generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
@@ -1615,7 +1618,7 @@ class Agent:
 
             try:
                 if stream and self.is_streamable:
-                    yield from self._continue_run_stream(
+                    response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=user_message,
@@ -1626,7 +1629,7 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
 
-                    return
+                    return response_iterator
                 else:
                     response = self._continue_run(
                         run_response=run_response,
@@ -1653,7 +1656,7 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 if stream and self.is_streamable:
-                    yield create_run_response_cancelled_event(run_response, "Operation cancelled by user")
+                    return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
                 else:
                     return self.create_run_response(
                         event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1666,11 +1669,11 @@ class Agent:
             )
 
             if stream and self.is_streamable:
-                yield create_run_response_error_event(run_response, error=str(last_exception))
+                return self._generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
             if stream and self.is_streamable:
-                yield create_run_response_error_event(run_response, error=str(last_exception))
+                return self._generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _continue_run(
@@ -1732,12 +1735,14 @@ class Agent:
             )
 
         # 4. Update Agent Memory
-        self._update_memory(
+        response_iterator = self._update_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
             messages=messages,
         )
+        # Consume the response iterator to ensure the memory is updated before the run is completed
+        deque(response_iterator, maxlen=0)
 
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
@@ -2739,11 +2744,13 @@ class Agent:
                 and self.memory.update_user_memories_after_run
                 and run_messages.user_message is not None
             ):
+                if stream_intermediate_steps:
+                    yield create_memory_update_started_event(from_run_response=self.run_response)
+
                 self.memory.update_memory(input=run_messages.user_message.get_content_string())
 
-                # Yield UpdatingMemory event
                 if stream_intermediate_steps:
-                    yield create_memory_update_event(from_run_response=self.run_response)
+                    yield create_memory_update_completed_event(from_run_response=self.run_response)
 
             if messages is not None and len(messages) > 0:
                 for _im in messages:
@@ -2772,11 +2779,8 @@ class Agent:
                 self.memory.update_summary()
 
         elif isinstance(self.memory, Memory):
-            memory_updated = self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+            yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages, stream_intermediate_steps)  # type: ignore
 
-            # Yield UpdatingMemory event
-            if stream_intermediate_steps and memory_updated:
-                yield create_memory_update_event(from_run_response=self.run_response)
 
     async def _aupdate_memory(
         self,
@@ -2802,7 +2806,7 @@ class Agent:
 
                 # Yield UpdatingMemory event
                 if stream_intermediate_steps:
-                    yield create_memory_update_event(from_run_response=self.run_response)
+                    yield create_memory_update_started_event(from_run_response=self.run_response)
 
             if messages is not None and len(messages) > 0:
                 for _im in messages:
@@ -2830,10 +2834,8 @@ class Agent:
                 await self.memory.aupdate_summary()
 
         elif isinstance(self.memory, Memory):
-            memory_updated = await self._amake_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
-
-            if stream_intermediate_steps and memory_updated:
-                yield create_memory_update_event(from_run_response=self.run_response)
+            async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id, messages, stream_intermediate_steps):  # type: ignore
+                yield event
 
     def _handle_model_response_stream(
         self,
@@ -3124,6 +3126,9 @@ class Agent:
                 yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=model_response_chunk.content)
 
 
+    def _generator_wrapper(self, event: RunResponseEvent) -> Iterator[RunResponseEvent]:
+        yield event
+
     async def _async_generator_wrapper(self, event: RunResponseEvent) -> AsyncIterator[RunResponseEvent]:
         yield event
 
@@ -3208,15 +3213,18 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
-    ) -> bool:
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[RunResponseEvent]:
         session_messages: List[Message] = []
         self.memory = cast(Memory, self.memory)
-        memory_updated = False
+
         if self.enable_user_memories and run_messages.user_message is not None:
             log_debug("Creating user memories.")
+            
+            if stream_intermediate_steps:
+                yield create_memory_update_started_event(from_run_response=self.run_response)
+                
             self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
-
-            memory_updated = True
 
             # TODO: Possibly do both of these in one step
             if messages is not None and len(messages) > 0:
@@ -3241,14 +3249,14 @@ class Agent:
                     self.memory.create_user_memories(messages=parsed_messages, user_id=user_id)
                 else:
                     log_warning("Unable to add messages to memory")
+                    
+            if stream_intermediate_steps:
+                yield create_memory_update_completed_event(from_run_response=self.run_response)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
             self.memory.create_session_summary(session_id=session_id, user_id=user_id)
-            memory_updated = True
-
-        return memory_updated
 
     async def _amake_memories_and_summaries(
         self,
@@ -3256,17 +3264,21 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
-    ) -> bool:
+        stream_intermediate_steps: bool = False,
+    ) -> AsyncIterator[RunResponseEvent]:
         self.memory = cast(Memory, self.memory)
         session_messages: List[Message] = []
 
         memory_updated = False
         if self.enable_user_memories and run_messages.user_message is not None:
             log_debug("Creating user memories.")
+            
+            if stream_intermediate_steps:
+                yield create_memory_update_started_event(from_run_response=self.run_response)
+                
             await self.memory.acreate_user_memories(
                 message=run_messages.user_message.get_content_string(), user_id=user_id
             )
-            memory_updated = True
 
             # TODO: Possibly do both of these in one step
             if messages is not None and len(messages) > 0:
@@ -3291,14 +3303,14 @@ class Agent:
                     await self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id)
                 else:
                     log_warning("Unable to add messages to memory")
+                    
+            if stream_intermediate_steps:
+                yield create_memory_update_completed_event(from_run_response=self.run_response)
 
         # Update the session summary if needed
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
             await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
-            memory_updated = True
-
-        return memory_updated
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -6536,19 +6548,18 @@ class Agent:
                     knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
-                print(run_response)
                 response_timer.stop()
 
                 reasoning_steps = []
 
-                if isinstance(run_response, RunResponseEvent) and run_response.is_paused:
+                if isinstance(run_response, RunResponse) and run_response.is_paused:
                     response_panel = create_paused_run_response_panel(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
 
                 if (
-                    isinstance(run_response, RunResponseEvent)
+                    isinstance(run_response, RunResponse)
                     and run_response.extra_data is not None
                     and run_response.extra_data.reasoning_steps is not None
                 ):
@@ -6582,7 +6593,7 @@ class Agent:
                         panels.append(reasoning_panel)
                     live_log.update(Group(*panels))
 
-                if isinstance(run_response, RunResponseEvent) and run_response.thinking is not None:
+                if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
                     thinking_panel = create_panel(
                         content=Text(run_response.thinking),
@@ -6593,7 +6604,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if self.show_tool_calls and isinstance(run_response, RunResponseEvent) and run_response.formatted_tool_calls:
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
@@ -6608,7 +6619,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""
-                if isinstance(run_response, RunResponseEvent):
+                if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
                             escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
@@ -6637,7 +6648,7 @@ class Agent:
                 panels.append(response_panel)
 
                 if (
-                    isinstance(run_response, RunResponseEvent)
+                    isinstance(run_response, RunResponse)
                     and run_response.citations is not None
                     and run_response.citations.urls is not None
                 ):
@@ -6954,7 +6965,7 @@ class Agent:
                 )
                 response_timer.stop()
 
-                if isinstance(run_response, RunResponseEvent) and run_response.is_paused:
+                if isinstance(run_response, RunResponse) and run_response.is_paused:
                     response_panel = create_paused_run_response_panel(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
@@ -6962,7 +6973,7 @@ class Agent:
 
                 reasoning_steps = []
                 if (
-                    isinstance(run_response, RunResponseEvent)
+                    isinstance(run_response, RunResponse)
                     and run_response.extra_data is not None
                     and run_response.extra_data.reasoning_steps is not None
                 ):
@@ -6996,7 +7007,7 @@ class Agent:
                         panels.append(reasoning_panel)
                     live_log.update(Group(*panels))
 
-                if isinstance(run_response, RunResponseEvent) and run_response.thinking is not None:
+                if isinstance(run_response, RunResponse) and run_response.thinking is not None:
                     # Create panel for thinking
                     thinking_panel = create_panel(
                         content=Text(run_response.thinking),
@@ -7006,7 +7017,7 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
-                if self.show_tool_calls and isinstance(run_response, RunResponseEvent) and run_response.formatted_tool_calls:
+                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {formatted_tool_call}\n")
@@ -7020,7 +7031,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""
-                if isinstance(run_response, RunResponseEvent):
+                if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
                             escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
@@ -7049,7 +7060,7 @@ class Agent:
                 panels.append(response_panel)
 
                 if (
-                    isinstance(run_response, RunResponseEvent)
+                    isinstance(run_response, RunResponse)
                     and run_response.citations is not None
                     and run_response.citations.urls is not None
                 ):

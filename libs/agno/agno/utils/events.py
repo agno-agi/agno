@@ -13,12 +13,13 @@ from agno.run.response import (
     RunResponseErrorEvent,
     RunResponseCancelledEvent,
     RunResponseContinuedEvent,
-    UpdatingMemoryEvent,
+    MemoryUpdateStartedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    MemoryUpdateCompletedEvent,
 )
 
 
@@ -81,12 +82,20 @@ def create_run_response_cancelled_event(
     )
 
 
-def create_memory_update_event(from_run_response: RunResponse) -> UpdatingMemoryEvent:
-    return UpdatingMemoryEvent(
+def create_memory_update_started_event(from_run_response: RunResponse) -> MemoryUpdateStartedEvent:
+    return MemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,
         run_id=from_run_response.run_id,
     )
+
+def create_memory_update_completed_event(from_run_response: RunResponse) -> MemoryUpdateCompletedEvent:
+    return MemoryUpdateCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,
+        run_id=from_run_response.run_id,
+    )
+
 
 
 def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningStartedEvent:

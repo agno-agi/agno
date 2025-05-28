@@ -246,18 +246,22 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
 
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
 
-    event_counts = {}
+    events = {}
     for run_response in response_generator:
-        event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
+        if not run_response.event in events:
+            events[run_response.event] = []
+        events[run_response.event].append(run_response)
 
-    assert event_counts.keys() == {
+    assert events.keys() == {
         RunEvent.run_started,
         RunEvent.run_response,
         RunEvent.run_completed,
-        RunEvent.updating_memory,
+        RunEvent.memory_update_started,
+        RunEvent.memory_update_completed,
     }
 
-    assert event_counts[RunEvent.run_started] == 1
-    assert event_counts[RunEvent.run_response] > 1
-    assert event_counts[RunEvent.run_completed] == 1
-    assert event_counts[RunEvent.updating_memory] == 1
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.memory_update_started]) == 1
+    assert len(events[RunEvent.memory_update_completed]) == 1
