@@ -957,7 +957,7 @@ class Agent:
                 self.run_messages = run_messages
 
                 if stream and self.is_streamable:
-                    yield from self._run_stream(
+                    response_iterator = self._run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=message,
@@ -967,7 +967,7 @@ class Agent:
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-                    return
+                    return response_iterator
                 else:
                     response = self._run(
                         run_response=run_response,
