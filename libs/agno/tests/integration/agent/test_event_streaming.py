@@ -1,70 +1,13 @@
-import os
-import tempfile
-import uuid
 from textwrap import dedent
 
 import pytest
 
 from agno.agent.agent import Agent
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.memory import Memory
-from agno.models.anthropic.claude import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.run.response import RunEvent
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-
-
-@pytest.fixture
-def temp_storage_db_file():
-    """Create a temporary SQLite database file for agent storage testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
-        db_path = temp_file.name
-
-    yield db_path
-
-    # Clean up the temporary file after the test
-    if os.path.exists(db_path):
-        os.unlink(db_path)
-
-
-@pytest.fixture
-def temp_memory_db_file():
-    """Create a temporary SQLite database file for memory testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as temp_file:
-        db_path = temp_file.name
-
-    yield db_path
-
-    # Clean up the temporary file after the test
-    if os.path.exists(db_path):
-        os.unlink(db_path)
-
-
-@pytest.fixture
-def agent_storage(temp_storage_db_file):
-    """Create a SQLite storage for agent sessions."""
-    # Use a unique table name for each test run
-    table_name = f"agent_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteStorage(table_name=table_name, db_file=temp_storage_db_file)
-    storage.create()
-    return storage
-
-
-@pytest.fixture
-def memory_db(temp_memory_db_file):
-    """Create a SQLite memory database for testing."""
-    db = SqliteMemoryDb(db_file=temp_memory_db_file)
-    db.create()
-    return db
-
-
-@pytest.fixture
-def memory(memory_db):
-    """Create a Memory instance for testing."""
-    return Memory(model=Claude(id="claude-3-5-sonnet-20241022"), db=memory_db)
 
 
 def test_basic_events():
@@ -249,13 +192,18 @@ def test_intermediate_steps_with_user_confirmation():
     assert events[RunEvent.run_paused][0].tools[0].requires_confirmation is True
 
     assert agent.is_paused
+
     assert agent.run_response.tools[0].requires_confirmation
 
     # Mark the tool as confirmed
-    agent.run_response.tools[0].confirmed = True
+    updated_tools = agent.run_response.tools
+    run_id = agent.run_response.run_id
+    updated_tools[0].confirmed = True
 
     # Then we continue the run
-    response_generator = agent.continue_run(stream=True, stream_intermediate_steps=True)
+    response_generator = agent.continue_run(
+        run_id=run_id, updated_tools=updated_tools, stream=True, stream_intermediate_steps=True
+    )
 
     events = {}
     for run_response_delta in response_generator:
