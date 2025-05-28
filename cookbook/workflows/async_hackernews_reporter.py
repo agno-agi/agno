@@ -2,8 +2,8 @@
 pip install openai newspaper4k lxml_html_clean agno httpx
 """
 
-import json
 import asyncio
+import json
 from typing import AsyncIterator
 
 import httpx
@@ -11,7 +11,7 @@ from agno.agent import Agent, RunResponse
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import Workflow, RunEvent
+from agno.workflow import RunEvent, Workflow
 
 
 class AsyncHackerNewsReporter(Workflow):
@@ -52,13 +52,16 @@ class AsyncHackerNewsReporter(Workflow):
         """
         async with httpx.AsyncClient() as client:
             # Fetch top story IDs
-            response = await client.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+            response = await client.get(
+                "https://hacker-news.firebaseio.com/v0/topstories.json"
+            )
             story_ids = response.json()
 
             # Fetch story details concurrently
             tasks = [
                 client.get(
-                    f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json")
+                    f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
+                )
                 for story_id in story_ids[:num_stories]
             ]
             responses = await asyncio.gather(*tasks)
@@ -81,7 +84,7 @@ class AsyncHackerNewsReporter(Workflow):
             yield RunResponse(
                 run_id=self.run_id,
                 content="Sorry, could not get the top stories.",
-                event=RunEvent.workflow_completed
+                event=RunEvent.workflow_completed,
             )
             return
 
@@ -93,14 +96,13 @@ class AsyncHackerNewsReporter(Workflow):
         async for response in writer_response:
             if response.content:
                 yield RunResponse(
-                    content=response.content,
-                    event=response.event,
-                    run_id=self.run_id
+                    content=response.content, event=response.event, run_id=self.run_id
                 )
 
 
 if __name__ == "__main__":
     import asyncio
+
     from rich.console import Console
 
     async def main():
@@ -122,8 +124,7 @@ if __name__ == "__main__":
         # Create final response with combined content
         if final_content:
             final_response = RunResponse(
-                content="".join(final_content),
-                event=RunEvent.workflow_completed
+                content="".join(final_content), event=RunEvent.workflow_completed
             )
             # Pretty print the final response
             pprint_run_response(final_response, markdown=True, show_time=True)
