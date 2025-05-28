@@ -32,6 +32,7 @@ from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.memory.v2.memory import Memory, SessionSummary
+from agno.memory.v2.schema import UserMemory
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -4735,7 +4736,7 @@ class Agent:
         else:
             raise ValueError(f"Memory type {type(self.memory)} not supported")
 
-    def get_user_memories(self, user_id: Optional[str] = None):
+    def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID."""
         if self.memory is None:
             return None
