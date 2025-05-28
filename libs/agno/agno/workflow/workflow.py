@@ -272,7 +272,7 @@ class Workflow:
                 value.workflow_id = self.workflow_id
 
         # Register the workflow, which will also register agents and teams
-        self.register_workflow()
+        await self.aregister_workflow()
 
         # Create a run_id
         self.run_id = str(uuid4())
@@ -779,6 +779,31 @@ class Workflow:
 
         # For other types, return as is
         return field_value
+    
+    async def aregister_workflow(self, force: bool = False) -> None:
+        """Async version of register_workflow"""
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        if not self.workflow_id:
+            self.set_workflow_id()
+
+        try:
+            from agno.api.schemas.workflows import WorkflowCreate
+            from agno.api.workflows import acreate_workflow
+
+            workflow_config = self.to_config_dict()
+            # Register the workflow as an app
+            await acreate_workflow(
+                workflow=WorkflowCreate(
+                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
+                )
+            )
+
+            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
+        except Exception as e:
+            log_warning(f"Failed to register workflow: {e}")
 
     def register_workflow(self, force: bool = False) -> None:
         """Register this workflow with Agno's platform.
