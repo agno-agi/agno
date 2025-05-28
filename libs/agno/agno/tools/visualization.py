@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -28,40 +28,40 @@ class VisualizationTools(Toolkit):
             scatter_plot (bool): Enable scatter plot creation. Default is True.
             histogram (bool): Enable histogram creation. Default is True.
             enable_all (bool): Enable all chart types. Default is False.
-            output_dir (str): Directory to save chart images. Default is "charts".
+            output_dir (str): Directory to save charts. Default is "charts".
         """
+        super().__init__(**kwargs)
+
         # Check if matplotlib is available
         try:
             import matplotlib
-            import matplotlib.pyplot as plt
             # Use non-interactive backend to avoid display issues
             matplotlib.use('Agg')
         except ImportError:
             raise ImportError(
-                "The `matplotlib` package is not installed. Please install it via `pip install matplotlib`."
+                "matplotlib is not installed. Please install it using: pip install matplotlib"
             )
 
-        self.output_dir = output_dir
-        
         # Create output directory if it doesn't exist
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        self.output_dir = output_dir
 
-        # Build the tools list based on enabled functions
-        tools = []
-        if bar_chart or enable_all:
-            tools.append(self.create_bar_chart)
-        if line_chart or enable_all:
-            tools.append(self.create_line_chart)
-        if pie_chart or enable_all:
-            tools.append(self.create_pie_chart)
-        if scatter_plot or enable_all:
-            tools.append(self.create_scatter_plot)
-        if histogram or enable_all:
-            tools.append(self.create_histogram)
+        # Register functions based on enabled chart types
+        if enable_all:
+            bar_chart = line_chart = pie_chart = scatter_plot = histogram = True
 
-        # Initialize the toolkit
-        super().__init__(name="visualization_tools", tools=tools, **kwargs)
+        if bar_chart:
+            self.register(self.create_bar_chart)
+        if line_chart:
+            self.register(self.create_line_chart)
+        if pie_chart:
+            self.register(self.create_pie_chart)
+        if scatter_plot:
+            self.register(self.create_scatter_plot)
+        if histogram:
+            self.register(self.create_histogram)
 
     def create_bar_chart(
         self, 

@@ -3,7 +3,7 @@
 import json
 import os
 import tempfile
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -310,7 +310,7 @@ def test_create_histogram_success(
 
 def test_custom_filename(viz_tools):
     """Test chart creation with custom filename."""
-    with patch("matplotlib.pyplot.savefig") as mock_savefig, \
+    with patch("matplotlib.pyplot.savefig"), \
          patch("matplotlib.pyplot.close"), \
          patch("matplotlib.pyplot.figure"), \
          patch("matplotlib.pyplot.bar"), \
