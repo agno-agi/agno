@@ -5,6 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 
 
+
 def test_tool_call_requires_confirmation():
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
@@ -63,21 +64,22 @@ def test_tool_call_requires_confirmation_continue_with_run_response():
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
-def test_tool_call_requires_confirmation_continue_with_run_id():
+def test_tool_call_requires_confirmation_continue_with_run_id(agent_storage, memory):
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
 
+    session_id = "test_session_1"
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        show_tool_calls=True,
-        markdown=True,
+        storage=agent_storage,
+        memory=memory,
         telemetry=False,
         monitoring=False,
     )
 
-    response = agent.run("What is the weather in Tokyo?")
+    response = agent.run("What is the weather in Tokyo?", session_id=session_id)
 
     assert response.is_paused
     assert response.tools[0].requires_confirmation
@@ -86,11 +88,109 @@ def test_tool_call_requires_confirmation_continue_with_run_id():
 
     # Mark the tool as confirmed
     response.tools[0].confirmed = True
+    
+    
+    # Create a completely new agent instance
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        storage=agent_storage,
+        memory=memory,
+        telemetry=False,
+        monitoring=False,
+    )
 
-    response = agent.continue_run(run_id=response.run_id)
+    response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
     assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
+
+
+def test_tool_call_requires_confirmation_continue_with_run_id_stream(agent_storage, memory):
+    @tool(requires_confirmation=True)
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    session_id = "test_session_1"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        storage=agent_storage,
+        memory=memory,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    updated_tools = None
+    for response in agent.run("What is the weather in Tokyo?", session_id=session_id, stream=True):
+        if response.is_paused:
+            assert response.tools[0].requires_confirmation
+            assert response.tools[0].tool_name == "get_the_weather"
+            assert response.tools[0].tool_args == {"city": "Tokyo"}
+            
+            # Mark the tool as confirmed
+            response.tools[0].confirmed = True
+            updated_tools = response.tools
+
+    assert agent.run_response.is_paused
+    
+    # Create a completely new agent instance
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        storage=agent_storage,
+        memory=memory,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.continue_run(run_id=response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True)
+    for response in response:
+        if response.is_paused:
+            assert False, "The run should not be paused"
+
+    assert agent.run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
+@pytest.mark.asyncio
+async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_storage, memory):
+    @tool(requires_confirmation=True)
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    session_id = "test_session_1"
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        storage=agent_storage,
+        memory=memory,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = await agent.arun("What is the weather in Tokyo?", session_id=session_id)
+
+    assert response.is_paused
+    assert response.tools[0].requires_confirmation
+    assert response.tools[0].tool_name == "get_the_weather"
+    assert response.tools[0].tool_args == {"city": "Tokyo"}
+
+    # Mark the tool as confirmed
+    response.tools[0].confirmed = True
+    
+    
+    # Create a completely new agent instance
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_the_weather],
+        storage=agent_storage,
+        memory=memory,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
+    assert response.is_paused is False
+    assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 def test_tool_call_requires_confirmation_memory_footprint():
     @tool(requires_confirmation=True)

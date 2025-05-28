@@ -788,7 +788,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -807,7 +807,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -1422,8 +1422,9 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[False] = False,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1436,8 +1437,9 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[True] = True,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1449,14 +1451,27 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
-        """Continue a previous run."""
+        """Continue a previous run.
+
+        Args:
+            run_response: The run response to continue.
+            run_id: The run id to continue. Alternative to passing run_response.
+            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            stream: Whether to stream the response.
+            stream_intermediate_steps: Whether to stream the intermediate steps.
+            user_id: The user id to continue the run for.
+            session_id: The session id to continue the run for.
+            retries: The number of retries to continue the run for.
+            knowledge_filters: The knowledge filters to use for the run.
+        """
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1521,10 +1536,15 @@ class Agent:
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
+            # The run is continued from a provided run_response. This contains the updated tools.
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
+            # The run is continued from a run_id. This requires the updated tools to be passed.
+            if updated_tools is None:
+                raise ValueError("Updated tools are required to continue a run from a run_id.")
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -1533,12 +1553,13 @@ class Agent:
                 run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
+            run_response.tools = updated_tools
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
         else:
             self.run_response = cast(RunResponse, self.run_response)
-            # We are continuing from a previous run
+            # We are continuing from a previous run_response in state
             run_response = self.run_response
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
@@ -1597,6 +1618,9 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
+
+            # Reset the event to run_response
+            run_response.event = RunEvent.run_response
 
             try:
                 if stream and self.is_streamable:
@@ -1763,6 +1787,11 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
+
+        # Start the Run by yielding a RunContinued event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
+
         # 1. Handle the updated tools
         yield from self._handle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages, session_id=session_id
@@ -1771,10 +1800,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunContinued event
-        if stream_intermediate_steps:
-            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
 
         # 2. Process model response
         for event in self._handle_model_response_stream(
@@ -1846,14 +1871,27 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """Continue a previous run."""
+        """Continue a previous run.
+
+        Args:
+            run_response: The run response to continue.
+            run_id: The run id to continue. Alternative to passing run_response.
+            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            stream: Whether to stream the response.
+            stream_intermediate_steps: Whether to stream the intermediate steps.
+            user_id: The user id to continue the run for.
+            session_id: The session id to continue the run for.
+            retries: The number of retries to continue the run for.
+            knowledge_filters: The knowledge filters to use for the run.
+        """
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1918,10 +1956,15 @@ class Agent:
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
+            # The run is continued from a provided run_response. This contains the updated tools.
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
+            # The run is continued from a run_id. This requires the updated tools to be passed.
+            if updated_tools is None:
+                raise ValueError("Updated tools are required to continue a run from a run_id.")
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -1930,11 +1973,12 @@ class Agent:
                 run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
+            run_response.tools = updated_tools
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
         else:
-            # We are continuing from a previous run
+            # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
             messages = self.run_response.messages or []
@@ -1994,6 +2038,9 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
+
+            # Reset the event to run_response
+            run_response.event = RunEvent.run_response
 
             try:
                 if stream and self.is_streamable:
@@ -2161,6 +2208,11 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
+        # Start the Run by yielding a RunContinued event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
+
+
         # 1. Handle the updated tools
         async for event in self._ahandle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages, session_id=session_id
@@ -2170,10 +2222,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunContinued event
-        if stream_intermediate_steps:
-            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
 
         # 2. Process model response
         async for event in self._ahandle_model_response_stream(
@@ -2248,8 +2296,12 @@ class Agent:
         user_id: Optional[str] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> RunResponse:
+        # Set the run response to paused
+        run_response.event = RunEvent.run_paused
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
+
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
@@ -2259,7 +2311,6 @@ class Agent:
         self.save_run_response_to_file(message=message, session_id=session_id)
 
         # We return and await confirmation/completion for the tools that require it
-        run_response.event = RunEvent.run_paused
         return run_response
 
     def _handle_agent_run_paused_stream(
@@ -2269,6 +2320,9 @@ class Agent:
         user_id: Optional[str] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> Iterator[RunResponse]:
+        # Set the run response to paused
+        run_response.event = RunEvent.run_paused
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
