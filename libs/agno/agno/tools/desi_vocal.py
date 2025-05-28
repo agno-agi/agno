@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional, Union
+from typing import Any, List, Optional, Union
 from uuid import uuid4
 
 import requests
@@ -18,16 +18,17 @@ class DesiVocalTools(Toolkit):
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
         **kwargs,
     ):
-        super().__init__(name="desi_vocal_tools", **kwargs)
-
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
             logger.error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
 
         self.voice_id = voice_id
 
-        self.register(self.get_voices)
-        self.register(self.text_to_speech)
+        tools: List[Any] = []
+        tools.append(self.get_voices)
+        tools.append(self.text_to_speech)
+
+        super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
 
     def get_voices(self) -> str:
         """

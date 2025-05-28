@@ -387,9 +387,8 @@ class PgVector(VectorDb):
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
                                 content_hash = md5(cleaned_content.encode()).hexdigest()
-                                _id = doc.id or content_hash
                                 record = {
-                                    "id": _id,
+                                    "id": content_hash,  # use content_hash as a reproducible id to avoid duplicates while upsert
                                     "name": doc.name,
                                     "meta_data": doc.meta_data,
                                     "filters": filters,
@@ -406,15 +405,15 @@ class PgVector(VectorDb):
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_=dict(
-                                name=insert_stmt.excluded.name,
-                                meta_data=insert_stmt.excluded.meta_data,
-                                filters=insert_stmt.excluded.filters,
-                                content=insert_stmt.excluded.content,
-                                embedding=insert_stmt.excluded.embedding,
-                                usage=insert_stmt.excluded.usage,
-                                content_hash=insert_stmt.excluded.content_hash,
-                            ),
+                            set_={
+                                "name": insert_stmt.excluded.name,
+                                "meta_data": insert_stmt.excluded.meta_data,
+                                "filters": insert_stmt.excluded.filters,
+                                "content": insert_stmt.excluded.content,
+                                "embedding": insert_stmt.excluded.embedding,
+                                "usage": insert_stmt.excluded.usage,
+                                "content_hash": insert_stmt.excluded.content_hash,
+                            },
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently

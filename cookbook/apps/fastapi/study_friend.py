@@ -2,7 +2,6 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.app.fastapi.app import FastAPIApp
-from agno.app.serve import serve_app
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -84,9 +83,14 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = FastAPIApp(
+fastapi_app = FastAPIApp(
     agent=StudyBuddy,
-).get_app()
+    name="StudyBuddy",
+    app_id="study_buddy",
+    description="A study buddy that helps users achieve their educational goals through personalized guidance, interactive learning, and comprehensive resource curation.",
+)
+
+app = fastapi_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("study_friend:app", port=8001, reload=True)
+    fastapi_app.serve(app="study_friend:app", port=8001, reload=True)

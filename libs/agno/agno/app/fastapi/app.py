@@ -6,6 +6,11 @@ from agno.app.base import BaseAPIApp
 from agno.app.fastapi.async_router import get_async_router
 from agno.app.fastapi.sync_router import get_sync_router
 
+from fastapi.routing import APIRouter
+
+from agno.app.fastapi.async_router import get_async_router
+from agno.app.fastapi.sync_router import get_sync_router
+
 logger = logging.getLogger(__name__)
 
 

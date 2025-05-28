@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.serve import serve_app
 from agno.app.whatsapp.app import WhatsappAPI
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
@@ -96,9 +95,14 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+whatsapp_app = WhatsappAPI(
     agent=StudyBuddy,
-).get_app()
+    name="StudyBuddy",
+    app_id="study_buddy",
+    description="A study buddy that helps users achieve their educational goals through personalized guidance, interactive learning, and comprehensive resource curation.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("study_friend:app", port=8000, reload=True)
+    whatsapp_app.serve(app="study_friend:app", port=8000, reload=True)

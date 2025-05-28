@@ -1,5 +1,4 @@
 from agno.agent import Agent
-from agno.app.serve import serve_app
 from agno.app.whatsapp.app import WhatsappAPI
 from agno.models.google import Gemini
 
@@ -12,9 +11,14 @@ media_agent = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+whatsapp_app = WhatsappAPI(
     agent=media_agent,
-).get_app()
+    name="Media Agent",
+    app_id="media_agent",
+    description="A agent that can send media to the user.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("agent_with_media:app", port=8000, reload=True)
+    whatsapp_app.serve(app="agent_with_media:app", port=8000, reload=True)
