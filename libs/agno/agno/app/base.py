@@ -3,14 +3,14 @@ from os import getenv
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRouter
 from starlette.middleware.cors import CORSMiddleware
-import uvicorn
 
-from agno.api.app import AppCreate, create_app
 from agno.agent.agent import Agent
+from agno.api.app import AppCreate, create_app
 from agno.app.settings import APIAppSettings
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_info
@@ -46,7 +46,6 @@ class BaseAPIApp(ABC):
         self.description = description
         self.set_app_id()
 
-
         if self.agent:
             if not self.agent.app_id:
                 self.agent.app_id = self.app_id
@@ -80,11 +79,11 @@ class BaseAPIApp(ABC):
 
     @abstractmethod
     def get_router(self) -> APIRouter:
-        pass
+        raise NotImplementedError("get_router must be implemented")
 
     @abstractmethod
     def get_async_router(self) -> APIRouter:
-        pass
+        raise NotImplementedError("get_async_router must be implemented")
 
     def get_app(self, use_async: bool = True, prefix: str = "") -> FastAPI:
         if not self.api_app:
@@ -116,7 +115,6 @@ class BaseAPIApp(ABC):
 
         self.api_app.middleware("http")(general_exception_handler)
 
-
         if not self.router:
             self.router = APIRouter(prefix=prefix)
 
@@ -138,7 +136,7 @@ class BaseAPIApp(ABC):
             allow_headers=["*"],
             expose_headers=["*"],
         )
-        
+
         return self.api_app
 
     def serve(

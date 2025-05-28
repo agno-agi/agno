@@ -1,5 +1,4 @@
 from agno.agent import Agent
-from agno.app.serve import serve_app
 from agno.app.slack.app import SlackAPI
 from agno.models.openai import OpenAIChat
 
@@ -11,9 +10,10 @@ basic_agent = Agent(
     add_datetime_to_instructions=True,
 )
 
-app = SlackAPI(
+slack_api_app = SlackAPI(
     agent=basic_agent,
-).get_app()
+)
+app = slack_api_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("basic:app", port=8000, reload=True)
+    slack_api_app.serve("basic:app", port=8000, reload=True)

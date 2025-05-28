@@ -1,7 +1,6 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.serve import serve_app
 from agno.app.slack.app import SlackAPI
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
@@ -49,13 +48,14 @@ personal_agent = Agent(
         You may sometimes recieve messages prepenned with group message when that is the message then reply to whole group instead of treating them as from a single user
                         """),
     debug_mode=True,
-    add_state_in_messages=True
+    add_state_in_messages=True,
 )
 
 
-app = SlackAPI(
+slack_api_app = SlackAPI(
     agent=personal_agent,
-).get_app()
+)
+app = slack_api_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("agent_with_user_memory:app", port=8000, reload=True)
+    slack_api_app.serve("agent_with_user_memory:app", port=8000, reload=True)

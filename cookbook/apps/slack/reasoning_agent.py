@@ -1,5 +1,4 @@
 from agno.agent import Agent
-from agno.app.serve import serve_app
 from agno.app.slack.app import SlackAPI
 from agno.models.anthropic.claude import Claude
 from agno.tools.thinking import ThinkingTools
@@ -22,9 +21,10 @@ reasoning_finance_agent = Agent(
     markdown=True,
 )
 
-app = SlackAPI(
+slack_api_app = SlackAPI(
     agent=reasoning_finance_agent,
-).get_app()
+)
+app = slack_api_app.get_app()
 
 if __name__ == "__main__":
-    serve_app("reasoning_agent:app", port=8000, reload=True)
+    slack_api_app.serve("reasoning_agent:app", port=8000, reload=True)

@@ -37,32 +37,44 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                 log_info("bot event")
                 pass
             else:
-                background_tasks.add_task(process_slack_event, event)
+                background_tasks.add_task(_process_slack_event, event)
 
         return {"status": "ok"}
 
-    def process_slack_event(event: dict):
+    def _process_slack_event(event: dict):
         log_info(f"Processing event: {event}")
         if event.get("type") == "message":
             user = None
             message_text = event.get("text")
             channel_id = event.get("channel", "")
-            if event.get("channel_type") == "im":
-                user = event.get("user")
-            if agent:
-                response = agent.run(message_text, user_id=user if user else None)
-            elif team:
-                response = team.run(message_text, user_id=user if user else None)  # type: ignore
+            user = event.get("user")
+            if event.get("thread_ts"):
+                ts = event.get("thread_ts")
+            else:
+                ts = event.get("ts")
 
-            SlackTools().send_message(channel=channel_id, text=response.content or "")
-    def _send_slack_message(channel: str, ts:str, message: str, italics: bool = False):
+            # Use the timestamp as the session id, so that each thread is a separate session
+            session_id = ts
+
+            if agent:
+                response = agent.run(message_text, user_id=user if user else None, session_id=session_id)
+            elif team:
+                response = team.run(message_text, user_id=user if user else None, session_id=session_id)  # type: ignore
+
+            if response.reasoning_content:
+                _send_slack_message(
+                    channel=channel_id, message=f"Reasoning: \n{response.reasoning_content}", thread_ts=ts, italics=True
+                )
+            _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
+
+    def _send_slack_message(channel: str, thread_ts: str, message: str, italics: bool = False):
         if len(message) <= 40000:
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=formatted_message or "",ts=ts)
+                SlackTools().send_message_thread(channel=channel, text=formatted_message or "", thread_ts=thread_ts)
             else:
-                SlackTools().send_message_thread(channel=channel, text=message or "",ts=ts)
+                SlackTools().send_message_thread(channel=channel, text=message or "", thread_ts=thread_ts)
             return
 
         # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
@@ -74,8 +86,8 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
             if italics:
                 # Handle multi-line messages by making each line italic
                 formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=batch_message or "",ts=ts)
+                SlackTools().send_message_thread(channel=channel, text=formatted_batch or "", thread_ts=thread_ts)
             else:
-                SlackTools().send_message_thread(channel=channel, text=message or "",ts=ts)
+                SlackTools().send_message_thread(channel=channel, text=message or "", thread_ts=thread_ts)
 
     return router

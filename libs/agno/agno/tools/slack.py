@@ -17,6 +17,7 @@ class SlackTools(Toolkit):
         self,
         token: Optional[str] = None,
         send_message: bool = True,
+        send_message_thread: bool = True,
         list_channels: bool = True,
         get_channel_history: bool = True,
         **kwargs,
@@ -29,6 +30,8 @@ class SlackTools(Toolkit):
         tools: List[Any] = []
         if send_message:
             tools.append(self.send_message)
+        if send_message_thread:
+            tools.append(self.send_message_thread)
         if list_channels:
             tools.append(self.list_channels)
         if get_channel_history:
@@ -53,20 +56,21 @@ class SlackTools(Toolkit):
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
             return json.dumps({"error": str(e)})
-    def send_message_thread(self, channel: str, text: str, ts: str) -> str:
+
+    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
         """
         Send a message to a Slack channel.
 
         Args:
             channel (str): The channel ID or name to send the message to.
             text (str): The text of the message to send.
-            ts (ts): The thread to reply to
+            thread_ts (ts): The thread to reply to
 
         Returns:
             str: A JSON string containing the response from the Slack API.
         """
         try:
-            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=ts)
+            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")
