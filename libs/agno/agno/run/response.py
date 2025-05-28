@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -31,7 +31,8 @@ class RunEvent(str, Enum):
     reasoning_step = "ReasoningStep"
     reasoning_completed = "ReasoningCompleted"
 
-    updating_memory = "UpdatingMemory"
+    memory_update_started = "MemoryUpdateStarted"
+    memory_update_completed = "MemoryUpdateCompleted"
 
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
@@ -59,18 +60,20 @@ class RunResponseExtraData:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
         add_messages = data.pop("add_messages", None)
-        add_messages = [Message.model_validate(message) for message in add_messages] if add_messages else None
+        if add_messages is not None:
+            add_messages = [Message.model_validate(message) for message in add_messages]
 
         reasoning_steps = data.pop("reasoning_steps", None)
-        reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps] if reasoning_steps else None
+        if reasoning_steps is not None:
+            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
 
         reasoning_messages = data.pop("reasoning_messages", None)
-        reasoning_messages = (
-            [Message.model_validate(message) for message in reasoning_messages] if reasoning_messages else None
-        )
+        if reasoning_messages is not None:
+            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
 
         references = data.pop("references", None)
-        references = [MessageReferences.model_validate(reference) for reference in references] if references else None
+        if references is not None:
+            references = [MessageReferences.model_validate(reference) for reference in references]
 
         return cls(
             add_messages=add_messages,
@@ -78,6 +81,239 @@ class RunResponseExtraData:
             reasoning_messages=reasoning_messages,
             references=references,
         )
+
+
+@dataclass(kw_only=True)
+class BaseRunResponseEvent:
+    run_id: str
+    session_id: str
+    agent_id: str
+    event: str
+    created_at: int = field(default_factory=lambda: int(time()))
+
+
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = {
+            k: v
+            for k, v in asdict(self).items()
+            if v is not None
+            and k not in ["messages", "tools", "tool", "extra_data", "image", "images", "videos", "audio", "response_audio", "citations"]
+        }
+        if self.messages is not None:
+            _dict["messages"] = [m.to_dict() for m in self.messages]
+
+        if self.extra_data is not None:
+            _dict["extra_data"] = (
+                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+            )
+
+        if self.images is not None:
+            _dict["images"] = []
+            for img in self.images:
+                if isinstance(img, ImageArtifact):
+                    _dict["images"].append(img.to_dict())
+                else:
+                    _dict["images"].append(img)
+
+        if self.image is not None:
+            if isinstance(self.image, ImageArtifact):
+                _dict["image"] = self.image.to_dict()
+            else:
+                _dict["image"] = self.image
+
+        if self.videos is not None:
+            _dict["videos"] = []
+            for vid in self.videos:
+                if isinstance(vid, VideoArtifact):
+                    _dict["videos"].append(vid.to_dict())
+                else:
+                    _dict["videos"].append(vid)
+
+        if self.audio is not None:
+            _dict["audio"] = []
+            for aud in self.audio:
+                if isinstance(aud, AudioArtifact):
+                    _dict["audio"].append(aud.to_dict())
+                else:
+                    _dict["audio"].append(aud)
+
+        if self.response_audio is not None:
+            if isinstance(self.response_audio, AudioResponse):
+                _dict["response_audio"] = self.response_audio.to_dict()
+            else:
+                _dict["response_audio"] = self.response_audio
+
+        if self.citations is not None:
+            if isinstance(self.citations, Citations):
+                _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            else:
+                _dict["citations"] = self.citations
+
+        if self.content and isinstance(self.content, BaseModel):
+            _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if self.tools is not None:
+            _dict["tools"] = []
+            for tool in self.tools:
+                if isinstance(tool, ToolExecution):
+                    _dict["tools"].append(tool.to_dict())
+                else:
+                    _dict["tools"].append(tool)
+
+        if self.tool is not None:
+            if isinstance(self.tool, ToolExecution):
+                _dict["tool"] = self.tool.to_dict()
+            else:
+                _dict["tool"] = self.tool
+
+        return _dict
+
+    def to_json(self) -> str:
+        import json
+
+        try:
+            _dict = self.to_dict()
+        except Exception:
+            logger.error("Failed to convert response to json", exc_info=True)
+            raise
+
+        return json.dumps(_dict, indent=2)
+
+    @property
+    def is_paused(self):
+        return False
+
+
+@dataclass(kw_only=True)
+class RunResponseStartedEvent(BaseRunResponseEvent):
+    """Event sent when the run starts"""
+
+    event: str = RunEvent.run_started.value
+
+    model: str
+    model_provider: str
+
+
+@dataclass(kw_only=True)
+class RunResponseDeltaEvent(BaseRunResponseEvent):
+    """Main event for each delta of the RunResponse"""
+    event: str = RunEvent.run_response.value
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
+
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+    image: Optional[ImageArtifact] = None  # Image attached to the response
+
+    extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_completed.value
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+    reasoning_content: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class RunResponsePausedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_paused.value
+
+    tools: List[ToolExecution]
+
+    @property
+    def is_paused(self):
+        return True
+
+
+
+@dataclass(kw_only=True)
+class RunResponseContinuedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_continued.value
+
+
+@dataclass(kw_only=True)
+class RunResponseErrorEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_error.value
+
+    error: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseCancelledEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_cancelled.value
+
+    reason: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class MemoryUpdateStartedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.memory_update_started.value
+
+
+@dataclass(kw_only=True)
+class MemoryUpdateCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.memory_update_completed.value
+
+
+
+@dataclass(kw_only=True)
+class ReasoningStartedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.reasoning_started.value
+
+
+@dataclass(kw_only=True)
+class ReasoningStepEvent(BaseRunResponseEvent):
+    event: str = RunEvent.reasoning_step.value
+
+    content: Any
+    content_type: str = "str"
+    reasoning_content: str
+
+@dataclass(kw_only=True)
+class ReasoningCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.reasoning_completed.value
+
+    content: Any
+    content_type: str = "str"
+
+
+
+@dataclass(kw_only=True)
+class ToolCallStartedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.tool_call_started.value
+
+    tool: ToolExecution
+
+@dataclass(kw_only=True)
+class ToolCallCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.tool_call_completed.value
+
+    tool: ToolExecution
+    content: str
+
+
+
+
+RunResponseEvent = Union[
+    RunResponseStartedEvent,
+    RunResponseDeltaEvent,
+    RunResponseCompletedEvent,
+    RunResponseErrorEvent,
+    RunResponseCancelledEvent,
+    RunResponsePausedEvent,
+    RunResponseContinuedEvent,
+    ReasoningStartedEvent,
+    ReasoningStepEvent,
+    ReasoningCompletedEvent,
+    MemoryUpdateStartedEvent,
+    MemoryUpdateCompletedEvent,
+]
 
 
 @dataclass
