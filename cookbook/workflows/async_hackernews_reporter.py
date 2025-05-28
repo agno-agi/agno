@@ -103,11 +103,7 @@ class AsyncHackerNewsReporter(Workflow):
 if __name__ == "__main__":
     import asyncio
 
-    from rich.console import Console
-
     async def main():
-        console = Console()
-
         # Initialize the workflow
         workflow = AsyncHackerNewsReporter(debug_mode=False)
 
