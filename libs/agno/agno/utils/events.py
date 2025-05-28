@@ -162,4 +162,5 @@ def create_run_response_delta_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
+        extra_data=from_run_response.extra_data,
     )

@@ -206,6 +206,7 @@ class RunResponseDeltaEvent(BaseRunResponseEvent):
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
 
+    extra_data: Optional[RunResponseExtraData] = None
 
 
 @dataclass(kw_only=True)

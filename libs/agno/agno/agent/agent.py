@@ -926,7 +926,6 @@ class Agent:
         # for backward compatibility, set self.run_response
         self.run_response = run_response
         self.run_id = run_id
-
         for attempt in range(num_attempts):
             try:
                 # Set run_input
@@ -1616,7 +1615,7 @@ class Agent:
 
             try:
                 if stream and self.is_streamable:
-                    response_iterator = self._continue_run_stream(
+                    yield from self._continue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=user_message,
@@ -1627,7 +1626,7 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
 
-                    return response_iterator
+                    return
                 else:
                     response = self._continue_run(
                         run_response=run_response,
@@ -1782,10 +1781,9 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
         # Start the Run by yielding a RunContinued event
-        print("HERE")
         if stream_intermediate_steps:
             yield create_run_response_continued_event(run_response)
-        print("HERE2")
+
         # 1. Handle the updated tools
         yield from self._handle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages
@@ -6310,7 +6308,6 @@ class Agent:
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
-
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
@@ -6353,7 +6350,7 @@ class Agent:
                     knowledge_filters=knowledge_filters,
                     **kwargs,
                 ):
-                    if isinstance(resp, RunResponse):
+                    if isinstance(resp, RunResponseEvent):
                         if resp.is_paused:
                             response_panel = create_paused_run_response_panel(resp)
                             panels.append(response_panel)
@@ -6463,7 +6460,7 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    if isinstance(resp, RunResponseEvent) and resp.citations is not None and resp.citations.urls is not None:
                         md_content = "\n".join(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(resp.citations.urls)
@@ -6539,18 +6536,19 @@ class Agent:
                     knowledge_filters=knowledge_filters,
                     **kwargs,
                 )
+                print(run_response)
                 response_timer.stop()
 
                 reasoning_steps = []
 
-                if isinstance(run_response, RunResponse) and run_response.is_paused:
+                if isinstance(run_response, RunResponseEvent) and run_response.is_paused:
                     response_panel = create_paused_run_response_panel(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
 
                 if (
-                    isinstance(run_response, RunResponse)
+                    isinstance(run_response, RunResponseEvent)
                     and run_response.extra_data is not None
                     and run_response.extra_data.reasoning_steps is not None
                 ):
@@ -6584,7 +6582,7 @@ class Agent:
                         panels.append(reasoning_panel)
                     live_log.update(Group(*panels))
 
-                if isinstance(run_response, RunResponse) and run_response.thinking is not None:
+                if isinstance(run_response, RunResponseEvent) and run_response.thinking is not None:
                     # Create panel for thinking
                     thinking_panel = create_panel(
                         content=Text(run_response.thinking),
@@ -6595,7 +6593,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if self.show_tool_calls and isinstance(run_response, RunResponseEvent) and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
@@ -6610,7 +6608,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""
-                if isinstance(run_response, RunResponse):
+                if isinstance(run_response, RunResponseEvent):
                     if isinstance(run_response.content, str):
                         if self.markdown:
                             escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
@@ -6639,7 +6637,7 @@ class Agent:
                 panels.append(response_panel)
 
                 if (
-                    isinstance(run_response, RunResponse)
+                    isinstance(run_response, RunResponseEvent)
                     and run_response.citations is not None
                     and run_response.citations.urls is not None
                 ):
@@ -6767,7 +6765,7 @@ class Agent:
                 )
 
                 async for resp in result:
-                    if isinstance(resp, RunResponse):
+                    if isinstance(resp, RunResponseEvent):
                         if resp.is_paused:
                             response_panel = create_paused_run_response_panel(resp)
                             panels.append(response_panel)
@@ -6878,7 +6876,7 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponse) and resp.citations is not None and resp.citations.urls is not None:
+                    if isinstance(resp, RunResponseEvent) and resp.citations is not None and resp.citations.urls is not None:
                         md_content = "\n".join(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(resp.citations.urls)
@@ -6956,7 +6954,7 @@ class Agent:
                 )
                 response_timer.stop()
 
-                if isinstance(run_response, RunResponse) and run_response.is_paused:
+                if isinstance(run_response, RunResponseEvent) and run_response.is_paused:
                     response_panel = create_paused_run_response_panel(run_response)
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
@@ -6964,7 +6962,7 @@ class Agent:
 
                 reasoning_steps = []
                 if (
-                    isinstance(run_response, RunResponse)
+                    isinstance(run_response, RunResponseEvent)
                     and run_response.extra_data is not None
                     and run_response.extra_data.reasoning_steps is not None
                 ):
@@ -6998,7 +6996,7 @@ class Agent:
                         panels.append(reasoning_panel)
                     live_log.update(Group(*panels))
 
-                if isinstance(run_response, RunResponse) and run_response.thinking is not None:
+                if isinstance(run_response, RunResponseEvent) and run_response.thinking is not None:
                     # Create panel for thinking
                     thinking_panel = create_panel(
                         content=Text(run_response.thinking),
@@ -7008,7 +7006,7 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if self.show_tool_calls and isinstance(run_response, RunResponseEvent) and run_response.formatted_tool_calls:
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {formatted_tool_call}\n")
@@ -7022,7 +7020,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 response_content_batch: Union[str, JSON, Markdown] = ""
-                if isinstance(run_response, RunResponse):
+                if isinstance(run_response, RunResponseEvent):
                     if isinstance(run_response.content, str):
                         if self.markdown:
                             escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
@@ -7051,7 +7049,7 @@ class Agent:
                 panels.append(response_panel)
 
                 if (
-                    isinstance(run_response, RunResponse)
+                    isinstance(run_response, RunResponseEvent)
                     and run_response.citations is not None
                     and run_response.citations.urls is not None
                 ):
