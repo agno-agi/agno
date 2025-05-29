@@ -27,7 +27,6 @@ def test_agent_image_input(agent_storage):
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1
     assert session_in_db.memory["runs"][0]["messages"] is not None
-    print(session_in_db.memory["runs"][0]["messages"])
     assert len(session_in_db.memory["runs"][0]["messages"]) == 3
     assert session_in_db.memory["runs"][0]["messages"][1]["role"] == "user"
     assert session_in_db.memory["runs"][0]["messages"][2]["role"] == "assistant"
