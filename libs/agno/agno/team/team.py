@@ -445,16 +445,10 @@ class Team:
 
         # Set the team session state on members
         if self.team_session_state is not None:
-            if isinstance(member, Agent):
-                if member.team_session_state is None:
-                    member.team_session_state = self.team_session_state
-                else:
-                    merge_dictionaries(member.team_session_state, self.team_session_state)
-            elif isinstance(member, Team):
-                if member.team_session_state is None:
-                    member.team_session_state = self.team_session_state
-                else:
-                    merge_dictionaries(member.team_session_state, self.team_session_state)
+            if member.team_session_state is None:
+                member.team_session_state = self.team_session_state
+            else:
+                merge_dictionaries(member.team_session_state, self.team_session_state)
 
         if isinstance(member, Agent):
             member.team_id = self.team_id
@@ -5008,12 +5002,8 @@ class Team:
         return set_shared_context
 
     def _update_team_session_state(self, member_agent: Union[Agent, "Team"]) -> None:
-        if isinstance(member_agent, Agent) and member_agent.team_session_state is not None:
-            if self.team_session_state is None:
-                self.team_session_state = member_agent.team_session_state
-            else:
-                merge_dictionaries(self.team_session_state, member_agent.team_session_state)
-        elif isinstance(member_agent, Team) and member_agent.team_session_state is not None:
+        """Update team session state from either an Agent or nested Team member"""
+        if member_agent.team_session_state is not None:
             if self.team_session_state is None:
                 self.team_session_state = member_agent.team_session_state
             else:
