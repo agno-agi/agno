@@ -317,7 +317,7 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
-        tool_call_count = 0
+        function_call_count = 0
 
         while True:
             # Get response from model
@@ -340,64 +340,58 @@ class Model(ABC):
                 )
                 function_call_results: List[Message] = []
                 
-                tool_call_count += len(function_calls_to_run)
-                
-                if tool_call_limit is not None and tool_call_count > tool_call_limit:
-                    for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                    )
-                else:
-                    # Execute function calls
-                    for function_call_response in self.run_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                    ):
-                        if (
-                            function_call_response.event
-                            in [
-                                ModelResponseEvent.tool_call_completed.value,
-                                ModelResponseEvent.tool_call_paused.value,
-                            ]
-                            and function_call_response.tool_executions is not None
-                        ):
-                            if model_response.tool_executions is None:
-                                model_response.tool_executions = []
-                            model_response.tool_executions.extend(function_call_response.tool_executions)
-
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
+                # Execute function calls
+                for function_call_response in self.run_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                ):
+                    
+                    if (
+                        function_call_response.event
+                        in [
                             ModelResponseEvent.tool_call_completed.value,
-                        ]:
-                            if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                            ModelResponseEvent.tool_call_paused.value,
+                        ]
+                        and function_call_response.tool_executions is not None
+                    ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
 
-                    # Format and add results to messages
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                    )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                    elif function_call_response.event not in [
+                        ModelResponseEvent.tool_call_started.value,
+                        ModelResponseEvent.tool_call_completed.value,
+                    ]:
+                        if function_call_response.content:
+                            model_response.content += function_call_response.content  # type: ignore
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
+                
+                # Format and add results to messages
+                self.format_function_call_results(
+                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                )
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True)
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
+
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -426,7 +420,7 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
         
-        tool_call_count = 0
+        function_call_count = 0
 
         while True:
             # Get response from model
@@ -449,64 +443,58 @@ class Model(ABC):
                 )
                 function_call_results: List[Message] = []
                 
-                tool_call_count += len(function_calls_to_run)
-                
-                if tool_call_limit is not None and tool_call_count > tool_call_limit:
-                    for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                    )
-                else:
 
-                    # Execute function calls
-                    async for function_call_response in self.arun_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                    ):
-                        if (
-                            function_call_response.event
-                            in [
-                                ModelResponseEvent.tool_call_completed.value,
-                                ModelResponseEvent.tool_call_paused.value,
-                            ]
-                            and function_call_response.tool_executions is not None
-                        ):
-                            if model_response.tool_executions is None:
-                                model_response.tool_executions = []
-                            model_response.tool_executions.extend(function_call_response.tool_executions)
-                        elif function_call_response.event not in [
-                            ModelResponseEvent.tool_call_started.value,
+                # Execute function calls
+                async for function_call_response in self.arun_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                ):
+                    
+                    if (
+                        function_call_response.event
+                        in [
                             ModelResponseEvent.tool_call_completed.value,
-                        ]:
-                            if function_call_response.content:
-                                model_response.content += function_call_response.content  # type: ignore
+                            ModelResponseEvent.tool_call_paused.value,
+                        ]
+                        and function_call_response.tool_executions is not None
+                    ):
+                        if model_response.tool_executions is None:
+                            model_response.tool_executions = []
+                        model_response.tool_executions.extend(function_call_response.tool_executions)
+                    elif function_call_response.event not in [
+                        ModelResponseEvent.tool_call_started.value,
+                        ModelResponseEvent.tool_call_completed.value,
+                    ]:
+                        if function_call_response.content:
+                            model_response.content += function_call_response.content  # type: ignore
 
-                    # Format and add results to messages
-                    self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **model_response.extra or {}
-                    )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
+                
+                # Format and add results to messages
+                self.format_function_call_results(
+                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                )
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require confirmation, break the loop
+                if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(tc.external_execution_required for tc in model_response.tool_executions or []):
+                    break
 
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
+                # If we have any tool calls that require user input, break the loop
+                if any(tc.requires_user_input for tc in model_response.tool_executions or []):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -752,7 +740,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         
-        tool_call_count = 0
+        function_call_count = 0
 
         while True:
             # Create assistant message and stream data
@@ -798,53 +786,46 @@ class Model(ABC):
                     assistant_message, messages, functions
                 )
                 function_call_results: List[Message] = []
-                
-                tool_call_count += len(function_calls_to_run)
-                
-                if tool_call_limit is not None and tool_call_count > tool_call_limit:
-                    for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+            
+
+                # Execute function calls
+                for function_call_response in self.run_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                ):
+                    yield function_call_response
+                    
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
+
+                # Format and add results to messages
+                if stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra or {}
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
-                    # Execute function calls
-                    for function_call_response in self.run_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                    ):
-                        yield function_call_response
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True)
 
-                    # Format and add results to messages
-                    if stream_data.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **stream_data.extra
-                        )
-                    else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -895,7 +876,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         
-        tool_call_count = 0
+        function_call_count = 0
 
         while True:
             # Create assistant message and stream data
@@ -941,52 +922,44 @@ class Model(ABC):
                 )
                 function_call_results: List[Message] = []
                 
-                tool_call_count += len(function_calls_to_run)
-                
-                if tool_call_limit is not None and tool_call_count > tool_call_limit:
-                    for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+                # Execute function calls
+                async for function_call_response in self.arun_function_calls(
+                    function_calls=function_calls_to_run,
+                    function_call_results=function_call_results,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
+                ):
+                    yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
+
+                # Format and add results to messages
+                if stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra or {}
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
+                    self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
-                    # Execute function calls
-                    async for function_call_response in self.arun_function_calls(
-                        function_calls=function_calls_to_run,
-                        function_call_results=function_call_results,
-                    ):
-                        yield function_call_response
+                for function_call_result in function_call_results:
+                    function_call_result.log(metrics=True)
 
-                    # Format and add results to messages
-                    if stream_data.extra is not None:
-                        self.format_function_call_results(
-                            messages=messages, function_call_results=function_call_results, **stream_data.extra
-                        )
-                    else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                # Check if we should stop after tool calls
+                if any(m.stop_after_tool_call for m in function_call_results):
+                    break
 
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
+                # If we have any tool calls that require confirmation, break the loop
+                if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    break
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
-                        break
+                # If we have any tool calls that require external execution, break the loop
+                if any(fc.function.external_execution for fc in function_calls_to_run):
+                    break
 
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
+                # If we have any tool calls that require user input, break the loop
+                if any(fc.function.requires_user_input for fc in function_calls_to_run):
+                    break
 
                 # Continue loop to get next response
                 continue
@@ -1238,12 +1211,23 @@ class Model(ABC):
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(
+                        self.create_tool_call_limit_error_result(fc)
+                    )
+                    continue
+            
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1371,15 +1355,31 @@ class Model(ABC):
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
 
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
-
-        # Yield tool_call_started events for all function calls
+            
+        
+        function_calls_to_run = []
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(
+                        self.create_tool_call_limit_error_result(fc)
+                    )
+                    # Skip this function call
+                    continue
+            function_calls_to_run.append(fc)
+
+        # Yield tool_call_started events for all function calls or pause them
+        for fc in function_calls_to_run:
             paused_tool_executions = []
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation and not skip_pause_check:
@@ -1474,11 +1474,11 @@ class Model(ABC):
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
         if skip_pause_check:
-            function_calls_to_run = function_calls
+            function_calls_to_run = function_calls_to_run
         else:
             function_calls_to_run = [
                 fc
-                for fc in function_calls
+                for fc in function_calls_to_run
                 if not (
                     fc.function.requires_confirmation
                     or fc.function.external_execution
