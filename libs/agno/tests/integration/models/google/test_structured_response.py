@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
         description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
     )
 
-def test_structured_response_with_integer_field():
+def test_structured_response_with_dict_fields():
     structured_output_agent = Agent(
         model=Gemini(id="gemini-2.0-flash"),
         description="You help people write movie scripts.",
@@ -37,5 +37,11 @@ def test_structured_response_with_integer_field():
     response = structured_output_agent.run("New York")
     assert response.content is not None
     assert isinstance(response.content.rating, Dict)
+    assert isinstance(response.content.setting, str)
+    assert isinstance(response.content.ending, str)
+    assert isinstance(response.content.genre, str)
+    assert isinstance(response.content.name, str)
+    assert isinstance(response.content.characters, List)
+    assert isinstance(response.content.storyline, str)
 
 
