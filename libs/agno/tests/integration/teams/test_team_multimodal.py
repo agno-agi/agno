@@ -37,7 +37,6 @@ def test_team_image_input(team_storage, agent_storage):
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1
     assert session_in_db.memory["runs"][0]["messages"] is not None
-    print(session_in_db.memory["runs"][0]["messages"])
     assert session_in_db.memory["runs"][0]["messages"][1]["role"] == "user"
     assert session_in_db.memory["runs"][0]["messages"][1]["images"] is not None
     assert session_in_db.memory["runs"][0]["messages"][1]["images"][0]["url"] == "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
