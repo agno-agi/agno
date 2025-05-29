@@ -111,10 +111,12 @@ def test_tool_use_tool_call_limit():
 
     response = agent.run("Find me the current price of TSLA, then after that find me the latest news about Tesla.")
 
-    # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    # Verify tool usage, should only call the first tool
+    assert len(response.tools) == 1
+    assert response.tools[0].tool_name == "get_current_stock_price"
+    assert response.tools[0].tool_args == {"symbol": "TSLA"}
+    assert response.tools[0].result is not None
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_with_content():
