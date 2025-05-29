@@ -1504,9 +1504,8 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
-        self.reset_run_state()
-
         if session_id is not None:
+            self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self.reset_session_state()
 
@@ -1931,9 +1930,8 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
-        self.reset_run_state()
-
         if session_id is not None:
+            self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self.reset_session_state()
 

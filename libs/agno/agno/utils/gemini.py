@@ -126,7 +126,6 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
                 # to avoid the "properties should be non-empty" error.
                 # We'll create a generic property that represents the dictionary structure
                 value_type = additional_props.get("type", "string").upper()
-
                 # Create a placeholder property to satisfy Gemini's requirements
                 # This is a workaround since Gemini doesn't support additionalProperties directly
                 placeholder_properties = {
@@ -135,6 +134,8 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
                         description=f"Example key-value pair. This object can contain any number of keys with {value_type.lower()} values.",
                     )
                 }
+                if value_type == "ARRAY":
+                    placeholder_properties["example_key"].items = {}
 
                 return Schema(
                     type=Type.OBJECT,
