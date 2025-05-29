@@ -115,37 +115,38 @@ def convert_schema(schema_dict: Dict[str, Any]) -> Optional[Schema]:
                 )
             else:
                 return Schema(type=Type.OBJECT, description=description, default=default)
-        
+
         # Handle Dict types (objects with additionalProperties but no properties)
         elif "additionalProperties" in schema_dict:
             additional_props = schema_dict["additionalProperties"]
-            
+
             # If additionalProperties is a schema object (Dict[str, T] case)
             if isinstance(additional_props, dict) and "type" in additional_props:
                 # For Gemini, we need to represent Dict[str, T] as an object with at least one property
                 # to avoid the "properties should be non-empty" error.
                 # We'll create a generic property that represents the dictionary structure
                 value_type = additional_props.get("type", "string").upper()
-                
+
                 # Create a placeholder property to satisfy Gemini's requirements
                 # This is a workaround since Gemini doesn't support additionalProperties directly
                 placeholder_properties = {
                     "example_key": Schema(
                         type=value_type,
-                        description=f"Example key-value pair. This object can contain any number of keys with {value_type.lower()} values."
+                        description=f"Example key-value pair. This object can contain any number of keys with {value_type.lower()} values.",
                     )
                 }
-                
+
                 return Schema(
                     type=Type.OBJECT,
                     properties=placeholder_properties,
-                    description=description or f"Dictionary with {value_type.lower()} values. Can contain any number of key-value pairs.",
+                    description=description
+                    or f"Dictionary with {value_type.lower()} values. Can contain any number of key-value pairs.",
                     default=default,
                 )
             else:
                 # additionalProperties is false or true
                 return Schema(type=Type.OBJECT, description=description, default=default)
-        
+
         # Handle empty objects
         else:
             return Schema(type=Type.OBJECT, description=description, default=default)

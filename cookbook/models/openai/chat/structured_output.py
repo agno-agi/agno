@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import Dict, List
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat

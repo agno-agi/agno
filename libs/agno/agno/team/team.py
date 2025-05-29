@@ -498,13 +498,13 @@ class Team:
         self.audio = None
         self.files = None
         self.team_session = None
-    
+
     def _reset_run_state(self) -> None:
         self.run_id = None
         self.run_input = None
         self.run_messages = None
         self.run_response = None
-        
+
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
@@ -588,12 +588,11 @@ class Team:
         """Run the Team and return the response."""
 
         self._reset_run_state()
-        
+
         if session_id is not None:
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self._reset_session_state()
-        
-        
+
         retries = retries or 3
         if retries < 1:
             raise ValueError("Retries must be at least 1")
@@ -1071,7 +1070,7 @@ class Team:
         """Run the Team asynchronously and return the response."""
 
         self._reset_run_state()
-        
+
         if session_id is not None:
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self._reset_session_state()
@@ -1956,8 +1955,9 @@ class Team:
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         self.memory = cast(Memory, self.memory)
-        
+
         # Create a thread pool with a reasonable number of workers
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
@@ -1966,21 +1966,13 @@ class Team:
             )
             if self.enable_user_memories and user_message_str is not None and user_message_str:
                 futures.append(
-                    executor.submit(
-                        self.memory.create_user_memories, 
-                        message=user_message_str, 
-                        user_id=user_id
-                    )
+                    executor.submit(self.memory.create_user_memories, message=user_message_str, user_id=user_id)
                 )
 
             # Update the session summary if needed
             if self.enable_session_summaries:
                 futures.append(
-                    executor.submit(
-                        self.memory.create_session_summary, 
-                        session_id=session_id, 
-                        user_id=user_id
-                    )
+                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
                 )
             # Wait for all operations to complete and handle any errors
             for future in as_completed(futures):
@@ -1994,7 +1986,7 @@ class Team:
     ) -> None:
         self.memory = cast(Memory, self.memory)
         tasks = []
-        
+
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
@@ -2003,7 +1995,7 @@ class Team:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
-            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))
+            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
 
         # Execute all tasks concurrently and handle any errors
         if tasks:
@@ -4766,7 +4758,7 @@ class Team:
 
     def _get_user_message(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Optional[Union[str, List, Dict, Message]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,

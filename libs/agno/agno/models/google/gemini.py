@@ -13,7 +13,7 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message, convert_schema
+from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 
@@ -181,7 +181,7 @@ class Gemini(Model):
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
             # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
-            
+
             # Get the normalized schema for Gemini
             normalized_schema = get_response_schema_for_provider(response_format, "gemini")
             gemini_schema = convert_schema(normalized_schema)

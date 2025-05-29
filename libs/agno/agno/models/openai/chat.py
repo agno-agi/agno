@@ -183,7 +183,7 @@ class OpenAIChat(Model):
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 # Convert Pydantic to JSON schema for regular endpoint
                 from agno.utils.models.schema_utils import get_response_schema_for_provider
-                
+
                 schema = get_response_schema_for_provider(response_format, "openai")
                 base_params["response_format"] = {
                     "type": "json_schema",
@@ -191,7 +191,7 @@ class OpenAIChat(Model):
                         "name": response_format.__name__,
                         "schema": schema,
                         "strict": True,
-                    }
+                    },
                 }
             else:
                 # Handle other response format types (like {"type": "json_object"})

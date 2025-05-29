@@ -118,13 +118,13 @@ def sanitize_response_schema(schema: dict):
             # Ensure all properties are required, EXCEPT Dict fields
             if "properties" in schema:
                 from agno.utils.models.schema_utils import is_dict_field
-                
+
                 required_fields = []
                 for prop_name, prop_schema in schema["properties"].items():
                     # Use the utility function to check if this is a Dict field
                     if not is_dict_field(prop_schema):
                         required_fields.append(prop_name)
-                
+
                 schema["required"] = required_fields
 
         # Remove only default: null

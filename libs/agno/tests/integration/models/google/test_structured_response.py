@@ -1,15 +1,14 @@
-from typing import List, Dict
+from typing import Dict, List
 
-from agno.agent import Agent, RunResponse  # noqa
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
+from agno.agent import Agent, RunResponse  # noqa
+from agno.models.google import Gemini
+
 
 class MovieScript(BaseModel):
-    setting: str = Field(
-        ..., description="Provide a nice setting for a blockbuster movie."
-    )
+    setting: str = Field(..., description="Provide a nice setting for a blockbuster movie.")
     ending: str = Field(
         ...,
         description="Ending of the movie. If not available, provide a happy ending.",
@@ -20,13 +19,12 @@ class MovieScript(BaseModel):
     )
     name: str = Field(..., description="Give a name to this movie")
     characters: List[str] = Field(..., description="Name of characters for this movie.")
-    storyline: str = Field(
-        ..., description="3 sentence storyline for the movie. Make it exciting!"
-    )
+    storyline: str = Field(..., description="3 sentence storyline for the movie. Make it exciting!")
     rating: Dict[str, int] = Field(
         ...,
         description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
     )
+
 
 def test_structured_response_with_dict_fields():
     structured_output_agent = Agent(
@@ -43,5 +41,3 @@ def test_structured_response_with_dict_fields():
     assert isinstance(response.content.name, str)
     assert isinstance(response.content.characters, List)
     assert isinstance(response.content.storyline, str)
-
-
