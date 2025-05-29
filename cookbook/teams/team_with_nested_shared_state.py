@@ -213,7 +213,7 @@ shopping_team.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Shared Session state: {shopping_team.team_session_state}")
 
 
 print(f"Team session state: {shopping_team.session_state}")
