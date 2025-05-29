@@ -339,18 +339,18 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
-                
+
                 tool_call_count += len(function_calls_to_run)
-                
+
                 if tool_call_limit is not None and tool_call_count > tool_call_limit:
                     for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+                        # Create an error result
+                        function_call_results.append(self.create_tool_call_limit_error_result(function_call))
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
                     # Execute function calls
                     for function_call_response in self.run_function_calls(
@@ -425,7 +425,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         model_response = ModelResponse()
-        
+
         tool_call_count = 0
 
         while True:
@@ -448,20 +448,19 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
-                
+
                 tool_call_count += len(function_calls_to_run)
-                
+
                 if tool_call_limit is not None and tool_call_count > tool_call_limit:
                     for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+                        # Create an error result
+                        function_call_results.append(self.create_tool_call_limit_error_result(function_call))
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
-
                     # Execute function calls
                     async for function_call_response in self.arun_function_calls(
                         function_calls=function_calls_to_run,
@@ -751,7 +750,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
+
         tool_call_count = 0
 
         while True:
@@ -798,20 +797,19 @@ class Model(ABC):
                     assistant_message, messages, functions
                 )
                 function_call_results: List[Message] = []
-                
+
                 tool_call_count += len(function_calls_to_run)
-                
+
                 if tool_call_limit is not None and tool_call_count > tool_call_limit:
                     for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+                        # Create an error result
+                        function_call_results.append(self.create_tool_call_limit_error_result(function_call))
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra or {}
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
-
                     # Execute function calls
                     for function_call_response in self.run_function_calls(
                         function_calls=function_calls_to_run,
@@ -825,7 +823,9 @@ class Model(ABC):
                             messages=messages, function_call_results=function_call_results, **stream_data.extra
                         )
                     else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=function_call_results
+                        )
 
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
@@ -894,7 +894,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
+
         tool_call_count = 0
 
         while True:
@@ -940,20 +940,19 @@ class Model(ABC):
                     assistant_message, messages, functions
                 )
                 function_call_results: List[Message] = []
-                
+
                 tool_call_count += len(function_calls_to_run)
-                
+
                 if tool_call_limit is not None and tool_call_count > tool_call_limit:
                     for function_call in function_calls_to_run:
-                        # create a error result
-                        function_call_results.append(
-                            self.create_tool_call_limit_error_result(function_call)
-                        )
+                        # Create an error result
+                        function_call_results.append(self.create_tool_call_limit_error_result(function_call))
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra or {}
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
-
                     # Execute function calls
                     async for function_call_response in self.arun_function_calls(
                         function_calls=function_calls_to_run,
@@ -967,7 +966,9 @@ class Model(ABC):
                             messages=messages, function_call_results=function_call_results, **stream_data.extra
                         )
                     else:
-                        self.format_function_call_results(messages=messages, function_call_results=function_call_results)
+                        self.format_function_call_results(
+                            messages=messages, function_call_results=function_call_results
+                        )
 
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True)
@@ -1147,7 +1148,7 @@ class Model(ABC):
             stop_after_tool_call=function_call.function.stop_after_tool_call,
             **kwargs,
         )
-    
+
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
         return Message(
             role=self.tool_message_role,
@@ -1373,7 +1374,6 @@ class Model(ABC):
         additional_messages: Optional[List[Message]] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []

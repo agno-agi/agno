@@ -13,4 +13,7 @@ agent = Agent(
 )
 
 # It should only call the first tool and fail to call the second tool.
-agent.print_response("Find me the current price of TSLA, then after that find me the latest news about Tesla.", stream=True)
+agent.print_response(
+    "Find me the current price of TSLA, then after that find me the latest news about Tesla.",
+    stream=True,
+)
