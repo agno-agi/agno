@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from agno.utils.models.schema_utils import (
     is_dict_field,
     get_dict_value_type,
-    normalize_schema_for_provider,
     get_response_schema_for_provider,
     _normalize_for_openai,
     _normalize_for_gemini,
