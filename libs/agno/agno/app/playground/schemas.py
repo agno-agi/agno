@@ -84,8 +84,6 @@ class AgentRunRequest(BaseModel):
 class ContinueRunRequest(BaseModel):
     tools: Optional[List[dict]] = None  # List of tool dictionaries instead of full run_response_data
     stream: bool = True
-    session_id: Optional[str] = None
-    user_id: Optional[str] = None
 
 
 class AgentRenameRequest(BaseModel):
