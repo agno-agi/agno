@@ -403,7 +403,9 @@ def get_async_playground_router(
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
-        payload: ContinueRunRequest = Body(...),  # Use the Pydantic model
+        payload: ContinueRunRequest = Body(...),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
     ):
         print(payload)
         logger.debug(
@@ -434,11 +436,10 @@ def get_async_playground_router(
             return StreamingResponse(
                 agent_acontinue_run_streamer(
                     agent,
-                    run_response=None,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
-                    session_id=payload.session_id,
-                    user_id=payload.user_id,
+                    session_id=session_id,
+                    user_id=user_id, 
                 ),
                 media_type="text/event-stream",
             )
@@ -448,8 +449,8 @@ def get_async_playground_router(
                 await agent.acontinue_run(
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
-                    session_id=payload.session_id,
-                    user_id=payload.user_id,
+                    session_id=session_id,
+                    user_id=user_id,
                     stream=False,
                 ),
             )
