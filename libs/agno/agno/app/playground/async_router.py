@@ -407,7 +407,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run:
+                if "content" in first_run or first_run.get("is_paused", False):
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -782,7 +782,7 @@ def get_async_playground_router(
             if runs is not None:
                 first_run = runs[0]
                 # This is how we know it is a RunResponse
-                if "content" in first_run:
+                if "content" in first_run or first_run.get("is_paused", False):
                     team_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None
