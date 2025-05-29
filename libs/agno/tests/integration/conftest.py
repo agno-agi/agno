@@ -56,7 +56,6 @@ def team_storage(temp_storage_db_file):
     return storage
 
 
-
 @pytest.fixture
 def memory_db(temp_memory_db_file):
     """Create a SQLite memory database for testing."""
