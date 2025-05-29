@@ -1,4 +1,4 @@
-"""MCP Brave Agent - Search for Brave 
+"""MCP Brave Agent - Search for Brave
 
 This example shows how to create an agent that uses Anthropic to search for information using the Brave MCP server.
 

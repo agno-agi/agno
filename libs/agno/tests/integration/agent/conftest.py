@@ -1,4 +1,3 @@
-
 import os
 import tempfile
 import uuid
@@ -9,6 +8,7 @@ from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.storage.sqlite import SqliteStorage
+
 
 @pytest.fixture
 def temp_storage_db_file():
@@ -58,4 +58,3 @@ def memory_db(temp_memory_db_file):
 def memory(memory_db):
     """Create a Memory instance for testing."""
     return Memory(model=Claude(id="claude-3-5-sonnet-20241022"), db=memory_db)
-

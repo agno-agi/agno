@@ -625,4 +625,3 @@ class Claude(Model):
             log_error(f"Error parsing Beta response: {e}")
 
         return model_response
-

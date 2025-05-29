@@ -81,7 +81,8 @@ if agent.is_paused:  # Or agent.run_response.is_paused
 
 updated_tools = agent.run_response.tools
 
-run_response = agent.continue_run(run_id=agent.run_response.run_id, updated_tools=updated_tools)
+run_response = agent.continue_run(
+    run_id=agent.run_response.run_id, updated_tools=updated_tools
+)
 
 pprint.pprint_run_response(run_response)
-
