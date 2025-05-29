@@ -805,6 +805,8 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -939,6 +941,8 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -1120,7 +1124,7 @@ class Model(ABC):
             stop_after_tool_call=function_call.function.stop_after_tool_call,
             **kwargs,
         )
-    
+
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
         return Message(
             role=self.tool_message_role,
@@ -1359,7 +1363,6 @@ class Model(ABC):
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
