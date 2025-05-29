@@ -5,7 +5,7 @@ import inspect
 from dataclasses import dataclass, field, fields
 from os import getenv
 from types import GeneratorType
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -248,6 +248,118 @@ class Workflow:
             logger.warning(f"Workflow.run() should only return RunResponse objects, got: {type(result)}")
             return None
 
+    # Add to workflow.py after the run_workflow method
+
+    async def arun_workflow(self, **kwargs: Any):
+        """Run the Workflow asynchronously"""
+
+        # Set mode, debug, workflow_id, session_id, initialize memory
+        self.set_storage_mode()
+        self.set_debug()
+        self.set_monitoring()
+        self.set_workflow_id()  # Ensure workflow_id is set
+        self.set_session_id()
+        self.initialize_memory()
+
+        # Update workflow_id for all agents before registration
+        for field_name, value in self.__class__.__dict__.items():
+            if isinstance(value, Agent):
+                value.initialize_agent()
+                value.workflow_id = self.workflow_id
+
+            if isinstance(value, Team):
+                value.initialize_team()
+                value.workflow_id = self.workflow_id
+
+        # Register the workflow, which will also register agents and teams
+        await self.aregister_workflow()
+
+        # Create a run_id
+        self.run_id = str(uuid4())
+
+        # Set run_input, run_response
+        self.run_input = kwargs
+        self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, workflow_id=self.workflow_id)
+
+        # Read existing session from storage
+        self.read_from_storage()
+
+        # Update the session_id for all Agent instances
+        self.update_agent_session_ids()
+
+        log_debug(f"Workflow Run Start: {self.run_id}", center=True)
+        try:
+            self._subclass_run = cast(Callable, self._subclass_run)
+            result = await self._subclass_run(**kwargs)
+        except Exception as e:
+            logger.error(f"Workflow.arun() failed: {e}")
+            raise e
+
+        # Handle async iterator results
+        if isinstance(result, (AsyncIterator, AsyncGenerator)):
+            # Initialize the run_response content
+            self.run_response.content = ""
+
+            async def result_generator():
+                self.run_response = cast(RunResponse, self.run_response)
+                if isinstance(self.memory, WorkflowMemory):
+                    self.memory = cast(WorkflowMemory, self.memory)
+                elif isinstance(self.memory, Memory):
+                    self.memory = cast(Memory, self.memory)
+
+                async for item in result:
+                    if isinstance(item, RunResponse):
+                        # Update the run_id, session_id and workflow_id of the RunResponse
+                        item.run_id = self.run_id
+                        item.session_id = self.session_id
+                        item.workflow_id = self.workflow_id
+
+                        # Update the run_response with the content from the result
+                        if item.content is not None and isinstance(item.content, str):
+                            self.run_response.content += item.content
+                    else:
+                        logger.warning(f"Workflow.arun() should only yield RunResponse objects, got: {type(item)}")
+                    yield item
+
+                # Add the run to the memory
+                if isinstance(self.memory, WorkflowMemory):
+                    self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+                elif isinstance(self.memory, Memory):
+                    self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
+                # Write this run to the database
+                self.write_to_storage()
+                log_debug(f"Workflow Run End: {self.run_id}", center=True)
+
+            return result_generator()
+        # Handle single RunResponse result
+        elif isinstance(result, RunResponse):
+            # Update the result with the run_id, session_id and workflow_id of the workflow run
+            result.run_id = self.run_id
+            result.session_id = self.session_id
+            result.workflow_id = self.workflow_id
+
+            # Update the run_response with the content from the result
+            if result.content is not None and isinstance(result.content, str):
+                self.run_response.content = result.content
+
+            # Add the run to the memory
+            if isinstance(self.memory, WorkflowMemory):
+                self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+            elif isinstance(self.memory, Memory):
+                self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
+            # Write this run to the database
+            self.write_to_storage()
+            log_debug(f"Workflow Run End: {self.run_id}", center=True)
+            return result
+        else:
+            logger.warning(f"Workflow.arun() should only return RunResponse objects, got: {type(result)}")
+            return None
+
+    async def arun(self, **kwargs: Any):
+        """Async version of run() that calls arun_workflow()"""
+        logger.error(f"{self.__class__.__name__}.arun() method not implemented.")
+        return
+
     def set_storage_mode(self):
         if self.storage is not None:
             self.storage.mode = "workflow"
@@ -294,11 +406,17 @@ class Workflow:
         # First, check if the subclass has a run method
         #   If the run() method has been overridden by the subclass,
         #   then self.__class__.run is not Workflow.run will be True
-        if self.__class__.run is not Workflow.run:
-            # Store the original run method bound to the instance in self._subclass_run
-            self._subclass_run = self.__class__.run.__get__(self)
-            # Get the parameters of the run method
-            sig = inspect.signature(self.__class__.run)
+        if self.__class__.run is not Workflow.run or self.__class__.arun is not Workflow.arun:
+            # Store the original run methods bound to the instance
+            if self.__class__.run is not Workflow.run:
+                self._subclass_run = self.__class__.run.__get__(self)
+                # Get the parameters of the sync run method
+                sig = inspect.signature(self.__class__.run)
+            if self.__class__.arun is not Workflow.arun:
+                self._subclass_run = self.__class__.arun.__get__(self)
+                # Get the parameters of the async run method
+                sig = inspect.signature(self.__class__.arun)
+
             # Convert parameters to a serializable format
             self._run_parameters = {
                 param_name: {
@@ -661,6 +779,31 @@ class Workflow:
 
         # For other types, return as is
         return field_value
+
+    async def aregister_workflow(self, force: bool = False) -> None:
+        """Async version of register_workflow"""
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        if not self.workflow_id:
+            self.set_workflow_id()
+
+        try:
+            from agno.api.schemas.workflows import WorkflowCreate
+            from agno.api.workflows import acreate_workflow
+
+            workflow_config = self.to_config_dict()
+            # Register the workflow as an app
+            await acreate_workflow(
+                workflow=WorkflowCreate(
+                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
+                )
+            )
+
+            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
+        except Exception as e:
+            log_warning(f"Failed to register workflow: {e}")
 
     def register_workflow(self, force: bool = False) -> None:
         """Register this workflow with Agno's platform.

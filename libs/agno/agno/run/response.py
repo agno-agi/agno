@@ -204,10 +204,8 @@ class RunResponse:
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
-
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
-
         return cls(messages=messages, tools=tools, **data)
 
     def get_content_as_string(self, **kwargs) -> str:

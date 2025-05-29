@@ -22,7 +22,7 @@ memory = Memory(
 )
 # *******************************
 
-# ************* Core Agents *************
+# ************* Members *************
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests and general research",
@@ -40,6 +40,8 @@ web_agent = Agent(
         "Focus on reputable financial news sources",
         "Provide context and background information",
     ],
+    markdown=True,
+    enable_agentic_memory=True,
     add_datetime_to_instructions=True,
 )
 
@@ -70,45 +72,42 @@ finance_agent = Agent(
         "Focus on delivering actionable financial insights.",
         "Delegate tasks and run tools in parallel if needed.",
     ],
+    markdown=True,
+    enable_agentic_memory=True,
     add_datetime_to_instructions=True,
 )
 # *******************************
 
-
-def get_reasoning_finance_team():
-    return Team(
-        name="Reasoning Finance Team",
-        mode="coordinate",
-        team_id="reasoning_finance_team",
-        model=Claude(id="claude-sonnet-4-20250514"),
-        members=[
-            web_agent,
-            finance_agent,
-        ],
-        tools=[ReasoningTools(add_instructions=True)],
-        instructions=[
-            "Collaborate to provide comprehensive financial and investment insights",
-            "Consider both fundamental analysis and market sentiment",
-            "Provide actionable investment recommendations with clear rationale",
-            "Use tables and charts to display data clearly and professionally",
-            "Ensure all claims are supported by data and sources",
-            "Present findings in a structured, easy-to-follow format",
-            "Only output the final consolidated analysis, not individual agent responses",
-            "Dont use emojis",
-        ],
-        storage=PostgresAgentStorage(
-            db_url=db_url,
-            table_name="reasoning_finance_team_sessions",
-        ),
-        memory=memory,
-        markdown=True,
-        enable_agentic_memory=True,
-        show_members_responses=True,
-        enable_agentic_context=True,
-        add_datetime_to_instructions=True,
-        success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
-    )
-
+# ************* Team *************
+reasoning_finance_team = Team(
+    name="Reasoning Finance Team",
+    mode="coordinate",
+    team_id="reasoning_finance_team",
+    model=Claude(id="claude-sonnet-4-20250514"),
+    members=[web_agent, finance_agent],
+    tools=[ReasoningTools(add_instructions=True)],
+    instructions=[
+        "Collaborate to provide comprehensive financial and investment insights",
+        "Consider both fundamental analysis and market sentiment",
+        "Provide actionable investment recommendations with clear rationale",
+        "Use tables and charts to display data clearly and professionally",
+        "Ensure all claims are supported by data and sources",
+        "Present findings in a structured, easy-to-follow format",
+        "Only output the final consolidated analysis, not individual agent responses",
+        "Dont use emojis",
+    ],
+    storage=PostgresAgentStorage(
+        db_url=db_url,
+        table_name="reasoning_finance_team_sessions",
+    ),
+    memory=memory,
+    markdown=True,
+    enable_agentic_memory=True,
+    enable_agentic_context=True,
+    add_datetime_to_instructions=True,
+    success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
+)
+# *******************************
 
 # ************* Demo Scenarios *************
 """
