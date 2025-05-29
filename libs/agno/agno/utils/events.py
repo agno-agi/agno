@@ -40,6 +40,10 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
+        images=from_run_response.images,  # type: ignore
+        videos=from_run_response.videos,  # type: ignore
+        audio=from_run_response.audio,  # type: ignore
+        response_audio=from_run_response.response_audio,  # type: ignore
     )
 
 

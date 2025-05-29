@@ -226,6 +226,11 @@ class RunResponseCompletedEvent(BaseRunResponseEvent):
     content_type: str = "str"
 
     reasoning_content: Optional[str] = None
+    
+    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
+    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
+    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
 
 
 @dataclass(kw_only=True)
@@ -282,6 +287,7 @@ class ReasoningStepEvent(BaseRunResponseEvent):
     content: Any
     content_type: str = "str"
     reasoning_content: str
+
 
 @dataclass(kw_only=True)
 class ReasoningCompletedEvent(BaseRunResponseEvent):
