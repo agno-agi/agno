@@ -168,7 +168,6 @@ class OpenAIChat(Model):
             "modalities": self.modalities,
             "audio": self.audio,
             "presence_penalty": self.presence_penalty,
-            "response_format": response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -178,6 +177,25 @@ class OpenAIChat(Model):
             "extra_query": self.extra_query,
             "metadata": self.metadata,
         }
+
+        # Handle response format - always use JSON schema approach
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Convert Pydantic to JSON schema for regular endpoint
+                from agno.utils.models.schema_utils import get_response_schema_for_provider
+                
+                schema = get_response_schema_for_provider(response_format, "openai")
+                base_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": schema,
+                        "strict": True,
+                    }
+                }
+            else:
+                # Handle other response format types (like {"type": "json_object"})
+                base_params["response_format"] = response_format
 
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
@@ -308,16 +326,6 @@ class OpenAIChat(Model):
         """
 
         try:
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                return self.get_client().beta.chat.completions.parse(
-                    model=self.id,
-                    messages=[self._format_message(m) for m in messages],  # type: ignore
-                    **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
-                )
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -378,16 +386,6 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                return await self.get_async_client().beta.chat.completions.parse(
-                    model=self.id,
-                    messages=[self._format_message(m) for m in messages],  # type: ignore
-                    **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
-                )
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
