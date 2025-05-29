@@ -615,11 +615,14 @@ class Claude(Model):
 
         # Capture the Beta response
         try:
-            if isinstance(response, BetaRawContentBlockDeltaEvent):
-                if isinstance(response.delta, BetaTextDelta):
-                    if response.delta.text is not None:
-                        model_response.content = response.delta.text
+            if (
+                isinstance(response, BetaRawContentBlockDeltaEvent)
+                and isinstance(response.delta, BetaTextDelta)
+                and response.delta.text is not None
+            ):
+                model_response.content = response.delta.text
         except Exception as e:
-            log_error(f"Error parsing Beta response: {str(e)}")
+            log_error(f"Error parsing Beta response: {e}")
 
         return model_response
+
