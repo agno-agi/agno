@@ -1,6 +1,6 @@
 from typing import Dict
 from unittest.mock import ANY, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import redis
