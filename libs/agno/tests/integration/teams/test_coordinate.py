@@ -86,14 +86,14 @@ def test_coordinator_team_with_structured_output():
 
     hn_researcher = Agent(
         name="HackerNews Researcher",
-        model=OpenAIChat("gpt-4o"),
+        model=OpenAIChat("gpt-4o-mini"),
         role="Gets top stories from hackernews",
         tools=[HackerNewsTools()],
     )
 
     web_searcher = Agent(
         name="Web Searcher",
-        model=OpenAIChat("gpt-4o"),
+        model=OpenAIChat("gpt-4o-mini"),
         role="Searches the web for additional information",
         tools=[DuckDuckGoTools(cache_results=True)],
     )
@@ -101,7 +101,7 @@ def test_coordinator_team_with_structured_output():
     team = Team(
         name="News Team",
         mode="coordinate",
-        model=OpenAIChat("gpt-4o"),
+        model=OpenAIChat("gpt-4o-mini"),
         members=[hn_researcher, web_searcher],
         instructions=[
             "First, search hackernews for what the user is asking about.",

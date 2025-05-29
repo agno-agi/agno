@@ -959,6 +959,7 @@ class Memory:
             self.db.clear()
         self.memories = {}
         self.summaries = {}
+        self.runs = {}
 
     def deep_copy(self) -> "Memory":
         from copy import deepcopy

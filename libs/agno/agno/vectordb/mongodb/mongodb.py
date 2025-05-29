@@ -485,7 +485,7 @@ class MongoDb(VectorDb):
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the MongoDB collection."""
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
 
         prepared_docs = []
@@ -942,7 +942,7 @@ class MongoDb(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously."""
-        log_info(f"Inserting {len(documents)} documents asynchronously")
+        log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
         prepared_docs = []

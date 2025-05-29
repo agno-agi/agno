@@ -27,9 +27,8 @@ class Searxng(Toolkit):
         self.engines = engines
         self.fixed_max_results = fixed_max_results
 
-        self.register(self.search)
-
         tools: List[Any] = []
+        tools.append(self.search)
         if images:
             tools.append(self.image_search)
         if it:

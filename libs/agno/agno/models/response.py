@@ -71,7 +71,7 @@ class ToolExecution:
             requires_user_input=data.get("requires_user_input"),
             user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema") or []],
             external_execution_required=data.get("external_execution_required"),
-            metrics=MessageMetrics(**data.get("metrics", {})),
+            metrics=MessageMetrics(**(data.get("metrics", {}) or {})),
         )
 
 

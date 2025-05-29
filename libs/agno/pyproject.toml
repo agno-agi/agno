@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.5"
+version = "1.5.6"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -54,7 +54,7 @@ integration-tests = [
     "duckduckgo-search",
     "yfinance",
     "sqlalchemy",
-    "Pillow",
+    "Pillow"
 ]
 
 # Dependencies for Telemetry
