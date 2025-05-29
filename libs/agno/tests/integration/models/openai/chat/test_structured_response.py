@@ -1,7 +1,7 @@
 from typing import List, Dict
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.openai import OpenAIChat
+from agno.models.openai.chat import OpenAIChat
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -28,28 +28,20 @@ class MovieScript(BaseModel):
         description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
     )
 
+def test_structured_response_with_dict_fields():
+    structured_output_agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        description="You help people write movie scripts.",
+        response_model=MovieScript,
+    )
+    response = structured_output_agent.run("New York")
+    assert response.content is not None
+    assert isinstance(response.content.rating, Dict)
+    assert isinstance(response.content.setting, str)
+    assert isinstance(response.content.ending, str)
+    assert isinstance(response.content.genre, str)
+    assert isinstance(response.content.name, str)
+    assert isinstance(response.content.characters, List)
+    assert isinstance(response.content.storyline, str)
 
-# Agent that uses JSON mode
-json_mode_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
-    response_model=MovieScript,
-    use_json_mode=True,
-)
 
-# Agent that uses structured outputs
-structured_output_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
-    response_model=MovieScript,
-)
-
-
-# Get the response in a variable
-# json_mode_response: RunResponse = json_mode_agent.run("New York")
-# pprint(json_mode_response.content)
-# structured_output_response: RunResponse = structured_output_agent.run("New York")
-# pprint(structured_output_response.content)
-
-json_mode_agent.print_response("New York")
-structured_output_agent.print_response("New York")
