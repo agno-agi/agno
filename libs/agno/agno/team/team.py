@@ -489,6 +489,23 @@ class Team:
         if self.num_of_interactions_from_history is not None:
             self.num_history_runs = self.num_of_interactions_from_history
 
+    def _reset_session_state(self) -> None:
+        self.session_name = None
+        self.session_state = None
+        self.team_session_state = None
+        self.session_metrics = None
+        self.images = None
+        self.videos = None
+        self.audio = None
+        self.files = None
+        self.team_session = None
+    
+    def _reset_run_state(self) -> None:
+        self.run_id = None
+        self.run_input = None
+        self.run_messages = None
+        self.run_response = None
+        
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
@@ -571,6 +588,13 @@ class Team:
     ) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         """Run the Team and return the response."""
 
+        self._reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self._reset_session_state()
+        
+        
         retries = retries or 3
         if retries < 1:
             raise ValueError("Retries must be at least 1")
@@ -1046,6 +1070,12 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         """Run the Team asynchronously and return the response."""
+
+        self._reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self._reset_session_state()
 
         retries = retries or 3
         if retries < 1:

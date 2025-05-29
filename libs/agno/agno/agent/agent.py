@@ -555,6 +555,23 @@ class Agent:
         if self.num_history_responses is not None:
             self.num_history_runs = self.num_history_responses
 
+    def reset_session_state(self) -> None:
+        self.session_name = None
+        self.session_state = None
+        self.team_session_state = None
+        self.session_metrics = None
+        self.images = None
+        self.videos = None
+        self.audio = None
+        self.files = None
+        self.agent_session = None
+    
+    def reset_run_state(self) -> None:
+        self.run_id = None
+        self.run_input = None
+        self.run_messages = None
+        self.run_response = None
+        
     def initialize_agent(self) -> None:
         self.set_defaults()
         self.set_default_model()
@@ -832,6 +849,12 @@ class Agent:
     ) -> Union[RunResponse, Iterator[RunResponse]]:
         """Run the Agent and return the response."""
 
+        self.reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
+        
         # Initialize the Agent
         self.initialize_agent()
 
@@ -883,6 +906,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -891,7 +916,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1226,7 +1251,12 @@ class Agent:
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
-
+        self.reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided
+            self.reset_session_state()
+        
         # Initialize the Agent
         self.initialize_agent()
 
@@ -1280,6 +1310,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1288,7 +1320,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1472,6 +1504,11 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        self.reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1524,6 +1561,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1532,7 +1571,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -1892,6 +1931,11 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        self.reset_run_state()
+        
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1944,6 +1988,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1952,7 +1998,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -3862,9 +3908,11 @@ class Agent:
     def read_from_storage(
         self,
         session_id: str,
-        user_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
         """Load the AgentSession from storage
+        
+        Args:
+            session_id: The session_id to load from storage.
 
         Returns:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
@@ -3875,9 +3923,6 @@ class Agent:
             if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
-            else:
-                # New session, just reset the state
-                self.session_name = None
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -3928,7 +3973,7 @@ class Agent:
         if self.storage is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading AgentSession: {self.session_id}")
-            self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+            self.read_from_storage(session_id=self.session_id)  # type: ignore
 
             # Create a new session if it does not exist
             if self.agent_session is None:
@@ -4690,7 +4735,7 @@ class Agent:
         from dataclasses import fields
 
         # Do not copy agent_session and session_name to the new agent
-        excluded_fields = ["agent_session", "session_name"]
+        excluded_fields = ["agent_session"]
         # Extract the fields to set for the new Agent
         fields_for_new_agent: Dict[str, Any] = {}
 
@@ -5165,7 +5210,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -5182,7 +5227,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -5238,7 +5283,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=self.session_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -5257,17 +5302,16 @@ class Agent:
         self.storage.delete_session(session_id=session_id)
 
     def get_messages_for_session(
-        self, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self, session_id: Optional[str] = None
     ) -> List[Message]:
         """Get messages for a session"""
         _session_id = session_id or self.session_id
-        _user_id = user_id or self.user_id
         if _session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
         if self.memory is None:
-            self.read_from_storage(session_id=_session_id, user_id=_user_id)
+            self.read_from_storage(session_id=_session_id)
 
         if self.memory is None:
             return []
