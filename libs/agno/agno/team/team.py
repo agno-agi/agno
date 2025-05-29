@@ -108,7 +108,7 @@ class Team:
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
 
-    # Team session state (stored in the database to persist across team runs)
+    # Team session state (shared between team leaders and team members)
     team_session_state: Optional[Dict[str, Any]] = None
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
