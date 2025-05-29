@@ -1,0 +1,37 @@
+/* Comprehensive empty message fix */
+
+/* Hide any element that appears to be an empty message bubble */
+.copilotKitMessages > div:has(> div:empty),
+.copilotKitMessages > div:not(:has(*)),
+[class*="Messages"] > div:empty,
+[class*="Message"]:not(:has(:not(:empty))) {
+  display: none !important;
+}
+
+/* Hide messages with only whitespace or invisible content */
+.copilotKitMessage:not(:has(*:not(:empty):not(.animate-pulse):not(.animate-bounce))) {
+  display: none !important;
+}
+
+/* Hide leftover loading indicators */
+.copilotKitMessage:has(.animate-pulse):not(:has([class*="content"])),
+.copilotKitMessage:has(.animate-bounce):not(:has([class*="content"])) {
+  display: none !important;
+}
+
+/* Ensure proper styling for visible messages */
+.copilotKitMessage:has(*:not(:empty)) {
+  display: flex !important;
+  visibility: visible !important;
+}
+
+/* Additional cleanup for AG-UI specific empty elements */
+[class*="message"]:has(> span:empty):not(:has(> span:not(:empty))),
+[class*="message"]:has(> div:empty):not(:has(> div:not(:empty))) {
+  display: none !important;
+}
+
+/* Hide the initial greeting if it appears as empty */
+.copilotKitMessages > div:first-child:has(> div:empty) {
+  display: none !important;
+} 

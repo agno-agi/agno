@@ -1,0 +1,147 @@
+/* CopilotKit Input Styles - Force black text */
+.copilotKitInput,
+.copilotKitInput *,
+.copilotKitInput textarea,
+.copilotKitInput input,
+[class*="copilotKitInput"] textarea,
+[class*="copilotKitInput"] input,
+[class*="Input_root"] textarea,
+[class*="Input_root"] input,
+[class*="input_root"] textarea,
+[class*="input_root"] input {
+  color: #000 !important;
+  opacity: 1 !important;
+  caret-color: #000 !important;
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+  background-color: transparent !important;
+  -webkit-text-fill-color: #000 !important;
+}
+
+/* Fix for any element with contenteditable */
+[contenteditable="true"] {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  caret-color: #000 !important;
+}
+
+/* Target the actual textarea more specifically */
+.copilotKitInput textarea[aria-label],
+.copilotKitInput textarea[placeholder],
+[class*="Input"] textarea[aria-label],
+[class*="Input"] textarea[placeholder] {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+}
+
+/* Placeholder styles */
+.copilotKitInput textarea::placeholder,
+[class*="Input"] textarea::placeholder,
+[class*="input"] textarea::placeholder {
+  color: #9ca3af !important;
+  opacity: 0.7 !important;
+  -webkit-text-fill-color: #9ca3af !important;
+}
+
+/* Focus states */
+.copilotKitInput textarea:focus,
+[class*="Input"] textarea:focus,
+[class*="input"] textarea:focus {
+  color: #000 !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #000 !important;
+}
+
+/* Input wrapper styling - ensure white background */
+.copilotKitInput {
+  border-radius: 0.75rem;
+  border: 1px solid var(--copilot-kit-separator-color) !important;
+  background-color: #fff !important;
+}
+
+/* Ensure input area has proper background */
+.copilotKitInput > div,
+[class*="Input_root"] > div {
+  background-color: #fff !important;
+}
+  
+.copilotKitChat {
+  background-color: #fff !important;
+}
+
+/* Hide empty message bubbles - more aggressive approach */
+.copilotKitMessage:empty,
+.copilotKitMessage:blank,
+[class*="Message_root"]:empty,
+[class*="Message_root"]:blank,
+[class*="message"]:empty,
+/* Also target messages that are technically not empty but have no visible content */
+.copilotKitMessage:not(:has(*:not(:empty))) {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Hide messages that only contain whitespace or invisible elements */
+.copilotKitMessage {
+  min-height: unset !important;
+}
+
+/* Only show padding for messages with actual visible content */
+.copilotKitMessage:has(*:not(:empty)) {
+  padding: 0.75rem 1rem;
+}
+
+/* Hide loading indicators after message is complete */
+.copilotKitMessage:has(.animate-pulse):not(:has(.copilotKitAssistantMessage)),
+.copilotKitMessage:has(.animate-bounce):not(:has(.copilotKitAssistantMessage)),
+[class*="Message"]:has(> :empty:only-child) {
+  display: none !important;
+}
+
+/* Ensure empty containers after messages are hidden */
+.copilotKitMessages > div:empty,
+.copilotKitMessages > div:blank,
+[class*="Messages_root"] > div:empty,
+.copilotKitMessages > :not(:has(*:not(:empty))) {
+  display: none !important;
+}
+
+/* Fix the wrapper to prevent layout issues */
+.copilot-chat-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+/* Ensure the chat takes full height */
+.copilot-chat-wrapper > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Force all text inputs to be black with white background */
+div[contenteditable="true"],
+textarea,
+input[type="text"],
+.copilotKitChat textarea,
+.copilotKitChat input,
+.copilotKitChat [contenteditable="true"] {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Ensure proper contrast for all input areas */
+[class*="input"], 
+[class*="Input"],
+[class*="textarea"],
+[class*="Textarea"] {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+} 
