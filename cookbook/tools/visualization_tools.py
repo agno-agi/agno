@@ -4,7 +4,7 @@ This example shows how to use the VisualizationTools to create various types of 
 and graphs for data visualization. Perfect for business reports, analytics dashboards,
 and data presentations.
 
-Run: `pip install matplotlib agno` to install the dependencies
+Run: `pip install matplotlib` to install the dependencies
 """
 
 from agno.agent import Agent
