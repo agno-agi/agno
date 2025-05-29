@@ -64,3 +64,5 @@ token.json
 # Coverage
 coverage_report
 .coverage
+
+**node_modules**

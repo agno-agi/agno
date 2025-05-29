@@ -1,0 +1,74 @@
+/* Ultra high specificity input fix */
+html body * textarea,
+html body * input,
+html body .copilotKitInput textarea,
+html body .copilotKitInput input,
+html body [class*="copilot"] textarea,
+html body [class*="copilot"] input,
+html body [class*="Input"] textarea,
+html body [class*="input"] textarea,
+html body [contenteditable="true"] {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  opacity: 1 !important;
+  caret-color: #000000 !important;
+  background-color: transparent !important;
+}
+
+/* Input wrapper backgrounds */
+html body .copilotKitInput,
+html body [class*="Input_root"],
+html body [class*="input_root"] {
+  background-color: #ffffff !important;
+}
+
+/* Ensure text is visible when typing */
+html body * textarea:not(:placeholder-shown),
+html body * input:not(:placeholder-shown),
+html body [contenteditable="true"]:not(:empty) {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+/* Target by attributes */
+html body textarea[aria-label],
+html body textarea[placeholder],
+html body input[aria-label],
+html body input[placeholder] {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+/* Override any inline styles */
+html body textarea[style*="color"],
+html body input[style*="color"] {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+}
+
+/* Placeholder specific */
+html body textarea::placeholder,
+html body input::placeholder {
+  color: #9ca3af !important;
+  -webkit-text-fill-color: #9ca3af !important;
+  opacity: 0.7 !important;
+}
+
+/* Selection styles */
+html body textarea::selection,
+html body input::selection,
+html body [contenteditable="true"]::selection {
+  background-color: #3b82f6 !important;
+  color: #ffffff !important;
+}
+
+/* Focus states with background */
+html body textarea:focus,
+html body input:focus,
+html body [contenteditable="true"]:focus {
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: -2px !important;
+} 

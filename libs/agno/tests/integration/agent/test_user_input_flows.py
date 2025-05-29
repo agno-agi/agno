@@ -164,8 +164,6 @@ async def test_tool_call_requires_user_input_stream_async():
     assert found_user_input is False, "Some tools still require user input"
 
 
-
-
 def test_tool_call_requires_user_input_continue_with_run_id(agent_storage, memory):
     @tool(requires_user_input=True)
     def get_the_weather(city: str):
@@ -190,7 +188,7 @@ def test_tool_call_requires_user_input_continue_with_run_id(agent_storage, memor
 
     # Provide user input
     response.tools[0].user_input_schema[0].value = "Tokyo"
-    
+
     # Create a completely new agent instance
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -204,7 +202,6 @@ def test_tool_call_requires_user_input_continue_with_run_id(agent_storage, memor
     response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
     assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
-
 
 
 def test_tool_call_multiple_requires_user_input():

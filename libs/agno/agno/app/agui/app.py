@@ -2,102 +2,103 @@
 AG-UI FastAPI Application
 
 Main application that serves agents via the AG-UI protocol.
-This app can route requests to different agents based on query parameters.
 """
+
 from typing import Dict, Optional
+from uuid import uuid4
+
+import uvicorn
+from fastapi import FastAPI, Request
+
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.app.fastapi.app import FastAPIApp
-from fastapi import Request
-
-from .agents import (
-    create_chat_agent,
-    create_generative_ui_agent,
-    create_human_in_loop_agent,
-    create_predictive_state_agent,
-    create_shared_state_agent,
-    create_tool_ui_agent,
-)
-
-class AgentRouter:
-    """Routes requests to different agents based on query parameters"""
-    
-    def __init__(self):
-        # Create all agents
-        self.agents = {
-            "chat_agent": create_chat_agent(),
-            "generative_ui_agent": create_generative_ui_agent(),
-            "human_in_loop_agent": create_human_in_loop_agent(),
-            "predictive_state_agent": create_predictive_state_agent(),
-            "shared_state_agent": create_shared_state_agent(),
-            "tool_ui_agent": create_tool_ui_agent(),
-        }
-        
-        # Default agent for routing
-        self.default_agent = self.agents["chat_agent"]
-    
-    def get_agent(self, agent_name: str) -> Optional[Agent]:
-        """Get agent by name"""
-        return self.agents.get(agent_name, self.default_agent)
+from agno.team.team import Team
 
 
-def create_agui_app(
-    name: str = "AG-UI Application",
-    description: str = "Serves multiple agents via AG-UI protocol"
-) -> FastAPIApp:
-    """Create the AG-UI FastAPI application"""
-    
-    # Create router
-    router = AgentRouter()
-    
-    # For now, we'll use the default agent as the main agent
-    # The AG-UI router will handle the actual routing based on query params
-    app = FastAPIApp(
-        agent=router.default_agent,
-        name=name,
-        description=description
-    )
-    
-    # Store the router for later use
-    app.agent_router = router  # type: ignore
-    
-    # Create the FastAPI instance first
-    api = app.get_app(enable_agui=True)
-    
-    # Add custom endpoint to list available agents
-    @api.get("/agui/agents")
-    def list_agents():
-        """List all available agents and their endpoints"""
-        return {
-            "agents": list(router.agents.keys()),
-            "endpoints": {
-                name: f"/agui/awp?agent={name}"
-                for name in router.agents.keys()
-            }
-        }
-    
-    # Store the api reference in app state for the router
-    api.state.agent_router = router
-    
-    return app
+class AGUIApp(FastAPIApp):
+    """AG-UI Application for serving agents with the AG-UI protocol"""
 
+    def __init__(
+        self,
+        agent: Optional[Agent] = None,
+        team: Optional[Team] = None,
+        app_id: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ):
+        """
+        Initialize an AG-UI application.
 
-# Default app instance
-app = create_agui_app()
+        Args:
+            agent: The Agno agent to serve
+            team: The Agno team to serve (not yet implemented)
+            app_id: Unique identifier for the app
+            name: Name of the application
+            description: Description of the application
+        """
+        super().__init__(
+            agent=agent,
+            team=team,
+            app_id=app_id,
+            name=name or "AG-UI App",
+            description=description or "AG-UI Protocol Bridge Application",
+        )
 
+        # Store the agent for AG-UI router access
+        if agent:
+            self._agui_agent = agent
 
-if __name__ == "__main__":
-    print("🚀 Starting AG-UI Application...")
-    print("📍 Available agents:")
-    
-    router = AgentRouter()
-    for agent_name in router.agents.keys():
-        print(f"   - {agent_name}: http://localhost:8000/agui/awp?agent={agent_name}")
-    print("\n📍 List agents: http://localhost:8000/agui/agents")
-    print("📍 API docs: http://localhost:8000/docs")
-    
-    # Get FastAPI instance (already created in create_agui_app)
-    api = app.get_app(enable_agui=True)
-    
-    # Serve the application
-    app.serve(api, host="0.0.0.0", port=8000)
+    def get_app(self) -> FastAPI:
+        """Get the FastAPI app with AG-UI enabled"""
+        # Always enable AG-UI for this app type
+        app = super().get_app(enable_agui=True)
+
+        # Store reference to agent for router
+        if hasattr(self, "_agui_agent"):
+            app._agui_agent = self._agui_agent
+
+        return app
+
+    def serve(
+        self,
+        app: str = None,
+        host: str = "0.0.0.0",
+        port: int = 8000,
+        reload: bool = False,
+        **kwargs,
+    ):
+        """
+        Serve the AG-UI application.
+
+        Args:
+            app: App string (defaults to module:app format)
+            host: Host to bind to
+            port: Port to bind to
+            reload: Enable auto-reload
+            **kwargs: Additional uvicorn options
+        """
+        # Print startup info
+        print("🚀 Starting AG-UI Application...")
+        if self.agent:
+            print(f"📍 Access the agent at:")
+            print(f"   - http://localhost:{port}/agui/awp?agent={self.agent.name}")
+            print(f"   - http://localhost:{port}/agui/awp?agent=agenticChatAgent")
+        print(f"\n📍 List all agents: http://localhost:{port}/agui/agents")
+        print(f"📍 API docs: http://localhost:{port}/docs")
+
+        # Use module:app format if not provided
+        if app is None:
+            import inspect
+
+            frame = inspect.stack()[1]
+            module = inspect.getmodule(frame[0])
+            if module and module.__name__ == "__main__":
+                # Get the module file name without extension
+                import os
+
+                module_name = os.path.splitext(os.path.basename(module.__file__))[0]
+                app = f"{module_name}:app"
+            else:
+                app = "app:app"
+
+        super().serve(app=app, host=host, port=port, reload=reload, **kwargs)

@@ -89,6 +89,7 @@ class FastAPIApp:
     def get_agui_router(self) -> APIRouter:
         """Get AG-UI compatible router"""
         from agno.app.agui import get_agui_router
+
         return get_agui_router(agent=self.agent, team=self.team)
 
     def get_app(self, use_async: bool = True, prefix: str = "/v1", enable_agui: bool = False) -> FastAPI:
@@ -133,7 +134,7 @@ class FastAPIApp:
             self.router.include_router(self.get_router())
 
         self.api_app.include_router(self.router)
-        
+
         # Add AG-UI support if enabled
         if enable_agui:
             agui_router = self.get_agui_router()

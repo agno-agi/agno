@@ -5,7 +5,6 @@ from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 
 
-
 def test_tool_call_requires_confirmation():
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
@@ -88,8 +87,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id(agent_storage, mem
 
     # Mark the tool as confirmed
     response.tools[0].confirmed = True
-    
-    
+
     # Create a completely new agent instance
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -103,7 +101,6 @@ def test_tool_call_requires_confirmation_continue_with_run_id(agent_storage, mem
     response = agent.continue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
     assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
-
 
 
 def test_tool_call_requires_confirmation_continue_with_run_id_stream(agent_storage, memory):
@@ -127,13 +124,13 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(agent_stora
             assert response.tools[0].requires_confirmation
             assert response.tools[0].tool_name == "get_the_weather"
             assert response.tools[0].tool_args == {"city": "Tokyo"}
-            
+
             # Mark the tool as confirmed
             response.tools[0].confirmed = True
             updated_tools = response.tools
 
     assert agent.run_response.is_paused
-    
+
     # Create a completely new agent instance
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -144,12 +141,15 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(agent_stora
         monitoring=False,
     )
 
-    response = agent.continue_run(run_id=response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True)
+    response = agent.continue_run(
+        run_id=response.run_id, updated_tools=updated_tools, session_id=session_id, stream=True
+    )
     for response in response:
         if response.is_paused:
             assert False, "The run should not be paused"
 
     assert agent.run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
 
 @pytest.mark.asyncio
 async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_storage, memory):
@@ -176,8 +176,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
 
     # Mark the tool as confirmed
     response.tools[0].confirmed = True
-    
-    
+
     # Create a completely new agent instance
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -191,6 +190,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
     response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, session_id=session_id)
     assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
+
 
 def test_tool_call_requires_confirmation_memory_footprint():
     @tool(requires_confirmation=True)

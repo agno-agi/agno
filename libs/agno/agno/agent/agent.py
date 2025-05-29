@@ -2212,7 +2212,6 @@ class Agent:
         if stream_intermediate_steps:
             yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
 
-
         # 1. Handle the updated tools
         async for event in self._ahandle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages, session_id=session_id
