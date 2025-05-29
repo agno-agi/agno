@@ -1,7 +1,7 @@
 import pytest
+
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
-
 from agno.run.response import RunEvent
 from agno.tools.yfinance import YFinanceTools
 
@@ -24,7 +24,7 @@ def test_tool_use_tool_call_limit():
     assert response.tools[0].tool_args == {"symbol": "TSLA"}
     assert response.tools[0].result is not None
     assert response.content is not None
-    
+
 
 def test_tool_use_tool_call_limit_stream():
     agent = Agent(
@@ -49,9 +49,6 @@ def test_tool_use_tool_call_limit_stream():
     assert tools[0].result is not None
 
 
-    
-
-
 @pytest.mark.asyncio
 async def test_tool_use_tool_call_limit_async():
     agent = Agent(
@@ -71,7 +68,7 @@ async def test_tool_use_tool_call_limit_async():
     assert response.tools[0].tool_args == {"symbol": "TSLA"}
     assert response.tools[0].result is not None
     assert response.content is not None
-    
+
 
 @pytest.mark.asyncio
 async def test_tool_use_tool_call_limit_stream_async():

@@ -3124,7 +3124,7 @@ class Agent:
                             run_response.tools[index] = tool_call_dict
                 else:
                     run_response.tools = tool_executions_list
-                
+
                 # Only iterate through new tool calls
                 for tool_call in tool_executions_list:
                     tool_name = tool_call.tool_name or ""

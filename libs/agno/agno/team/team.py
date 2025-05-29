@@ -4633,7 +4633,7 @@ class Team:
         *,
         session_id: str,
         user_id: Optional[str] = None,
-        message: Union[str, List, Dict, Message],
+        message: Optional[Union[str, List, Dict, Message]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,

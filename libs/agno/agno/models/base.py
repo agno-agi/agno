@@ -339,7 +339,7 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
-                
+
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
@@ -347,7 +347,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
-                    
                     if (
                         function_call_response.event
                         in [
@@ -369,7 +368,7 @@ class Model(ABC):
 
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
-                
+
                 # Format and add results to messages
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
@@ -419,7 +418,7 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
         model_response = ModelResponse()
-        
+
         function_call_count = 0
 
         while True:
@@ -442,7 +441,6 @@ class Model(ABC):
                     functions=functions,
                 )
                 function_call_results: List[Message] = []
-                
 
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
@@ -451,7 +449,6 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
-                    
                     if (
                         function_call_response.event
                         in [
@@ -472,7 +469,7 @@ class Model(ABC):
 
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
-                
+
                 # Format and add results to messages
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
@@ -739,7 +736,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
+
         function_call_count = 0
 
         while True:
@@ -786,7 +783,6 @@ class Model(ABC):
                     assistant_message, messages, functions
                 )
                 function_call_results: List[Message] = []
-            
 
                 # Execute function calls
                 for function_call_response in self.run_function_calls(
@@ -796,7 +792,7 @@ class Model(ABC):
                     function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
-                    
+
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
@@ -877,7 +873,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
-        
+
         function_call_count = 0
 
         while True:
@@ -923,7 +919,7 @@ class Model(ABC):
                     assistant_message, messages, functions
                 )
                 function_call_results: List[Message] = []
-                
+
                 # Execute function calls
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
@@ -1227,11 +1223,9 @@ class Model(ABC):
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
-                    function_call_results.append(
-                        self.create_tool_call_limit_error_result(fc)
-                    )
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
-            
+
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1366,17 +1360,14 @@ class Model(ABC):
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
-            
-        
+
         function_calls_to_run = []
         for fc in function_calls:
             if function_call_limit is not None:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
-                    function_call_results.append(
-                        self.create_tool_call_limit_error_result(fc)
-                    )
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue
             function_calls_to_run.append(fc)
