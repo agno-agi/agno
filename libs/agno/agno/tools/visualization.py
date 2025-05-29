@@ -39,7 +39,7 @@ class VisualizationTools(Toolkit):
             # Use non-interactive backend to avoid display issues
             matplotlib.use("Agg")
         except ImportError:
-            raise ImportError("matplotlib is not installed. Please install it using: pip install matplotlib")
+            raise ImportError("matplotlib is not installed. Please install it using: `pip install matplotlib`")
 
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
