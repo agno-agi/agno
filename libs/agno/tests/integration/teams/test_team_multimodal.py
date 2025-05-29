@@ -57,6 +57,7 @@ def test_team_image_input_no_prompt(team_storage, agent_storage):
 
     response = team.run(
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        message="Analyze this image and provide insights.",
     )
     assert response.content is not None
 
