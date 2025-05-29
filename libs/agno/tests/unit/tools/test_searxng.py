@@ -155,7 +155,7 @@ def test_searxng_initialization():
     assert searxng.host == "http://test.com"
     assert searxng.engines == ["google"]
     assert searxng.fixed_max_results == 10
-    assert len(searxng.tools) == 2  # image_search and news_search tools
+    assert len(searxng.tools) == 3  # image_search and news_search tools
 
 
 @pytest.mark.parametrize(

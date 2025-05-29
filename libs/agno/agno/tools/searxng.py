@@ -28,6 +28,7 @@ class Searxng(Toolkit):
         self.fixed_max_results = fixed_max_results
 
         tools: List[Any] = []
+        tools.append(self.search)
         if images:
             tools.append(self.image_search)
         if it:
@@ -44,7 +45,6 @@ class Searxng(Toolkit):
             tools.append(self.video_search)
 
         super().__init__(name="searxng", tools=tools, **kwargs)
-        self.register(self.search)
 
     def search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
