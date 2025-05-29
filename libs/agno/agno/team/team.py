@@ -4753,6 +4753,7 @@ class Team:
         """Format a message with the session state variables."""
         format_variables = ChainMap(
             self.session_state or {},
+            self.team_session_state or {},
             self.context or {},
             self.extra_data or {},
             {"user_id": user_id} if user_id is not None else {},
