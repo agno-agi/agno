@@ -522,7 +522,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: bool = False,
@@ -539,7 +539,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: bool = False,
@@ -555,7 +555,7 @@ class Team:
 
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
@@ -998,7 +998,7 @@ class Team:
     @overload
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: bool = False,
@@ -1015,7 +1015,7 @@ class Team:
     @overload
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: bool = False,
@@ -1031,7 +1031,7 @@ class Team:
 
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         *,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
@@ -4633,7 +4633,7 @@ class Team:
         *,
         session_id: str,
         user_id: Optional[str] = None,
-        message: Union[str, List, Dict, Message],
+        message: Optional[Union[str, List, Dict, Message]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4699,7 +4699,7 @@ class Team:
 
     def _get_user_message(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Union[str, List, Dict, Message],
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4737,21 +4737,6 @@ class Team:
                 files=files,
                 **kwargs,
             )
-        elif message is None:
-            # If we have any media, return a message with empty content
-            if images is not None or audio is not None or videos is not None or files is not None:
-                return Message(
-                    role="user",
-                    content="",
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
-                    **kwargs,
-                )
-            else:
-                # If the message is None, return None
-                return None
 
         # 3.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
