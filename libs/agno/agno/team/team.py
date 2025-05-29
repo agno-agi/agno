@@ -4797,6 +4797,23 @@ class Team:
                 **kwargs,
             )
 
+        # 3. Build the default user message for the Agent
+        elif message is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role="user",
+                    content="",
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+            else:
+                # If the message is None, return None
+                return None
+
         # 3.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             return message
