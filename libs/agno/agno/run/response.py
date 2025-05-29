@@ -91,23 +91,31 @@ class BaseRunResponseEvent:
     event: str
     created_at: int = field(default_factory=lambda: int(time()))
 
-
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "tool", "extra_data", "image", "images", "videos", "audio", "response_audio", "citations"]
+            and k not in ["messages", 
+                          "tools", 
+                          "tool", 
+                          "extra_data", 
+                          "image", 
+                          "images",
+                          "videos", 
+                          "audio", 
+                          "response_audio", 
+                          "citations"]
         }
-        if self.messages is not None:
+        if hasattr(self, "messages") and self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
-        if self.extra_data is not None:
+        if hasattr(self, "extra_data") and self.extra_data is not None:
             _dict["extra_data"] = (
                 self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
             )
 
-        if self.images is not None:
+        if hasattr(self, "images") and self.images is not None:
             _dict["images"] = []
             for img in self.images:
                 if isinstance(img, ImageArtifact):
@@ -115,13 +123,13 @@ class BaseRunResponseEvent:
                 else:
                     _dict["images"].append(img)
 
-        if self.image is not None:
+        if hasattr(self, "image") and self.image is not None:
             if isinstance(self.image, ImageArtifact):
                 _dict["image"] = self.image.to_dict()
             else:
                 _dict["image"] = self.image
 
-        if self.videos is not None:
+        if hasattr(self, "videos") and self.videos is not None:
             _dict["videos"] = []
             for vid in self.videos:
                 if isinstance(vid, VideoArtifact):
@@ -129,7 +137,7 @@ class BaseRunResponseEvent:
                 else:
                     _dict["videos"].append(vid)
 
-        if self.audio is not None:
+        if hasattr(self, "audio") and self.audio is not None:
             _dict["audio"] = []
             for aud in self.audio:
                 if isinstance(aud, AudioArtifact):
@@ -137,22 +145,22 @@ class BaseRunResponseEvent:
                 else:
                     _dict["audio"].append(aud)
 
-        if self.response_audio is not None:
+        if hasattr(self, "response_audio") and self.response_audio is not None:
             if isinstance(self.response_audio, AudioResponse):
                 _dict["response_audio"] = self.response_audio.to_dict()
             else:
                 _dict["response_audio"] = self.response_audio
 
-        if self.citations is not None:
+        if hasattr(self, "citations") and self.citations is not None:
             if isinstance(self.citations, Citations):
                 _dict["citations"] = self.citations.model_dump(exclude_none=True)
             else:
                 _dict["citations"] = self.citations
 
-        if self.content and isinstance(self.content, BaseModel):
+        if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
-        if self.tools is not None:
+        if hasattr(self, "tools") and self.tools is not None:
             _dict["tools"] = []
             for tool in self.tools:
                 if isinstance(tool, ToolExecution):
@@ -160,7 +168,7 @@ class BaseRunResponseEvent:
                 else:
                     _dict["tools"].append(tool)
 
-        if self.tool is not None:
+        if hasattr(self, "tool") and self.tool is not None:
             if isinstance(self.tool, ToolExecution):
                 _dict["tool"] = self.tool.to_dict()
             else:
