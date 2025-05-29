@@ -54,8 +54,7 @@ integration-tests = [
     "duckduckgo-search",
     "yfinance",
     "sqlalchemy",
-    "Pillow",
-    "anthropic"
+    "Pillow"
 ]
 
 # Dependencies for Telemetry
