@@ -55,6 +55,7 @@ integration-tests = [
     "yfinance",
     "sqlalchemy",
     "Pillow",
+    "anthropic"
 ]
 
 # Dependencies for Telemetry
