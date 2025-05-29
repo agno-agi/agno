@@ -73,4 +73,8 @@ if __name__ == "__main__":
     asyncio.run(knowledge_base.aload(recreate=False))
 
     # Create and use the agent
-    asyncio.run(agent.aprint_response("Ask me about something from the knowledge base", markdown=True))
+    asyncio.run(
+        agent.aprint_response(
+            "Ask me about something from the knowledge base", markdown=True
+        )
+    )
