@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -59,7 +57,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -78,7 +75,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -107,7 +103,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -135,7 +130,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -165,7 +159,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=Ollama(id="qwen2.5:latest "),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -195,7 +188,6 @@ def test_tool_call_custom_tool_untyped_parameters():
     agent = Agent(
         model=Ollama(id="qwen2.5:latest "),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -214,7 +206,6 @@ def test_tool_call_list_parameters():
         model=Ollama(id="llama3.2:latest"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
