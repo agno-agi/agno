@@ -78,6 +78,7 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.price is not None
     assert response.content.currency is not None
 
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
