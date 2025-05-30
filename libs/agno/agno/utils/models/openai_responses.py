@@ -97,19 +97,35 @@ def sanitize_response_schema(schema: dict):
     """
     Recursively sanitize a Pydantic-generated JSON schema to comply with OpenAI's response_format rules:
 
-    - Sets "additionalProperties": false for all object types to disallow extra fields.
+    - Sets "additionalProperties": false for all object types to disallow extra fields,
+      EXCEPT when additionalProperties is already defined with a schema (Dict types).
     - Removes "default": null from optional fields.
     - Ensures that all fields defined in "properties" are listed in "required",
-      making every property explicitly required as per OpenAI's expectations.
+      making every property explicitly required as per OpenAI's expectations,
+      EXCEPT for Dict fields which should not be in the required array.
     """
     if isinstance(schema, dict):
-        # Enforce additionalProperties: false
+        # Enforce additionalProperties: false for object types, but preserve Dict schemas
         if schema.get("type") == "object":
-            schema["additionalProperties"] = False
+            # Only set additionalProperties to False if it's not already defined with a schema
+            # This preserves Dict[str, T] fields which need additionalProperties to define value types
+            if "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            elif schema.get("additionalProperties") is True:
+                # Convert True to False for strict mode, but preserve schema objects
+                schema["additionalProperties"] = False
 
-            # Ensure all properties are required
+            # Ensure all properties are required, EXCEPT Dict fields
             if "properties" in schema:
-                schema["required"] = list(schema["properties"].keys())
+                from agno.utils.models.schema_utils import is_dict_field
+
+                required_fields = []
+                for prop_name, prop_schema in schema["properties"].items():
+                    # Use the utility function to check if this is a Dict field
+                    if not is_dict_field(prop_schema):
+                        required_fields.append(prop_name)
+
+                schema["required"] = required_fields
 
         # Remove only default: null
         if "default" in schema and schema["default"] is None:
