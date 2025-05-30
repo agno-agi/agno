@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -62,7 +60,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -81,7 +78,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -119,7 +115,6 @@ def test_multiple_tool_calls():
             "Use DuckDuckGo for news and general information",
             "When both price and news are requested, use both tools",
         ],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -147,7 +142,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -177,7 +171,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -196,7 +189,6 @@ def test_tool_call_list_parameters():
         model=v0(id="v0-1.0-md"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

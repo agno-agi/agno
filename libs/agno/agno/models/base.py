@@ -317,6 +317,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = self._process_model_response(
@@ -342,7 +344,8 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     if (
                         function_call_response.event
@@ -362,6 +365,9 @@ class Model(ABC):
                     ]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -413,6 +419,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = await self._aprocess_model_response(
@@ -438,7 +446,8 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     if (
                         function_call_response.event
@@ -457,6 +466,9 @@ class Model(ABC):
                     ]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -725,6 +737,8 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        function_call_count = 0
+
         while True:
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -774,15 +788,21 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -854,6 +874,8 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        function_call_count = 0
+
         while True:
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -902,15 +924,21 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
+                    for function_call_result in function_call_results:
+                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -1093,6 +1121,16 @@ class Model(ABC):
             **kwargs,
         )
 
+    def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
+        return Message(
+            role=self.tool_message_role,
+            content=f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again.",
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -1172,17 +1210,22 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    continue
+
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1262,14 +1305,6 @@ class Model(ABC):
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
 
-            # Add function call result to function call results
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
-
         # Add any additional messages at the end
         if additional_messages:
             function_call_results.extend(additional_messages)
@@ -1317,19 +1352,28 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
-        # Yield tool_call_started events for all function calls
+        function_calls_to_run = []
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    # Skip this function call
+                    continue
+            function_calls_to_run.append(fc)
+
+        # Yield tool_call_started events for all function calls or pause them
+        for fc in function_calls_to_run:
             paused_tool_executions = []
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation and not skip_pause_check:
@@ -1424,11 +1468,11 @@ class Model(ABC):
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
         if skip_pause_check:
-            function_calls_to_run = function_calls
+            function_calls_to_run = function_calls_to_run
         else:
             function_calls_to_run = [
                 fc
-                for fc in function_calls
+                for fc in function_calls_to_run
                 if not (
                     fc.function.requires_confirmation
                     or fc.function.external_execution
@@ -1497,12 +1541,6 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
 
         # Add any additional messages at the end
         if additional_messages:
