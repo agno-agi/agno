@@ -66,43 +66,43 @@ langfuse = ["langfuse"]
 
 # Dependencies for Models
 azure = ["azure-ai-inference", "aiohttp"]
-anthropic = ["anthropic"]
+cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 google = ["google-genai"]
 groq = ["groq"]
-mistral = ["mistralai"]
-openai = ["openai"]
-ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
-lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-cerebras = ["cerebras-cloud-sdk"]
+mistral = ["mistralai"]
+ollama = ["ollama"]
+openai = ["openai"]
 
 # Dependencies for Tools
+agentql = ["agentql"]
 apify = ["apify-client"]
+browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-exa = ["exa_py"]
-mem0 = ["mem0ai"]
-yfinance = ["yfinance"]
+confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
-newspaper = ["newspaper4k", "lxml_html_clean"]
-youtube = ["youtube_transcript_api"]
+elevenlabs = ["elevenlabs"]
+exa = ["exa_py"]
+fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps", "google-maps-places"]
-todoist = ["todoist-api-python"]
-elevenlabs = ["elevenlabs"]
-fal = ["fal_client"]
-webex = ["webexpythonsdk"]
-mcp = ["mcp"]
-browserbase = ["browserbase", "playwright"]
-agentql = ["agentql"]
-confluence = ["atlassian-python-api"]
-zep = ["zep-cloud"]
 google_bigquery = ["google-cloud-bigquery"]
+googlemaps = ["googlemaps", "google-maps-places"]
+matplotlib = ["matplotlib"]
+mcp = ["mcp"]
+mem0 = ["mem0ai"]
+newspaper = ["newspaper4k", "lxml_html_clean"]
+todoist = ["todoist-api-python"]
+webex = ["webexpythonsdk"]
+yfinance = ["yfinance"]
+youtube = ["youtube_transcript_api"]
+zep = ["zep-cloud"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -179,6 +179,7 @@ tools = [
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
+  "agno[matplotlib]",
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
@@ -339,6 +340,7 @@ module = [
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
+  "matplotlib.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
