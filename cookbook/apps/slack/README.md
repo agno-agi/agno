@@ -10,13 +10,37 @@ This guide will help you set up and configure the Slack API integration for your
 
 ## Setup Steps
 
-### 1. Install the App to Your Workspace
+### 1. Create a Slack App
 
-1. Go to your Slack App settings (api.slack.com/apps)
+1. Go to the Slack App Directory (https://api.slack.com/apps)
+2. Click "Create New App"
+3. Select "From scratch"
+4. Give your app a name and select a workspace
+5. Click "Create App"
+
+### 2. Configure OAuth & Permissions
+
+1. Go to "OAuth & Permissions" in your Slack App settings
+2. Click "Add Scopes"
+3. Add the following scopes:
+   - `app_mention`
+   - `chat:write`
+   - `chat:write.customize`
+   - `chat:write.public`
+   - `im:history`
+   - `im:read`
+   - `im:write`
+
+### 3. Install to your workspace
+
+1. Go to "Install App" in your Slack App settings
 2. Click "Install to Workspace"
 3. Authorize the app
 
-### 2. Configure Environment Variables
+You'll have to repeat this step if you change any scopes/permissions.
+
+
+### 4. Configure Environment Variables
 
 Save the following credentials as environment variables:
 
@@ -29,31 +53,30 @@ You can find these values in your Slack App settings:
 - Bot User OAuth Token: Under "OAuth & Permissions"
 - Signing Secret: Under "Basic Information" > "App Credentials"
 
-### 3. Configure Event Subscriptions
+### 5 Run Ngrok
+   1. For local testing with Agno's SlackApp and agents, we recommend using ngrok to create a secure tunnel to your local server. It is also easier if you get a static url from ngrok.
+   2. Run ngrok:
+   ```bash
+   ngrok http --url=your-url.ngrok-free.app http://localhost:8000
+   ```
+   3. Run your app locally with `python <my-app>.py`
+   4. Subscribe to the following events:
+      - `app_mention`
+      - `message.im`
+      - `message.channels`
+      - `message.groups`
+
+
+### 6. Configure Event Subscriptions
 
 1. Go to "Event Subscriptions" in your Slack App settings
 2. Enable events by toggling the switch
 3. Add your ngrok URL + "/slack/events" to the Request URL
    - Example: `https://your-ngrok-url.ngrok.io/slack/events`
-4. Subscribe to the following bot events:
-   - `app_mention`
-   - `message.channels`
-   - `message.im`
+4. Make sure your app is running with ngrok, then verify the request URL
+5. Reinstall the app to your workspace to apply the changes
 
-### 4. Verify and Save Changes
-
-1. Run your application to verify the URL is working
-2. Save all changes in the Slack App settings
-3. Reinstall the app to your workspace to apply the changes
-
-### 5. Invite the Bot to Channels
-
-Use the following command in any Slack channel to invite the bot:
-```
-/invite @YourAppName
-```
-
-### 6. Enable Direct Messages
+### 7. Enable Direct Messages
 
 To allow users to send messages to the bot:
 
@@ -62,12 +85,13 @@ To allow users to send messages to the bot:
 3. Check "Allow users to send Slash commands and messages from the messages tab"
 4. Reinstall the app to apply changes
 
+
 ## Testing the Integration
 
-1. Start your application
+1. Start your application locally with `python <my-app>.py` (ensure ngrok is running)
 2. Invite the bot to a channel using `/invite @YourAppName`
 3. Try mentioning the bot in the channel: `@YourAppName hello`
-4. Test direct messages by opening a DM with the bot
+4. Test direct messages by opening a DM with the bot.
 
 ## Troubleshooting
 

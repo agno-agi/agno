@@ -42,7 +42,6 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
         return {"status": "ok"}
 
     async def _process_slack_event(event: dict):
-        log_info(f"Processing event: {event}")
         if event.get("type") == "message":
             user = None
             message_text = event.get("text")
