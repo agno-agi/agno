@@ -10,7 +10,7 @@ from agno.document.reader.markdown_reader import MarkdownReader
 from agno.document.reader.url_reader import URLReader
 
 import textract
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_info, log_debug,logger
 
 class LightRagKnowledgeBase(AgentKnowledge):
     
@@ -56,23 +56,23 @@ class LightRagKnowledgeBase(AgentKnowledge):
                     # Handle URL with metadata
                     url = item["url"]
                     config = item.get("metadata", {})
-                    log_info(f"Processing URL with metadata - URL: {url}, Config: {config}")
+                    log_debug(f"Processing URL with metadata - URL: {url}, Config: {config}")
                     if self._is_valid_url(url):
-                        log_info(f"URL is valid, reading documents from: {url}")
+                        log_debug(f"URL is valid, reading documents from: {url}")
                         documents = self.url_reader.read(url=url)
                         text_contents = []
                         for doc in documents:
                             if config:
-                                log_info(f"Adding metadata {config} to document from URL: {url}")
+                                log_debug(f"Adding metadata {config} to document from URL: {url}")
                                 doc.meta_data.update(config)
                             # Extract text content from Document object
                             text_contents.append(doc.content)
                         yield text_contents
                 else:
                     # Handle simple URL
-                    log_info(f"Processing simple URL: {item}")
+                    log_debug(f"Processing simple URL: {item}")
                     if self._is_valid_url(item):
-                        log_info(f"Simple URL is valid, reading documents from: {item}")
+                        log_debug(f"Simple URL is valid, reading documents from: {item}")
                         documents = self.url_reader.read(url=item)
                         # Extract text content from Document objects
                         text_contents = [doc.content for doc in documents]
@@ -81,26 +81,75 @@ class LightRagKnowledgeBase(AgentKnowledge):
         if self.urls is None and self.path is None:
             raise ValueError("Path or URLs are not set")
 
-    async def load(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True) -> None:
-        print("Loading LightRagKnowledgeBase")
-        # if self.path:
+    async def load(self) -> None:
+        logger.debug("Loading LightRagKnowledgeBase")
         for text_list in self.document_lists:
             for text in text_list:
                 await self._insert_text(text)
         
 
-
-    async def aload(self, recreate: bool = False, upsert: bool = False, skip_existing: bool = True) -> None:
-        pass
-
-    async def search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None):
-        mode="hybrid"
-        # mode="local"
-        res = await self.rag.aquery(
-              query,
-              param=QueryParam(mode=mode)
-          )
-        return res
+    async def aload_document(
+        self,
+        path: Union[str, Path],
+        metadata: Optional[Dict[str, Any]] = None,
+        recreate: bool = False,
+        upsert: bool = False,
+        skip_existing: bool = True,
+    ) -> None:
+        """Load a single document from a file path or URL into the LightRAG server.
+        
+        Args:
+            path: The file path or URL to load
+            metadata: Optional metadata to associate with the document
+            recreate: Ignored for LightRAG (kept for compatibility)
+            upsert: Ignored for LightRAG (kept for compatibility) 
+            skip_existing: Ignored for LightRAG (kept for compatibility)
+        """
+        try:
+            # Determine if path is a URL or local file
+            path_str = str(path)
+            if path_str.startswith(("http://", "https://")):
+                # Handle URL
+                if not self._is_valid_url(path_str):
+                    logger.error(f"Invalid URL format: {path_str}")
+                    return
+                    
+                log_info(f"Loading document from URL: {path_str}")
+                documents = self.url_reader.read(url=path_str)
+            else:
+                # Handle local file path
+                _file_path = Path(path) if isinstance(path, str) else path
+                
+                if not _file_path.exists() or not _file_path.is_file():
+                    logger.error(f"File does not exist: {_file_path}")
+                    return
+                    
+                log_info(f"Loading document from file: {_file_path}")
+                
+                # Use textract for local files (consistent with document_lists method)
+                try:
+                    text_content = textract.process(str(_file_path)).decode('utf-8')
+                    # Create a simple document-like structure for consistency
+                    documents = [type('Document', (), {'content': text_content, 'meta_data': {}})()]
+                except Exception as e:
+                    logger.error(f"Failed to process file with textract: {e}")
+                    return
+            
+            # Process each document
+            for doc in documents:
+                # Add metadata if provided
+                if metadata and hasattr(doc, 'meta_data'):
+                    doc.meta_data.update(metadata)
+                    log_info(f"Added metadata {metadata} to document from: {path}")
+                
+                # Insert the document content into LightRAG server
+                await self._insert_text(doc.content)
+                
+            log_info(f"Successfully loaded {len(documents)} document(s) from: {path}")
+            
+        except Exception as e:
+            logger.exception(f"Failed to load document from {path}: {e}")
+            return
 
     async def async_search(self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None):
         """Override the async_search method from AgentKnowledge to query the LightRAG server."""

@@ -1,14 +1,13 @@
-"""This cookbook shows how to implement Agentic RAG using Hybrid Search and Reranking.
+"""This cookbook shows how to implement Agentic RAG using LightRAG.
 1. Run: `pip install agno anthropic cohere lancedb tantivy sqlalchemy` to install the dependencies
-2. Export your ANTHROPIC_API_KEY and CO_API_KEY
-3. Run: `python cookbook/agent_concepts/agentic_search/agentic_rag.py` to run the agent
+2. Export your ANTHROPIC_API_KEY
+3. Run: `python cookbook/agent_concepts/agentic_search/lightrag/agentic_rag_with_lightrag.py` to run the agent
 """
 
 from agno.agent import Agent
 from agno.knowledge.light_rag import LightRagKnowledgeBase, LightRagRetriever
 from agno.models.anthropic import Claude
 import asyncio
-from typing import Optional
 from agno.document.reader.markdown_reader import MarkdownReader
 
 # Create a knowledge base, loaded with documents from a URL
@@ -18,17 +17,13 @@ knowledge_base = LightRagKnowledgeBase(
     # path="tmp/",
      urls=["https://docs.agno.com/introduction/agents.md"],
      reader=MarkdownReader()
-    # Use LanceDB as the vector database, store embeddings in the `agno_docs` table
-    # vector_db=LanceDb(
-    #     uri="tmp/lancedb",
-    #     table_name="agno_docs",
-    #     search_type=SearchType.hybrid,
-    #     embedder=CohereEmbedder(id="embed-v4.0"),
-    #     reranker=CohereReranker(model="rerank-v3.5"),
-    # ),
+    
 )
 
-# asyncio.run(knowledge_base.load(recreate=True))
+# asyncio.run(knowledge_base.load())
+# asyncio.run(knowledge_base.aload_document(path="tmp/Sellers Declaration.pdf"))
+asyncio.run(knowledge_base.aload_document(path="https://docs.agno.com/teams/run.md"))
+
 
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
@@ -46,4 +41,4 @@ agent = Agent(
     markdown=True)
 
 
-asyncio.run(agent.aprint_response("What are Agno Agents?"))
+asyncio.run(agent.aprint_response("How does Agno Team RunResponse look like?"))
