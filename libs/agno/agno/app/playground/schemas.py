@@ -81,11 +81,6 @@ class AgentRunRequest(BaseModel):
     files: Optional[List[UploadFile]] = None
 
 
-class ContinueRunRequest(BaseModel):
-    tools: Optional[List[dict]] = None  # List of tool dictionaries instead of full run_response_data
-    stream: bool = True
-
-
 class AgentRenameRequest(BaseModel):
     name: str
     user_id: str

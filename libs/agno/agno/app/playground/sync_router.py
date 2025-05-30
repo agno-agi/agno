@@ -82,6 +82,39 @@ def chat_response_streamer(
         return
 
 
+def agent_acontinue_run_streamer(
+    agent: Agent,
+    run_response: Optional[RunResponse] = None,
+    run_id: Optional[str] = None,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Generator:
+    try:
+        continue_response = agent.continue_run(
+            run_response=run_response,
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        for run_response_chunk in continue_response:
+            run_response_chunk = cast(RunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunResponse(
+            content=str(e),
+            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
 def team_chat_response_streamer(
     team: Team,
     message: str,
@@ -359,6 +392,70 @@ def get_sync_playground_router(
                 ),
             )
             return run_response.to_dict()
+
+    @playground_router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    def continue_agent_run(
+        agent_id: str,
+        run_id: str,
+        tools: str = Form(...),  # JSON string of tools
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        print(tools_data)
+        logger.debug(
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
+        )
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is None or session_id == "":
+            logger.warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+        else:
+            logger.debug(f"Continuing run within session: {session_id}")
+
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if tools_data:
+            try:
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if stream and agent.is_streamable:
+            return StreamingResponse(
+                agent_acontinue_run_streamer(
+                    agent,
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response_obj = cast(
+                RunResponse,
+                agent.continue_run(
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                ),
+            )
+            return run_response_obj.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     def get_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):

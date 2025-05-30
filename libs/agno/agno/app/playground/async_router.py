@@ -24,7 +24,6 @@ from agno.app.playground.schemas import (
     AgentModel,
     AgentRenameRequest,
     AgentSessionsResponse,
-    ContinueRunRequest,
     MemoryResponse,
     TeamGetResponse,
     TeamRenameRequest,
@@ -87,7 +86,6 @@ async def chat_response_streamer(
 
 async def agent_acontinue_run_streamer(
     agent: Agent,
-    run_response: Optional[RunResponse] = None,
     run_id: Optional[str] = None,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
@@ -95,7 +93,6 @@ async def agent_acontinue_run_streamer(
 ) -> AsyncGenerator:
     try:
         continue_response = await agent.acontinue_run(
-            run_response=run_response,
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
