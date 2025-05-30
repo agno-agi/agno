@@ -125,6 +125,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+surrealdb = ["surrealdb>=1.0.4"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -217,7 +218,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[surrealdb]"
 ]
 
 # All knowledge
@@ -406,6 +408,7 @@ module = [
   "youtube_transcript_api.*",
   "couchbase.*",
   "acouchbase.*",
-  "zep_cloud.*"
+  "zep_cloud.*",
+  "surrealdb.*"
 ]
 ignore_missing_imports = true
