@@ -11,38 +11,21 @@ Run: `pip install agno anthropic infinity-client lancedb`
 ### 2. Set up Infinity Server
 You have several options to deploy Infinity:
 
-#### Option A: Docker (Recommended for testing)
-```bash
-# Pull and run Infinity with a reranking model
-docker run -it --gpus all \
-  -p 7997:7997 \
-  michaelf34/infinity:latest \
-  --model-id BAAI/bge-reranker-base \
-  --port 7997
-```
-
-#### Option B: Local Installation
+#### Local Installation
 ```bash
 # Install infinity
-pip install infinity-emb[all]
+pip install "infinity-emb[all]"
 
 # Run infinity server with reranking model
 infinity_emb v2 --model-id BAAI/bge-reranker-base --port 7997
 ```
+Wait for the engine to start.
 
-#### Option C: Using other reranking models
-```bash
 # For better performance, you can use larger models:
 # BAAI/bge-reranker-large
 # BAAI/bge-reranker-v2-m3
 # ms-marco-MiniLM-L-12-v2
 
-docker run -it --gpus all \
-  -p 7997:7997 \
-  michaelf34/infinity:latest \
-  --model-id BAAI/bge-reranker-large \
-  --port 7997
-```
 
 ### 3. Export API Keys
 ```bash
@@ -73,8 +56,8 @@ from agno.vectordb.lancedb import LanceDb, SearchType
 knowledge_base = UrlKnowledge(
     urls=[
         "https://docs.agno.com/introduction/agents.md",
-        "https://docs.agno.com/introduction/tools.md",
-        "https://docs.agno.com/introduction/knowledge.md",
+        "https://docs.agno.com/agents/tools.md",
+        "https://docs.agno.com/agents/knowledge.md",
     ],
     # Use LanceDB as the vector database, store embeddings in the `agno_docs_infinity` table
     vector_db=LanceDb(
