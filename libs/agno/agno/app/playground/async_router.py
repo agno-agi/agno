@@ -403,43 +403,50 @@ def get_async_playground_router(
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
-        payload: ContinueRunRequest = Body(...),
+        tools: str = Form(...),  # JSON string of tools
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
     ):
-        print(payload)
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        print(tools_data)
         logger.debug(
-            f"AgentContinueRunRequest: run_id={run_id} session_id={payload.session_id} user_id={payload.user_id} agent_id={agent_id}"
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
         )
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if payload.session_id is None or payload.session_id == "":
+        if session_id is None or session_id == "":
             logger.warning(
                 "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
         else:
-            logger.debug(f"Continuing run within session: {payload.session_id}")
+            logger.debug(f"Continuing run within session: {session_id}")
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None
-        if payload.tools:
+        if tools_data:
             try:
                 from agno.models.response import ToolExecution
 
-                updated_tools = [ToolExecution.from_dict(tool) for tool in payload.tools]
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
-        if payload.stream and agent.is_streamable:
+        if stream and agent.is_streamable:
             return StreamingResponse(
                 agent_acontinue_run_streamer(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
                     session_id=session_id,
-                    user_id=user_id, 
+                    user_id=user_id,
                 ),
                 media_type="text/event-stream",
             )
