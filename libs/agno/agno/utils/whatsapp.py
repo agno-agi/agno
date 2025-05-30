@@ -249,7 +249,7 @@ def send_image_message(
         log_debug(f"Response: {response.text}")
     except requests.exceptions.RequestException as e:
         log_error(f"Failed to send WhatsApp image message: {e}")
-        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")
+        log_error(f"Error response: {e.response.text if hasattr(e, 'response') else 'No response text'}")  # type: ignore
         raise
     except Exception as e:
         log_error(f"Unexpected error sending WhatsApp image message: {str(e)}")
