@@ -63,6 +63,7 @@ class AgentKnowledge(BaseModel):
             log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_num_documents, filters=filters)
         except Exception as e:
+            print(f"Error searching for documents: {e}")
             logger.error(f"Error searching for documents: {e}")
             return []
 
