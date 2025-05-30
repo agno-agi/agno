@@ -302,6 +302,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "brave-search.*",
   "browserbase.*",
   "cassio.*",
   "cerebras.*",

@@ -8,9 +8,7 @@ from agno.utils.log import log_info
 try:
     from brave import Brave
 except ImportError:
-    raise ImportError(
-        "`brave-search` not installed. Please install using `pip install brave-search`"
-    )
+    raise ImportError("`brave-search` not installed. Please install using `pip install brave-search`")
 
 
 class BraveSearchTools(Toolkit):
@@ -32,9 +30,7 @@ class BraveSearchTools(Toolkit):
     ):
         self.api_key = api_key or getenv("BRAVE_API_KEY")
         if not self.api_key:
-            raise ValueError(
-                "BRAVE_API_KEY is required. Please set the BRAVE_API_KEY environment variable."
-            )
+            raise ValueError("BRAVE_API_KEY is required. Please set the BRAVE_API_KEY environment variable.")
 
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language

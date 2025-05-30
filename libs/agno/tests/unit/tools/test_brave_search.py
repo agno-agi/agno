@@ -12,19 +12,19 @@ def mock_brave_client():
     with patch("agno.tools.bravesearch.Brave") as mock_brave:
         # Create a mock instance that will be returned when Brave() is called
         mock_instance = MagicMock()
-        
+
         # Mock the search method to return a proper result
         mock_result = MagicMock()
         mock_result.web = MagicMock()
         mock_result.web.results = []
         mock_instance.search.return_value = mock_result
-        
+
         # Mock the _get method to return a proper response
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"web": {"results": []}}
         mock_instance._get.return_value = mock_response
-        
+
         mock_brave.return_value = mock_instance
         yield mock_instance
 
@@ -59,11 +59,7 @@ def test_init_without_api_key():
 
 def test_init_with_fixed_params():
     with patch("agno.tools.bravesearch.Brave"):
-        tools = BraveSearchTools(
-            api_key="test_key",
-            fixed_max_results=10,
-            fixed_language="fr"
-        )
+        tools = BraveSearchTools(api_key="test_key", fixed_max_results=10, fixed_language="fr")
         assert tools.fixed_max_results == 10
         assert tools.fixed_language == "fr"
 
@@ -95,10 +91,10 @@ def test_brave_search_whitespace_query(brave_search_tools, mock_brave_client):
     mock_result = MagicMock()
     mock_result.web.results = []
     mock_brave_client.search.return_value = mock_result
-    
+
     result = brave_search_tools.brave_search("   ")
     result_dict = json.loads(result)
-    
+
     # Current behavior: whitespace queries are processed as normal
     assert result_dict["query"] == "   "
     assert result_dict["web_results"] == []
@@ -111,7 +107,7 @@ def test_brave_search_successful(brave_search_tools, mock_brave_client):
     mock_web_result.title = "Test Title"
     mock_web_result.url = "https://test.com"
     mock_web_result.description = "Test Description"
-    
+
     mock_result = MagicMock()
     mock_result.web.results = [mock_web_result]
     mock_brave_client.search.return_value = mock_result
@@ -136,7 +132,7 @@ def test_brave_search_with_multiple_results(brave_search_tools, mock_brave_clien
         mock_result.url = f"https://test{i}.com"
         mock_result.description = f"Description {i}"
         mock_results.append(mock_result)
-    
+
     mock_search_result = MagicMock()
     mock_search_result.web.results = mock_results
     mock_brave_client.search.return_value = mock_search_result
@@ -159,7 +155,7 @@ def test_brave_search_with_malformed_results(brave_search_tools, mock_brave_clie
     mock_web_result.title = None
     mock_web_result.url = None
     mock_web_result.description = None
-    
+
     mock_result = MagicMock()
     mock_result.web.results = [mock_web_result]
     mock_brave_client.search.return_value = mock_result
@@ -181,20 +177,11 @@ def test_brave_search_with_custom_params(brave_search_tools, mock_brave_client):
     mock_result.web.results = []
     mock_brave_client.search.return_value = mock_result
 
-    brave_search_tools.brave_search(
-        query="test query",
-        max_results=3,
-        country="UK",
-        search_lang="en"
-    )
+    brave_search_tools.brave_search(query="test query", max_results=3, country="UK", search_lang="en")
 
     # Verify the search was called with correct parameters
     mock_brave_client.search.assert_called_once_with(
-        q="test query",
-        count=3,
-        country="UK",
-        search_lang="en",
-        result_filter="web"
+        q="test query", count=3, country="UK", search_lang="en", result_filter="web"
     )
 
 
@@ -204,46 +191,33 @@ def test_brave_search_with_none_params(brave_search_tools, mock_brave_client):
     mock_result.web.results = []
     mock_brave_client.search.return_value = mock_result
 
-    brave_search_tools.brave_search(
-        query="test query",
-        max_results=None,
-        country=None,
-        search_lang=None
-    )
+    brave_search_tools.brave_search(query="test query", max_results=None, country=None, search_lang=None)
 
     # Verify the search was called with None values
     mock_brave_client.search.assert_called_once_with(
-        q="test query",
-        count=None,
-        country=None,
-        search_lang=None,
-        result_filter="web"
+        q="test query", count=None, country=None, search_lang=None, result_filter="web"
     )
 
 
 def test_brave_search_with_fixed_params():
     with patch("agno.tools.bravesearch.Brave") as mock_brave:
         mock_instance = MagicMock()
-        
+
         # Mock the search method
         mock_result = MagicMock()
         mock_result.web = MagicMock()
         mock_result.web.results = []
         mock_instance.search.return_value = mock_result
-        
+
         # Mock the _get method
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"web": {"results": []}}
         mock_instance._get.return_value = mock_response
-        
+
         mock_brave.return_value = mock_instance
 
-        tools = BraveSearchTools(
-            api_key="test_key",
-            fixed_max_results=5,
-            fixed_language="fr"
-        )
+        tools = BraveSearchTools(api_key="test_key", fixed_max_results=5, fixed_language="fr")
 
         result = tools.brave_search(query="test query", max_results=10, search_lang="en")
         result_dict = json.loads(result)
@@ -259,7 +233,7 @@ def test_brave_search_with_fixed_params():
             count=5,  # Should use fixed_max_results
             country=None,
             search_lang="fr",  # Should use fixed_language
-            result_filter="web"
+            result_filter="web",
         )
 
 
@@ -308,7 +282,7 @@ def test_brave_search_empty_web_results(brave_search_tools, mock_brave_client):
 def test_brave_search_exception_handling(brave_search_tools, mock_brave_client):
     """Test that exceptions from Brave client are handled gracefully"""
     mock_brave_client.search.side_effect = Exception("API Error")
-    
+
     with pytest.raises(Exception, match="API Error"):
         brave_search_tools.brave_search("test query")
 
@@ -321,7 +295,7 @@ def test_brave_search_logging(mock_log_info, brave_search_tools, mock_brave_clie
     mock_brave_client.search.return_value = mock_result
 
     brave_search_tools.brave_search("test query")
-    
+
     mock_log_info.assert_called_once_with("Searching Brave for: test query")
 
 
@@ -344,7 +318,7 @@ def test_brave_search_url_conversion(brave_search_tools, mock_brave_client):
     mock_web_result.title = "Test Title"
     mock_web_result.url = 12345  # Non-string URL
     mock_web_result.description = "Test Description"
-    
+
     mock_result = MagicMock()
     mock_result.web.results = [mock_web_result]
     mock_brave_client.search.return_value = mock_result
@@ -361,21 +335,20 @@ def test_json_serialization_integrity(brave_search_tools, mock_brave_client):
     mock_web_result.title = "Test Title"
     mock_web_result.url = "https://test.com"
     mock_web_result.description = "Test Description"
-    
+
     mock_result = MagicMock()
     mock_result.web.results = [mock_web_result]
     mock_brave_client.search.return_value = mock_result
 
     result = brave_search_tools.brave_search("test query")
-    
+
     # Should not raise an exception
     parsed = json.loads(result)
-    
+
     # Verify structure
     assert "web_results" in parsed
     assert "query" in parsed
     assert "total_results" in parsed
-    
+
     # Verify it can be serialized again (round-trip test)
-    json.dumps(parsed) 
-    
+    json.dumps(parsed)
