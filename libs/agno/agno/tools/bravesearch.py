@@ -19,6 +19,8 @@ class BraveSearchTools(Toolkit):
 
     Args:
         api_key (str, optional): Brave API key. If not provided, will use BRAVE_API_KEY environment variable.
+        fixed_max_results (Optional[int]): A fixed number of maximum results.
+        fixed_language (Optional[str]): A fixed language for the search results.
     """
 
     def __init__(
