@@ -142,9 +142,7 @@ class Searxng(Toolkit):
         """
         return self._search(query, "videos", max_results)
 
-    def _search(
-        self, query: str, category: Optional[str] = None, max_results: int = 5
-    ) -> str:
+    def _search(self, query: str, category: Optional[str] = None, max_results: int = 5) -> str:
         encoded_query = urllib.parse.quote(query)
         url = f"{self.host}/search?format=json&q={encoded_query}"
 
@@ -161,3 +159,7 @@ class Searxng(Toolkit):
             return json.dumps(resp)
         except Exception as e:
             return f"Error fetching results from searxng: {e}"
+
+
+# Alias for consistency with other tools
+SearxngTools = Searxng
