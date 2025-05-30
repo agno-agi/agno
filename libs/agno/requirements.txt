@@ -72,3 +72,4 @@ typing-extensions==4.12.2
     #   pydantic-core
     #   rich
     #   typer
+opencv-python==4.11.0.86
