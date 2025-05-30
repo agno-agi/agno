@@ -41,16 +41,19 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import base64
+import mimetypes
 import re
 from datetime import datetime, timedelta
 from functools import wraps
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
 
 try:
+    from email.mime.application import MIMEApplication
+    from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
     from google.auth.transport.requests import Request
@@ -397,7 +400,14 @@ class GmailTools(Toolkit):
             return f"Unexpected error retrieving emails by date: {type(error).__name__}: {error}"
 
     @authenticate
-    def create_draft_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def create_draft_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+    ) -> str:
         """
         Create and save a draft email. to and cc are comma separated string of email ids
         Args:
@@ -405,18 +415,42 @@ class GmailTools(Toolkit):
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing draft email details including id
         """
         self._validate_email_params(to, subject, body)
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+        )
         draft = {"message": message}
         draft = self.service.users().drafts().create(userId="me", body=draft).execute()  # type: ignore
         return str(draft)
 
     @authenticate
-    def send_email(self, to: str, subject: str, body: str, cc: Optional[str] = None) -> str:
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
+    ) -> str:
         """
         Send an email immediately. to and cc are comma separated string of email ids
         Args:
@@ -424,19 +458,43 @@ class GmailTools(Toolkit):
             subject (str): Email subject
             body (str): Email body content
             cc (Optional[str]): Comma separated string of CC email addresses (optional)
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing sent email details including id
         """
         self._validate_email_params(to, subject, body)
+
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
         body = body.replace("\n", "<br>")
-        message = self._create_message(to.split(","), subject, body, cc.split(",") if cc else None)
+        message = self._create_message(
+            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+        )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
 
     @authenticate
     def send_email_reply(
-        self, thread_id: str, message_id: str, to: str, subject: str, body: str, cc: Optional[str] = None
+        self,
+        thread_id: str,
+        message_id: str,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[Union[str, List[str]]] = None,
     ) -> str:
         """
         Respond to an existing email thread.
@@ -448,6 +506,7 @@ class GmailTools(Toolkit):
             subject (str): Email subject (prefixed with "Re:" if not already).
             body (str): Email body content.
             cc (Optional[str]): Comma-separated CC email addresses (optional).
+            attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
             str: Stringified dictionary containing sent email details including id.
@@ -458,9 +517,28 @@ class GmailTools(Toolkit):
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
+        # Process attachments
+        attachment_files = []
+        if attachments:
+            if isinstance(attachments, str):
+                attachment_files = [attachments]
+            else:
+                attachment_files = attachments
+
+            # Validate attachment files
+            for file_path in attachment_files:
+                if not Path(file_path).exists():
+                    raise ValueError(f"Attachment file not found: {file_path}")
+
         body = body.replace("\n", "<br>")
         message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, thread_id, message_id
+            to.split(","),
+            subject,
+            body,
+            cc.split(",") if cc else None,
+            thread_id,
+            message_id,
+            attachments=attachment_files,
         )
         message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
         return str(message)
@@ -511,9 +589,42 @@ class GmailTools(Toolkit):
         cc: Optional[List[str]] = None,
         thread_id: Optional[str] = None,
         message_id: Optional[str] = None,
+        attachments: Optional[List[str]] = None,
     ) -> dict:
         body = body.replace("\\n", "\n")
-        message = MIMEText(body, "html")
+
+        # Create multipart message if attachments exist, otherwise simple text message
+        if attachments:
+            message = MIMEMultipart()
+
+            # Add the text body
+            text_part = MIMEText(body, "html")
+            message.attach(text_part)
+
+            # Add attachments
+            for file_path in attachments:
+                file_path_obj = Path(file_path)
+                if not file_path_obj.exists():
+                    continue
+
+                # Guess the content type based on the file extension
+                content_type, encoding = mimetypes.guess_type(file_path)
+                if content_type is None or encoding is not None:
+                    content_type = "application/octet-stream"
+
+                main_type, sub_type = content_type.split("/", 1)
+
+                # Read file and create attachment
+                with open(file_path, "rb") as file:
+                    attachment_data = file.read()
+
+                attachment = MIMEApplication(attachment_data, _subtype=sub_type)
+                attachment.add_header("Content-Disposition", "attachment", filename=file_path_obj.name)
+                message.attach(attachment)
+        else:
+            message = MIMEText(body, "html")
+
+        # Set headers
         message["to"] = ", ".join(to)
         message["from"] = "me"
         message["subject"] = subject
