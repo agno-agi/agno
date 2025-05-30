@@ -223,8 +223,6 @@ class Model(ABC):
     # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
     supports_json_schema_outputs: bool = False
 
-    # Function call stack.
-    _function_call_stack: Optional[List[FunctionCall]] = None
 
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
@@ -1581,11 +1579,6 @@ class Model(ABC):
     def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
         return self.instructions
 
-    def clear(self) -> None:
-        """Clears the Model's state."""
-
-        self._function_call_stack = None
-
     def __deepcopy__(self, memo):
         """Create a deep copy of the Model instance.
 
@@ -1604,7 +1597,7 @@ class Model(ABC):
 
         # Deep copy all attributes
         for k, v in self.__dict__.items():
-            if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
+            if k in {"response_format", "_tools", "_functions"}:
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
@@ -1614,6 +1607,4 @@ class Model(ABC):
                 except Exception:
                     setattr(new_model, k, v)
 
-        # Clear the new model to remove any references to the old model
-        new_model.clear()
         return new_model
