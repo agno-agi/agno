@@ -48,9 +48,9 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             channel_id = event.get("channel", "")
             user = event.get("user")
             if event.get("thread_ts"):
-                ts = event.get("thread_ts")
+                ts = event.get("thread_ts", "")
             else:
-                ts = event.get("ts")
+                ts = event.get("ts", "")
 
             # Use the timestamp as the session id, so that each thread is a separate session
             session_id = ts
