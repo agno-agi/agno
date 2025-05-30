@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 
 import httpx
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
@@ -142,7 +142,9 @@ class Searxng(Toolkit):
         """
         return self._search(query, "videos", max_results)
 
-    def _search(self, query: str, category: Optional[str] = None, max_results: int = 5) -> str:
+    def _search(
+        self, query: str, category: Optional[str] = None, max_results: int = 5
+    ) -> str:
         encoded_query = urllib.parse.quote(query)
         url = f"{self.host}/search?format=json&q={encoded_query}"
 
