@@ -5036,6 +5036,7 @@ class Agent:
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
+            log_info(f"Asearch KB Validating filters: {filters}")
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
 
             # Warn about invalid filter keys
@@ -5051,6 +5052,7 @@ class Agent:
         if self.retriever is not None and callable(self.retriever):
             from inspect import isawaitable, signature
 
+            log_info(f"Asearch KB Retriever: {self.retriever}")
             try:
                 sig = signature(self.retriever)
                 retriever_kwargs: Dict[str, Any] = {}
@@ -5075,12 +5077,13 @@ class Agent:
                 getattr(self.knowledge, "vector_db", None) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
+                log_info(f"Asearch KB No knowledge base or retriever found")
                 return None
 
             if num_documents is None:
                 num_documents = self.knowledge.num_documents
 
-            log_debug(f"Searching knowledge base with filters: {filters}")
+            log_info(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
                 query=query, num_documents=num_documents, filters=filters
             )
@@ -6045,6 +6048,8 @@ class Agent:
             Returns:
                 str: A string containing the response from the knowledge base.
             """
+
+            log_info(f"Asearch KB Searching for documents with query: {query}")
             self.run_response = cast(RunResponse, self.run_response)
             retrieval_timer = Timer()
             retrieval_timer.start()
