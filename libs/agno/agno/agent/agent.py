@@ -4027,8 +4027,6 @@ class Agent:
         - Load the new session
         """
         self.agent_session = None
-        if self.model is not None:
-            self.model.clear()
         if self.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 self.memory.clear()

@@ -245,8 +245,8 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
 
         return base64_images, base64_audios, base64_videos, document_files
 
-    @router.post("/run")
-    def run_agent_team(
+    @router.post("/runs")
+    def run_agent_or_team(
         message: str = Form(...),
         stream: bool = Form(True),
         monitor: bool = Form(False),

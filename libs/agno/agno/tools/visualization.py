@@ -63,7 +63,7 @@ class VisualizationTools(Toolkit):
             self.register(self.create_histogram)
 
     def _normalize_data_for_charts(
-        self, data: Union[Dict[str, Any], List[Dict[str, Any]], List[Any]]
+        self, data: Union[Dict[str, Any], List[Dict[str, Any]], List[Any], str]
     ) -> Dict[str, Union[int, float]]:
         """
         Normalize various data formats into a simple dictionary format for charts.
