@@ -30,6 +30,8 @@ class ReasoningTools(Toolkit):
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
             self.instructions += "\n</reasoning_instructions>\n"
+        else:
+            self.instructions = instructions
 
         tools: List[Any] = []
         if think:
@@ -39,7 +41,7 @@ class ReasoningTools(Toolkit):
 
         super().__init__(
             name="reasoning_tools",
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             tools=tools,
             **kwargs,

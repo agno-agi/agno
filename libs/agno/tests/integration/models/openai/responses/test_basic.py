@@ -206,7 +206,6 @@ def test_persistent_memory():
         model=OpenAIResponses(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[
