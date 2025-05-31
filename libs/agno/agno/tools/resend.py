@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -17,14 +17,15 @@ class ResendTools(Toolkit):
         from_email: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(name="resend_tools", **kwargs)
-
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
         if not self.api_key:
             logger.error("No Resend API key provided")
 
-        self.register(self.send_email)
+        tools: List[Any] = []
+        tools.append(self.send_email)
+
+        super().__init__(name="resend_tools", tools=tools, **kwargs)
 
     def send_email(self, to_email: str, subject: str, body: str) -> str:
         """Send an email using the Resend API. Returns if the email was sent successfully or an error message.

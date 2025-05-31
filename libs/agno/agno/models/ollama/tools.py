@@ -136,24 +136,24 @@ class OllamaTools(Ollama):
 
         return model_response
 
-    def _create_function_call_result(
-        self, fc: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+    def create_function_call_result(
+        self, function_call: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
     ) -> Message:
         """Create a function call result message."""
         content = (
             "<tool_response>\n"
-            + json.dumps({"name": fc.function.name, "content": output if success else fc.error})
+            + json.dumps({"name": function_call.function.name, "content": output if success else function_call.error})
             + "\n</tool_response>"
         )
 
         return Message(
             role=self.tool_message_role,
             content=content,
-            tool_call_id=fc.call_id,
-            tool_name=fc.function.name,
-            tool_args=fc.arguments,
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
             tool_call_error=not success,
-            stop_after_tool_call=fc.function.stop_after_tool_call,
+            stop_after_tool_call=function_call.function.stop_after_tool_call,
             metrics=MessageMetrics(time=timer.elapsed),
         )
 
@@ -222,7 +222,9 @@ class OllamaTools(Ollama):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response_delta=model_response_delta,
                 )
 
     async def aprocess_response_stream(
@@ -245,7 +247,9 @@ class OllamaTools(Ollama):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
-                    stream_data=stream_data, assistant_message=assistant_message, model_response=model_response_delta
+                    stream_data=stream_data,
+                    assistant_message=assistant_message,
+                    model_response_delta=model_response_delta,
                 ):
                     yield model_response
 

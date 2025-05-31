@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from os import getenv
 from typing import TYPE_CHECKING, List, Optional
 from uuid import uuid4
@@ -6,8 +6,10 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from rich.console import Console
 
-from agno.eval.utils import store_result_in_file
-from agno.run.response import RunResponse
+from agno.agent import RunResponse
+from agno.api.schemas.evals import EvalType
+from agno.eval.utils import log_eval_run, store_result_in_file
+from agno.run.team import TeamRunResponse
 from agno.utils.log import logger
 
 
@@ -45,6 +47,8 @@ class ReliabilityEval:
 
     # Agent response
     agent_response: Optional[RunResponse] = None
+    # Team response
+    team_response: Optional[TeamRunResponse] = None
     # Expected tool calls
     expected_tool_calls: Optional[List[str]] = None
     # Result of the evaluation
@@ -56,8 +60,18 @@ class ReliabilityEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
+    # Log the results to the Agno platform. On by default.
+    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
+        if self.agent_response is None and self.team_response is None:
+            raise ValueError("You need to provide 'agent_response' or 'team_response' to run the evaluation.")
+
+        if self.agent_response is not None and self.team_response is not None:
+            raise ValueError(
+                "You need to provide only one of 'agent_response' or 'team_response' to run the evaluation."
+            )
+
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
@@ -70,12 +84,19 @@ class ReliabilityEval:
 
             actual_tool_calls = None
             if self.agent_response is not None:
-                for message in reversed(self.agent_response.messages):  # type: ignore
-                    if message.tool_calls:
-                        if actual_tool_calls is None:
-                            actual_tool_calls = message.tool_calls
-                        else:
-                            actual_tool_calls.append(message.tool_calls[0])  # type: ignore
+                messages = self.agent_response.messages
+            elif self.team_response is not None:
+                messages = self.team_response.messages or []
+                for member_response in self.team_response.member_responses:
+                    if member_response.messages is not None:
+                        messages += member_response.messages
+
+            for message in reversed(messages):  # type: ignore
+                if message.tool_calls:
+                    if actual_tool_calls is None:
+                        actual_tool_calls = message.tool_calls
+                    else:
+                        actual_tool_calls.append(message.tool_calls[0])  # type: ignore
 
             failed_tool_calls = []
             passed_tool_calls = []
@@ -107,6 +128,30 @@ class ReliabilityEval:
         # Print results if requested
         if self.print_results or print_results:
             self.result.print_eval(console)
+
+        # Log results to the Agno platform if requested
+        if self.monitoring:
+            if self.agent_response is not None:
+                agent_id = self.agent_response.agent_id
+                team_id = None
+                model_id = self.agent_response.model
+                model_provider = self.agent_response.model_provider
+            elif self.team_response is not None:
+                agent_id = None
+                team_id = self.team_response.team_id
+                model_id = self.team_response.model
+                model_provider = self.team_response.model_provider
+
+            log_eval_run(
+                run_id=self.eval_id,  # type: ignore
+                run_data=asdict(self.result),
+                eval_type=EvalType.RELIABILITY,
+                name=self.name if self.name is not None else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
+            )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
