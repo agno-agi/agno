@@ -488,6 +488,23 @@ class Team:
         if self.num_of_interactions_from_history is not None:
             self.num_history_runs = self.num_of_interactions_from_history
 
+    def _reset_session_state(self) -> None:
+        self.session_name = None
+        self.session_state = None
+        self.team_session_state = None
+        self.session_metrics = None
+        self.images = None
+        self.videos = None
+        self.audio = None
+        self.files = None
+        self.team_session = None
+
+    def _reset_run_state(self) -> None:
+        self.run_id = None
+        self.run_input = None
+        self.run_messages = None
+        self.run_response = None
+
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
@@ -569,6 +586,12 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunResponse, Iterator[TeamRunResponse]]:
         """Run the Team and return the response."""
+
+        self._reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self._reset_session_state()
 
         retries = retries or 3
         if retries < 1:
@@ -1045,6 +1068,12 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponse]]:
         """Run the Team asynchronously and return the response."""
+
+        self._reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self._reset_session_state()
 
         retries = retries or 3
         if retries < 1:
@@ -1925,30 +1954,55 @@ class Team:
     def _make_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
-        self.memory = cast(Memory, self.memory)
-        user_message_str = (
-            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
-        )
-        if self.enable_user_memories and user_message_str is not None and user_message_str:
-            self.memory.create_user_memories(message=user_message_str, user_id=user_id)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Update the session summary if needed
-        if self.enable_session_summaries:
-            self.memory.create_session_summary(session_id=session_id, user_id=user_id)
+        self.memory = cast(Memory, self.memory)
+
+        # Create a thread pool with a reasonable number of workers
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            user_message_str = (
+                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+            )
+            if self.enable_user_memories and user_message_str is not None and user_message_str:
+                futures.append(
+                    executor.submit(self.memory.create_user_memories, message=user_message_str, user_id=user_id)
+                )
+
+            # Update the session summary if needed
+            if self.enable_session_summaries:
+                futures.append(
+                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                )
+            # Wait for all operations to complete and handle any errors
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    log_warning(f"Error in memory/summary operation: {str(e)}")
 
     async def _amake_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> None:
         self.memory = cast(Memory, self.memory)
+        tasks = []
+
         user_message_str = (
             run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
         )
         if self.enable_user_memories and user_message_str is not None and user_message_str:
-            await self.memory.acreate_user_memories(message=user_message_str, user_id=user_id)
+            tasks.append(self.memory.acreate_user_memories(message=user_message_str, user_id=user_id))
 
         # Update the session summary if needed
         if self.enable_session_summaries:
-            await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
+            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
+
+        # Execute all tasks concurrently and handle any errors
+        if tasks:
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as e:
+                log_warning(f"Error in memory/summary operation: {str(e)}")
 
     def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
         self.model = cast(Model, self.model)
@@ -4704,7 +4758,7 @@ class Team:
 
     def _get_user_message(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Optional[Union[str, List, Dict, Message]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4742,6 +4796,23 @@ class Team:
                 files=files,
                 **kwargs,
             )
+
+        # 3. Build the default user message for the Agent
+        elif message is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role="user",
+                    content="",
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+            else:
+                # If the message is None, return None
+                return None
 
         # 3.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):

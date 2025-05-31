@@ -167,7 +167,8 @@ class AgentKnowledge(BaseModel):
 
         log_info("Loading knowledge base")
         num_documents = 0
-        async for document_list in await self.async_document_lists:
+        document_iterator = await self.async_document_lists
+        async for document_list in document_iterator:
             documents_to_load = document_list
             # Track metadata for filtering capabilities
             for doc in document_list:
