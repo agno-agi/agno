@@ -1,3 +1,4 @@
+import enum
 from typing import Dict, List
 
 from pydantic import BaseModel, Field
@@ -35,3 +36,27 @@ def test_structured_response_with_integer_field():
     response = structured_output_agent.run("New York")
     assert response.content is not None
     assert isinstance(response.content.rating, Dict)
+
+
+def test_structured_response_with_enum_fields():
+    class Grade(enum.Enum):
+        A_PLUS = "a+"
+        A = "a"
+        B = "b"
+        C = "c"
+        D = "d"
+        F = "f"
+
+    class Recipe(BaseModel):
+        recipe_name: str
+        rating: Grade
+
+    structured_output_agent = Agent(
+        model=OpenAIResponses(id="gpt-4o"),
+        description="You help generate recipe names and ratings.",
+        response_model=Recipe,
+    )
+    response = structured_output_agent.run("Generate a recipe name and rating.")
+    assert response.content is not None
+    assert isinstance(response.content.rating, Grade)
+    assert isinstance(response.content.recipe_name, str)
