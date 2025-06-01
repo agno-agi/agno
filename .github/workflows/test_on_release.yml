@@ -3,17 +3,16 @@ name: Main Validation
 on:
   push:
     branches:
-      - '*release*'  # Run on release-* format
-      - 'release/*'  # Run on release/1.2.3 branch format
+      - "*release*" # Run on release-* format
+      - "release/*" # Run on release/1.2.3 branch format
 
 jobs:
   style-check:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.9"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
 
     defaults:
       run:
@@ -25,7 +24,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: "pip"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade \
@@ -48,7 +47,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
@@ -73,7 +72,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
@@ -99,7 +98,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
@@ -485,7 +484,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
     steps:
@@ -562,7 +561,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -591,7 +590,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -620,7 +619,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
     steps:
@@ -648,7 +647,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -678,7 +677,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

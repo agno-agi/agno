@@ -403,7 +403,7 @@ def get_sync_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                if "content" in first_run or first_run.is_paused:
+                if "content" in first_run or first_run.get("is_paused", False):
                     agent_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None
@@ -775,7 +775,7 @@ def get_sync_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                if "content" in first_run or first_run.is_paused:
+                if "content" in first_run or first_run.get("is_paused", False):
                     team_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None

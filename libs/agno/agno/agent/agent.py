@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
+from threading import Thread
 from typing import (
     Any,
     AsyncIterator,
@@ -563,6 +563,23 @@ class Agent:
         if self.num_history_responses is not None:
             self.num_history_runs = self.num_history_responses
 
+    def reset_session_state(self) -> None:
+        self.session_name = None
+        self.session_state = None
+        self.team_session_state = None
+        self.session_metrics = None
+        self.images = None
+        self.videos = None
+        self.audio = None
+        self.files = None
+        self.agent_session = None
+
+    def reset_run_state(self) -> None:
+        self.run_id = None
+        self.run_input = None
+        self.run_messages = None
+        self.run_response = None
+
     def initialize_agent(self) -> None:
         self.set_defaults()
         self.set_default_model()
@@ -827,6 +844,12 @@ class Agent:
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
 
+        self.reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
+
         # Initialize the Agent
         self.initialize_agent()
 
@@ -878,6 +901,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -917,7 +942,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Register Agent
-        thread = threading.Thread(target=self.register_agent)
+        thread = Thread(target=self.register_agent)
         thread.start()
 
         # Create a new run_response for this attempt
@@ -1118,7 +1143,7 @@ class Agent:
 
         Steps:
         1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
+        2. Generate a response from the Model
         3. Add the run to memory
         4. Update Agent Memory
         5. Calculate session metrics
@@ -1210,6 +1235,11 @@ class Agent:
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
+        self.reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1264,6 +1294,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1465,6 +1497,10 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        if session_id is not None:
+            self.reset_run_state()
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1517,6 +1553,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1875,6 +1913,10 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        if session_id is not None:
+            self.reset_run_state()
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1927,6 +1969,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -3215,22 +3259,29 @@ class Agent:
         messages: Optional[List[Message]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
-        session_messages: List[Message] = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         self.memory = cast(Memory, self.memory)
 
-        if self.enable_user_memories and run_messages.user_message is not None:
-            log_debug("Creating user memories.")
-            
-            if stream_intermediate_steps:
-                yield create_memory_update_started_event(from_run_response=self.run_response)
-                
-            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
 
-            # TODO: Possibly do both of these in one step
+            # Create user memories from single message
+            if self.enable_user_memories and run_messages.user_message is not None:
+                
+                log_debug("Creating user memories.")
+                futures.append(
+                    executor.submit(
+                        self.memory.create_user_memories,
+                        message=run_messages.user_message.get_content_string(),
+                        user_id=user_id,
+                    )
+                )
+
+            # Parse messages if provided
             if messages is not None and len(messages) > 0:
                 parsed_messages = []
                 for _im in messages:
-                    # Parse the message and convert to a Message object if possible
                     if isinstance(_im, Message):
                         parsed_messages.append(_im)
                     elif isinstance(_im, dict):
@@ -3243,20 +3294,33 @@ class Agent:
                         continue
 
                 if len(parsed_messages) > 0:
-                    if session_messages is None:
-                        session_messages = []
-                    session_messages.extend(parsed_messages)
-                    self.memory.create_user_memories(messages=parsed_messages, user_id=user_id)
+                    futures.append(
+                        executor.submit(self.memory.create_user_memories, messages=parsed_messages, user_id=user_id)
+                    )
                 else:
                     log_warning("Unable to add messages to memory")
                     
             if stream_intermediate_steps:
                 yield create_memory_update_completed_event(from_run_response=self.run_response)
 
-        # Update the session summary if needed
-        if self.enable_session_summaries:
-            log_debug("Creating session summary.")
-            self.memory.create_session_summary(session_id=session_id, user_id=user_id)
+            # Create session summary
+            if self.enable_session_summaries:
+                log_debug("Creating session summary.")
+                futures.append(
+                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                )
+            if futures and stream_intermediate_steps:
+                yield create_memory_update_started_event(from_run_response=self.run_response)
+
+            # Wait for all operations to complete and handle any errors
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    log_warning(f"Error in memory/summary operation: {str(e)}")
+            
+            if futures and stream_intermediate_steps:
+                yield create_memory_update_completed_event(from_run_response=self.run_response)
 
     async def _amake_memories_and_summaries(
         self,
@@ -3267,50 +3331,55 @@ class Agent:
         stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[RunResponseEvent]:
         self.memory = cast(Memory, self.memory)
-        session_messages: List[Message] = []
+        tasks = []
 
-        memory_updated = False
+        # Create user memories from single message
         if self.enable_user_memories and run_messages.user_message is not None:
             log_debug("Creating user memories.")
             
-            if stream_intermediate_steps:
-                yield create_memory_update_started_event(from_run_response=self.run_response)
-                
-            await self.memory.acreate_user_memories(
-                message=run_messages.user_message.get_content_string(), user_id=user_id
+            tasks.append(
+                self.memory.acreate_user_memories(
+                    message=run_messages.user_message.get_content_string(), user_id=user_id
+                )
             )
 
-            # TODO: Possibly do both of these in one step
-            if messages is not None and len(messages) > 0:
-                parsed_messages = []
-                for _im in messages:
-                    # Parse the message and convert to a Message object if possible
-                    if isinstance(_im, Message):
-                        parsed_messages.append(_im)
-                    elif isinstance(_im, dict):
-                        try:
-                            parsed_messages.append(Message(**_im))
-                        except Exception as e:
-                            log_warning(f"Failed to validate message during memory update: {e}")
-                    else:
-                        log_warning(f"Unsupported message type: {type(_im)}")
-                        continue
-
-                if len(parsed_messages) > 0:
-                    if session_messages is None:
-                        session_messages = []
-                    session_messages.extend(parsed_messages)
-                    await self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id)
+        # Parse messages if provided
+        if messages is not None and len(messages) > 0:
+            parsed_messages = []
+            for _im in messages:
+                if isinstance(_im, Message):
+                    parsed_messages.append(_im)
+                elif isinstance(_im, dict):
+                    try:
+                        parsed_messages.append(Message(**_im))
+                    except Exception as e:
+                        log_warning(f"Failed to validate message during memory update: {e}")
                 else:
-                    log_warning("Unable to add messages to memory")
-                    
-            if stream_intermediate_steps:
-                yield create_memory_update_completed_event(from_run_response=self.run_response)
+                    log_warning(f"Unsupported message type: {type(_im)}")
+                    continue
 
-        # Update the session summary if needed
+            if len(parsed_messages) > 0:
+                tasks.append(self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id))
+            else:
+                log_warning("Unable to add messages to memory")
+
+        # Create session summary
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
-            await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
+            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
+
+        if tasks and stream_intermediate_steps:
+            yield create_memory_update_started_event(from_run_response=self.run_response)
+
+        # Execute all tasks concurrently and handle any errors
+        if tasks:
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as e:
+                log_warning(f"Error in memory/summary operation: {str(e)}")
+    
+        if tasks and stream_intermediate_steps:
+            yield create_memory_update_completed_event(from_run_response=self.run_response)
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -3854,6 +3923,9 @@ class Agent:
     ) -> Optional[AgentSession]:
         """Load the AgentSession from storage
 
+        Args:
+            session_id: The session_id to load from storage.
+
         Returns:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
@@ -3863,9 +3935,6 @@ class Agent:
             if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
-            else:
-                # New session, just reset the state
-                self.session_name = None
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -3916,7 +3985,7 @@ class Agent:
         if self.storage is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading AgentSession: {self.session_id}")
-            self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+            self.read_from_storage(session_id=self.session_id)  # type: ignore
 
             # Create a new session if it does not exist
             if self.agent_session is None:
@@ -3946,8 +4015,6 @@ class Agent:
         - Load the new session
         """
         self.agent_session = None
-        if self.model is not None:
-            self.model.clear()
         if self.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 self.memory.clear()
@@ -3963,6 +4030,7 @@ class Agent:
 
         format_variables = ChainMap(
             self.session_state or {},
+            self.team_session_state or {},
             self.context or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
@@ -4335,9 +4403,21 @@ class Agent:
             )
 
         # 3. Build the default user message for the Agent
-        # If the message is None, return None
         if message is None:
-            return None
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role,
+                    content="",
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+            else:
+                # If the message is None, return None
+                return None
 
         user_msg_content = message
         # Format the message with the session state variables
@@ -4678,7 +4758,7 @@ class Agent:
         from dataclasses import fields
 
         # Do not copy agent_session and session_name to the new agent
-        excluded_fields = ["agent_session", "session_name"]
+        excluded_fields = ["agent_session"]
         # Extract the fields to set for the new Agent
         fields_for_new_agent: Dict[str, Any] = {}
 
@@ -5153,7 +5233,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -5170,7 +5250,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -5226,7 +5306,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=self.session_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -5244,18 +5324,15 @@ class Agent:
         # -*- Delete session
         self.storage.delete_session(session_id=session_id)
 
-    def get_messages_for_session(
-        self, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> List[Message]:
+    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
         """Get messages for a session"""
         _session_id = session_id or self.session_id
-        _user_id = user_id or self.user_id
         if _session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
         if self.memory is None:
-            self.read_from_storage(session_id=_session_id, user_id=_user_id)
+            self.read_from_storage(session_id=_session_id)
 
         if self.memory is None:
             return []
