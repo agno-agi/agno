@@ -40,10 +40,13 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
+        thinking=from_run_response.thinking,  # type: ignore
+        citations=from_run_response.citations,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
+        extra_data=from_run_response.extra_data,  # type: ignore
     )
 
 
@@ -153,6 +156,9 @@ def create_tool_call_completed_event(
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
+        images=from_run_response.images,
+        videos=from_run_response.videos,
+        audio=from_run_response.audio,
     )
 
 

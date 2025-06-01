@@ -2449,6 +2449,7 @@ class Agent:
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=call_result.content)
+        
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 

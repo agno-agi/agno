@@ -226,11 +226,15 @@ class RunResponseCompletedEvent(BaseRunResponseEvent):
     content_type: str = "str"
 
     reasoning_content: Optional[str] = None
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
     
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
+    
+    extra_data: Optional[RunResponseExtraData] = None
 
 
 @dataclass(kw_only=True)
@@ -310,6 +314,10 @@ class ToolCallCompletedEvent(BaseRunResponseEvent):
 
     tool: ToolExecution
     content: str
+    
+    images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
+    videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
+    audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
 
