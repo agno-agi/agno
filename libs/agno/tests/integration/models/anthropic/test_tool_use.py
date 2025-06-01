@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -59,7 +57,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -78,7 +75,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -103,11 +99,30 @@ async def test_async_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
+def test_tool_use_tool_call_limit():
+    agent = Agent(
+        model=Claude(id="claude-3-5-haiku-20241022"),
+        tools=[YFinanceTools(company_news=True, cache_results=True)],
+        tool_call_limit=1,
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("Find me the current price of TSLA, then after that find me the latest news about Tesla.")
+
+    # Verify tool usage, should only call the first tool
+    assert len(response.tools) == 1
+    assert response.tools[0].tool_name == "get_current_stock_price"
+    assert response.tools[0].tool_args == {"symbol": "TSLA"}
+    assert response.tools[0].result is not None
+    assert response.content is not None
+
+
 def test_tool_use_with_content():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -126,7 +141,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -148,7 +162,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -176,7 +189,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -206,7 +218,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -225,7 +236,6 @@ def test_tool_call_list_parameters():
         model=Claude(id="claude-3-5-haiku-20241022"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

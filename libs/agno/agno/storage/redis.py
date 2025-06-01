@@ -2,6 +2,7 @@ import json
 import time
 from dataclasses import asdict
 from typing import List, Literal, Optional
+from uuid import UUID
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
@@ -14,6 +15,13 @@ try:
     from redis import ConnectionError, Redis
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
+
+
+class UUIDEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, UUID):
+            return str(obj)
+        return super().default(obj)
 
 
 class RedisStorage(Storage):
@@ -60,7 +68,7 @@ class RedisStorage(Storage):
 
     def serialize(self, data: dict) -> str:
         """Serialize data to JSON string."""
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(data, ensure_ascii=False, cls=UUIDEncoder)
 
     def deserialize(self, data: str) -> dict:
         """Deserialize JSON string to dict."""

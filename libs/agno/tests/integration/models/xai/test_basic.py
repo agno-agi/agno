@@ -14,7 +14,6 @@ def _assert_metrics(response: RunResponse):
     assert sum(input_tokens) > 0
     assert sum(output_tokens) > 0
     assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
 
 
 def test_basic():

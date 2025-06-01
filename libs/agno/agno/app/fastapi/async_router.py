@@ -245,8 +245,8 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
 
         return base64_images, base64_audios, base64_videos, document_files
 
-    @router.post("/run")
-    async def run_agent_team(
+    @router.post("/runs")
+    async def run_agent_or_team(
         message: str = Form(...),
         stream: bool = Form(False),
         monitor: bool = Form(False),
