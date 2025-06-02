@@ -983,6 +983,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     messages=messages,
+                    knowledge_filters=effective_filters,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1386,6 +1387,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     messages=messages,
+                    knowledge_filters=effective_filters,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -4341,6 +4343,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -4363,7 +4366,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=message_str, **kwargs)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=message_str, filters=knowledge_filters, **kwargs
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -4474,6 +4479,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4571,7 +4577,13 @@ class Agent:
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
             user_message = self.get_user_message(
-                message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
+                message=message,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
             )
         # 4.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
