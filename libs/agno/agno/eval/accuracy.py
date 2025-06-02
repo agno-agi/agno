@@ -170,9 +170,51 @@ class AccuracyEval:
     # Log the results to the Agno platform. On by default.
     monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
 
+    def _using_custom_response(self) -> bool:
+        """Check if the evaluator agent is using a custom response model"""
+        if not self.evaluator_agent:
+            return False
+        return self.evaluator_agent.response_model is not AccuracyAgentResponse
+
+    def parse_additional_guidelines(self) -> str:
+        """Parse the user-provided additional guidelines into a prompt-ready string"""
+        if not self.additional_guidelines:
+            return ""
+        additional_guidelines = "\n## Additional Guidelines\n"
+        if isinstance(self.additional_guidelines, str):
+            additional_guidelines += self.additional_guidelines
+        else:
+            additional_guidelines += "\n- ".join(self.additional_guidelines)
+        additional_guidelines += "\n"
+        return additional_guidelines
+
+    def parse_additional_context(self) -> str:
+        """Parse the user-provided additional context into a prompt-ready string"""
+        if not self.additional_context:
+            return ""
+        additional_context = "\n## Additional Context\n"
+        if isinstance(self.additional_context, str):
+            additional_context += self.additional_context
+        else:
+            additional_context += "\n- ".join(self.additional_context)
+        additional_context += "\n"
+        return additional_context
+
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the evaluator fields and default instructions."""
+
         if self.evaluator_agent is not None:
+            # Adding user-provided guidelines and context to the evaluator agent description
+            if self.additional_guidelines is not None or self.additional_context is not None:
+                self.evaluator_agent.description = (
+                    (self.evaluator_agent.description or "")
+                    + self.parse_additional_guidelines()
+                    + self.parse_additional_context()
+                )
+            if self.evaluator_agent.response_model is not AccuracyAgentResponse:
+                logger.warning(
+                    "The evaluator agent is not using the AccuracyAgentResponse response model. This means a complete Accuracy result won't be available, stored or monitored."
+                )
             return self.evaluator_agent
 
         model = self.model
@@ -187,20 +229,8 @@ class AccuracyEval:
                     "Agno uses `openai` as the default model provider. Please run `pip install openai` to use the default evaluator."
                 )
 
-        additional_guidelines = ""
-        if self.additional_guidelines is not None:
-            additional_guidelines = "\n## Additional Guidelines\n"
-            if isinstance(self.additional_guidelines, str):
-                additional_guidelines += self.additional_guidelines
-            else:
-                additional_guidelines += "\n- ".join(self.additional_guidelines)
-            additional_guidelines += "\n"
-
-        additional_context = ""
-        if self.additional_context is not None and len(self.additional_context) > 0:
-            additional_context = "\n## Additional Context\n"
-            additional_context += self.additional_context
-            additional_context += "\n"
+        additional_guidelines = self.parse_additional_guidelines()
+        additional_context = self.parse_additional_context()
 
         return Agent(
             model=model,
@@ -266,18 +296,20 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         evaluation_input: str,
         evaluator_expected_output: str,
         agent_output: str,
-    ) -> Optional[AccuracyEvaluation]:
+    ) -> Optional[Union[AccuracyEvaluation, str]]:
         """Orchestrate the evaluation process."""
         try:
-            accuracy_agent_response = evaluator_agent.run(evaluation_input).content
-            if accuracy_agent_response is None or not isinstance(accuracy_agent_response, AccuracyAgentResponse):
-                raise EvalError(f"Evaluator Agent returned an invalid response: {accuracy_agent_response}")
+            response = evaluator_agent.run(evaluation_input).content
+            if response is None:
+                raise EvalError(f"Evaluator Agent returned an invalid response: {response}")
+            if not isinstance(response, AccuracyAgentResponse):
+                return response
             return AccuracyEvaluation(
                 input=input,
                 output=agent_output,
                 expected_output=evaluator_expected_output,
-                score=accuracy_agent_response.accuracy_score,
-                reason=accuracy_agent_response.accuracy_reason,
+                score=response.accuracy_score,
+                reason=response.accuracy_reason,
             )
         except Exception as e:
             logger.exception(f"Failed to evaluate accuracy: {e}")
@@ -349,9 +381,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 if result is None:
                     logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
                     continue
-
-                self.result.results.append(result)
-                self.result.compute_stats()
+                if self._using_custom_response():
+                    console.print(f"Evaluator Agent response on iteration {i + 1}: \n{result}")
+                    continue
+                else:
+                    self.result.results.append(result)  # type: ignore
+                    self.result.compute_stats()
                 status.update(f"Eval iteration {i + 1} finished")
 
             status.stop()
@@ -365,26 +400,27 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 result=self.result,
             )
 
-        # Print results if requested
-        if self.print_results or print_results:
-            self.result.print_results(console)
-        if self.print_summary or print_summary:
-            self.result.print_summary(console)
+        if not self._using_custom_response():
+            # Print results if requested
+            if self.print_results or print_results:
+                self.result.print_results(console)
+            if self.print_summary or print_summary:
+                self.result.print_summary(console)
 
-        # Log results to the Agno platform if requested
-        if self.monitoring:
-            log_eval_run(
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
-                eval_type=EvalType.ACCURACY,
-                agent_id=self.agent.agent_id if self.agent is not None else None,
-                model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
-                model_provider=self.agent.model.provider
-                if self.agent is not None and self.agent.model is not None
-                else None,
-                name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.agent.name if self.agent is not None else None,
-            )
+            # Log results to the Agno platform if requested
+            if self.monitoring:
+                log_eval_run(
+                    run_id=self.eval_id,  # type: ignore
+                    run_data=asdict(self.result),
+                    eval_type=EvalType.ACCURACY,
+                    agent_id=self.agent.agent_id if self.agent is not None else None,
+                    model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
+                    model_provider=self.agent.model.provider
+                    if self.agent is not None and self.agent.model is not None
+                    else None,
+                    name=self.name if self.name is not None else None,
+                    evaluated_entity_name=self.agent.name if self.agent is not None else None,
+                )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
@@ -430,7 +466,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         )
 
         if result is not None:
-            self.result.results.append(result)
+            if self._using_custom_response():
+                print(f"Evaluator Agent response: {result}")
+                return None
+
+            self.result.results.append(result)  # type: ignore
             self.result.compute_stats()
 
             # Print results if requested
