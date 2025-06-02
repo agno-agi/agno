@@ -709,8 +709,6 @@ class Team:
         self.run_id = run_id
         
         retries = retries or 3
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
 
         # Run the team
         last_exception = None
@@ -1121,8 +1119,6 @@ class Team:
         self.run_id = run_id
         
         retries = retries or 3
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
 
         # Run the team
         last_exception = None

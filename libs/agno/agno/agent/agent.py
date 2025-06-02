@@ -952,8 +952,6 @@ class Agent:
         
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
         
         last_exception = None
         num_attempts = retries + 1
@@ -1346,8 +1344,6 @@ class Agent:
         
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
         
         last_exception = None
         num_attempts = retries + 1
