@@ -28,6 +28,7 @@ class BaseAPIApp(ABC):
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        type: Optional[str] = None,
     ):
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
@@ -190,7 +191,7 @@ class BaseAPIApp(ABC):
             ]
             if self.team
             else None,
-            "type": "fastapi",
+            "type": self.type,
             "description": self.description,
         }
         payload = {k: v for k, v in payload.items() if v is not None}
