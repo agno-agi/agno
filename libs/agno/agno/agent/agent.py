@@ -53,7 +53,7 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.message import get_text_from_message
-from agno.utils.prompts import get_json_output_prompt
+from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
@@ -234,6 +234,10 @@ class Agent:
     # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
+    # Provide a parser model to parse the response from the Model
+    parser_model: Optional[Model] = None
+    # Provide a prompt for the parser model
+    parser_model_prompt: Optional[str] = None
     # If True, the response from the Model is converted into the response_model
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
@@ -357,6 +361,7 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
+        parser_model: Optional[Model] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
@@ -452,6 +457,7 @@ class Agent:
         self.retries = retries
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
+        self.parser_model = parser_model
         self.response_model = response_model
         self.parse_response = parse_response
 
@@ -638,14 +644,33 @@ class Agent:
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        model_response: ModelResponse = self.model.response(
-            messages=run_messages.messages,
-            response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-        )
+        if self.parser_model is not None:
+            model_response: ModelResponse = self.model.response(
+                messages=run_messages.messages,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
+        else:
+            model_response: ModelResponse = self.model.response(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+            )
+
+        # Parse the response if a parser model is provided
+        if self.parser_model is not None:
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=self.get_messages_for_parser_model(model_response),
+                response_format=self.response_model,
+            )
+            run_messages.messages.append(Message(role="assistant", content=parser_model_response.content))
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -958,7 +983,7 @@ class Agent:
                 run_response.model = self.model.id if self.model is not None else None
                 run_response.model_provider = self.model.provider if self.model is not None else None
 
-                # for backward compatibility, set self.run_response
+                # For backward compatibility, set self.run_response
                 self.run_response = run_response
                 self.run_id = run_id
 
@@ -4078,6 +4103,7 @@ class Agent:
             # or if use_json_mode is True
             if (
                 self.model is not None
+                and self.parser_model is None
                 and self.response_model is not None
                 and not (
                     (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
@@ -4320,11 +4346,19 @@ class Agent:
 
         # 3.3.13 Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
-        if self.response_model is not None and not (
-            (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-            and (not self.use_json_mode or self.structured_outputs is True)
+        if (
+            self.response_model is not None
+            and self.parser_model is None
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and (not self.use_json_mode or self.structured_outputs is True)
+            )
         ):
             system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        # 3.3.14 Add the response model format prompt if response_model is provided
+        if self.response_model is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(self.response_model)}"
 
         # Return the system message
         return (
@@ -4723,6 +4757,21 @@ class Agent:
                         log_warning(f"Failed to validate message: {e}")
 
         return run_messages
+
+    def get_messages_for_parser_model(self, model_response: ModelResponse) -> List[Message]:
+        """Get the messages for the parser model."""
+        if self.parser_model_prompt is None:
+            return [
+                Message(
+                    role="system", content="You are tasked with creating a structed output from a string response."
+                ),
+                Message(role="user", content=model_response.content),
+            ]
+        else:
+            return [
+                Message(role="system", content=self.parser_model_prompt),
+                Message(role="user", content=model_response.content),
+            ]
 
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
