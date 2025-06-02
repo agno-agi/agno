@@ -521,6 +521,15 @@ class Team:
 
         log_debug(f"Team ID: {self.team_id}", center=True)
 
+        # Initialize memory if not yet set
+        if self.memory is None:
+            self.memory = Memory()
+
+        # Default to the team's model if no model is provided
+        if isinstance(self.memory, Memory):
+            if self.memory.model is None and self.model is not None:
+                self.memory.set_model(self.model)
+
         # Initialize formatter
         if self._formatter is None:
             self._formatter = SafeFormatter()
@@ -541,7 +550,7 @@ class Team:
         message: Union[str, List, Dict, Message],
         *,
         stream: Literal[False] = False,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -549,6 +558,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
 
@@ -558,7 +568,7 @@ class Team:
         message: Union[str, List, Dict, Message],
         *,
         stream: Literal[True] = True,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -566,6 +576,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Iterator[TeamRunResponse]: ...
 
@@ -573,8 +584,8 @@ class Team:
         self,
         message: Union[str, List, Dict, Message],
         *,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -592,10 +603,6 @@ class Team:
         if session_id is not None:
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self._reset_session_state()
-
-        retries = retries or 3
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
@@ -616,8 +623,10 @@ class Team:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
+        # Initialize Team
         self.initialize_team(session_id=session_id)
 
+        # Initialize Knowledge Filters
         effective_filters = knowledge_filters
 
         # When filters are passed manually
@@ -637,17 +646,24 @@ class Team:
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
+
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
-
-        # Initialize memory if not yet set
-        if self.memory is None:
-            self.memory = Memory()
-
-        # Default to the team's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
 
         # Read existing session from storage
         if self.context is not None:
@@ -660,10 +676,41 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
+        response_format = self._get_response_format()
+
+        self.model = cast(Model, self.model)
+        self.determine_tools_for_model(model=self.model, 
+                                        session_id=session_id,
+                                        user_id=user_id,
+                                        async_mode=False,
+                                        knowledge_filters=effective_filters,
+                                        message=message,
+                                        stream=stream,
+                                        images=images,
+                                        videos=videos,
+                                        audio=audio,
+                                        files=files,
+                                        )
 
         # Register the team on the platform
         thread = threading.Thread(target=self.register_team)
         thread.start()
+        
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
+        # Create a new run_response for this attempt
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+
+        run_response.model = self.model.id if self.model is not None else None
+        run_response.model_provider = self.model.provider if self.model is not None else None
+
+        self.run_response = run_response
+        self.run_id = run_id
+        
+        retries = retries or 3
+        if retries < 1:
+            raise ValueError("Retries must be at least 1")
 
         # Run the team
         last_exception = None
@@ -671,8 +718,6 @@ class Team:
 
         for attempt in range(num_attempts):
             # Initialize the current run
-            run_id = str(uuid4())
-            self.run_id = run_id
 
             log_debug(f"Team Run Start: {self.run_id}", center=True)
             log_debug(f"Mode: '{self.mode}'", center=True)
@@ -686,107 +731,8 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare tools
-            _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-
-            # Add provided tools
-            if self.tools is not None:
-                for tool in self.tools:
-                    _tools.append(tool)
-
-            if self.read_team_history:
-                _tools.append(self.get_team_history_function(session_id=session_id))
-
-            if isinstance(self.memory, Memory) and self.enable_agentic_memory:
-                _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=False))
-
-            if self.enable_agentic_context:
-                _tools.append(self.get_set_shared_context_function(session_id=session_id))
-
-            if self.knowledge is not None or self.retriever is not None:
-                # Check if retriever is an async function but used in sync mode
-                from inspect import iscoroutinefunction
-
-                if self.retriever is not None and iscoroutinefunction(self.retriever):
-                    log_warning(
-                        "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
-                        "It is recommended to use agent.arun() or agent.aprint_response() instead."
-                    )
-
-                if self.search_knowledge:
-                    # Use async or sync search based on async_mode
-                    if self.enable_agentic_knowledge_filters:
-                        _tools.append(
-                            self.search_knowledge_base_with_agentic_filters_function(
-                                knowledge_filters=effective_filters, async_mode=False
-                            )
-                        )
-                    else:
-                        _tools.append(
-                            self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=False)
-                        )
-
-            if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
-                forward_task_func: Function = self.get_forward_task_function(
-                    message=user_message,
-                    session_id=session_id,
-                    stream=stream,
-                    async_mode=False,
-                    images=images,  # type: ignore
-                    videos=videos,  # type: ignore
-                    audio=audio,  # type: ignore
-                    files=files,  # type: ignore
-                    knowledge_filters=effective_filters,
-                )
-                _tools.append(forward_task_func)
-                if self.get_member_information_tool:
-                    _tools.append(self.get_member_information)
-
-            elif self.mode == "coordinate":
-                _tools.append(
-                    self.get_transfer_task_function(
-                        session_id=session_id,
-                        stream=stream,
-                        async_mode=False,
-                        images=images,  # type: ignore
-                        videos=videos,  # type: ignore
-                        audio=audio,  # type: ignore
-                        files=files,  # type: ignore
-                        knowledge_filters=effective_filters,
-                    )
-                )
-                if self.get_member_information_tool:
-                    _tools.append(self.get_member_information)
-
-            elif self.mode == "collaborate":
-                run_member_agents_func = self.get_run_member_agents_function(
-                    session_id=session_id,
-                    stream=stream,
-                    async_mode=False,
-                    images=images,  # type: ignore
-                    videos=videos,  # type: ignore
-                    audio=audio,  # type: ignore
-                    files=files,  # type: ignore
-                )
-                _tools.append(run_member_agents_func)
-
-                if self.get_member_information_tool:
-                    _tools.append(self.get_member_information)
-
-            self.model = cast(Model, self.model)
-            self.determine_tools_for_model(model=self.model, tools=_tools)
-
-            # Configure parameters for the model
-            response_format = self._get_response_format()
-
             # # Run the team
             try:
-                self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
-
-                # Configure the team leader model
-                self.run_response.model = self.model.id if self.model is not None else None
-                self.run_response.model_provider = self.model.provider if self.model is not None else None
 
                 # Prepare run messages
                 if self.mode == "route":
@@ -812,9 +758,11 @@ class Team:
                         **kwargs,
                     )
                 self.run_messages = run_messages
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
 
-                if stream:
-                    resp = self._run_stream(
+                if stream and self.is_streamable:
+                    response_iterator = self._run_stream(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         stream_intermediate_steps=stream_intermediate_steps,
@@ -823,7 +771,7 @@ class Team:
                         response_format=response_format,
                     )
 
-                    return resp
+                    return response_iterator
                 else:
                     return self._run(
                         run_response=self.run_response,
@@ -877,8 +825,6 @@ class Team:
         6. Parse any structured outputs
         7. Log the team run
         """
-        self.model = cast(Model, self.model)
-
         # 1. Reason about the task(s) if reasoning is enabled
         self._handle_reasoning(run_response=run_response, run_messages=run_messages, session_id=session_id)
 
@@ -886,6 +832,7 @@ class Team:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Get the model response for the team leader
+        self.model = cast(Model, self.model)
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
             response_format=response_format,
@@ -1023,7 +970,7 @@ class Team:
         message: Union[str, List, Dict, Message],
         *,
         stream: Literal[False] = False,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1031,6 +978,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
 
@@ -1040,7 +988,7 @@ class Team:
         message: Union[str, List, Dict, Message],
         *,
         stream: Literal[True] = True,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1048,6 +996,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[TeamRunResponse]: ...
 
@@ -1055,8 +1004,8 @@ class Team:
         self,
         message: Union[str, List, Dict, Message],
         *,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1074,10 +1023,6 @@ class Team:
         if session_id is not None:
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             self._reset_session_state()
-
-        retries = retries or 3
-        if retries < 1:
-            raise ValueError("Retries must be at least 1")
 
         # Use the default user_id and session_id when necessary
         if user_id is None:
@@ -1114,17 +1059,25 @@ class Team:
 
             effective_filters = self._get_team_effective_filters(knowledge_filters)
 
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
+
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
-
-        # Initialize memory if not yet set
-        if self.memory is None:
-            self.memory = Memory()
-
-        # Default to the team's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1137,18 +1090,45 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
+        response_format = self._get_response_format()
+
+        self.model = cast(Model, self.model)
+        self.determine_tools_for_model(model=self.model, 
+                                        session_id=session_id,
+                                        user_id=user_id,
+                                        async_mode=False,
+                                        knowledge_filters=effective_filters,
+                                        message=message,
+                                        stream=stream,
+                                        images=images,
+                                        videos=videos,
+                                        audio=audio,
+                                        files=files,
+                                        )
 
         asyncio.create_task(self._aregister_team())
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
+
+        # Create a new run_response for this attempt
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+
+        run_response.model = self.model.id if self.model is not None else None
+        run_response.model_provider = self.model.provider if self.model is not None else None
+
+        self.run_response = run_response
+        self.run_id = run_id
+        
+        retries = retries or 3
+        if retries < 1:
+            raise ValueError("Retries must be at least 1")
 
         # Run the team
         last_exception = None
         num_attempts = retries + 1
 
         for attempt in range(num_attempts):
-            # Initialize the current run
-            run_id = str(uuid4())
-            self.run_id = run_id
-
             log_debug(f"Team Run Start: {self.run_id}", center=True)
             log_debug(f"Mode: '{self.mode}'", center=True)
 
@@ -1161,93 +1141,8 @@ class Team:
                 else:
                     self.run_input = message
 
-            # Prepare tools
-            _tools: List[Union[Function, Callable, Toolkit, Dict]] = []
-
-            # Add provided tools
-            if self.tools is not None:
-                for tool in self.tools:
-                    _tools.append(tool)
-
-            if self.read_team_history:
-                _tools.append(self.get_team_history_function(session_id=session_id))
-
-            if isinstance(self.memory, Memory) and self.enable_agentic_memory:
-                _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=True))
-
-            if self.knowledge is not None or self.retriever is not None:
-                if self.search_knowledge:
-                    # Use async or sync search based on async_mode
-                    if self.enable_agentic_knowledge_filters:
-                        _tools.append(
-                            self.search_knowledge_base_with_agentic_filters_function(
-                                knowledge_filters=effective_filters, async_mode=True
-                            )
-                        )
-                    else:
-                        _tools.append(
-                            self.search_knowledge_base_function(knowledge_filters=effective_filters, async_mode=True)
-                        )
-
-            if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
-                forward_task_func: Function = self.get_forward_task_function(
-                    message=user_message,
-                    session_id=session_id,
-                    stream=stream,
-                    async_mode=True,  # Set to True for async mode
-                    images=images,  # type: ignore
-                    videos=videos,  # type: ignore
-                    audio=audio,  # type: ignore
-                    files=files,  # type: ignore
-                    knowledge_filters=effective_filters,
-                )
-                _tools.append(forward_task_func)
-                self.model.tool_choice = "required"  # type: ignore
-            elif self.mode == "coordinate":
-                _tools.append(
-                    self.get_transfer_task_function(
-                        session_id=session_id,
-                        stream=stream,
-                        async_mode=True,
-                        images=images,  # type: ignore
-                        videos=videos,  # type: ignore
-                        audio=audio,  # type: ignore
-                        files=files,  # type: ignore
-                        knowledge_filters=effective_filters,
-                    )
-                )
-                self.model.tool_choice = "auto"  # type: ignore
-
-                if self.enable_agentic_context:
-                    _tools.append(self.get_set_shared_context_function(session_id=session_id))
-            elif self.mode == "collaborate":
-                run_member_agents_func = self.get_run_member_agents_function(
-                    session_id=session_id,
-                    stream=stream,
-                    async_mode=True,
-                    images=images,  # type: ignore
-                    videos=videos,  # type: ignore
-                    audio=audio,  # type: ignore
-                    files=files,  # type: ignore
-                )
-                _tools.append(run_member_agents_func)
-                self.model.tool_choice = "auto"  # type: ignore
-
-                if self.enable_agentic_context:
-                    _tools.append(self.get_set_shared_context_function(session_id=session_id))
-
-            self.model = cast(Model, self.model)
-            self.determine_tools_for_model(model=self.model, tools=_tools)
-
             # Run the team
             try:
-                self.run_response = TeamRunResponse(run_id=self.run_id, session_id=session_id, team_id=self.team_id)
-
-                # Configure the team leader model
-                self.run_response.model = self.model.id if self.model is not None else None
-                self.run_response.model_provider = self.model.provider if self.model is not None else None
-
                 # Prepare run messages
                 if self.mode == "route":
                     # In route mode the model shouldn't get images/audio/video
@@ -1274,14 +1169,14 @@ class Team:
                     )
 
                 if stream:
-                    resp = self._arun_stream(
+                    response_iterator = self._arun_stream(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
                         user_id=user_id,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-                    return resp
+                    return response_iterator
                 else:
                     return await self._arun(
                         run_response=self.run_response,
@@ -4335,13 +4230,113 @@ class Team:
             else:
                 log_warning("Context is not a dict")
 
-    def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
+    def determine_tools_for_model(self, 
+                                  model: Model, 
+                                  session_id: str, 
+                                  user_id: Optional[str] = None, 
+                                  async_mode: bool = False, 
+                                  knowledge_filters: Optional[Dict[str, Any]] = None,
+                                  message: Optional[Union[str, List, Dict, Message]] = None,
+                                  stream: Optional[bool] = None,
+                                  images: Optional[Sequence[Image]] = None,
+                                  videos: Optional[Sequence[Video]] = None,
+                                  audio: Optional[Sequence[Audio]] = None,
+                                  files: Optional[Sequence[File]] = None) -> None:
+        # Prepare tools
+        _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+
+        # Add provided tools
+        if self.tools is not None:
+            for tool in self.tools:
+                _tools.append(tool)
+
+        if self.read_team_history:
+            _tools.append(self.get_team_history_function(session_id=session_id))
+
+        if isinstance(self.memory, Memory) and self.enable_agentic_memory:
+            _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+
+        if self.enable_agentic_context:
+            _tools.append(self.get_set_shared_context_function(session_id=session_id))
+
+        if self.knowledge is not None or self.retriever is not None:
+            # Check if retriever is an async function but used in sync mode
+            from inspect import iscoroutinefunction
+
+            if self.retriever is not None and iscoroutinefunction(self.retriever):
+                log_warning(
+                    "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                    "It is recommended to use agent.arun() or agent.aprint_response() instead."
+                )
+
+            if self.search_knowledge:
+                # Use async or sync search based on async_mode
+                if self.enable_agentic_knowledge_filters:
+                    _tools.append(
+                        self.search_knowledge_base_with_agentic_filters_function(
+                            knowledge_filters=knowledge_filters, async_mode=async_mode
+                        )
+                    )
+                else:
+                    _tools.append(
+                        self.search_knowledge_base_function(knowledge_filters=knowledge_filters, async_mode=async_mode)
+                    )
+
+        if self.mode == "route":
+            user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
+            forward_task_func: Function = self.get_forward_task_function(
+                message=user_message,
+                session_id=session_id,
+                stream=stream,
+                async_mode=False,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+                knowledge_filters=knowledge_filters,
+            )
+            _tools.append(forward_task_func)
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
+
+        elif self.mode == "coordinate":
+            _tools.append(
+                self.get_transfer_task_function(
+                    session_id=session_id,
+                    stream=stream,
+                    async_mode=False,
+                    images=images,  # type: ignore
+                    videos=videos,  # type: ignore
+                    audio=audio,  # type: ignore
+                    files=files,  # type: ignore
+                    knowledge_filters=knowledge_filters,
+                )
+            )
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
+
+        elif self.mode == "collaborate":
+            run_member_agents_func = self.get_run_member_agents_function(
+                session_id=session_id,
+                stream=stream,
+                async_mode=False,
+                images=images,  # type: ignore
+                videos=videos,  # type: ignore
+                audio=audio,  # type: ignore
+                files=files,  # type: ignore
+            )
+            _tools.append(run_member_agents_func)
+
+            if self.get_member_information_tool:
+                _tools.append(self.get_member_information)
+        
+        
         if self._tools_for_model is None:
             self._functions_for_model = {}
             self._tools_for_model = []
 
             # Get Agent tools
-            if len(tools) > 0:
+            if len(_tools) > 0:
                 log_debug("Processing tools for model")
 
                 # Check if we need strict mode for the model
@@ -4353,7 +4348,7 @@ class Team:
                 ):
                     strict = True
 
-                for tool in tools:
+                for tool in _tools:
                     if isinstance(tool, Dict):
                         # If a dict is passed, it is a builtin tool
                         # that is run by the model provider and not the Agent

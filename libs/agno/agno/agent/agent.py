@@ -793,6 +793,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
         stream: Literal[False] = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -800,7 +801,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -812,6 +812,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
         stream: Literal[True] = True,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -819,7 +820,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -830,6 +830,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
         *,
         stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -837,7 +838,6 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -852,45 +852,8 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-
-        effective_filters = knowledge_filters
-
-        # When filters are passed manually
-        if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
-            effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
-
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = (
-                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
-            )
-
-        # Can't have stream_intermediate_steps if stream is False
-        if stream is False:
-            stream_intermediate_steps = False
-
-        self.stream = self.stream or (stream and self.is_streamable)
-        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-
+        
+        # Initialize Session
         # Use the default user_id and session_id when necessary
         user_id = user_id if user_id is not None else self.user_id
 
@@ -910,6 +873,42 @@ class Agent:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
+        # Initialize Knowledge Filters
+        effective_filters = knowledge_filters
+
+        # When filters are passed manually
+        if self.knowledge_filters or knowledge_filters:
+            """
+                initialize metadata (specially required in case when load is commented out)
+                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
+                so we need to call initialize_valid_filters to make sure the filters are initialized
+            """
+            if not self.knowledge.valid_metadata_filters:  # type: ignore
+                self.knowledge.initialize_valid_filters()  # type: ignore
+
+            effective_filters = self._get_effective_filters(knowledge_filters)
+
+        # Agentic filters are enabled
+        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
+            # initialize metadata (specially required in case when load is commented out)
+            self.knowledge.initialize_valid_filters()  # type: ignore
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Can't have stream_intermediate_steps if stream is False
+        if stream is False:
+            stream_intermediate_steps = False
+
+        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
@@ -921,9 +920,6 @@ class Agent:
             # Disable stream if response_model is set
             stream = False
             log_debug("Disabling stream as response_model is set")
-
-        last_exception = None
-        num_attempts = retries + 1
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -938,12 +934,13 @@ class Agent:
             knowledge_filters=effective_filters,
         )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
         # Register Agent
         thread = Thread(target=self.register_agent)
         thread.start()
+        
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
 
         # Create a new run_response for this attempt
         run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
@@ -951,9 +948,17 @@ class Agent:
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
-        # for backward compatibility, set self.run_response
         self.run_response = run_response
         self.run_id = run_id
+        
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+        if retries < 1:
+            raise ValueError("Retries must be at least 1")
+        
+        last_exception = None
+        num_attempts = retries + 1
+
         for attempt in range(num_attempts):
             try:
                 # Set run_input
@@ -1243,6 +1248,26 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
+        
+        # Initialize Session
+        # Use the default user_id and session_id when necessary
+        user_id = user_id if user_id is not None else self.user_id
+
+        if session_id is None or session_id == "":
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                session_id = str(uuid4())
+                self.session_id = session_id
+        else:
+            self.session_id = session_id
+
+        session_id = cast(str, session_id)
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Session ID: {session_id}", center=True)
 
         effective_filters = knowledge_filters
 
@@ -1263,10 +1288,6 @@ class Agent:
             # initialize metadata (specially required in case when load is commented out)
             self.knowledge.initialize_valid_filters()  # type: ignore
 
-        # If no retries are set, use the agent's default retries
-        if retries is None:
-            retries = self.retries
-
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
@@ -1283,26 +1304,6 @@ class Agent:
         self.stream = self.stream or (stream and self.is_streamable)
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
-        log_debug(f"Session ID: {session_id}", center=True)
-
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
@@ -1315,9 +1316,6 @@ class Agent:
             stream = False
             log_debug("Disabling stream as response_model is set")
 
-        last_exception = None
-        num_attempts = retries + 1
-
         # Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
@@ -1327,15 +1325,16 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=True,
+            async_mode=False,
             knowledge_filters=effective_filters,
         )
 
-        # Create a run_id for this specific run
-        run_id = str(uuid4())
-
         # Register Agent
         asyncio.create_task(self._aregister_agent())
+
+
+        # Create a run_id for this specific run
+        run_id = str(uuid4())
 
         # Create a new run_response for this attempt
         run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
@@ -1343,10 +1342,17 @@ class Agent:
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
-        # for backward compatibility, set self.run_response
         self.run_response = run_response
         self.run_id = run_id
-
+        
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+        if retries < 1:
+            raise ValueError("Retries must be at least 1")
+        
+        last_exception = None
+        num_attempts = retries + 1
+        
         for attempt in range(num_attempts):
             try:
                 # Set run_input
@@ -1379,7 +1385,7 @@ class Agent:
 
                 # Pass the new run_response to _arun
                 if stream and self.is_streamable:
-                    resp = self._arun_stream(
+                    response_iterator = self._arun_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         message=message,
@@ -1389,7 +1395,7 @@ class Agent:
                         messages=messages,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )  # type: ignore[assignment]
-                    return resp
+                    return response_iterator
                 else:
                     return await self._arun(
                         run_response=run_response,
@@ -3249,8 +3255,12 @@ class Agent:
         self.session_state = self.session_state or {}
         if user_id is not None:
             self.session_state["current_user_id"] = user_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_user_id"] = user_id
         if session_id is not None:
             self.session_state["current_session_id"] = session_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
