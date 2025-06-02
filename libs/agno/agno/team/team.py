@@ -226,6 +226,13 @@ class Team:
     reasoning_model: Optional[Model] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
+    
+    # --- Team Streaming ---
+    # Stream the response from the Team
+    stream: Optional[bool] = None
+    # Stream the intermediate steps from the Team
+    stream_intermediate_steps: bool = False
+    
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
     # --- Debug & Monitoring ---
@@ -295,6 +302,8 @@ class Team:
         reasoning_model: Optional[Model] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: bool = False,
         debug_mode: bool = False,
         show_members_responses: bool = False,
         monitoring: bool = False,
@@ -368,6 +377,9 @@ class Team:
         self.reasoning_model = reasoning_model
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
+        
+        self.stream = stream
+        self.stream_intermediate_steps = stream_intermediate_steps
 
         self.debug_mode = debug_mode
         self.show_members_responses = show_members_responses
