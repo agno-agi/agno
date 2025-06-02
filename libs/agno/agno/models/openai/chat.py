@@ -25,7 +25,6 @@ try:
         ChoiceDelta,
         ChoiceDeltaToolCall,
     )
-    from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -314,7 +313,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -375,7 +374,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
