@@ -4,12 +4,12 @@ from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         YFinanceTools(
             stock_price=True, analyst_recommendations=True, stock_fundamentals=True
         )
     ],
-    model=OpenAIChat(id="gpt-4o"),
     show_tool_calls=True,
     stream=True,
     stream_intermediate_steps=True,
@@ -27,4 +27,4 @@ agui_app = AGUIApp(
 app = agui_app.get_app()
 
 if __name__ == "__main__":
-    agui_app.serve(app="basic:app", port=8000, reload=True)
+    agui_app.serve(app="agent_with_tool:app", port=8000, reload=True)

@@ -40,13 +40,13 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
     try:
         # Preparing the input for the Agent and emitting the run started event
-        agno_messages = _convert_agui_messages_to_agno_messages(run_input.messages)
+        message = _get_last_user_message(run_input.messages)
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Request streaming response from agent
         response_stream = await agent.arun(
+            message=message,
             session_id=run_input.thread_id,
-            messages=agno_messages,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -96,7 +96,8 @@ async def _stream_response_content(
     """Map the Agno response stream to AG-UI format."""
     message_id = str(uuid.uuid4())
     message_started = False
-    text_message_end_event_emitted = False
+    active_tool_call_id = None
+    ended_tool_call_ids = []
 
     async for chunk in response_stream:
         content = _extract_response_chunk_content(chunk)
@@ -121,26 +122,35 @@ async def _stream_response_content(
 
         # Handle tool calls
         if chunk.event == RunEvent.tool_call_started:
+            # We need to end the previous tool call if it exists and it hasn't been ended yet
+            if active_tool_call_id is not None:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=active_tool_call_id,
+                )
+                ended_tool_call_ids.append(active_tool_call_id)
             if chunk.tools is not None and len(chunk.tools) != 0:
                 tool_call = chunk.tools[0]
                 yield ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call.tool_call_id or "",
-                    tool_call_name=tool_call.tool_name or "",
+                    tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    tool_call_name=tool_call.tool_name,  # type: ignore
                     parent_message_id=message_id,
                 )
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool_call.tool_call_id or "",
+                    tool_call_id=tool_call.tool_call_id,  # type: ignore
                     delta=str(tool_call.tool_args),
                 )
+                active_tool_call_id = tool_call.tool_call_id
         if chunk.event == RunEvent.tool_call_completed:
             if chunk.tools is not None and len(chunk.tools) != 0:
                 tool_call = chunk.tools[0]
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=tool_call.tool_call_id or "",
-                )
+                if tool_call.tool_call_id not in ended_tool_call_ids:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    )
 
         # Handle reasoning
         if chunk.event == RunEvent.reasoning_started:
@@ -148,17 +158,9 @@ async def _stream_response_content(
         if chunk.event == RunEvent.reasoning_completed:
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
 
-        # Handle memory
-        if chunk.event == RunEvent.updating_memory:
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-            text_message_end_event_emitted = True
-            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="updating_memory")
-            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="updating_memory")
-
         # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
-            if not text_message_end_event_emitted:
-                yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
             yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
 
 
@@ -213,11 +215,6 @@ async def _stream_team_response_content(
             yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
         if chunk.event == RunEvent.reasoning_completed:
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-
-        # Handle memory
-        if chunk.event == RunEvent.updating_memory:
-            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="updating_memory")
-            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="updating_memory")
 
         # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
