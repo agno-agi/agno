@@ -11,7 +11,6 @@ def test_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -61,7 +59,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -82,7 +79,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -118,7 +114,6 @@ def test_tool_use_with_native_structured_outputs():
     agent = Agent(
         model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         telemetry=False,
@@ -143,7 +138,6 @@ def test_tool_use_with_json_structured_outputs():
         tools=[YFinanceTools(cache_results=True)],
         exponential_backoff=True,
         delay_between_retries=5,
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         use_json_mode=True,
@@ -162,7 +156,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -186,7 +179,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,

@@ -14,7 +14,6 @@ def test_tool_use():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -32,7 +31,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -66,7 +64,6 @@ def test_tool_use_with_native_structured_outputs():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         telemetry=False,
@@ -78,12 +75,12 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.price is not None
     assert response.content.currency is not None
 
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -102,7 +99,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -134,7 +130,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -155,7 +150,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -183,7 +177,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -214,7 +207,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -244,7 +236,6 @@ def test_tool_call_custom_tool_untyped_parameters():
     agent = Agent(
         model=MistralChat(id="ministral-8b-latest"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -263,7 +254,6 @@ def test_tool_call_list_parameters():
         model=MistralChat(id="mistral-large-latest"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

@@ -1,5 +1,6 @@
 from typing import Dict
 from unittest.mock import ANY, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 import redis
@@ -345,3 +346,86 @@ def test_get_all_session_ids(agent_storage, mock_redis_client):
     # Test combined filtering
     filtered_session_ids = agent_storage.get_all_session_ids(user_id="user-1", entity_id="agent-1")
     assert len(filtered_session_ids) == 1
+
+
+def test_serialize_with_uuids(agent_storage):
+    """Test serialization of data containing UUIDs."""
+    test_data = {
+        "uuid_field": uuid4(),
+        "nested": {"uuid": uuid4()},
+        "uuid_list": [uuid4(), uuid4()],
+    }
+
+    # Serialize the data
+    serialized = agent_storage.serialize(test_data)
+
+    # Deserialize to verify format
+    import json
+
+    deserialized = json.loads(serialized)
+
+    # Check that UUIDs were converted to strings
+    assert isinstance(deserialized["uuid_field"], str)
+    assert isinstance(deserialized["nested"]["uuid"], str)
+    assert all(isinstance(u, str) for u in deserialized["uuid_list"])
+
+    # Verify the string representations match
+    assert deserialized["uuid_field"] == str(test_data["uuid_field"])
+    assert deserialized["nested"]["uuid"] == str(test_data["nested"]["uuid"])
+    assert deserialized["uuid_list"] == [str(u) for u in test_data["uuid_list"]]
+
+
+def test_session_upsert_with_uuids(agent_storage, mock_redis_client):
+    """Test upserting a session containing UUIDs."""
+    # Create a session with UUIDs
+    session_id = str(uuid4())
+    agent_id = uuid4()  # Keep as UUID
+    user_id = str(uuid4())
+
+    session = AgentSession(
+        session_id=session_id,
+        agent_id=agent_id,
+        user_id=user_id,
+        memory={"test_uuid": uuid4(), "uuid_list": [uuid4(), uuid4()], "nested": {"uuid": uuid4()}},
+    )
+
+    # Upsert the session
+    with patch("time.time", return_value=12345):
+        result = agent_storage.upsert(session)
+
+    # Verify the result
+    assert result is not None
+    assert result.session_id == session_id
+
+    # Verify Redis set was called
+    mock_redis_client.set.assert_called_once()
+
+    # Get the serialized data that was passed to Redis
+    call_args = mock_redis_client.set.call_args
+    key, value = call_args[0]
+
+    # Verify the key format
+    assert key == f"test_agent:{session_id}"
+
+    # Verify the serialized data contains string UUIDs
+    import json
+
+    serialized_data = json.loads(value)
+    assert isinstance(serialized_data["agent_id"], str)
+    assert isinstance(serialized_data["memory"]["test_uuid"], str)
+    assert all(isinstance(u, str) for u in serialized_data["memory"]["uuid_list"])
+    assert isinstance(serialized_data["memory"]["nested"]["uuid"], str)
+
+
+def test_error_handling_with_uuid(agent_storage, mock_redis_client):
+    """Test error handling with UUID operations."""
+    # Test serialization error
+    mock_redis_client.set.side_effect = Exception("Redis error")
+    session = AgentSession(session_id=str(uuid4()), agent_id=uuid4(), user_id=str(uuid4()), memory={"test": uuid4()})
+    result = agent_storage.upsert(session)
+    assert result is None
+
+    # Test deserialization error
+    mock_redis_client.get.return_value = "invalid json"
+    result = agent_storage.read(str(uuid4()))
+    assert result is None
