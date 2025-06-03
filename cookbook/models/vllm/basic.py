@@ -3,7 +3,7 @@ from agno.models.vllm import vLLMOpenAI
 
 agent = Agent(
     model=vLLMOpenAI(
-        id="microsoft/Phi-3-mini-4k-instruct", top_k=20, enable_thinking=False
+        id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False
     ),
     markdown=True,
 )
