@@ -101,7 +101,6 @@ async def _stream_response_content(
     text_message_end_event_emitted = False
 
     async for chunk in response_stream:
-        print("event", chunk.event)
         content = _extract_response_chunk_content(chunk)
 
         # Handle text responses
