@@ -143,7 +143,7 @@ class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
 
     tool: ToolExecution
-    content: str
+    content: Optional[Any] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
@@ -161,6 +161,8 @@ TeamRunResponseEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    ToolCallStartedEvent,
+    ToolCallCompletedEvent,
 ]
 
 

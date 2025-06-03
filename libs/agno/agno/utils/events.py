@@ -92,7 +92,7 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
 
 
 def create_run_response_paused_event(
-    from_run_response: RunResponse, tools: List[ToolExecution]
+    from_run_response: RunResponse, tools: Optional[List[ToolExecution]] = None
 ) -> RunResponsePausedEvent:
     return RunResponsePausedEvent(
         session_id=from_run_response.session_id,
@@ -230,7 +230,7 @@ def create_reasoning_completed_event(
         agent_id=from_run_response.agent_id,
         run_id=from_run_response.run_id,
         content=content,
-        content_type=content_type,
+        content_type=content_type or "str",
     )
 
 
@@ -242,7 +242,7 @@ def create_team_reasoning_completed_event(
         team_id=from_run_response.team_id,
         run_id=from_run_response.run_id,
         content=content,
-        content_type=content_type,
+        content_type=content_type or "str",
     )
 
 
@@ -267,7 +267,7 @@ def create_team_tool_call_started_event(
 
 
 def create_tool_call_completed_event(
-    from_run_response: RunResponse, tool: ToolExecution, content: str
+    from_run_response: RunResponse, tool: ToolExecution, content: Optional[Any] = None
 ) -> ToolCallCompletedEvent:
     return ToolCallCompletedEvent(
         session_id=from_run_response.session_id,
@@ -282,7 +282,7 @@ def create_tool_call_completed_event(
 
 
 def create_team_tool_call_completed_event(
-    from_run_response: TeamRunResponse, tool: ToolExecution, content: str
+    from_run_response: TeamRunResponse, tool: ToolExecution, content: Optional[Any] = None
 ) -> TeamToolCallCompletedEvent:
     return TeamToolCallCompletedEvent(
         session_id=from_run_response.session_id,

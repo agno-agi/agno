@@ -20,6 +20,7 @@ from typing import (
     Type,
     Union,
     cast,
+    get_args,
     overload,
 )
 from uuid import uuid4
@@ -43,6 +44,7 @@ from agno.run.response import (
     RunEvent,
     RunResponse,
     RunResponseEvent,
+    RunResponsePausedEvent,
 )
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
@@ -2025,8 +2027,8 @@ class Agent:
         else:
             # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
-            run_response.run_state = RunState.running
             run_response = self.run_response
+            run_response.run_state = RunState.running
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
@@ -2447,6 +2449,7 @@ class Agent:
         )
 
     def _run_tool(self, run_messages: RunMessages, tool: ToolExecution) -> Iterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         self.model = cast(Model, self.model)
         # Execute the tool
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
@@ -2486,6 +2489,7 @@ class Agent:
         run_messages: RunMessages,
         tool: ToolExecution,
     ) -> AsyncIterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         self.model = cast(Model, self.model)
         # Execute the tool
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
@@ -2798,6 +2802,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
@@ -2855,6 +2860,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         if isinstance(self.memory, AgentMemory):
             self.memory = cast(AgentMemory, self.memory)
         else:
@@ -2942,7 +2948,7 @@ class Agent:
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
                 yield create_reasoning_completed_event(
-                    from_run_response=self.run_response,
+                    from_run_response=run_response,
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__name__,
                 )
@@ -3001,7 +3007,7 @@ class Agent:
             if all_reasoning_steps:
                 self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
                 yield create_reasoning_completed_event(
-                    from_run_response=self.run_response,
+                    from_run_response=run_response,
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
                     content_type=ReasoningSteps.__name__,
                 )
@@ -3057,7 +3063,7 @@ class Agent:
                 or model_response_chunk.citations is not None
             ):
                 yield create_run_response_content_event(
-                    from_run_response=self.run_response,
+                    from_run_response=run_response,
                     content=model_response_chunk.content,
                     thinking=model_response_chunk.thinking,
                     redacted_thinking=model_response_chunk.redacted_thinking,
@@ -3093,7 +3099,7 @@ class Agent:
                 run_response.created_at = model_response_chunk.created_at
 
                 yield create_run_response_content_event(
-                    from_run_response=self.run_response,
+                    from_run_response=run_response,
                     response_audio=run_response.response_audio,
                 )
 
@@ -3101,7 +3107,7 @@ class Agent:
                 self.add_image(model_response_chunk.image)
 
                 yield create_run_response_content_event(
-                    from_run_response=self.run_response,
+                    from_run_response=run_response,
                     image=model_response_chunk.image,
                 )
 
@@ -3135,9 +3141,9 @@ class Agent:
                 # Format tool calls whenever new ones are added during streaming
                 run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
-            # Yield each tool call started event
-            for tool in tool_executions_list:
-                yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
+                # Yield each tool call started event
+                for tool in tool_executions_list:
+                    yield create_tool_call_started_event(from_run_response=run_response, tool=tool)
 
         # If the model response is a tool_call_completed, update the existing tool call in the run_response
         elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
@@ -3173,24 +3179,21 @@ class Agent:
                             reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
                                 metrics.time
                             )
+                    yield create_tool_call_completed_event(
+                        from_run_response=run_response, tool=tool_call, content=model_response_chunk.content
+                    )
 
             if stream_intermediate_steps:
                 if reasoning_step is not None:
                     if not reasoning_state["reasoning_started"]:
-                        yield create_reasoning_started_event(from_run_response=self.run_response)
+                        yield create_reasoning_started_event(from_run_response=run_response)
                         reasoning_state["reasoning_started"] = True
 
                     yield create_reasoning_step_event(
-                        from_run_response=self.run_response,
+                        from_run_response=run_response,
                         reasoning_step=reasoning_step,
-                        reasoning_content=run_response.reasoning_content,
+                        reasoning_content=run_response.reasoning_content or "",
                     )
-
-            # Yield each tool call completed event
-            for tool in tool_executions_list:
-                yield create_tool_call_completed_event(
-                    from_run_response=self.run_response, tool=tool, content=model_response_chunk.content
-                )
 
     def _generator_wrapper(self, event: RunResponseEvent) -> Iterator[RunResponseEvent]:
         yield event
@@ -3284,6 +3287,7 @@ class Agent:
     ) -> Iterator[RunResponseEvent]:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.memory = cast(Memory, self.memory)
 
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -3350,6 +3354,7 @@ class Agent:
         user_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
     ) -> AsyncIterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         self.memory = cast(Memory, self.memory)
         tasks = []
 
@@ -5459,6 +5464,7 @@ class Agent:
         return updated_reasoning_content
 
     def reason(self, run_messages: RunMessages) -> Iterator[RunResponseEvent]:
+        self.run_response = cast(RunResponse, self.run_response)
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield create_reasoning_started_event(from_run_response=self.run_response)
@@ -5665,6 +5671,7 @@ class Agent:
                 )
 
     async def areason(self, run_messages: RunMessages) -> Any:
+        self.run_response = cast(RunResponse, self.run_response)
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield create_reasoning_started_event(from_run_response=self.run_response)
@@ -6459,18 +6466,23 @@ class Agent:
                     knowledge_filters=knowledge_filters,
                     **kwargs,
                 ):
-                    if isinstance(resp, RunResponseEvent):
+                    if isinstance(resp, tuple(get_args(RunResponseEvent))):
                         if resp.is_paused:
+                            resp = cast(RunResponsePausedEvent, resp)
                             response_panel = create_paused_run_response_panel(resp)
                             panels.append(response_panel)
                             live_log.update(Group(*panels))
                             break
                         if resp.event == RunEvent.run_response_content:
-                            if isinstance(resp.content, str):
+                            if hasattr(resp, "content") and isinstance(resp.content, str):
                                 _response_content += resp.content
-                            if resp.thinking is not None:
+                            if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
-                        if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
+                        if (
+                            hasattr(resp, "extra_data")
+                            and resp.extra_data is not None
+                            and resp.extra_data.reasoning_steps is not None
+                        ):
                             reasoning_steps = resp.extra_data.reasoning_steps
 
                     response_content_stream: Union[str, Markdown] = _response_content
@@ -6570,7 +6582,8 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     if (
-                        isinstance(resp, RunResponseEvent)
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        and hasattr(resp, "citations")
                         and resp.citations is not None
                         and resp.citations.urls is not None
                     ):
@@ -6877,7 +6890,7 @@ class Agent:
                 )
 
                 async for resp in result:
-                    if isinstance(resp, RunResponseEvent):
+                    if isinstance(resp, tuple(get_args(RunResponseEvent))):
                         if resp.is_paused:
                             response_panel = create_paused_run_response_panel(resp)
                             panels.append(response_panel)
@@ -6989,7 +7002,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     if (
-                        isinstance(resp, RunResponseEvent)
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
                         and resp.citations is not None
                         and resp.citations.urls is not None
                     ):

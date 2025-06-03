@@ -93,7 +93,7 @@ class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
 class RunResponsePausedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_paused.value
 
-    tools: List[ToolExecution]
+    tools: Optional[List[ToolExecution]] = None
 
     @property
     def is_paused(self):
@@ -167,7 +167,7 @@ class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
 
     tool: ToolExecution
-    content: str
+    content: Optional[Any] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
@@ -200,6 +200,8 @@ RunResponseEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    ToolCallStartedEvent,
+    ToolCallCompletedEvent,
     WorkflowRunResponseStartedEvent,
     WorkflowCompletedEvent,
 ]

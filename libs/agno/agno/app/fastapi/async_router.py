@@ -11,7 +11,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.team import TeamRunResponse
+from agno.run.team import TeamRunResponseEvent
 from agno.team.team import Team
 from agno.utils.log import logger
 
@@ -70,7 +70,7 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         error_response = TeamRunResponseErrorEvent(

@@ -5,7 +5,7 @@ import inspect
 from dataclasses import dataclass, field, fields
 from os import getenv
 from types import GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional, Union, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional, Union, cast, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -201,7 +201,7 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 for item in result:
-                    if isinstance(item, RunResponseEvent):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
@@ -308,7 +308,7 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 async for item in result:
-                    if isinstance(item, RunResponseEvent):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
