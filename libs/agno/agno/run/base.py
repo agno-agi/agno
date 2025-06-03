@@ -12,11 +12,11 @@ from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 
 
-@dataclass(kw_only=True)
+@dataclass
 class BaseRunResponseEvent:
+    event: str
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    event: str
     created_at: int = field(default_factory=lambda: int(time()))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -172,7 +172,7 @@ class RunResponseExtraData:
         )
 
 
-class RunState(str, Enum):
+class RunStatus(str, Enum):
     """State of the main run response"""
 
     running = "RUNNING"

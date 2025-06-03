@@ -39,7 +39,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunResponseExtraData, RunState
+from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
 from agno.run.team import RunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
@@ -837,7 +837,7 @@ class Team:
                     )
                 else:
                     return self._create_run_response(
-                        run_state=RunState.cancelled,
+                        run_state=RunStatus.cancelled,
                         content="Operation cancelled by user",
                         from_run_response=run_response,
                         session_id=session_id,
@@ -1231,7 +1231,7 @@ class Team:
                     )
                 else:
                     return self._create_run_response(
-                        run_state=RunState.cancelled,
+                        run_state=RunStatus.cancelled,
                         content="Operation cancelled by user",
                         from_run_response=run_response,
                         session_id=session_id,
@@ -4288,7 +4288,7 @@ class Team:
         content: Optional[Any] = None,
         content_type: Optional[str] = None,
         thinking: Optional[str] = None,
-        run_state: RunState = RunState.running,
+        run_state: RunStatus = RunStatus.running,
         tools: Optional[List[ToolExecution]] = None,
         reasoning_content: Optional[str] = None,
         audio: Optional[List[AudioArtifact]] = None,

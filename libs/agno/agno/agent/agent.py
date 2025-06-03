@@ -38,7 +38,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunResponseExtraData, RunState
+from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import (
     RunEvent,
@@ -1040,14 +1040,16 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
+                self.run_response = self.create_run_response(
+                    run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
+                )
                 if stream and self.is_streamable:
                     return self._generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
-                    return self.create_run_response(
-                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
-                    )
+                    return self.run_response
+
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1434,14 +1436,15 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
+                self.run_response = self.create_run_response(
+                        run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
+                    )
                 if stream and self.is_streamable:
                     return self._async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
-                    return self.create_run_response(
-                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
-                    )
+                    return self.run_response
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1611,7 +1614,7 @@ class Agent:
             self.run_id = run_id
         else:
             self.run_response = cast(RunResponse, self.run_response)
-            self.run_response.run_state = RunState.running
+            self.run_response.status = RunStatus.running
             # We are continuing from a previous run_response in state
             run_response = self.run_response
             messages = self.run_response.messages or []
@@ -1673,7 +1676,7 @@ class Agent:
             )
 
             # Reset the run state
-            run_response.run_state = RunState.running
+            run_response.status = RunStatus.running
 
             try:
                 if stream and self.is_streamable:
@@ -1720,7 +1723,7 @@ class Agent:
                     )
                 else:
                     return self.create_run_response(
-                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -1820,7 +1823,7 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        run_response.run_state = RunState.running
+        run_response.status = RunStatus.running
 
         return run_response
 
@@ -2030,7 +2033,7 @@ class Agent:
             # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
-            run_response.run_state = RunState.running
+            run_response.status = RunStatus.running
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
@@ -2090,7 +2093,7 @@ class Agent:
             )
 
             # Reset the run paused state
-            run_response.run_state = RunState.running
+            run_response.status = RunStatus.running
 
             try:
                 if stream and self.is_streamable:
@@ -2136,7 +2139,7 @@ class Agent:
                     )
                 else:
                     return self.create_run_response(
-                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -2240,7 +2243,7 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        run_response.run_state = RunState.running
+        run_response.status = RunStatus.running
 
         return run_response
 
@@ -2339,7 +2342,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> RunResponse:
         # Set the run response to paused
-        run_response.run_state = RunState.paused
+        run_response.status = RunStatus.paused
 
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
@@ -2363,7 +2366,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> Iterator[RunResponseEvent]:
         # Set the run response to paused
-        run_response.run_state = RunState.paused
+        run_response.status = RunStatus.paused
 
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
@@ -3211,7 +3214,7 @@ class Agent:
         thinking: Optional[str] = None,
         redacted_thinking: Optional[str] = None,
         reasoning_content: Optional[str] = None,
-        run_state: RunState = RunState.running,
+        run_state: RunStatus = RunStatus.running,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
         citations: Optional[Citations] = None,
@@ -3244,7 +3247,7 @@ class Agent:
 
         rr = RunResponse(
             run_id=self.run_id,
-            run_state=run_state,
+            status=run_state,
             session_id=session_id,
             agent_id=self.agent_id,
             content=content,

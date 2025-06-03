@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunState
+from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
 from agno.utils.log import logger
 
 
@@ -38,61 +38,50 @@ class RunEvent(str, Enum):
     workflow_completed = "WorkflowCompleted"
 
 
-@dataclass(kw_only=True)
+@dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     agent_id: Optional[str] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseStartedEvent(BaseAgentRunResponseEvent):
     """Event sent when the run starts"""
-
     event: str = RunEvent.run_started.value
+    model: str  # type: ignore[misc]
+    model_provider: str  # type: ignore[misc]
 
-    model: str
-    model_provider: str
 
-
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseContentEvent(BaseAgentRunResponseEvent):
     """Main event for each delta of the RunResponse"""
-
     event: str = RunEvent.run_response_content.value
-
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
     citations: Optional[Citations] = None
-
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-
     extra_data: Optional[RunResponseExtraData] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_completed.value
-
     content: Optional[Any] = None
     content_type: str = "str"
-
     reasoning_content: Optional[str] = None
     thinking: Optional[str] = None
     citations: Optional[Citations] = None
-
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-
     extra_data: Optional[RunResponseExtraData] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponsePausedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_paused.value
-
     tools: Optional[List[ToolExecution]] = None
 
     @property
@@ -100,22 +89,20 @@ class RunResponsePausedEvent(BaseAgentRunResponseEvent):
         return True
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseContinuedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_continued.value
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseErrorEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_error.value
-
     content: Optional[str] = None
 
 
-@dataclass(kw_only=True)
+@dataclass
 class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_cancelled.value
-
     reason: Optional[str] = None
 
     @property
@@ -123,66 +110,60 @@ class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
         return True
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MemoryUpdateStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.memory_update_started.value
 
 
-@dataclass(kw_only=True)
+@dataclass
 class MemoryUpdateCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.memory_update_completed.value
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ReasoningStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_started.value
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ReasoningStepEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
-
-    content: Any
+    content: Any  # type: ignore[misc]
     content_type: str = "str"
-    reasoning_content: str
+    reasoning_content: str  # type: ignore[misc]
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ReasoningCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_completed.value
-
-    content: Any
+    content: Any  # type: ignore[misc]
     content_type: str = "str"
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ToolCallStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
+    tool: ToolExecution  # type: ignore[misc]
 
-    tool: ToolExecution
 
-
-@dataclass(kw_only=True)
+@dataclass
 class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
-
-    tool: ToolExecution
+    tool: ToolExecution  # type: ignore[misc]
     content: Optional[Any] = None
-
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
-@dataclass(kw_only=True)
+@dataclass
 class WorkflowRunResponseStartedEvent(BaseRunResponseEvent):
     event: str = RunEvent.run_started.value
 
 
-@dataclass(kw_only=True)
+@dataclass
 class WorkflowCompletedEvent(BaseRunResponseEvent):
     event: str = RunEvent.workflow_completed.value
-
     content: Optional[Any] = None
     content_type: str = "str"
 
@@ -233,15 +214,15 @@ class RunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
-    run_state: RunState = RunState.running
+    status: RunStatus = RunStatus.running
 
     @property
     def is_paused(self):
-        return self.run_state == RunState.paused
+        return self.status == RunStatus.paused
 
     @property
     def is_cancelled(self):
-        return self.run_state == RunState.cancelled
+        return self.status == RunStatus.cancelled
 
     @property
     def tools_requiring_confirmation(self):
@@ -262,6 +243,9 @@ class RunResponse:
             if v is not None
             and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
+
+        _dict["status"] = self.status.value
+
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
