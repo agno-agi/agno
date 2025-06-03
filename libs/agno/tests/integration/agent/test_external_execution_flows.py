@@ -13,7 +13,6 @@ def test_tool_call_requires_external_execution():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -41,7 +40,6 @@ def test_tool_call_requires_external_execution_stream():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -81,7 +79,6 @@ async def test_tool_call_requires_external_execution_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -111,7 +108,6 @@ def test_tool_call_requires_external_execution_error():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -133,7 +129,6 @@ async def test_tool_call_requires_external_execution_stream_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -175,7 +170,6 @@ def test_tool_call_multiple_requires_external_execution():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather, get_activities],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

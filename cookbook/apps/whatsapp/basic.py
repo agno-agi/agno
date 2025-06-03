@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.models.openai import OpenAIChat
 
 basic_agent = Agent(
