@@ -170,9 +170,7 @@ class ContentPlanningWorkflow(Workflow):
         if response:
             return RunResponse(content=response)
         else:
-            return RunResponse(
-                content="Failed to schedule content."
-            )
+            return RunResponse(content="Failed to schedule content.")
 
     def run(self, blog_post_url, post_type) -> RunResponse:
         """

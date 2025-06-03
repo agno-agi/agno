@@ -4,9 +4,9 @@ from agno.exceptions import RunCancelledException
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.base import RunResponseExtraData
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 
 
 def create_panel(content, title, border_style="blue"):
@@ -29,7 +29,7 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
     return escaped_content
 
 
-def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
+def check_if_run_cancelled(run_response: Union[RunResponse, RunResponseEvent, TeamRunResponse, TeamRunResponseEvent]):
     if run_response.is_cancelled:
         raise RunCancelledException()
 

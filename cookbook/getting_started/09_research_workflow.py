@@ -213,9 +213,7 @@ class ResearchReportGenerator(Workflow):
         if use_cached_report:
             cached_report = self.get_cached_report(topic)
             if cached_report:
-                yield WorkflowCompletedEvent(
-                    content=cached_report
-                )
+                yield WorkflowCompletedEvent(content=cached_report)
                 return
 
         # Search the web for articles on the topic

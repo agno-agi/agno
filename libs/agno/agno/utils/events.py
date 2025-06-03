@@ -1,42 +1,39 @@
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.response import (
-    RunResponseStartedEvent,
-    RunResponse,
-    RunResponseCompletedEvent,
-    RunResponsePausedEvent,
-    RunResponseContentEvent,
-    RunResponseErrorEvent,
-    RunResponseCancelledEvent,
-    RunResponseContinuedEvent,
+    MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
-    ReasoningCompletedEvent,
-    ToolCallStartedEvent,
+    RunResponse,
+    RunResponseCancelledEvent,
+    RunResponseCompletedEvent,
+    RunResponseContentEvent,
+    RunResponseContinuedEvent,
+    RunResponseErrorEvent,
+    RunResponsePausedEvent,
+    RunResponseStartedEvent,
     ToolCallCompletedEvent,
-    MemoryUpdateCompletedEvent,
+    ToolCallStartedEvent,
 )
-from agno.run.team import TeamRunResponse
-from agno.run.team import RunResponseStartedEvent as TeamRunResponseStartedEvent
+from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
+from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
+from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
+from agno.run.team import RunResponseCancelledEvent as TeamRunResponseCancelledEvent
 from agno.run.team import RunResponseCompletedEvent as TeamRunResponseCompletedEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.team import RunResponseCancelledEvent as TeamRunResponseCancelledEvent
-from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
-from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
-from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
-from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
-from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
-from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.team import RunResponseStartedEvent as TeamRunResponseStartedEvent
+from agno.run.team import TeamRunResponse
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
-
-
-
+from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
 
 def create_team_run_response_started_event(from_run_response: TeamRunResponse) -> TeamRunResponseStartedEvent:
@@ -58,6 +55,7 @@ def create_run_response_started_event(from_run_response: RunResponse) -> RunResp
         model_provider=from_run_response.model_provider,  # type: ignore
     )
 
+
 def create_team_run_response_completed_event(from_run_response: TeamRunResponse) -> TeamRunResponseCompletedEvent:
     return TeamRunResponseCompletedEvent(
         session_id=from_run_response.session_id,
@@ -72,7 +70,9 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         extra_data=from_run_response.extra_data,  # type: ignore
+        member_responses=from_run_response.member_responses,  # type: ignore
     )
+
 
 def create_run_response_completed_event(from_run_response: RunResponse) -> RunResponseCompletedEvent:
     return RunResponseCompletedEvent(
@@ -89,6 +89,7 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         response_audio=from_run_response.response_audio,  # type: ignore
         extra_data=from_run_response.extra_data,  # type: ignore
     )
+
 
 def create_run_response_paused_event(
     from_run_response: RunResponse, tools: List[ToolExecution]
@@ -117,6 +118,7 @@ def create_team_run_response_error_event(from_run_response: TeamRunResponse, err
         content=error,
     )
 
+
 def create_run_response_error_event(from_run_response: RunResponse, error: str) -> RunResponseErrorEvent:
     return RunResponseErrorEvent(
         session_id=from_run_response.session_id,
@@ -125,7 +127,10 @@ def create_run_response_error_event(from_run_response: RunResponse, error: str) 
         content=error,
     )
 
-def create_team_run_response_cancelled_event(from_run_response: TeamRunResponse, reason: str) -> TeamRunResponseCancelledEvent:
+
+def create_team_run_response_cancelled_event(
+    from_run_response: TeamRunResponse, reason: str
+) -> TeamRunResponseCancelledEvent:
     return TeamRunResponseCancelledEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
@@ -133,15 +138,15 @@ def create_team_run_response_cancelled_event(from_run_response: TeamRunResponse,
         reason=reason,
     )
 
-def create_run_response_cancelled_event(
-    from_run_response: RunResponse, reason: str
-) -> RunResponseCancelledEvent:
+
+def create_run_response_cancelled_event(from_run_response: RunResponse, reason: str) -> RunResponseCancelledEvent:
     return RunResponseCancelledEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,
         run_id=from_run_response.run_id,
         reason=reason,
     )
+
 
 def create_memory_update_started_event(from_run_response: RunResponse) -> MemoryUpdateStartedEvent:
     return MemoryUpdateStartedEvent(
@@ -150,12 +155,14 @@ def create_memory_update_started_event(from_run_response: RunResponse) -> Memory
         run_id=from_run_response.run_id,
     )
 
+
 def create_team_memory_update_started_event(from_run_response: TeamRunResponse) -> TeamMemoryUpdateStartedEvent:
     return TeamMemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
         run_id=from_run_response.run_id,
     )
+
 
 def create_memory_update_completed_event(from_run_response: RunResponse) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
@@ -164,6 +171,7 @@ def create_memory_update_completed_event(from_run_response: RunResponse) -> Memo
         run_id=from_run_response.run_id,
     )
 
+
 def create_team_memory_update_completed_event(from_run_response: TeamRunResponse) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
@@ -171,12 +179,14 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunResponse
         run_id=from_run_response.run_id,
     )
 
+
 def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningStartedEvent:
     return ReasoningStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,
         run_id=from_run_response.run_id,
     )
+
 
 def create_team_reasoning_started_event(from_run_response: TeamRunResponse) -> TeamReasoningStartedEvent:
     return TeamReasoningStartedEvent(
@@ -198,7 +208,10 @@ def create_reasoning_step_event(
         reasoning_content=reasoning_content,
     )
 
-def create_team_reasoning_step_event(from_run_response: TeamRunResponse, reasoning_step: ReasoningStep, reasoning_content: str) -> TeamReasoningStepEvent:
+
+def create_team_reasoning_step_event(
+    from_run_response: TeamRunResponse, reasoning_step: ReasoningStep, reasoning_content: str
+) -> TeamReasoningStepEvent:
     return TeamReasoningStepEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
@@ -220,7 +233,10 @@ def create_reasoning_completed_event(
         content_type=content_type,
     )
 
-def create_team_reasoning_completed_event(from_run_response: TeamRunResponse, content: Optional[Any] = None, content_type: Optional[str] = None) -> TeamReasoningCompletedEvent:
+
+def create_team_reasoning_completed_event(
+    from_run_response: TeamRunResponse, content: Optional[Any] = None, content_type: Optional[str] = None
+) -> TeamReasoningCompletedEvent:
     return TeamReasoningCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
@@ -238,7 +254,10 @@ def create_tool_call_started_event(from_run_response: RunResponse, tool: ToolExe
         tool=tool,
     )
 
-def create_team_tool_call_started_event(from_run_response: TeamRunResponse, tool: ToolExecution) -> TeamToolCallStartedEvent:
+
+def create_team_tool_call_started_event(
+    from_run_response: TeamRunResponse, tool: ToolExecution
+) -> TeamToolCallStartedEvent:
     return TeamToolCallStartedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
@@ -261,7 +280,10 @@ def create_tool_call_completed_event(
         audio=from_run_response.audio,
     )
 
-def create_team_tool_call_completed_event(from_run_response: TeamRunResponse, tool: ToolExecution, content: str) -> TeamToolCallCompletedEvent:
+
+def create_team_tool_call_completed_event(
+    from_run_response: TeamRunResponse, tool: ToolExecution, content: str
+) -> TeamToolCallCompletedEvent:
     return TeamToolCallCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,
@@ -309,7 +331,7 @@ def create_team_run_response_content_event(
     thinking_combined = (thinking or "") + (redacted_thinking or "")
     return TeamRunResponseContentEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        team_id=from_run_response.team_id,
         run_id=from_run_response.run_id,
         content=content,
         thinking=thinking_combined,
@@ -318,5 +340,3 @@ def create_team_run_response_content_event(
         image=image,
         extra_data=from_run_response.extra_data,
     )
-
-

@@ -40,10 +40,7 @@ def agent_chat_response_streamer(
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = RunResponse(
-            content=str(e),
-            run_state=RunState.error
-        )
+        error_response = RunResponse(content=str(e), run_state=RunState.error)
         yield error_response.to_json()
         return
 

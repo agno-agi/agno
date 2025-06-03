@@ -241,10 +241,7 @@ class StartupIdeaValidator(Workflow):
             )
         )
 
-        yield WorkflowCompletedEvent(
-            run_id=self.run_id,
-            content=final_response.content
-        )
+        yield WorkflowCompletedEvent(run_id=self.run_id, content=final_response.content)
 
 
 # Run the workflow if the script is executed directly

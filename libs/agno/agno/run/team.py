@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
+from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunState
 from agno.run.response import RunResponse
-from agno.run.base import RunResponseExtraData, RunState, BaseRunResponseEvent
 
 
 class RunEvent(str, Enum):
@@ -82,6 +82,8 @@ class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
 
     extra_data: Optional[RunResponseExtraData] = None
 
+    member_responses: List[Union["TeamRunResponse", RunResponse]]
+
 
 @dataclass(kw_only=True)
 class RunResponseErrorEvent(BaseTeamRunResponseEvent):
@@ -146,7 +148,6 @@ class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
-
 
 
 TeamRunResponseEvent = Union[

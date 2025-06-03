@@ -1,12 +1,12 @@
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.media import ImageArtifact, VideoArtifact, AudioArtifact, AudioResponse
-from agno.models.message import MessageReferences, Message, Citations
+from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
@@ -24,16 +24,19 @@ class BaseRunResponseEvent:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages",
-                          "tools",
-                          "tool",
-                          "extra_data",
-                          "image",
-                          "images",
-                          "videos",
-                          "audio",
-                          "response_audio",
-                          "citations"]
+            and k
+            not in [
+                "messages",
+                "tools",
+                "tool",
+                "extra_data",
+                "image",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+                "citations",
+            ]
         }
         if hasattr(self, "messages") and self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -119,6 +122,10 @@ class BaseRunResponseEvent:
     def is_paused(self):
         return False
 
+    @property
+    def is_cancelled(self):
+        return False
+
 
 @dataclass
 class RunResponseExtraData:
@@ -167,6 +174,7 @@ class RunResponseExtraData:
 
 class RunState(str, Enum):
     """State of the main run response"""
+
     running = "RUNNING"
     paused = "PAUSED"
     cancelled = "CANCELLED"

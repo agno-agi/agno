@@ -118,9 +118,7 @@ if __name__ == "__main__":
 
         # Create final response with combined content
         if final_content:
-            final_response = RunResponse(
-                content="".join(final_content)
-            )
+            final_response = RunResponse(content="".join(final_content))
             # Pretty print the final response
             pprint_run_response(final_response, markdown=True, show_time=True)
 

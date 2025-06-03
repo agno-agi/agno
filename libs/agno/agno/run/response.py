@@ -8,12 +8,13 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.run.base import RunResponseExtraData, BaseRunResponseEvent, RunState
+from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunState
 from agno.utils.log import logger
 
 
 class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
+
     run_started = "RunStarted"
     run_response_content = "RunResponseContent"
     run_completed = "RunCompleted"
@@ -36,6 +37,7 @@ class RunEvent(str, Enum):
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
 
+
 @dataclass(kw_only=True)
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     agent_id: Optional[str] = None
@@ -54,6 +56,7 @@ class RunResponseStartedEvent(BaseAgentRunResponseEvent):
 @dataclass(kw_only=True)
 class RunResponseContentEvent(BaseAgentRunResponseEvent):
     """Main event for each delta of the RunResponse"""
+
     event: str = RunEvent.run_response_content.value
 
     content: Optional[Any] = None
@@ -97,7 +100,6 @@ class RunResponsePausedEvent(BaseAgentRunResponseEvent):
         return True
 
 
-
 @dataclass(kw_only=True)
 class RunResponseContinuedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_continued.value
@@ -116,6 +118,10 @@ class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
 
     reason: Optional[str] = None
 
+    @property
+    def is_cancelled(self):
+        return True
+
 
 @dataclass(kw_only=True)
 class MemoryUpdateStartedEvent(BaseAgentRunResponseEvent):
@@ -125,7 +131,6 @@ class MemoryUpdateStartedEvent(BaseAgentRunResponseEvent):
 @dataclass(kw_only=True)
 class MemoryUpdateCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.memory_update_completed.value
-
 
 
 @dataclass(kw_only=True)
@@ -150,12 +155,12 @@ class ReasoningCompletedEvent(BaseAgentRunResponseEvent):
     content_type: str = "str"
 
 
-
 @dataclass(kw_only=True)
 class ToolCallStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
 
     tool: ToolExecution
+
 
 @dataclass(kw_only=True)
 class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
@@ -169,12 +174,9 @@ class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
-
-
 @dataclass(kw_only=True)
 class WorkflowRunResponseStartedEvent(BaseRunResponseEvent):
     event: str = RunEvent.run_started.value
-
 
 
 @dataclass(kw_only=True)

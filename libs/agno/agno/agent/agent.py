@@ -37,20 +37,34 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.run.base import RunResponseExtraData, RunState
 from agno.run.messages import RunMessages
 from agno.run.response import (
     RunEvent,
     RunResponse,
     RunResponseEvent,
 )
-from agno.run.base import RunResponseExtraData, RunState
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.events import create_reasoning_completed_event, create_reasoning_step_event, create_reasoning_started_event, create_tool_call_started_event, create_tool_call_completed_event, create_run_response_content_event, create_run_response_completed_event, create_run_response_cancelled_event, create_run_response_started_event, create_run_response_error_event, create_run_response_continued_event, create_run_response_paused_event, create_memory_update_started_event, \
-    create_memory_update_completed_event
+from agno.utils.events import (
+    create_memory_update_completed_event,
+    create_memory_update_started_event,
+    create_reasoning_completed_event,
+    create_reasoning_started_event,
+    create_reasoning_step_event,
+    create_run_response_cancelled_event,
+    create_run_response_completed_event,
+    create_run_response_content_event,
+    create_run_response_continued_event,
+    create_run_response_error_event,
+    create_run_response_paused_event,
+    create_run_response_started_event,
+    create_tool_call_completed_event,
+    create_tool_call_started_event,
+)
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -62,7 +76,7 @@ from agno.utils.log import (
 )
 from agno.utils.message import get_text_from_message
 from agno.utils.prompts import get_json_output_prompt
-from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls, create_paused_run_response_panel
+from agno.utils.response import create_panel, create_paused_run_response_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -1024,7 +1038,9 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 if stream and self.is_streamable:
-                    return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
+                    return self._generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Operation cancelled by user")
+                    )
                 else:
                     return self.create_run_response(
                         run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1328,7 +1344,6 @@ class Agent:
 
         # Register Agent
         asyncio.create_task(self._aregister_agent())
-
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -1696,7 +1711,9 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 if stream and self.is_streamable:
-                    return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
+                    return self._generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Operation cancelled by user")
+                    )
                 else:
                     return self.create_run_response(
                         run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1830,9 +1847,7 @@ class Agent:
             yield create_run_response_continued_event(run_response)
 
         # 1. Handle the updated tools
-        yield from self._handle_tool_call_updates_stream(
-            run_response=run_response, run_messages=run_messages
-        )
+        yield from self._handle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages)
 
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
@@ -2252,9 +2267,7 @@ class Agent:
             yield create_run_response_continued_event(run_response)
 
         # 1. Handle the updated tools
-        async for event in self._ahandle_tool_call_updates_stream(
-            run_response=run_response, run_messages=run_messages
-        ):
+        async for event in self._ahandle_tool_call_updates_stream(run_response=run_response, run_messages=run_messages):
             yield event
 
         # Get the index of the last "user" message in messages_for_run
@@ -2433,9 +2446,7 @@ class Agent:
             )
         )
 
-    def _run_tool(
-        self, run_messages: RunMessages, tool: ToolExecution
-    ) -> Iterator[RunResponseEvent]:
+    def _run_tool(self, run_messages: RunMessages, tool: ToolExecution) -> Iterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
         # Execute the tool
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
@@ -2452,7 +2463,9 @@ class Agent:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=call_result.content)
+                yield create_tool_call_completed_event(
+                    from_run_response=self.run_response, tool=tool, content=call_result.content
+                )
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -2469,7 +2482,9 @@ class Agent:
         run_messages.messages.append(function_call_result)
 
     async def _arun_tool(
-        self, run_messages: RunMessages, tool: ToolExecution,
+        self,
+        run_messages: RunMessages,
+        tool: ToolExecution,
     ) -> AsyncIterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
         # Execute the tool
@@ -2487,7 +2502,9 @@ class Agent:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=call_result.content)
+                yield create_tool_call_completed_event(
+                    from_run_response=self.run_response, tool=tool, content=call_result.content
+                )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -2828,8 +2845,7 @@ class Agent:
                 self.memory.update_summary()
 
         elif isinstance(self.memory, Memory):
-            yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages, stream_intermediate_steps)  # type: ignore
-
+            yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
     async def _aupdate_memory(
         self,
@@ -2883,7 +2899,7 @@ class Agent:
                 await self.memory.aupdate_summary()
 
         elif isinstance(self.memory, Memory):
-            async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id, messages, stream_intermediate_steps):  # type: ignore
+            async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id, messages):  # type: ignore
                 yield event
 
     def _handle_model_response_stream(
@@ -3172,16 +3188,15 @@ class Agent:
 
             # Yield each tool call completed event
             for tool in tool_executions_list:
-                yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=model_response_chunk.content)
-
+                yield create_tool_call_completed_event(
+                    from_run_response=self.run_response, tool=tool, content=model_response_chunk.content
+                )
 
     def _generator_wrapper(self, event: RunResponseEvent) -> Iterator[RunResponseEvent]:
         yield event
 
     async def _async_generator_wrapper(self, event: RunResponseEvent) -> AsyncIterator[RunResponseEvent]:
         yield event
-
-
 
     def create_run_response(
         self,
@@ -3235,7 +3250,7 @@ class Agent:
             images=images,
             videos=videos,
             citations=citations,
-            response_audio=response_audio
+            response_audio=response_audio,
         )
         if content_type is not None:
             rr.content_type = content_type
@@ -3266,7 +3281,6 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
-        stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -3277,7 +3291,6 @@ class Agent:
 
             # Create user memories from single message
             if self.enable_user_memories and run_messages.user_message is not None:
-
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
@@ -3286,6 +3299,69 @@ class Agent:
                         user_id=user_id,
                     )
                 )
+
+                # Parse messages if provided
+                if messages is not None and len(messages) > 0:
+                    parsed_messages = []
+                    for _im in messages:
+                        if isinstance(_im, Message):
+                            parsed_messages.append(_im)
+                        elif isinstance(_im, dict):
+                            try:
+                                parsed_messages.append(Message(**_im))
+                            except Exception as e:
+                                log_warning(f"Failed to validate message during memory update: {e}")
+                        else:
+                            log_warning(f"Unsupported message type: {type(_im)}")
+                            continue
+
+                    if len(parsed_messages) > 0:
+                        futures.append(
+                            executor.submit(self.memory.create_user_memories, messages=parsed_messages, user_id=user_id)
+                        )
+                    else:
+                        log_warning("Unable to add messages to memory")
+
+            # Create session summary
+            if self.enable_session_summaries:
+                log_debug("Creating session summary.")
+                futures.append(
+                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                )
+
+            if futures:
+                if self.stream_intermediate_steps:
+                    yield create_memory_update_started_event(from_run_response=self.run_response)
+
+                # Wait for all operations to complete and handle any errors
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        log_warning(f"Error in memory/summary operation: {str(e)}")
+
+                if self.stream_intermediate_steps:
+                    yield create_memory_update_completed_event(from_run_response=self.run_response)
+
+    async def _amake_memories_and_summaries(
+        self,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        messages: Optional[List[Message]] = None,
+    ) -> AsyncIterator[RunResponseEvent]:
+        self.memory = cast(Memory, self.memory)
+        tasks = []
+
+        # Create user memories from single message
+        if self.enable_user_memories and run_messages.user_message is not None:
+            log_debug("Creating user memories.")
+
+            tasks.append(
+                self.memory.acreate_user_memories(
+                    message=run_messages.user_message.get_content_string(), user_id=user_id
+                )
+            )
 
             # Parse messages if provided
             if messages is not None and len(messages) > 0:
@@ -3303,92 +3379,27 @@ class Agent:
                         continue
 
                 if len(parsed_messages) > 0:
-                    futures.append(
-                        executor.submit(self.memory.create_user_memories, messages=parsed_messages, user_id=user_id)
-                    )
+                    tasks.append(self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id))
                 else:
                     log_warning("Unable to add messages to memory")
-
-            if stream_intermediate_steps:
-                yield create_memory_update_completed_event(from_run_response=self.run_response)
-
-            # Create session summary
-            if self.enable_session_summaries:
-                log_debug("Creating session summary.")
-                futures.append(
-                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
-                )
-            if futures and stream_intermediate_steps:
-                yield create_memory_update_started_event(from_run_response=self.run_response)
-
-            # Wait for all operations to complete and handle any errors
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    log_warning(f"Error in memory/summary operation: {str(e)}")
-
-            if futures and stream_intermediate_steps:
-                yield create_memory_update_completed_event(from_run_response=self.run_response)
-
-    async def _amake_memories_and_summaries(
-        self,
-        run_messages: RunMessages,
-        session_id: str,
-        user_id: Optional[str] = None,
-        messages: Optional[List[Message]] = None,
-        stream_intermediate_steps: bool = False,
-    ) -> AsyncIterator[RunResponseEvent]:
-        self.memory = cast(Memory, self.memory)
-        tasks = []
-
-        # Create user memories from single message
-        if self.enable_user_memories and run_messages.user_message is not None:
-            log_debug("Creating user memories.")
-
-            tasks.append(
-                self.memory.acreate_user_memories(
-                    message=run_messages.user_message.get_content_string(), user_id=user_id
-                )
-            )
-
-        # Parse messages if provided
-        if messages is not None and len(messages) > 0:
-            parsed_messages = []
-            for _im in messages:
-                if isinstance(_im, Message):
-                    parsed_messages.append(_im)
-                elif isinstance(_im, dict):
-                    try:
-                        parsed_messages.append(Message(**_im))
-                    except Exception as e:
-                        log_warning(f"Failed to validate message during memory update: {e}")
-                else:
-                    log_warning(f"Unsupported message type: {type(_im)}")
-                    continue
-
-            if len(parsed_messages) > 0:
-                tasks.append(self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id))
-            else:
-                log_warning("Unable to add messages to memory")
 
         # Create session summary
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
             tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
 
-        if tasks and stream_intermediate_steps:
-            yield create_memory_update_started_event(from_run_response=self.run_response)
-
-        # Execute all tasks concurrently and handle any errors
         if tasks:
+            if self.stream_intermediate_steps:
+                yield create_memory_update_started_event(from_run_response=self.run_response)
+
+            # Execute all tasks concurrently and handle any errors
             try:
                 await asyncio.gather(*tasks)
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
 
-        if tasks and stream_intermediate_steps:
-            yield create_memory_update_completed_event(from_run_response=self.run_response)
+            if self.stream_intermediate_steps:
+                yield create_memory_update_completed_event(from_run_response=self.run_response)
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -3865,7 +3876,9 @@ class Agent:
                         from agno.memory.memory import Memory as AgentUserMemory
 
                         try:
-                            self.memory.memories = [AgentUserMemory.model_validate(m) for m in session.memory["memories"]]
+                            self.memory.memories = [
+                                AgentUserMemory.model_validate(m) for m in session.memory["memories"]
+                            ]
                         except Exception as e:
                             log_warning(f"Failed to load user memories: {e}")
                     if self.memory.create_user_memories:
@@ -5416,9 +5429,7 @@ class Agent:
             async for _ in reason_generator:
                 pass
 
-    async def _ahandle_reasoning_stream(
-        self, run_messages: RunMessages
-    ) -> AsyncIterator[RunResponseEvent]:
+    async def _ahandle_reasoning_stream(self, run_messages: RunMessages) -> AsyncIterator[RunResponseEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self.areason(run_messages=run_messages)
             async for item in reason_generator:
@@ -6558,7 +6569,11 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponseEvent) and resp.citations is not None and resp.citations.urls is not None:
+                    if (
+                        isinstance(resp, RunResponseEvent)
+                        and resp.citations is not None
+                        and resp.citations.urls is not None
+                    ):
                         md_content = "\n".join(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(resp.citations.urls)
@@ -6973,7 +6988,11 @@ class Agent:
                     if render:
                         live_log.update(Group(*panels))
 
-                    if isinstance(resp, RunResponseEvent) and resp.citations is not None and resp.citations.urls is not None:
+                    if (
+                        isinstance(resp, RunResponseEvent)
+                        and resp.citations is not None
+                        and resp.citations.urls is not None
+                    ):
                         md_content = "\n".join(
                             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                             for i, citation in enumerate(resp.citations.urls)
@@ -7188,7 +7207,6 @@ class Agent:
                 # Final update to remove the "Thinking..." status
                 panels = [p for p in panels if not isinstance(p, Status)]
                 live_log.update(Group(*panels))
-
 
     def update_reasoning_content_from_tool_call(
         self, tool_name: str, tool_args: Dict[str, Any]
