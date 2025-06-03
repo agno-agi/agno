@@ -5,6 +5,8 @@ from agno.app.base import BaseAPIApp
 
 
 class AGUIApp(BaseAPIApp):
+    type = "agui"
+
     def get_async_router(self) -> APIRouter:
         return get_async_agui_router(agent=self.agent, team=self.team)
 

@@ -33,19 +33,7 @@ pip install ag-ui-protocol
 
 ### Run your backend
 
-Now you need to run a `AGUIApp` exposing your Agent. You can run this example file:
-```python
-from agno.agent.agent import Agent
-from agno.app.agui.app import AGUIApp
-from agno.models.openai import OpenAIChat
-
-# Setup the Agno Agent
-chat_agent = Agent(model=OpenAIChat(id="gpt-4o"))
-
-# Setup the AG-UI App
-agui_app = AGUIApp(agent=chat_agent)
-agui_app.serve(app="basic:app", port=8000, reload=True)
-```
+Now you need to run a `AGUIApp` exposing your Agent. You can run the `cookbook/apps/agui/basic.py` example!
 
 ## Run your frontend
 
