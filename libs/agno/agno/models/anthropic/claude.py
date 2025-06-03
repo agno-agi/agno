@@ -74,6 +74,13 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
+
+    # Enhanced caching parameters
+    enable_prompt_caching: Optional[bool] = False
+    cache_tool_definitions: Optional[bool] = False
+    cache_messages: Optional[Dict[str, Any]] = None
+    cache_ttl: Optional[str] = "5m"
+
     request_params: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
@@ -95,6 +102,12 @@ class Claude(Model):
 
         # Add API key to client parameters
         client_params["api_key"] = self.api_key
+
+        # Add beta header for extended cache duration if needed
+        if self.cache_ttl == "1h" or self.extended_cache_time:
+            if self.default_headers is None:
+                self.default_headers = {}
+            self.default_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
 
         # Add additional client parameters
         if self.client_params is not None:
@@ -151,33 +164,125 @@ class Claude(Model):
             _request_params.update(self.request_params)
         return _request_params
 
+    def _create_cache_control(self, ttl: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a cache_control dictionary based on the model configuration.
+
+        Args:
+            ttl: Time-to-live for the cache (5m or 1h). If None, uses model default.
+
+        Returns:
+            Dict containing cache_control configuration
+        """
+        cache_ttl = ttl or self.cache_ttl or "5m"
+
+        cache_control = {"type": "ephemeral"}
+
+        # Add TTL if not default 5m or if extended_cache_time is enabled
+        if cache_ttl == "1h" or self.extended_cache_time:
+            cache_control["ttl"] = "1h"
+        elif cache_ttl != "5m":
+            cache_control["ttl"] = cache_ttl
+
+        return cache_control
+
     def _prepare_request_kwargs(
-        self, system_message: str, tools: Optional[List[Dict[str, Any]]] = None
+        self,
+        system_message: str,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
 
         Args:
             system_message (str): The concatenated system messages.
+            tools: Tool definitions to potentially cache
+            messages: Message history to potentially cache
 
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
         request_kwargs = self.request_kwargs.copy()
+
+        # Handle system message caching
         if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
+            if self.cache_system_prompt or self.enable_prompt_caching:
+                cache_control = self._create_cache_control()
                 request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
+        # Handle tool caching
         if tools:
-            request_kwargs["tools"] = self._format_tools_for_model(tools)
+            formatted_tools = self._format_tools_for_model(tools)
+            if self.cache_tool_definitions and formatted_tools:
+                # Add cache_control to the last tool to cache all tools
+                if len(formatted_tools) > 0:
+                    formatted_tools[-1]["cache_control"] = self._create_cache_control()
+            request_kwargs["tools"] = formatted_tools
+
+        # Handle message caching
+        if messages and self.cache_messages:
+            cached_messages = self._apply_message_caching(messages)
+            # Note: messages are handled by the invoke methods, this is for reference
+
         return request_kwargs
+
+    def _apply_message_caching(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Apply caching to messages based on cache_messages configuration.
+
+        Args:
+            messages: List of message dictionaries
+
+        Returns:
+            List of messages with cache_control applied where specified
+        """
+        if not self.cache_messages:
+            return messages
+
+        cached_messages = messages.copy()
+
+        # Apply caching based on configuration
+        if isinstance(self.cache_messages, dict):
+            cache_indices = self.cache_messages.get("indices", [])
+            cache_ttl = self.cache_messages.get("ttl")
+            cache_last = self.cache_messages.get("cache_last", False)
+
+            # Cache specific message indices
+            for idx in cache_indices:
+                if 0 <= idx < len(cached_messages):
+                    if isinstance(cached_messages[idx].get("content"), list):
+                        # Add cache_control to the last content block
+                        content_blocks = cached_messages[idx]["content"]
+                        if content_blocks:
+                            content_blocks[-1]["cache_control"] = self._create_cache_control(cache_ttl)
+                    elif isinstance(cached_messages[idx].get("content"), str):
+                        # Convert string content to structured content with cache_control
+                        content_text = cached_messages[idx]["content"]
+                        cached_messages[idx]["content"] = [
+                            {
+                                "type": "text",
+                                "text": content_text,
+                                "cache_control": self._create_cache_control(cache_ttl),
+                            }
+                        ]
+
+            # Cache the last message if requested
+            if cache_last and cached_messages:
+                last_msg = cached_messages[-1]
+                if isinstance(last_msg.get("content"), list):
+                    content_blocks = last_msg["content"]
+                    if content_blocks:
+                        content_blocks[-1]["cache_control"] = self._create_cache_control(cache_ttl)
+                elif isinstance(last_msg.get("content"), str):
+                    content_text = last_msg["content"]
+                    cached_messages[-1]["content"] = [
+                        {"type": "text", "text": content_text, "cache_control": self._create_cache_control(cache_ttl)}
+                    ]
+
+        return cached_messages
 
     def _format_tools_for_model(self, tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
         """
@@ -198,7 +303,7 @@ class Claude(Model):
             required_params: List[str] = []
 
             for param_name, param_info in properties.items():
-                param_type = param_info.get("type", "")
+                param_type = param_info.get("type")
                 param_type_list: List[str] = [param_type] if isinstance(param_type, str) else param_type or []
 
                 if "null" not in param_type_list:
@@ -238,7 +343,12 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            # Apply message caching if enabled
+            if self.cache_messages:
+                chat_messages = self._apply_message_caching(chat_messages)
+
+            request_kwargs = self._prepare_request_kwargs(system_message, tools, chat_messages)
 
             if self.mcp_servers is not None:
                 return self.get_client().beta.messages.create(
@@ -289,7 +399,12 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+        # Apply message caching if enabled
+        if self.cache_messages:
+            chat_messages = self._apply_message_caching(chat_messages)
+
+        request_kwargs = self._prepare_request_kwargs(system_message, tools, chat_messages)
 
         try:
             if self.mcp_servers is not None:
@@ -339,7 +454,12 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            # Apply message caching if enabled
+            if self.cache_messages:
+                chat_messages = self._apply_message_caching(chat_messages)
+
+            request_kwargs = self._prepare_request_kwargs(system_message, tools, chat_messages)
 
             if self.mcp_servers is not None:
                 return await self.get_async_client().beta.messages.create(
@@ -391,7 +511,12 @@ class Claude(Model):
         """
         try:
             chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
+
+            # Apply message caching if enabled
+            if self.cache_messages:
+                chat_messages = self._apply_message_caching(chat_messages)
+
+            request_kwargs = self._prepare_request_kwargs(system_message, tools, chat_messages)
 
             if self.mcp_servers is not None:
                 async with self.get_async_client().beta.messages.stream(
@@ -524,14 +649,30 @@ class Claude(Model):
                         }
                     )
 
-        # Add usage metrics
+        # Enhanced usage metrics parsing with all cache-related fields
         if response.usage is not None:
-            model_response.response_usage = {
-                "cache_write_tokens": response.usage.cache_creation_input_tokens,
-                "cached_tokens": response.usage.cache_read_input_tokens,
+            usage_dict = {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
             }
+
+            # Cache-related metrics
+            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+
+            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+
+            # Enhanced cache metrics for 1-hour cache (beta feature)
+            if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
+                cache_creation = response.usage.cache_creation
+                if hasattr(cache_creation, "ephemeral_5m_input_tokens"):
+                    usage_dict["cache_5m_write_tokens"] = cache_creation.ephemeral_5m_input_tokens
+                if hasattr(cache_creation, "ephemeral_1h_input_tokens"):
+                    usage_dict["cache_1h_write_tokens"] = cache_creation.ephemeral_1h_input_tokens
+
+            model_response.response_usage = usage_dict
+
         return model_response
 
     def parse_provider_response_delta(
@@ -605,13 +746,29 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
+        # Enhanced usage metrics for streaming responses
         if hasattr(response, "usage") and response.usage is not None:
-            model_response.response_usage = {
-                "cache_write_tokens": response.usage.cache_creation_input_tokens or 0,
-                "cached_tokens": response.usage.cache_read_input_tokens or 0,
+            usage_dict = {
                 "input_tokens": response.usage.input_tokens or 0,
                 "output_tokens": response.usage.output_tokens or 0,
             }
+
+            # Cache-related metrics
+            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+
+            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+
+            # Enhanced cache metrics for 1-hour cache (beta feature)
+            if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
+                cache_creation = response.usage.cache_creation
+                if hasattr(cache_creation, "ephemeral_5m_input_tokens"):
+                    usage_dict["cache_5m_write_tokens"] = cache_creation.ephemeral_5m_input_tokens
+                if hasattr(cache_creation, "ephemeral_1h_input_tokens"):
+                    usage_dict["cache_1h_write_tokens"] = cache_creation.ephemeral_1h_input_tokens
+
+            model_response.response_usage = usage_dict
 
         # Capture the Beta response
         try:

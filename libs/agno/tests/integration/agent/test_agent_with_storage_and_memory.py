@@ -143,7 +143,9 @@ async def test_multi_user_multi_session_chat(memory_agent, agent_storage, memory
 
     # Chat with user 2
     await memory_agent.arun("Hi my name is John Doe.", user_id=user_2_id, session_id=user_2_session_1_id)
-    await memory_agent.arun("I love hiking and go hiking every weekend.", user_id=user_2_id, session_id=user_2_session_1_id)
+    await memory_agent.arun(
+        "I love hiking and go hiking every weekend.", user_id=user_2_id, session_id=user_2_session_1_id
+    )
 
     # Chat with user 3
     await memory_agent.arun("Hi my name is Jane Smith.", user_id=user_3_id, session_id=user_3_session_1_id)
