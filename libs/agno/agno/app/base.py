@@ -17,6 +17,8 @@ from agno.utils.log import log_debug, log_info
 
 
 class BaseAPIApp(ABC):
+    type: Optional[str] = None
+
     def __init__(
         self,
         agent: Optional[Agent] = None,
@@ -29,6 +31,7 @@ class BaseAPIApp(ABC):
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
+
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
 
@@ -190,7 +193,7 @@ class BaseAPIApp(ABC):
             ]
             if self.team
             else None,
-            "type": "fastapi",
+            "type": self.type,
             "description": self.description,
         }
         payload = {k: v for k, v in payload.items() if v is not None}
