@@ -42,14 +42,14 @@ from agno.run.response import (
     RunEvent,
     RunResponse,
     RunResponseEvent,
-    RunResponseExtraData,
 )
+from agno.run.base import RunResponseExtraData, RunState
 from agno.run.team import TeamRunResponse
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.events import create_reasoning_completed_event, create_reasoning_step_event, create_reasoning_started_event, create_tool_call_started_event, create_tool_call_completed_event, create_run_response_delta_event, create_run_response_completed_event, create_run_response_cancelled_event, create_run_response_started_event, create_run_response_error_event, create_run_response_continued_event, create_run_response_paused_event, create_memory_update_started_event, \
+from agno.utils.events import create_reasoning_completed_event, create_reasoning_step_event, create_reasoning_started_event, create_tool_call_started_event, create_tool_call_completed_event, create_run_response_content_event, create_run_response_completed_event, create_run_response_cancelled_event, create_run_response_started_event, create_run_response_error_event, create_run_response_continued_event, create_run_response_paused_event, create_memory_update_started_event, \
     create_memory_update_completed_event
 from agno.utils.log import (
     log_debug,
@@ -624,7 +624,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> RunResponse:
-        """Run the Agent and yield the RunResponse.
+        """Run the Agent and return the RunResponse.
 
         Steps:
         1. Reason about the task if reasoning is enabled
@@ -852,7 +852,7 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Initialize Session
         # Use the default user_id and session_id when necessary
         user_id = user_id if user_id is not None else self.user_id
@@ -937,7 +937,7 @@ class Agent:
         # Register Agent
         thread = Thread(target=self.register_agent)
         thread.start()
-        
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -949,10 +949,10 @@ class Agent:
 
         self.run_response = run_response
         self.run_id = run_id
-        
+
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
-        
+
         last_exception = None
         num_attempts = retries + 1
 
@@ -1027,7 +1027,7 @@ class Agent:
                     return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
                 else:
                     return self.create_run_response(
-                        event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -1245,7 +1245,7 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Initialize Session
         # Use the default user_id and session_id when necessary
         user_id = user_id if user_id is not None else self.user_id
@@ -1341,13 +1341,13 @@ class Agent:
 
         self.run_response = run_response
         self.run_id = run_id
-        
+
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
-        
+
         last_exception = None
         num_attempts = retries + 1
-        
+
         for attempt in range(num_attempts):
             try:
                 # Set run_input
@@ -1421,7 +1421,7 @@ class Agent:
                     )
                 else:
                     return self.create_run_response(
-                        event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -1505,7 +1505,7 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Initialize Session
         # Use the default user_id and session_id when necessary
         user_id = user_id if user_id is not None else self.user_id
@@ -1592,7 +1592,7 @@ class Agent:
             self.run_id = run_id
         else:
             self.run_response = cast(RunResponse, self.run_response)
-            self.run_response.event = RunEvent.run_response
+            self.run_response.run_state = RunState.running
             # We are continuing from a previous run_response in state
             run_response = self.run_response
             messages = self.run_response.messages or []
@@ -1653,8 +1653,8 @@ class Agent:
                 session_id=session_id,
             )
 
-            # Reset the event to run_response
-            run_response.event = RunEvent.run_response
+            # Reset the run state
+            run_response.run_state = RunState.running
 
             try:
                 if stream and self.is_streamable:
@@ -1699,7 +1699,7 @@ class Agent:
                     return self._generator_wrapper(create_run_response_cancelled_event(run_response, "Operation cancelled by user"))
                 else:
                     return self.create_run_response(
-                        event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -1799,7 +1799,7 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        run_response.event = RunEvent.run_response
+        run_response.run_state = RunState.running
 
         return run_response
 
@@ -1922,7 +1922,7 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Initialize Session
         # Use the default user_id and session_id when necessary
         user_id = user_id if user_id is not None else self.user_id
@@ -2010,7 +2010,7 @@ class Agent:
         else:
             # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
-            self.run_response.event = RunEvent.run_response
+            run_response.run_state = RunState.running
             run_response = self.run_response
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
@@ -2070,8 +2070,8 @@ class Agent:
                 session_id=session_id,
             )
 
-            # Reset the event to run_response
-            run_response.event = RunEvent.run_response
+            # Reset the run paused state
+            run_response.run_state = RunState.running
 
             try:
                 if stream and self.is_streamable:
@@ -2117,7 +2117,7 @@ class Agent:
                     )
                 else:
                     return self.create_run_response(
-                        event=RunEvent.run_cancelled, content="Operation cancelled by user", run_response=run_response
+                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
 
         # If we get here, all retries failed
@@ -2221,7 +2221,7 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        run_response.event = RunEvent.run_response
+        run_response.run_state = RunState.running
 
         return run_response
 
@@ -2322,7 +2322,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> RunResponse:
         # Set the run response to paused
-        run_response.event = RunEvent.run_paused
+        run_response.run_state = RunState.paused
 
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
@@ -2346,7 +2346,7 @@ class Agent:
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> Iterator[RunResponseEvent]:
         # Set the run response to paused
-        run_response.event = RunEvent.run_paused
+        run_response.run_state = RunState.paused
 
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
@@ -2453,7 +2453,7 @@ class Agent:
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 yield create_tool_call_completed_event(from_run_response=self.run_response, tool=tool, content=call_result.content)
-        
+
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -3040,7 +3040,7 @@ class Agent:
                 or model_response_chunk.redacted_thinking is not None
                 or model_response_chunk.citations is not None
             ):
-                yield create_run_response_delta_event(
+                yield create_run_response_content_event(
                     from_run_response=self.run_response,
                     content=model_response_chunk.content,
                     thinking=model_response_chunk.thinking,
@@ -3076,7 +3076,7 @@ class Agent:
                 )
                 run_response.created_at = model_response_chunk.created_at
 
-                yield create_run_response_delta_event(
+                yield create_run_response_content_event(
                     from_run_response=self.run_response,
                     response_audio=run_response.response_audio,
                 )
@@ -3084,7 +3084,7 @@ class Agent:
             if model_response_chunk.image is not None:
                 self.add_image(model_response_chunk.image)
 
-                yield create_run_response_delta_event(
+                yield create_run_response_content_event(
                     from_run_response=self.run_response,
                     image=model_response_chunk.image,
                 )
@@ -3191,7 +3191,7 @@ class Agent:
         thinking: Optional[str] = None,
         redacted_thinking: Optional[str] = None,
         reasoning_content: Optional[str] = None,
-        event: RunEvent = RunEvent.run_response,
+        run_state: RunState = RunState.running,
         content_type: Optional[str] = None,
         created_at: Optional[int] = None,
         citations: Optional[Citations] = None,
@@ -3224,6 +3224,7 @@ class Agent:
 
         rr = RunResponse(
             run_id=self.run_id,
+            run_state=run_state,
             session_id=session_id,
             agent_id=self.agent_id,
             content=content,
@@ -3234,8 +3235,7 @@ class Agent:
             images=images,
             videos=videos,
             citations=citations,
-            response_audio=response_audio,
-            event=event.value,
+            response_audio=response_audio
         )
         if content_type is not None:
             rr.content_type = content_type
@@ -3277,7 +3277,7 @@ class Agent:
 
             # Create user memories from single message
             if self.enable_user_memories and run_messages.user_message is not None:
-                
+
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
@@ -3308,7 +3308,7 @@ class Agent:
                     )
                 else:
                     log_warning("Unable to add messages to memory")
-                    
+
             if stream_intermediate_steps:
                 yield create_memory_update_completed_event(from_run_response=self.run_response)
 
@@ -3327,7 +3327,7 @@ class Agent:
                     future.result()
                 except Exception as e:
                     log_warning(f"Error in memory/summary operation: {str(e)}")
-            
+
             if futures and stream_intermediate_steps:
                 yield create_memory_update_completed_event(from_run_response=self.run_response)
 
@@ -3345,7 +3345,7 @@ class Agent:
         # Create user memories from single message
         if self.enable_user_memories and run_messages.user_message is not None:
             log_debug("Creating user memories.")
-            
+
             tasks.append(
                 self.memory.acreate_user_memories(
                     message=run_messages.user_message.get_content_string(), user_id=user_id
@@ -3386,7 +3386,7 @@ class Agent:
                 await asyncio.gather(*tasks)
             except Exception as e:
                 log_warning(f"Error in memory/summary operation: {str(e)}")
-    
+
         if tasks and stream_intermediate_steps:
             yield create_memory_update_completed_event(from_run_response=self.run_response)
 
@@ -6454,7 +6454,7 @@ class Agent:
                             panels.append(response_panel)
                             live_log.update(Group(*panels))
                             break
-                        if resp.event == RunEvent.run_response:
+                        if resp.event == RunEvent.run_response_content:
                             if isinstance(resp.content, str):
                                 _response_content += resp.content
                             if resp.thinking is not None:
@@ -6869,7 +6869,7 @@ class Agent:
                             live_log.update(Group(*panels))
                             break
 
-                        if resp.event == RunEvent.run_response:
+                        if resp.event == RunEvent.run_response_content:
                             if isinstance(resp.content, str):
                                 _response_content += resp.content
                             if resp.thinking is not None:

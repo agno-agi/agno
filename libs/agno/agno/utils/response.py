@@ -4,7 +4,8 @@ from agno.exceptions import RunCancelledException
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
+from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.base import RunResponseExtraData
 from agno.run.team import TeamRunResponse
 
 
@@ -29,7 +30,7 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
 
 
 def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
-    if run_response.event == RunEvent.run_cancelled:
+    if run_response.is_cancelled:
         raise RunCancelledException()
 
 
@@ -74,7 +75,7 @@ def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
     return formatted_tool_calls
 
 
-def create_paused_run_response_panel(run_response: RunResponse):
+def create_paused_run_response_panel(run_response: Union[RunResponseEvent, RunResponse]):
     from rich.text import Text
 
     tool_calls_content = Text("Run is paused. ")

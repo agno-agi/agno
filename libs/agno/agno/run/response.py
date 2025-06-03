@@ -6,17 +6,16 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Citations, Message, MessageReferences
+from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.reasoning.step import ReasoningStep
+from agno.run.base import RunResponseExtraData, BaseRunResponseEvent, RunState
 from agno.utils.log import logger
 
 
 class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
-
     run_started = "RunStarted"
-    run_response = "RunResponse"
+    run_response_content = "RunResponseContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
@@ -37,163 +36,13 @@ class RunEvent(str, Enum):
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
 
-
-@dataclass
-class RunResponseExtraData:
-    references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
-    reasoning_messages: Optional[List[Message]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {}
-        if self.add_messages is not None:
-            _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
-        if self.reasoning_messages is not None:
-            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
-        if self.reasoning_steps is not None:
-            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
-        if self.references is not None:
-            _dict["references"] = [r.model_dump() for r in self.references]
-        return _dict
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
-        add_messages = data.pop("add_messages", None)
-        if add_messages is not None:
-            add_messages = [Message.model_validate(message) for message in add_messages]
-
-        reasoning_steps = data.pop("reasoning_steps", None)
-        if reasoning_steps is not None:
-            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
-
-        reasoning_messages = data.pop("reasoning_messages", None)
-        if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
-
-        references = data.pop("references", None)
-        if references is not None:
-            references = [MessageReferences.model_validate(reference) for reference in references]
-
-        return cls(
-            add_messages=add_messages,
-            reasoning_steps=reasoning_steps,
-            reasoning_messages=reasoning_messages,
-            references=references,
-        )
+@dataclass(kw_only=True)
+class BaseAgentRunResponseEvent(BaseRunResponseEvent):
+    agent_id: Optional[str] = None
 
 
 @dataclass(kw_only=True)
-class BaseRunResponseEvent:
-    run_id: str
-    session_id: str
-    agent_id: str
-    event: str
-    created_at: int = field(default_factory=lambda: int(time()))
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k not in ["messages", 
-                          "tools", 
-                          "tool", 
-                          "extra_data", 
-                          "image", 
-                          "images",
-                          "videos", 
-                          "audio", 
-                          "response_audio", 
-                          "citations"]
-        }
-        if hasattr(self, "messages") and self.messages is not None:
-            _dict["messages"] = [m.to_dict() for m in self.messages]
-
-        if hasattr(self, "extra_data") and self.extra_data is not None:
-            _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
-            )
-
-        if hasattr(self, "images") and self.images is not None:
-            _dict["images"] = []
-            for img in self.images:
-                if isinstance(img, ImageArtifact):
-                    _dict["images"].append(img.to_dict())
-                else:
-                    _dict["images"].append(img)
-
-        if hasattr(self, "image") and self.image is not None:
-            if isinstance(self.image, ImageArtifact):
-                _dict["image"] = self.image.to_dict()
-            else:
-                _dict["image"] = self.image
-
-        if hasattr(self, "videos") and self.videos is not None:
-            _dict["videos"] = []
-            for vid in self.videos:
-                if isinstance(vid, VideoArtifact):
-                    _dict["videos"].append(vid.to_dict())
-                else:
-                    _dict["videos"].append(vid)
-
-        if hasattr(self, "audio") and self.audio is not None:
-            _dict["audio"] = []
-            for aud in self.audio:
-                if isinstance(aud, AudioArtifact):
-                    _dict["audio"].append(aud.to_dict())
-                else:
-                    _dict["audio"].append(aud)
-
-        if hasattr(self, "response_audio") and self.response_audio is not None:
-            if isinstance(self.response_audio, AudioResponse):
-                _dict["response_audio"] = self.response_audio.to_dict()
-            else:
-                _dict["response_audio"] = self.response_audio
-
-        if hasattr(self, "citations") and self.citations is not None:
-            if isinstance(self.citations, Citations):
-                _dict["citations"] = self.citations.model_dump(exclude_none=True)
-            else:
-                _dict["citations"] = self.citations
-
-        if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
-
-        if hasattr(self, "tools") and self.tools is not None:
-            _dict["tools"] = []
-            for tool in self.tools:
-                if isinstance(tool, ToolExecution):
-                    _dict["tools"].append(tool.to_dict())
-                else:
-                    _dict["tools"].append(tool)
-
-        if hasattr(self, "tool") and self.tool is not None:
-            if isinstance(self.tool, ToolExecution):
-                _dict["tool"] = self.tool.to_dict()
-            else:
-                _dict["tool"] = self.tool
-
-        return _dict
-
-    def to_json(self) -> str:
-        import json
-
-        try:
-            _dict = self.to_dict()
-        except Exception:
-            logger.error("Failed to convert response to json", exc_info=True)
-            raise
-
-        return json.dumps(_dict, indent=2)
-
-    @property
-    def is_paused(self):
-        return False
-
-
-@dataclass(kw_only=True)
-class RunResponseStartedEvent(BaseRunResponseEvent):
+class RunResponseStartedEvent(BaseAgentRunResponseEvent):
     """Event sent when the run starts"""
 
     event: str = RunEvent.run_started.value
@@ -203,9 +52,9 @@ class RunResponseStartedEvent(BaseRunResponseEvent):
 
 
 @dataclass(kw_only=True)
-class RunResponseDeltaEvent(BaseRunResponseEvent):
+class RunResponseContentEvent(BaseAgentRunResponseEvent):
     """Main event for each delta of the RunResponse"""
-    event: str = RunEvent.run_response.value
+    event: str = RunEvent.run_response_content.value
 
     content: Optional[Any] = None
     content_type: str = "str"
@@ -219,7 +68,7 @@ class RunResponseDeltaEvent(BaseRunResponseEvent):
 
 
 @dataclass(kw_only=True)
-class RunResponseCompletedEvent(BaseRunResponseEvent):
+class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_completed.value
 
     content: Optional[Any] = None
@@ -228,17 +77,17 @@ class RunResponseCompletedEvent(BaseRunResponseEvent):
     reasoning_content: Optional[str] = None
     thinking: Optional[str] = None
     citations: Optional[Citations] = None
-    
+
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    
+
     extra_data: Optional[RunResponseExtraData] = None
 
 
 @dataclass(kw_only=True)
-class RunResponsePausedEvent(BaseRunResponseEvent):
+class RunResponsePausedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_paused.value
 
     tools: List[ToolExecution]
@@ -250,42 +99,42 @@ class RunResponsePausedEvent(BaseRunResponseEvent):
 
 
 @dataclass(kw_only=True)
-class RunResponseContinuedEvent(BaseRunResponseEvent):
+class RunResponseContinuedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_continued.value
 
 
 @dataclass(kw_only=True)
-class RunResponseErrorEvent(BaseRunResponseEvent):
+class RunResponseErrorEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_error.value
 
-    error: Optional[str] = None
+    content: Optional[str] = None
 
 
 @dataclass(kw_only=True)
-class RunResponseCancelledEvent(BaseRunResponseEvent):
+class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_cancelled.value
 
     reason: Optional[str] = None
 
 
 @dataclass(kw_only=True)
-class MemoryUpdateStartedEvent(BaseRunResponseEvent):
+class MemoryUpdateStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.memory_update_started.value
 
 
 @dataclass(kw_only=True)
-class MemoryUpdateCompletedEvent(BaseRunResponseEvent):
+class MemoryUpdateCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.memory_update_completed.value
 
 
 
 @dataclass(kw_only=True)
-class ReasoningStartedEvent(BaseRunResponseEvent):
+class ReasoningStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_started.value
 
 
 @dataclass(kw_only=True)
-class ReasoningStepEvent(BaseRunResponseEvent):
+class ReasoningStepEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
 
     content: Any
@@ -294,7 +143,7 @@ class ReasoningStepEvent(BaseRunResponseEvent):
 
 
 @dataclass(kw_only=True)
-class ReasoningCompletedEvent(BaseRunResponseEvent):
+class ReasoningCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_completed.value
 
     content: Any
@@ -303,18 +152,18 @@ class ReasoningCompletedEvent(BaseRunResponseEvent):
 
 
 @dataclass(kw_only=True)
-class ToolCallStartedEvent(BaseRunResponseEvent):
+class ToolCallStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
 
     tool: ToolExecution
 
 @dataclass(kw_only=True)
-class ToolCallCompletedEvent(BaseRunResponseEvent):
+class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
 
     tool: ToolExecution
     content: str
-    
+
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
@@ -322,9 +171,23 @@ class ToolCallCompletedEvent(BaseRunResponseEvent):
 
 
 
+@dataclass(kw_only=True)
+class WorkflowRunResponseStartedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.run_started.value
+
+
+
+@dataclass(kw_only=True)
+class WorkflowCompletedEvent(BaseRunResponseEvent):
+    event: str = RunEvent.workflow_completed.value
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+
 RunResponseEvent = Union[
     RunResponseStartedEvent,
-    RunResponseDeltaEvent,
+    RunResponseContentEvent,
     RunResponseCompletedEvent,
     RunResponseErrorEvent,
     RunResponseCancelledEvent,
@@ -335,6 +198,8 @@ RunResponseEvent = Union[
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    WorkflowRunResponseStartedEvent,
+    WorkflowCompletedEvent,
 ]
 
 
@@ -346,7 +211,6 @@ class RunResponse:
     content_type: str = "str"
     thinking: Optional[str] = None
     reasoning_content: Optional[str] = None
-    event: str = RunEvent.run_response.value
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
@@ -365,11 +229,15 @@ class RunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    run_state: RunState = RunState.running
+
     @property
     def is_paused(self):
-        if self.event == RunEvent.run_paused:
-            return True
-        return False
+        return self.run_state == RunState.paused
+
+    @property
+    def is_cancelled(self):
+        return self.run_state == RunState.cancelled
 
     @property
     def tools_requiring_confirmation(self):

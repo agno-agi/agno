@@ -24,9 +24,9 @@ def test_basic_events():
     for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response}
+    assert event_counts.keys() == {RunEvent.run_response_content}
 
-    assert event_counts[RunEvent.run_response] > 1
+    assert event_counts[RunEvent.run_response_content] > 1
 
 
 @pytest.mark.asyncio
@@ -43,9 +43,9 @@ async def test_async_basic_events():
     async for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response}
+    assert event_counts.keys() == {RunEvent.run_response_content}
 
-    assert event_counts[RunEvent.run_response] > 1
+    assert event_counts[RunEvent.run_response_content] > 1
 
 
 def test_basic_intermediate_steps_events():
@@ -60,11 +60,11 @@ def test_basic_intermediate_steps_events():
 
     events = {}
     for run_response_delta in response_generator:
-        if not run_response_delta.event in events:
+        if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {RunEvent.run_started, RunEvent.run_response, RunEvent.run_completed}
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
 
     assert len(events[RunEvent.run_started]) == 1
     assert events[RunEvent.run_started][0].model == "gpt-4o-mini"
@@ -73,7 +73,7 @@ def test_basic_intermediate_steps_events():
     assert events[RunEvent.run_started][0].agent_id is not None
     assert events[RunEvent.run_started][0].run_id is not None
     assert events[RunEvent.run_started][0].created_at is not None
-    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
 
@@ -90,7 +90,7 @@ def test_intermediate_steps_with_tools():
 
     events = {}
     for run_response_delta in response_generator:
-        if not run_response_delta.event in events:
+        if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
@@ -98,12 +98,12 @@ def test_intermediate_steps_with_tools():
         RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response,
+        RunEvent.run_response_content,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.tool_call_started]) == 1
     assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
@@ -132,7 +132,7 @@ def test_intermediate_steps_with_reasoning():
 
     events = {}
     for run_response_delta in response_generator:
-        if not run_response_delta.event in events:
+        if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
@@ -143,12 +143,12 @@ def test_intermediate_steps_with_reasoning():
         RunEvent.reasoning_started,
         RunEvent.reasoning_completed,
         RunEvent.reasoning_step,
-        RunEvent.run_response,
+        RunEvent.run_response_content,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
@@ -181,7 +181,7 @@ def test_intermediate_steps_with_user_confirmation():
     # First until we hit a pause
     events = {}
     for run_response_delta in response_generator:
-        if not run_response_delta.event in events:
+        if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
@@ -207,7 +207,7 @@ def test_intermediate_steps_with_user_confirmation():
 
     events = {}
     for run_response_delta in response_generator:
-        if not run_response_delta.event in events:
+        if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
@@ -217,7 +217,7 @@ def test_intermediate_steps_with_user_confirmation():
         RunEvent.run_continued,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response,
+        RunEvent.run_response_content,
         RunEvent.run_completed,
     }
 
@@ -227,7 +227,7 @@ def test_intermediate_steps_with_user_confirmation():
     assert len(events[RunEvent.tool_call_completed]) == 1
     assert events[RunEvent.tool_call_completed][0].content is not None
     assert events[RunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response.is_paused is False
@@ -247,21 +247,21 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
 
     events = {}
-    for run_response in response_generator:
-        if not run_response.event in events:
-            events[run_response.event] = []
-        events[run_response.event].append(run_response)
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.run_response,
+        RunEvent.run_response_content,
         RunEvent.run_completed,
         RunEvent.memory_update_started,
         RunEvent.memory_update_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1

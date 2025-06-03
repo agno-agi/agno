@@ -9,7 +9,8 @@ from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.utils import process_audio, process_document, process_image, process_video
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.run.response import RunEvent
+from agno.run.base import RunState
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponse
 from agno.team.team import Team
 from agno.utils.log import logger
@@ -41,7 +42,7 @@ def agent_chat_response_streamer(
     except Exception as e:
         error_response = RunResponse(
             content=str(e),
-            event=RunEvent.run_error,
+            run_state=RunState.error
         )
         yield error_response.to_json()
         return
@@ -73,9 +74,8 @@ def team_chat_response_streamer(
             run_response_chunk = cast(TeamRunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return

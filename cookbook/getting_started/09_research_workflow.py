@@ -31,7 +31,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunEvent, RunResponse, Workflow
+from agno.workflow import RunResponse, Workflow, WorkflowCompletedEvent
 from pydantic import BaseModel, Field
 
 
@@ -213,8 +213,8 @@ class ResearchReportGenerator(Workflow):
         if use_cached_report:
             cached_report = self.get_cached_report(topic)
             if cached_report:
-                yield RunResponse(
-                    content=cached_report, event=RunEvent.workflow_completed
+                yield WorkflowCompletedEvent(
+                    content=cached_report
                 )
                 return
 
@@ -224,8 +224,7 @@ class ResearchReportGenerator(Workflow):
         )
         # If no search_results are found for the topic, end the workflow
         if search_results is None or len(search_results.articles) == 0:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
                 content=f"Sorry, could not find any articles on the topic: {topic}",
             )
             return

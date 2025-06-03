@@ -39,12 +39,14 @@ from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.messages import RunMessages
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunEvent, RunResponse
+from agno.run.base import RunResponseExtraData
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
+from agno.utils.events import create_team_reasoning_started_event, create_team_run_response_cancelled_event, create_team_run_response_content_event, create_team_reasoning_step_event, create_team_reasoning_completed_event, create_team_tool_call_started_event, create_team_tool_call_completed_event
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -224,15 +226,16 @@ class Team:
     # --- Team Reasoning ---
     reasoning: bool = False
     reasoning_model: Optional[Model] = None
+    reasoning_agent: Optional[Agent] = None
     reasoning_min_steps: int = 1
     reasoning_max_steps: int = 10
-    
+
     # --- Team Streaming ---
     # Stream the response from the Team
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Team
     stream_intermediate_steps: bool = False
-    
+
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
     # --- Debug & Monitoring ---
@@ -300,6 +303,7 @@ class Team:
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
+        reasoning_agent: Optional[Agent] = None,
         reasoning_min_steps: int = 1,
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
@@ -375,9 +379,10 @@ class Team:
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
+        self.reasoning_agent = reasoning_agent
         self.reasoning_min_steps = reasoning_min_steps
         self.reasoning_max_steps = reasoning_max_steps
-        
+
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
 
@@ -691,7 +696,7 @@ class Team:
         response_format = self._get_response_format()
 
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(model=self.model, 
+        self.determine_tools_for_model(model=self.model,
                                         session_id=session_id,
                                         user_id=user_id,
                                         async_mode=False,
@@ -707,7 +712,7 @@ class Team:
         # Register the team on the platform
         thread = threading.Thread(target=self.register_team)
         thread.start()
-        
+
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
@@ -719,7 +724,7 @@ class Team:
 
         self.run_response = run_response
         self.run_id = run_id
-        
+
         retries = retries or 3
 
         # Run the team
@@ -800,6 +805,13 @@ class Team:
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
+                
+                if stream and self.is_streamable:
+                    return self._generator_wrapper(create_team_run_response_cancelled_event(run_response, "Operation cancelled by user"))
+                else:
+                    return self._create_run_response(
+                        run_state=RunState.cancelled, content="Operation cancelled by user", run_response=run_response
+                    )
                 return TeamRunResponse(
                     run_id=self.run_id or str(uuid4()),
                     session_id=self.session_id,
@@ -930,7 +942,7 @@ class Team:
 
         # 1. Reason about the task(s) if reasoning is enabled
         yield from self._handle_reasoning_stream(
-            run_response=run_response, run_messages=run_messages, session_id=session_id
+            run_messages=run_messages
         )
 
         # Update agent state
@@ -1103,7 +1115,7 @@ class Team:
         response_format = self._get_response_format()
 
         self.model = cast(Model, self.model)
-        self.determine_tools_for_model(model=self.model, 
+        self.determine_tools_for_model(model=self.model,
                                         session_id=session_id,
                                         user_id=user_id,
                                         async_mode=False,
@@ -1129,7 +1141,7 @@ class Team:
 
         self.run_response = run_response
         self.run_id = run_id
-        
+
         retries = retries or 3
 
         # Run the team
@@ -2396,8 +2408,8 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, TeamRunResponse):
-                    if resp.event == RunEvent.run_response:
+                if isinstance(resp, TeamRunResponseEvent):
+                    if resp.event == RunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
                         if resp.thinking is not None:
@@ -3248,8 +3260,8 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, TeamRunResponse):
-                    if resp.event == RunEvent.run_response:
+                if isinstance(resp, TeamRunResponseEvent):
+                    if resp.event == RunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
                         if resp.thinking is not None:
@@ -3679,41 +3691,37 @@ class Team:
     # Helpers
     ###########################################################################
 
-    def _handle_reasoning(self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str) -> None:
+    def _handle_reasoning(self, run_response: TeamRunResponse, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
-            )
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(
-        self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str
-    ) -> Iterator[TeamRunResponse]:
+        self, run_response: TeamRunResponse, run_messages: RunMessages
+    ) -> Iterator[TeamRunResponseEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self._reason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
-            )
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
             yield from reasoning_generator
 
     async def _ahandle_reasoning(
-        self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str
+        self, run_response: TeamRunResponse, run_messages: RunMessages
     ) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self._areason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages
             )
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
 
     async def _ahandle_reasoning_stream(
-        self, run_response: TeamRunResponse, run_messages: RunMessages, session_id: str
+        self, run_response: TeamRunResponse, run_messages: RunMessages
     ) -> AsyncIterator[TeamRunResponse]:
         if self.reasoning or self.reasoning_model is not None:
             reason_generator = self._areason(
-                run_response=run_response, run_messages=run_messages, session_id=session_id
+                run_response=run_response,
+                run_messages=run_messages
             )
             async for item in reason_generator:
                 yield item
@@ -3790,19 +3798,12 @@ class Team:
         self,
         run_response: TeamRunResponse,
         run_messages: RunMessages,
-        session_id: str,
-        stream_intermediate_steps: bool = False,
     ) -> Iterator[TeamRunResponse]:
-        if stream_intermediate_steps:
-            yield self._create_run_response(
-                from_run_response=run_response,
-                content="Reasoning started",
-                reasoning_content="",
-                event=RunEvent.reasoning_started,
-                session_id=session_id,
-            )
-        log_debug("Reasoning started")
+        if self.stream_intermediate_steps:
+            yield create_team_reasoning_started_event(from_run_response=run_response)
 
+        use_default_reasoning = False
+        
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
@@ -3815,51 +3816,68 @@ class Team:
             return
 
         # If a reasoning model is provided, use it to generate reasoning
-        if reasoning_model_provided and self.reasoning_model is not None:
-            reasoning_message: Optional[Message] = None
-            # Use DeepSeek for reasoning
-            if (
-                self.reasoning_model.__class__.__name__ == "DeepSeek"
-                and self.reasoning_model.id.lower() == "deepseek-reasoner"
-            ):
-                from agno.reasoning.deepseek import get_deepseek_reasoning
+        if reasoning_model_provided:
+            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
+            
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
+            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
+            is_groq = is_groq_reasoning_model(reasoning_model)
+            is_openai = is_openai_reasoning_model(reasoning_model)
+            is_ollama = is_ollama_reasoning_model(reasoning_model)
+            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
+            
+            
+            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import get_deepseek_reasoning
 
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = get_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import get_groq_reasoning
 
-                reasoning_message = get_deepseek_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = get_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import get_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ai_foundry:
+                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
+
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ai_foundry_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+
+                    )
+                
                 if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import get_groq_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = get_groq_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-            # Use OpenAI o3 for reasoning
-            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
-                from agno.reasoning.openai import get_openai_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = get_openai_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-            else:
-                log_info(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
-
-            if reasoning_message:
+                
+                
                 run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
                 update_run_response_with_reasoning(
@@ -3867,27 +3885,56 @@ class Team:
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if stream_intermediate_steps:
-                    yield self._create_run_response(
+                if self.stream_intermediate_steps:
+                    yield create_team_reasoning_completed_event(
+                        from_run_response=run_response,
                         content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
+                        content_type=ReasoningSteps.__name__,
                     )
+            else:
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
+                )
+                use_default_reasoning = True
+        # If no reasoning model is provided, use default reasoning
         else:
+            use_default_reasoning = True
+            
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             use_json_mode: bool = self.use_json_mode
-            reasoning_agent: Agent = get_default_reasoning_agent(  # type: ignore
-                reasoning_model=reasoning_model,
-                min_steps=self.reasoning_min_steps,
-                max_steps=self.reasoning_max_steps,
-                monitoring=self.monitoring,
-                telemetry=self.telemetry,
-                debug_mode=self.debug_mode,
-                use_json_mode=use_json_mode,
-            )
+            
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
+            if reasoning_agent is None:
+                reasoning_agent = get_default_reasoning_agent(
+                    reasoning_model=reasoning_model,
+                    min_steps=self.reasoning_min_steps,
+                    max_steps=self.reasoning_max_steps,
+                    monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
+                    use_json_mode=use_json_mode,
+               )
+            
+            # Validate reasoning agent
+            if reasoning_agent is None:
+                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
+                return
+            # Ensure the reasoning agent response model is ReasoningSteps
+            if (
+                reasoning_agent.response_model is not None
+                and not isinstance(reasoning_agent.response_model, type)
+                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+            ):
+                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
+                return
+            # Ensure the reasoning model and agent do not show tool calls
+            reasoning_agent.show_tool_calls = False
+
+            
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -3913,18 +3960,16 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if stream_intermediate_steps:
+                    if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
                             )
 
-                            yield self._create_run_response(
-                                content=reasoning_step,
-                                content_type=reasoning_step.__class__.__name__,
+                            yield create_team_reasoning_step_event(
+                                from_run_response=run_response,
+                                reasoning_step=reasoning_step,
                                 reasoning_content=updated_reasoning_content,
-                                event=RunEvent.reasoning_step,
-                                session_id=session_id,
                             )
 
                     # Find the index of the first assistant message
@@ -3960,30 +4005,23 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if stream_intermediate_steps:
-                yield self._create_run_response(
+            if self.stream_intermediate_steps:
+                yield create_team_reasoning_completed_event(
+                    from_run_response=run_response,
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                    content_type=ReasoningSteps.__class__.__name__,
-                    event=RunEvent.reasoning_completed,
-                    session_id=session_id,
+                    content_type=ReasoningSteps.__name__,
                 )
 
     async def _areason(
         self,
         run_response: TeamRunResponse,
         run_messages: RunMessages,
-        session_id: str,
-        stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[TeamRunResponse]:
-        if stream_intermediate_steps:
-            yield self._create_run_response(
-                from_run_response=run_response,
-                content="Reasoning started",
-                reasoning_content="",
-                event=RunEvent.reasoning_started,
-                session_id=session_id,
-            )
+        if self.stream_intermediate_steps:
+            yield create_team_reasoning_started_event(from_run_response=run_response)
 
+        use_default_reasoning = False
+        
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
@@ -3996,79 +4034,118 @@ class Team:
             return
 
         # If a reasoning model is provided, use it to generate reasoning
-        if reasoning_model_provided and self.reasoning_model is not None:
-            reasoning_message: Optional[Message] = None
-            # Use DeepSeek for reasoning
-            if (
-                self.reasoning_model.__class__.__name__ == "DeepSeek"
-                and self.reasoning_model.id.lower() == "deepseek-reasoner"
-            ):
-                from agno.reasoning.deepseek import aget_deepseek_reasoning
+        if reasoning_model_provided:
+            from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
+            from agno.reasoning.deepseek import is_deepseek_reasoning_model
+            from agno.reasoning.groq import is_groq_reasoning_model
+            from agno.reasoning.helpers import get_reasoning_agent
+            from agno.reasoning.ollama import is_ollama_reasoning_model
+            from agno.reasoning.openai import is_openai_reasoning_model
+            
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
+                reasoning_model=reasoning_model, monitoring=self.monitoring
+            )
+            is_deepseek = is_deepseek_reasoning_model(reasoning_model)
+            is_groq = is_groq_reasoning_model(reasoning_model)
+            is_openai = is_openai_reasoning_model(reasoning_model)
+            is_ollama = is_ollama_reasoning_model(reasoning_model)
+            is_ai_foundry = is_ai_foundry_reasoning_model(reasoning_model)
 
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
+            if is_deepseek or is_groq or is_openai or is_ollama or is_ai_foundry:
+                reasoning_message: Optional[Message] = None
+                if is_deepseek:
+                    from agno.reasoning.deepseek import aget_deepseek_reasoning
 
-                reasoning_message = await aget_deepseek_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_deepseek_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_groq:
+                    from agno.reasoning.groq import aget_groq_reasoning
+
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_groq_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_openai:
+                    from agno.reasoning.openai import aget_openai_reasoning
+
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_openai_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ollama:
+                    from agno.reasoning.ollama import get_ollama_reasoning
+
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+                elif is_ai_foundry:
+                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
+
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ai_foundry_reasoning(
+                        reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
+                    )
+
                 if reasoning_message is None:
                     log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
                     return
-            # Use Groq for reasoning
-            elif reasoning_model.__class__.__name__ == "Groq" and "deepseek" in reasoning_model.id.lower():
-                from agno.reasoning.groq import aget_groq_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = await aget_groq_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-            # Use OpenAI o3 for reasoning
-            elif reasoning_model.__class__.__name__ == "OpenAIChat" and reasoning_model.id.startswith("o3"):
-                from agno.reasoning.openai import aget_openai_reasoning
-
-                reasoning_agent = self._get_reasoning_agent(self.reasoning_model)
-
-                reasoning_message = await aget_openai_reasoning(
-                    reasoning_agent=reasoning_agent, messages=run_messages.get_input_messages()
-                )
-                if reasoning_message is None:
-                    log_warning("Reasoning error. Reasoning response is None, continuing regular session...")
-                    return
-            else:
-                log_info(f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model.")
-
-            if reasoning_message:
                 run_messages.messages.append(reasoning_message)
                 # Add reasoning step to the Agent's run_response
-                update_run_response_with_reasoning(
-                    run_response=run_response,
+                self.update_run_response_with_reasoning(
                     reasoning_steps=[ReasoningStep(result=reasoning_message.content)],
                     reasoning_agent_messages=[reasoning_message],
                 )
-                if stream_intermediate_steps:
-                    yield self._create_run_response(
+                if self.stream_intermediate_steps:
+                    yield create_team_reasoning_completed_event(
+                        from_run_response=self.run_response,
                         content=ReasoningSteps(reasoning_steps=[ReasoningStep(result=reasoning_message.content)]),
-                        session_id=session_id,
-                        event=RunEvent.reasoning_completed,
+                        content_type=ReasoningSteps.__name__,
                     )
+            else:
+                log_warning(
+                    f"Reasoning model: {reasoning_model.__class__.__name__} is not a native reasoning model, defaulting to manual Chain-of-Thought reasoning"
+                )
+                use_default_reasoning = True
+        # If no reasoning model is provided, use default reasoning
         else:
+            use_default_reasoning = True
+        
+        if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
             from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
 
             # Get default reasoning agent
             use_json_mode: bool = self.use_json_mode
-            reasoning_agent: Agent = get_default_reasoning_agent(  # type: ignore
-                reasoning_model=reasoning_model,
-                min_steps=self.reasoning_min_steps,
-                max_steps=self.reasoning_max_steps,
-                monitoring=self.monitoring,
-                telemetry=self.telemetry,
-                debug_mode=self.debug_mode,
-                use_json_mode=use_json_mode,
-            )
+            reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
+            if reasoning_agent is None:
+                reasoning_agent = get_default_reasoning_agent(  # type: ignore
+                    reasoning_model=reasoning_model,
+                    min_steps=self.reasoning_min_steps,
+                    max_steps=self.reasoning_max_steps,
+                    monitoring=self.monitoring,
+                    telemetry=self.telemetry,
+                    debug_mode=self.debug_mode,
+                    use_json_mode=use_json_mode,
+                )
+                
+            # Validate reasoning agent
+            if reasoning_agent is None:
+                log_warning("Reasoning error. Reasoning agent is None, continuing regular session...")
+                return
+            # Ensure the reasoning agent response model is ReasoningSteps
+            if (
+                reasoning_agent.response_model is not None
+                and not isinstance(reasoning_agent.response_model, type)
+                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+            ):
+                log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
+                return
+
+            # Ensure the reasoning model and agent do not show tool calls
+            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4094,18 +4171,16 @@ class Team:
                     reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
-                    if stream_intermediate_steps:
+                    if self.stream_intermediate_steps:
                         for reasoning_step in reasoning_steps:
                             updated_reasoning_content = self._format_reasoning_step_content(
                                 run_response, reasoning_step
                             )
 
-                            yield self._create_run_response(
-                                content=reasoning_step,
-                                content_type=reasoning_step.__class__.__name__,
+                            yield create_team_reasoning_step_event(
+                                from_run_response=self.run_response,
+                                reasoning_step=reasoning_step,
                                 reasoning_content=updated_reasoning_content,
-                                event=RunEvent.reasoning_step,
-                                session_id=session_id,
                             )
 
                     # Find the index of the first assistant message
@@ -4141,13 +4216,19 @@ class Team:
             )
 
             # Yield the final reasoning completed event
-            if stream_intermediate_steps:
-                yield self._create_run_response(
+            if self.stream_intermediate_steps:
+                yield create_team_reasoning_completed_event(
+                    from_run_response=self.run_response,
                     content=ReasoningSteps(reasoning_steps=all_reasoning_steps),
-                    content_type=ReasoningSteps.__class__.__name__,
-                    event=RunEvent.reasoning_completed,
-                    session_id=session_id,
+                    content_type=ReasoningSteps.__name__,
                 )
+
+    def _generator_wrapper(self, event: TeamRunResponseEvent) -> Iterator[TeamRunResponseEvent]:
+        yield event
+
+    async def _async_generator_wrapper(self, event: TeamRunResponseEvent) -> AsyncIterator[TeamRunResponseEvent]:
+        yield event
+
 
     def _create_run_response(
         self,
@@ -4155,7 +4236,7 @@ class Team:
         content: Optional[Any] = None,
         content_type: Optional[str] = None,
         thinking: Optional[str] = None,
-        event: RunEvent = RunEvent.run_response,
+        event: RunEvent = RunEvent.run_response_content,
         tools: Optional[List[ToolExecution]] = None,
         reasoning_content: Optional[str] = None,
         audio: Optional[List[AudioArtifact]] = None,
@@ -4238,11 +4319,11 @@ class Team:
             else:
                 log_warning("Context is not a dict")
 
-    def determine_tools_for_model(self, 
-                                  model: Model, 
-                                  session_id: str, 
-                                  user_id: Optional[str] = None, 
-                                  async_mode: bool = False, 
+    def determine_tools_for_model(self,
+                                  model: Model,
+                                  session_id: str,
+                                  user_id: Optional[str] = None,
+                                  async_mode: bool = False,
                                   knowledge_filters: Optional[Dict[str, Any]] = None,
                                   message: Optional[Union[str, List, Dict, Message]] = None,
                                   stream: Optional[bool] = None,
@@ -4337,8 +4418,8 @@ class Team:
 
             if self.get_member_information_tool:
                 _tools.append(self.get_member_information)
-        
-        
+
+
         if self._tools_for_model is None:
             self._functions_for_model = {}
             self._tools_for_model = []

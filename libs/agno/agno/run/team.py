@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -7,14 +8,164 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
+from agno.run.response import RunResponse
+from agno.run.base import RunResponseExtraData, RunState, BaseRunResponseEvent
+
+
+class RunEvent(str, Enum):
+    """Events that can be sent by the run() functions"""
+
+    run_started = "TeamRunStarted"
+    run_response_content = "TeamRunResponseContent"
+    run_completed = "TeamRunCompleted"
+    run_error = "TeamRunError"
+    run_cancelled = "TeamRunCancelled"
+
+    tool_call_started = "TeamToolCallStarted"
+    tool_call_completed = "TeamToolCallCompleted"
+
+    reasoning_started = "TeamReasoningStarted"
+    reasoning_step = "TeamReasoningStep"
+    reasoning_completed = "TeamReasoningCompleted"
+
+    memory_update_started = "TeamMemoryUpdateStarted"
+    memory_update_completed = "TeamMemoryUpdateCompleted"
+
+
+@dataclass(kw_only=True)
+class BaseTeamRunResponseEvent(BaseRunResponseEvent):
+    team_id: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseStartedEvent(BaseTeamRunResponseEvent):
+    """Event sent when the run starts"""
+
+    event: str = RunEvent.run_started.value
+
+    model: str
+    model_provider: str
+
+
+@dataclass(kw_only=True)
+class RunResponseContentEvent(BaseTeamRunResponseEvent):
+    """Main event for each delta of the RunResponse"""
+
+    event: str = RunEvent.run_response_content.value
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
+
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+    image: Optional[ImageArtifact] = None  # Image attached to the response
+
+    extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.run_completed.value
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+    reasoning_content: Optional[str] = None
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
+
+    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
+    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
+    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+
+    extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseErrorEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.run_error.value
+
+    content: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class RunResponseCancelledEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.run_cancelled.value
+
+    reason: Optional[str] = None
+
+
+@dataclass(kw_only=True)
+class MemoryUpdateStartedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.memory_update_started.value
+
+
+@dataclass(kw_only=True)
+class MemoryUpdateCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.memory_update_completed.value
+
+
+@dataclass(kw_only=True)
+class ReasoningStartedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.reasoning_started.value
+
+
+@dataclass(kw_only=True)
+class ReasoningStepEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.reasoning_step.value
+
+    content: Any
+    content_type: str = "str"
+    reasoning_content: str
+
+
+@dataclass(kw_only=True)
+class ReasoningCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.reasoning_completed.value
+
+    content: Any
+    content_type: str = "str"
+
+
+@dataclass(kw_only=True)
+class ToolCallStartedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.tool_call_started.value
+
+    tool: ToolExecution
+
+
+@dataclass(kw_only=True)
+class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = RunEvent.tool_call_completed.value
+
+    tool: ToolExecution
+    content: str
+
+    images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
+    videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
+    audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
+
+
+
+TeamRunResponseEvent = Union[
+    RunResponseStartedEvent,
+    RunResponseContentEvent,
+    RunResponseCompletedEvent,
+    RunResponseErrorEvent,
+    RunResponseCancelledEvent,
+    ReasoningStartedEvent,
+    ReasoningStepEvent,
+    ReasoningCompletedEvent,
+    MemoryUpdateStartedEvent,
+    MemoryUpdateCompletedEvent,
+]
 
 
 @dataclass
 class TeamRunResponse:
     """Response returned by Team.run() functions"""
-
-    event: str = RunEvent.run_response.value
 
     content: Optional[Any] = None
     content_type: str = "str"
@@ -45,6 +196,16 @@ class TeamRunResponse:
 
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
+
+    run_state: RunState = RunState.running
+
+    @property
+    def is_paused(self):
+        return self.run_state == RunState.paused
+
+    @property
+    def is_cancelled(self):
+        return self.run_state == RunState.cancelled
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {

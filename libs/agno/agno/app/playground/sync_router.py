@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.operator import (
     format_tools,
@@ -37,7 +38,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunEvent
+from agno.run.response import RunEvent, RunResponseErrorEvent
 from agno.run.team import TeamRunResponse
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
@@ -74,9 +75,8 @@ def chat_response_streamer(
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -111,9 +111,8 @@ def team_chat_response_streamer(
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
