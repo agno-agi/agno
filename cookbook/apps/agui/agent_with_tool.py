@@ -1,23 +1,27 @@
 from agno.agent.agent import Agent
 from agno.app.agui.app import AGUIApp
 from agno.models.openai import OpenAIChat
-from agno.tools.calculator import CalculatorTools
+from agno.tools.yfinance import YFinanceTools
 
-calculator_agent = Agent(
-    name="Calculator Agent",
+agent = Agent(
+    tools=[
+        YFinanceTools(
+            stock_price=True, analyst_recommendations=True, stock_fundamentals=True
+        )
+    ],
     model=OpenAIChat(id="gpt-4o"),
-    instructions="You are a helpful AI assistant focused on using tools to perform arithmetic calculations.",
-    tools=[CalculatorTools()],
     show_tool_calls=True,
-    add_datetime_to_instructions=True,
-    markdown=True,
+    stream=True,
+    stream_intermediate_steps=True,
+    description="You are an investment analyst that researches stock prices, analyst recommendations, and stock fundamentals.",
+    instructions="Format your response using markdown and use tables to display data where possible.",
 )
 
 agui_app = AGUIApp(
-    agent=calculator_agent,
-    name="Calculator Agent",
-    app_id="calculator_agent",
-    description="An Agent with toolsthat demonstrates AG-UI protocol integration.",
+    agent=agent,
+    name="Investment Analyst",
+    app_id="investment_analyst",
+    description="An investment analyst that researches stock prices, analyst recommendations, and stock fundamentals.",
 )
 
 app = agui_app.get_app()
