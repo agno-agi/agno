@@ -1,3 +1,5 @@
+"""Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
+
 import logging
 import uuid
 from typing import AsyncIterator, List, Optional
@@ -10,6 +12,7 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunStartedEvent,
     TextMessageContentEvent,
+    TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
@@ -30,22 +33,21 @@ logger = logging.getLogger(__name__)
 
 async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
+    run_id = run_input.run_id or str(uuid.uuid4())
+
     try:
+        # Preparing the input for the Agent and emitting the run started event
         agno_messages = _convert_agui_messages_to_agno_messages(run_input.messages)
+        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Request streaming response from agent
         response_stream = await agent.arun(
-            session_id=run_input.thread_id,
-            messages=agno_messages,
-            stream=True,
-            stream_intermediate_steps=True,
+            session_id=run_input.thread_id, messages=agno_messages, stream=True, stream_intermediate_steps=True
         )
 
         # Stream the response content
         async for event in _stream_response_content(
-            response_stream=response_stream,
-            thread_id=run_input.thread_id,
-            run_id=run_input.run_id,
+            response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
         ):
             yield event
 
@@ -56,23 +58,20 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
 
 async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    run_id = input.run_id or str(uuid.uuid4())
     try:
         # Extract the last user message for team execution
         user_message = _get_last_user_message(input.messages) if input.messages else ""
+        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Request streaming response from team
         response_stream = await team.arun(
-            message=user_message,
-            session_id=input.thread_id,
-            stream=True,
-            stream_intermediate_steps=True,
+            message=user_message, session_id=input.thread_id, stream=True, stream_intermediate_steps=True
         )
 
         # Stream the response content
         async for event in _stream_team_response_content(
-            response_stream=response_stream,
-            thread_id=input.thread_id,
-            run_id=input.run_id,
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
         ):
             yield event
 
@@ -126,32 +125,10 @@ async def _stream_response_content(
                     tool_call_id=tool_call.tool_call_id or "",
                 )
 
-        # Handle reasoning
-        if chunk.event == RunEvent.reasoning_started:
-            yield ToolCallStartEvent(
-                type=EventType.TOOL_CALL_START,
-                tool_call_id="reasoning",
-                tool_call_name="reasoning",
-            )
-        if chunk.event == RunEvent.reasoning_completed:
-            yield ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id="reasoning",
-            )
-
-        # Handle lifecycle events
-        if chunk.event == RunEvent.run_started:
-            yield RunStartedEvent(
-                type=EventType.RUN_STARTED,
-                thread_id=thread_id,
-                run_id=run_id,
-            )
+        # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
-            yield RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
-                thread_id=thread_id,
-                run_id=run_id,
-            )
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
 
 
 async def _stream_team_response_content(
@@ -199,32 +176,10 @@ async def _stream_team_response_content(
                     tool_call_id=tool_call.tool_call_id or "",
                 )
 
-        # Handle reasoning
-        if chunk.event == RunEvent.reasoning_started:
-            yield ToolCallStartEvent(
-                type=EventType.TOOL_CALL_START,
-                tool_call_id="reasoning",
-                tool_call_name="reasoning",
-            )
-        if chunk.event == RunEvent.reasoning_completed:
-            yield ToolCallEndEvent(
-                type=EventType.TOOL_CALL_END,
-                tool_call_id="reasoning",
-            )
-
-        # Handle lifecycle events
-        if chunk.event == RunEvent.run_started:
-            yield RunStartedEvent(
-                type=EventType.RUN_STARTED,
-                thread_id=thread_id,
-                run_id=run_id,
-            )
+        # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
-            yield RunFinishedEvent(
-                type=EventType.RUN_FINISHED,
-                thread_id=thread_id,
-                run_id=run_id,
-            )
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
 
 
 def _get_last_user_message(messages: Optional[List[AGUIMessage]]) -> str:

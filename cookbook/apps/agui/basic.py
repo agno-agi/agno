@@ -5,10 +5,7 @@ from agno.models.openai import OpenAIChat
 chat_agent = Agent(
     name="Conversation Agent",
     model=OpenAIChat(id="gpt-4o"),
-    instructions="You are a helpful AI assistant focused on performing arithmetic calculations.",
-    reasoning=True,
-    stream=True,
-    stream_intermediate_steps=True,
+    instructions="You are a helpful AI assistant.",
     add_datetime_to_instructions=True,
     markdown=True,
 )
