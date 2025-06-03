@@ -372,18 +372,30 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             self.result.print_summary(console)
 
         # Log results to the Agno platform if requested
+        if self.agent is not None:
+            agent_id = self.agent.agent_id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+            evaluated_entity_name = self.agent.name
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.team_id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+            evaluated_entity_name = self.team.name
+
         if self.monitoring:
             log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=self.agent.agent_id if self.agent is not None else None,
-                model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
-                model_provider=self.agent.model.provider
-                if self.agent is not None and self.agent.model is not None
-                else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+                evaluated_entity_name=evaluated_entity_name,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
