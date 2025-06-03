@@ -3,20 +3,21 @@ from agno.app.agui.app import AGUIApp
 from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 
-chat_agent = Agent(
+calculator_agent = Agent(
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
-    instructions="You are a helpful AI assistant.",
-    tools=[CalculatorTools(enable_all=True)],
+    instructions="You are a helpful AI assistant focused on using tools to perform arithmetic calculations.",
+    tools=[CalculatorTools()],
+    show_tool_calls=True,
     add_datetime_to_instructions=True,
     markdown=True,
 )
 
 agui_app = AGUIApp(
-    agent=chat_agent,
-    name="Basic AG-UI Agent",
-    app_id="basic_agui_agent",
-    description="A basic agent that demonstrates AG-UI protocol integration.",
+    agent=calculator_agent,
+    name="Calculator Agent",
+    app_id="calculator_agent",
+    description="An Agent with toolsthat demonstrates AG-UI protocol integration.",
 )
 
 app = agui_app.get_app()

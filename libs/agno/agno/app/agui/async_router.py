@@ -16,6 +16,7 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
@@ -44,7 +45,11 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Request streaming response from agent
         response_stream = await agent.arun(
-            session_id=run_input.thread_id, messages=agno_messages, stream=True, stream_intermediate_steps=True
+            session_id=run_input.thread_id,
+            messages=agno_messages,
+            stream=True,
+            stream_intermediate_steps=True,
+            stream_tool_calls=True,
         )
 
         # Stream the response content
@@ -69,7 +74,11 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
         # Request streaming response from team
         response_stream = await team.arun(
-            message=user_message, session_id=input.thread_id, stream=True, stream_intermediate_steps=True
+            message=user_message,
+            session_id=input.thread_id,
+            stream=True,
+            stream_intermediate_steps=True,
+            stream_tool_calls=True,
         )
 
         # Stream the response content
@@ -89,8 +98,10 @@ async def _stream_response_content(
     """Map the Agno response stream to AG-UI format."""
     message_id = str(uuid.uuid4())
     message_started = False
+    text_message_end_event_emitted = False
 
     async for chunk in response_stream:
+        print("event", chunk.event)
         content = _extract_response_chunk_content(chunk)
 
         # Handle text responses
@@ -121,6 +132,11 @@ async def _stream_response_content(
                     tool_call_name=tool_call.tool_name or "",
                     parent_message_id=message_id,
                 )
+                yield ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool_call.tool_call_id or "",
+                    delta=str(tool_call.tool_args),
+                )
         if chunk.event == RunEvent.tool_call_completed:
             if chunk.tools is not None and len(chunk.tools) != 0:
                 tool_call = chunk.tools[0]
@@ -137,12 +153,15 @@ async def _stream_response_content(
 
         # Handle memory
         if chunk.event == RunEvent.updating_memory:
+            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            text_message_end_event_emitted = True
             yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="updating_memory")
             yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="updating_memory")
 
         # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+            if not text_message_end_event_emitted:
+                yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
             yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
 
 
