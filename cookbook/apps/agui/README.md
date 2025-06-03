@@ -1,87 +1,62 @@
 # AG-UI Integration for Agno
 
-AG-UI lets you create AI agents and teams that users can interact with through a modern web interface. Write your agent or team in Python, and get a ChatGPT-like UI automatically.
+AG-UI standardizes how front-end applications connect to AI agents through an open protocol.
+With this integration, you can write your Agno Agents and Teams, and get a ChatGPT-like UI automatically.
 
-**Example: A simple chat agent in 10 lines of code:**
+**Example: Chat with a simple agent:**
 
-```python
-from agno import Agent
+```python my_agent.py
+from agno.agent.agent import Agent
 from agno.app.agui.app import AGUIApp
 from agno.models.openai import OpenAIChat
 
-agent = Agent(
-    name="chat_agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions="You are a helpful AI assistant.",
-)
+# Setup the Agno Agent
+chat_agent = Agent(model=OpenAIChat(id="gpt-4o"))
+
+# Setup the AG-UI App
+agui_app = AGUIApp(agent=chat_agent)
+agui_app.serve(app="basic:app", port=8000, reload=True)
 ```
 
-That's it! Your agents and teams are now accessible through a beautiful web interface.
+That's it! Your Agent is now exposed in an AG-UI compatible way, and can be used in any AG-UI compatible front-end.
 
 
-## Quick Start
+## Usage example
 
 ### Setup
+
+Start by installing our backend dependencies:
 
 ```bash
 pip install ag-ui-protocol
 ```
 
-## Connecting to Dojo (Advanced UI)
+### Run your backend
 
-Dojo[https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo] is an advanced, customizable frontend for AG-UI agents. Follow these steps to connect your Agno agent to Dojo:
+Now you need to run a `AGUIApp` exposing your Agent. You can run this example file:
+```python
+from agno.agent.agent import Agent
+from agno.app.agui.app import AGUIApp
+from agno.models.openai import OpenAIChat
 
-### 1. Clone and Setup Dojo
+# Setup the Agno Agent
+chat_agent = Agent(model=OpenAIChat(id="gpt-4o"))
 
-```bash
-# Clone the Dojo repository
-git clone https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo
-cd dojo
+# Setup the AG-UI App
+agui_app = AGUIApp(agent=chat_agent)
+agui_app.serve(app="basic:app", port=8000, reload=True)
 ```
 
-Follow the readme for setup instructions
+## Run your frontend
 
-### 2. Configure Your Agent Integration
+You can run [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo), an advanced and customizable option to use as frontend for AG-UI agents.
+You can learn more on how to run it [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo).
 
-Edit `integrations.ts` in the Dojo project to add your Agno agent:
 
-```typescript
-export const integrations = [
-  {
-    id: "my-agno-agent",
-    name: "My Assistant",
-    description: "Your agent description",
-    poweredBy: "agno",
-    icon: "🤖",
-    endpoint: "http://localhost:8000/agui/awp",
-    headers: {
-      // Add any custom headers if needed
-    },
-    capabilities: {
-      chat: true,
-      voice: false,
-      attachments: true,
-    }
-  }
-];
-```
+### Chat with your Agent
 
-### 3. Start Both Services
+If you are running Dojo as your frontend, you can now go to http://localhost:3000 in your browser and select your agent from the available integrations.
 
-First, start your Agno agent:
-```bash
-python my_agent.py
-```
-
-Then, in another terminal, start Dojo:
-```bash
-cd dojo
-npm run dev
-```
-
-### 4. Access Your Agent
-
-Open http://localhost:3000 in your browser and select your agent from the available integrations.
 
 ## Examples
 
