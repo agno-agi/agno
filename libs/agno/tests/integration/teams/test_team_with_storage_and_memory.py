@@ -114,6 +114,34 @@ async def test_run_history_persistence(route_team, team_storage, memory):
 
 
 @pytest.mark.asyncio
+async def test_run_session_summary(route_team, team_storage, memory):
+    """Test that the session summary is persisted in storage."""
+    session_id = "session_123"
+    user_id = "john@example.com"
+
+    # Enable session summaries
+    route_team.enable_user_memories = False
+    route_team.enable_session_summaries = True
+
+    # Clear memory for this specific test case
+    memory.clear()
+
+    await route_team.arun("Where is New York?", user_id=user_id, session_id=session_id)
+
+    assert route_team.get_session_summary(user_id=user_id, session_id=session_id).summary is not None
+
+    team_session = team_storage.read(session_id=session_id)
+    assert len(team_session.memory["summaries"][user_id][session_id]) > 0
+
+    await route_team.arun("Where is Tokyo?", user_id=user_id, session_id=session_id)
+
+    assert route_team.get_session_summary(user_id=user_id, session_id=session_id).summary is not None
+
+    team_session = team_storage.read(session_id=session_id)
+    assert len(team_session.memory["summaries"][user_id][session_id]) > 0
+
+
+@pytest.mark.asyncio
 async def test_multi_user_multi_session_route_team(route_team, team_storage, memory):
     """Test multi-user multi-session route team with storage and memory."""
     # Define user and session IDs
