@@ -1,102 +1,221 @@
-import os
 from typing import Optional
 
 import pytest
 
 from agno.agent import Agent, RunResponse
-from agno.models.vllm.vllm import Vllm
+from agno.models.vllm import vLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
-# Skip the module if no vLLM endpoint configured
-if not os.getenv("VLLM_BASE_URL"):
-    pytest.skip("VLLM_BASE_URL not set, skipping vLLM tool-use tests", allow_module_level=True)
-
-VLLM_MODEL_ID = os.getenv("VLLM_MODEL_ID", "microsoft/Phi-3-mini-128k-instruct")
+VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 
-def _mk_agent(tool_list):
-    return Agent(
-        model=Vllm(id=VLLM_MODEL_ID),
-        tools=tool_list,
-        show_tool_calls=True,
+def test_tool_use():
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
+    response = agent.run("What is the current price of TSLA?")
 
-def _assert_tool_called(messages):
-    assert any(m.tool_calls for m in messages)
-
-
-def test_tool_use_single():
-    agent = _mk_agent([YFinanceTools(cache_results=True)])
-    resp = agent.run("What is the current price of TSLA?")
-    _assert_tool_called(resp.messages)
-    assert resp.content and "TSLA" in resp.content
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
-    agent = _mk_agent([YFinanceTools(cache_results=True)])
-    stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True)],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
 
-    saw_tool = False
-    for chunk in stream:
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+
+    responses = []
+    tool_call_seen = False
+
+    for chunk in response_stream:
         assert isinstance(chunk, RunResponse)
-        if chunk.tools and any(tc.get("tool_name") for tc in chunk.tools):
-            saw_tool = True
-    assert saw_tool
+        responses.append(chunk)
+        if chunk.tools:
+            if any(tc.tool_name for tc in chunk.tools):
+                tool_call_seen = True
+
+    assert len(responses) > 0
+    assert tool_call_seen, "No tool calls observed in stream"
+    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
-async def test_tool_use_async():
-    agent = _mk_agent([YFinanceTools(cache_results=True)])
-    resp = await agent.arun("What is the current price of TSLA?")
-    _assert_tool_called(resp.messages)
+async def test_async_tool_use():
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True)],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = await agent.arun("What is the current price of TSLA?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
+    assert response.content is not None
+    assert "TSLA" in response.content
 
 
 @pytest.mark.asyncio
-async def test_tool_use_async_stream():
-    agent = _mk_agent([YFinanceTools(cache_results=True)])
-    stream = await agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
-    saw_tool = False
-    async for chunk in stream:
-        if chunk.tools and any(tc.get("tool_name") for tc in chunk.tools):
-            saw_tool = True
-    assert saw_tool
+async def test_async_tool_use_stream():
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True)],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
+
+    responses = []
+    tool_call_seen = False
+
+    async for chunk in response_stream:
+        assert isinstance(chunk, RunResponse)
+        responses.append(chunk)
+        if chunk.tools:
+            if any(tc.tool_name for tc in chunk.tools):
+                tool_call_seen = True
+
+    assert len(responses) > 0
+    assert tool_call_seen, "No tool calls observed in stream"
+    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 def test_parallel_tool_calls():
-    agent = _mk_agent([YFinanceTools(cache_results=True)])
-    resp = agent.run("What is the current price of TSLA and AAPL?")
-    # expect 2 tool calls
-    calls = [tc for m in resp.messages if m.tool_calls for tc in m.tool_calls]
-    assert len([c for c in calls if c.get("type") == "function"]) == 2
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True)],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the current price of TSLA and AAPL?")
+
+    # Verify tool usage
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert response.content is not None
+    assert "TSLA" in response.content and "AAPL" in response.content
 
 
 def test_multiple_tool_calls():
-    agent = _mk_agent([YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)])
-    resp = agent.run("What is the current price of TSLA and the latest news about it?")
-    _assert_tool_called(resp.messages)
-    assert resp.content and "TSLA" in resp.content
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+
+    # Verify tool usage
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert response.content is not None
+    assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
-def test_custom_tool_optional_param():
-    def get_weather(city: Optional[str] = None):
-        """Simple demo function"""
-        return f"Weather for {city or 'Tokyo'} is 20C"
+def test_tool_call_custom_tool_no_parameters():
+    def get_the_weather_in_tokyo():
+        """
+        Get the weather in Tokyo
+        """
+        return "It is currently 70 degrees and cloudy in Tokyo"
 
-    agent = _mk_agent([get_weather])
-    resp = agent.run("What is the weather in Paris?")
-    _assert_tool_called(resp.messages)
-    assert "Paris" in resp.content
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[get_the_weather_in_tokyo],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
 
 
-def test_list_param_tool():
-    agent = _mk_agent([ExaTools()])
-    resp = agent.run(
+def test_tool_call_custom_tool_optional_parameters():
+    def get_the_weather(city: Optional[str] = None):
+        """
+        Get the weather in a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        if city is None:
+            return "It is currently 70 degrees and cloudy in Tokyo"
+        else:
+            return f"It is currently 70 degrees and cloudy in {city}"
+
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[get_the_weather],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run("What is the weather in Paris?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
+    assert "70" in response.content
+
+
+def test_tool_call_list_parameters():
+    agent = Agent(
+        model=vLLM(id=VLLM_MODEL_ID),
+        tools=[ExaTools()],
+        instructions="Use a single tool call if possible",
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run(
         "What are the papers at https://arxiv.org/pdf/2307.06435 and https://arxiv.org/pdf/2502.09601 about?"
     )
-    _assert_tool_called(resp.messages)
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    for call in tool_calls:
+        if call.get("type", "") == "function":
+            assert call["function"]["name"] in ["get_contents", "exa_answer", "search_exa"]
+    assert response.content is not None
