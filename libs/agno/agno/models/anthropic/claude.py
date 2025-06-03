@@ -700,57 +700,6 @@ class Claude(Model):
 
         return model_response
 
-    def log_cache_performance(self, response_usage: Dict[str, Any], debug: bool = False) -> None:
-        """
-        Log cache performance metrics in debug mode.
-
-        Args:
-            response_usage: Usage metrics from the response
-            debug: Whether to output detailed cache performance logs
-        """
-        if not debug:
-            return
-
-        cache_creation = response_usage.get("cache_write_tokens", 0)
-        cache_read = response_usage.get("cached_tokens", 0)
-        input_tokens = response_usage.get("input_tokens", 0)
-
-        print("\n🔍 CACHE PERFORMANCE DEBUG:")
-        print(f"   📊 Input tokens (not cached): {input_tokens}")
-        print(f"   ✍️  Cache creation tokens: {cache_creation}")
-        print(f"   📖 Cache read tokens: {cache_read}")
-
-        # Calculate cache efficiency
-        total_input = input_tokens + cache_read
-        if total_input > 0:
-            cache_hit_rate = (cache_read / total_input) * 100
-            print(f"   📈 Cache hit rate: {cache_hit_rate:.1f}%")
-
-            if cache_read > 0:
-                # Cost analysis
-                base_cost = (total_input * 0.003) / 1000  # $3 per 1M tokens
-                cached_cost = (cache_read * 0.0003 + input_tokens * 0.003) / 1000
-                savings = base_cost - cached_cost
-                savings_percent = (savings / base_cost) * 100 if base_cost > 0 else 0
-
-                print(f"   💰 Cost without cache: ${base_cost:.6f}")
-                print(f"   💰 Cost with cache: ${cached_cost:.6f}")
-                print(f"   💰 Savings: ${savings:.6f} ({savings_percent:.1f}%)")
-
-        # Enhanced TTL-specific metrics
-        cache_5m_create = response_usage.get("cache_5m_creation_tokens", 0)
-        cache_1h_create = response_usage.get("cache_1h_creation_tokens", 0)
-        cache_5m_read = response_usage.get("cache_5m_read_tokens", 0)
-        cache_1h_read = response_usage.get("cache_1h_read_tokens", 0)
-
-        if any([cache_5m_create, cache_1h_create, cache_5m_read, cache_1h_read]):
-            print(f"   🕐 5m cache created: {cache_5m_create}")
-            print(f"   🕐 5m cache read: {cache_5m_read}")
-            print(f"   🕓 1h cache created: {cache_1h_create}")
-            print(f"   🕓 1h cache read: {cache_1h_read}")
-
-        print("")
-
     def parse_provider_response_delta(
         self, response: Union[ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent]
     ) -> ModelResponse:
