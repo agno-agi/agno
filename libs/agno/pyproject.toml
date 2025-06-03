@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.5.5"
+version = "1.5.6"
 description = "Agno: a lightweight library for building Reasoning Agents"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -54,7 +54,7 @@ integration-tests = [
     "duckduckgo-search",
     "yfinance",
     "sqlalchemy",
-    "Pillow",
+    "Pillow"
 ]
 
 # Dependencies for Telemetry
@@ -65,44 +65,46 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
-azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
+azure = ["azure-ai-inference", "aiohttp"]
+cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 google = ["google-genai"]
 groq = ["groq"]
-mistral = ["mistralai"]
-openai = ["openai"]
-ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
-lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-cerebras = ["cerebras-cloud-sdk"]
+mistral = ["mistralai"]
+ollama = ["ollama"]
+openai = ["openai"]
 
 # Dependencies for Tools
+agentql = ["agentql"]
 apify = ["apify-client"]
+brave = ["brave-search"]
+browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-exa = ["exa_py"]
-mem0 = ["mem0ai"]
-yfinance = ["yfinance"]
+confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
-newspaper = ["newspaper4k", "lxml_html_clean"]
-youtube = ["youtube_transcript_api"]
+elevenlabs = ["elevenlabs"]
+exa = ["exa_py"]
+fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps", "google-maps-places"]
-todoist = ["todoist-api-python"]
-elevenlabs = ["elevenlabs"]
-fal = ["fal_client"]
-webex = ["webexpythonsdk"]
-mcp = ["mcp"]
-browserbase = ["browserbase", "playwright"]
-agentql = ["agentql"]
-confluence = ["atlassian-python-api"]
-zep = ["zep-cloud"]
 google_bigquery = ["google-cloud-bigquery"]
+googlemaps = ["googlemaps", "google-maps-places"]
+matplotlib = ["matplotlib"]
+mcp = ["mcp"]
+mem0 = ["mem0ai"]
+newspaper = ["newspaper4k", "lxml_html_clean"]
+todoist = ["todoist-api-python"]
+webex = ["webexpythonsdk"]
+yfinance = ["yfinance"]
+youtube = ["youtube_transcript_api"]
+zep = ["zep-cloud"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -153,21 +155,22 @@ aws = ["agno-aws", "agno-docker"]
 models = [
   "agno[anthropic]",
   "agno[azure]",
+  "agno[cerebras]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
-  "agno[mistral]",
-  "agno[ollama]",
-  "agno[openai]",
   "agno[ibm]",
   "agno[litellm]",
   "agno[meta]",
-  "agno[cerebras]"
+  "agno[mistral]",
+  "agno[ollama]",
+  "agno[openai]"
 ]
 
 # All tools
 tools = [
   "agno[apify]",
+  "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
   "agno[ddg]",
@@ -179,6 +182,7 @@ tools = [
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
+  "agno[matplotlib]",
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
@@ -299,6 +303,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "brave.*",
   "browserbase.*",
   "cassio.*",
   "cerebras.*",
@@ -339,6 +344,7 @@ module = [
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
+  "matplotlib.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",

@@ -12,7 +12,6 @@ def test_tool_use():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -29,7 +28,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -56,7 +54,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -74,7 +71,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -102,7 +98,6 @@ def test_tool_use_with_content():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -120,7 +115,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -141,7 +135,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -169,7 +162,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -198,7 +190,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )

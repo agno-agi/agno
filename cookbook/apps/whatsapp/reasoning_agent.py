@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
 from agno.models.anthropic.claude import Claude
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools

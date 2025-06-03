@@ -158,7 +158,6 @@ def test_persistent_memory():
         delay_between_retries=5,
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[
