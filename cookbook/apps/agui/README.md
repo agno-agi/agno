@@ -49,13 +49,45 @@ agui_app.serve(app="basic:app", port=8000, reload=True)
 
 ## Run your frontend
 
-You can run [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo), an advanced and customizable option to use as frontend for AG-UI agents.
-You can learn more on how to run it [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo).
+You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo), an advanced and customizable option to use as frontend for AG-UI agents.
+
+1. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
+2. Update `apps/dojo/src/menu.ts` to add your Agno integration:
+```ts
+// ...
+export const menuIntegrations: MenuIntegrationConfig[] = [
+  // ...
+  configureIntegration({
+    id: "agno",
+    name: "Agno",
+    features: ["agentic_chat"],
+  })
+// ...
+```
+3. Update `apps/dojo/src/agents.ts`:
+```ts
+import { HttpAgent } from "@ag-ui/client";
+// ...
+export const agentsIntegrations: AgentIntegrationConfig[] = [
+  // ...
+  {
+    id: "agno-backend",
+    agents: async () => {
+      return {
+        agentic_chat: new HttpAgent({
+          url: "http://127.0.0.1:8000/agui/awp",
+        }),
+      };
+    },
+  }
+  // ...
+```
+4. You can now run your Dojo. It will connect to our running backend.
 
 
 ### Chat with your Agent
 
-If you are running Dojo as your frontend, you can now go to http://localhost:3000 in your browser and select your agent from the available integrations.
+If you are running Dojo as your frontend, you can now go to http://localhost:3000 in your browser and chat with your Agno Agent.
 
 
 ## Examples
