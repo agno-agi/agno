@@ -112,6 +112,13 @@ async def _stream_response_content(
                     message_id=message_id,
                     role="assistant",
                 )
+            # We need to end any active tool call if it exists and it hasn't been ended yet
+            if active_tool_call_id is not None:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=active_tool_call_id,
+                )
+                ended_tool_call_ids.append(active_tool_call_id)
             # Emit an event for each streamed delta of the message
             if content is not None and content != "":
                 yield TextMessageContentEvent(
@@ -170,6 +177,8 @@ async def _stream_team_response_content(
     """Map the Agno Team response stream to AG-UI format."""
     message_id = str(uuid.uuid4())
     message_started = False
+    active_tool_call_id = None
+    ended_tool_call_ids = []
 
     async for chunk in response_stream:
         content = _extract_team_response_chunk_content(chunk)
@@ -184,6 +193,13 @@ async def _stream_team_response_content(
                     message_id=message_id,
                     role="assistant",
                 )
+            # We need to end the previous tool call if it exists and it hasn't been ended yet
+            if active_tool_call_id is not None:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=active_tool_call_id,
+                )
+                ended_tool_call_ids.append(active_tool_call_id)
             # Emit an event for each streamed delta of the message
             if content is not None and content != "":
                 yield TextMessageContentEvent(
@@ -194,21 +210,35 @@ async def _stream_team_response_content(
 
         # Handle tool calls
         if chunk.event == RunEvent.tool_call_started:
+            # We need to end the previous tool call if it exists and it hasn't been ended yet
+            if active_tool_call_id is not None:
+                yield ToolCallEndEvent(
+                    type=EventType.TOOL_CALL_END,
+                    tool_call_id=active_tool_call_id,
+                )
+                ended_tool_call_ids.append(active_tool_call_id)
             if chunk.tools is not None and len(chunk.tools) != 0:
                 tool_call = chunk.tools[0]
                 yield ToolCallStartEvent(
                     type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call.tool_call_id or "",
-                    tool_call_name=tool_call.tool_name or "",
+                    tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    tool_call_name=tool_call.tool_name,  # type: ignore
                     parent_message_id=message_id,
                 )
+                yield ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    delta=str(tool_call.tool_args),
+                )
+                active_tool_call_id = tool_call.tool_call_id
         if chunk.event == RunEvent.tool_call_completed:
             if chunk.tools is not None and len(chunk.tools) != 0:
                 tool_call = chunk.tools[0]
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=tool_call.tool_call_id or "",
-                )
+                if tool_call.tool_call_id not in ended_tool_call_ids:
+                    yield ToolCallEndEvent(
+                        type=EventType.TOOL_CALL_END,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    )
 
         # Handle reasoning
         if chunk.event == RunEvent.reasoning_started:
