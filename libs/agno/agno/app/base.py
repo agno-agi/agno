@@ -17,6 +17,8 @@ from agno.utils.log import log_debug, log_info
 
 
 class BaseAPIApp(ABC):
+    type: Optional[str] = None
+
     def __init__(
         self,
         agent: Optional[Agent] = None,
@@ -28,8 +30,8 @@ class BaseAPIApp(ABC):
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        type: Optional[str] = None,
     ):
+
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
 
