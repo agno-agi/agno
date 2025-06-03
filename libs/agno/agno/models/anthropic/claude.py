@@ -673,12 +673,12 @@ class Claude(Model):
                 "output_tokens": response.usage.output_tokens,
             }
 
-            # Cache-related metrics (following Anthropic's official field names)
+            # Map Anthropic cache metrics to standard field names
             if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cache_read_input_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
 
             # Enhanced cache metrics for 1-hour cache (beta feature)
             if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
@@ -711,8 +711,8 @@ class Claude(Model):
         if not debug:
             return
 
-        cache_creation = response_usage.get("cache_creation_input_tokens", 0)
-        cache_read = response_usage.get("cache_read_input_tokens", 0)
+        cache_creation = response_usage.get("cache_write_tokens", 0)
+        cache_read = response_usage.get("cached_tokens", 0)
         input_tokens = response_usage.get("input_tokens", 0)
 
         print("\n🔍 CACHE PERFORMANCE DEBUG:")
@@ -829,12 +829,12 @@ class Claude(Model):
                 "output_tokens": response.usage.output_tokens or 0,
             }
 
-            # Cache-related metrics (following Anthropic's official field names)
+            # Map Anthropic cache metrics to standard field names
             if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cache_read_input_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
 
             # Enhanced cache metrics for 1-hour cache (beta feature)
             if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
