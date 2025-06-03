@@ -72,9 +72,3 @@ class vLLMOpenAI(OpenAILike):
             request_kwargs["extra_body"] = {**existing_body, **vllm_body}
 
         return request_kwargs
-
-# Legacy alias for backwards compatibility
-vLLMOpenAI = vLLM
-
-# Alias
-Vllm = vLLM

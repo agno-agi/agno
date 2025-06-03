@@ -2,9 +2,7 @@ from agno.agent import Agent, RunResponse
 from agno.models.vllm import vLLMOpenAI
 
 agent = Agent(
-    model=vLLMOpenAI(
-        id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False
-    ),
+    model=vLLMOpenAI(id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False),
     markdown=True,
 )
 

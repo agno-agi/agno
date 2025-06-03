@@ -1,14 +1,14 @@
 """Run `pip install sqlalchemy` and ensure Postgres is running (`./cookbook/scripts/run_pgvector.sh`)."""
 
 from agno.agent import Agent
-from agno.models.vllm import Vllm
+from agno.models.vllm import vLLMOpenAI
 from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 agent = Agent(
-    model=Vllm(id="Qwen/Qwen2.5-7B-Instruct"),
+    model=vLLMOpenAI(id="Qwen/Qwen2.5-7B-Instruct"),
     storage=PostgresStorage(table_name="agent_sessions", db_url=DB_URL),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,
