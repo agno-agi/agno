@@ -60,6 +60,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
 
 async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+    """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # Extract the last user message for team execution
@@ -181,6 +182,7 @@ async def _stream_team_response_content(
                     type=EventType.TOOL_CALL_START,
                     tool_call_id=tool_call.tool_call_id or "",
                     tool_call_name=tool_call.tool_name or "",
+                    parent_message_id=message_id,
                 )
         if chunk.event == RunEvent.tool_call_completed:
             if chunk.tools is not None and len(chunk.tools) != 0:
