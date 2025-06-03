@@ -1,11 +1,13 @@
 from agno.agent.agent import Agent
 from agno.app.agui.app import AGUIApp
 from agno.models.openai import OpenAIChat
+from agno.tools.calculator import CalculatorTools
 
 chat_agent = Agent(
-    name="Assistant",
+    name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions="You are a helpful AI assistant.",
+    tools=[CalculatorTools(enable_all=True)],
     add_datetime_to_instructions=True,
     markdown=True,
 )

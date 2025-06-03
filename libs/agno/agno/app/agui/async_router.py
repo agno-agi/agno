@@ -11,6 +11,8 @@ from ag_ui.core import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -116,6 +118,7 @@ async def _stream_response_content(
                     type=EventType.TOOL_CALL_START,
                     tool_call_id=tool_call.tool_call_id or "",
                     tool_call_name=tool_call.tool_name or "",
+                    parent_message_id=message_id,
                 )
         if chunk.event == RunEvent.tool_call_completed:
             if chunk.tools is not None and len(chunk.tools) != 0:
@@ -124,6 +127,17 @@ async def _stream_response_content(
                     type=EventType.TOOL_CALL_END,
                     tool_call_id=tool_call.tool_call_id or "",
                 )
+
+        # Handle reasoning
+        if chunk.event == RunEvent.reasoning_started:
+            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
+        if chunk.event == RunEvent.reasoning_completed:
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
+
+        # Handle memory
+        if chunk.event == RunEvent.updating_memory:
+            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="updating_memory")
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="updating_memory")
 
         # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
@@ -176,6 +190,17 @@ async def _stream_team_response_content(
                     tool_call_id=tool_call.tool_call_id or "",
                 )
 
+        # Handle reasoning
+        if chunk.event == RunEvent.reasoning_started:
+            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
+        if chunk.event == RunEvent.reasoning_completed:
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
+
+        # Handle memory
+        if chunk.event == RunEvent.updating_memory:
+            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="updating_memory")
+            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="updating_memory")
+
         # Handle the lifecycle end events
         if chunk.event == RunEvent.run_completed:
             yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
@@ -227,10 +252,6 @@ def _convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List
     """Map AG-UI messages to Agno format."""
     converted = []
     for msg in messages:
-        # No need to convert the system message
-        if msg.role == "system":
-            continue
-
         agno_msg = AgnoMessage(
             role=msg.role,
             content=msg.content,
