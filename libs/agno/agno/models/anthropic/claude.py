@@ -100,16 +100,33 @@ class Claude(Model):
         if not self.api_key:
             log_error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
 
-        # Add API key to client parameters
         client_params["api_key"] = self.api_key
 
-        # Add beta header for extended cache duration if needed
-        if self.cache_ttl == "1h" or self.extended_cache_time:
+        # Add beta headers for prompt caching
+        if (
+            self.cache_system_prompt
+            or self.enable_prompt_caching
+            or self.cache_tool_definitions
+            or self.cache_messages
+            or self.cache_ttl == "1h"
+            or self.extended_cache_time
+        ):
             if self.default_headers is None:
                 self.default_headers = {}
-            self.default_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
 
-        # Add additional client parameters
+            # Always add the prompt caching beta header
+            if "anthropic-beta" not in self.default_headers:
+                self.default_headers["anthropic-beta"] = "prompt-caching-2024-07-31"
+
+            # Add extended cache TTL header if needed
+            if self.cache_ttl == "1h" or self.extended_cache_time:
+                existing_beta = self.default_headers.get("anthropic-beta", "")
+                if "extended-cache-ttl" not in existing_beta:
+                    if existing_beta:
+                        self.default_headers["anthropic-beta"] = f"{existing_beta},extended-cache-ttl-2025-04-11"
+                    else:
+                        self.default_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
+
         if self.client_params is not None:
             client_params.update(self.client_params)
         if self.default_headers is not None:
@@ -224,8 +241,8 @@ class Claude(Model):
 
         # Handle message caching
         if messages and self.cache_messages:
-            cached_messages = self._apply_message_caching(messages)
             # Note: messages are handled by the invoke methods, this is for reference
+            pass
 
         return request_kwargs
 
@@ -656,24 +673,83 @@ class Claude(Model):
                 "output_tokens": response.usage.output_tokens,
             }
 
-            # Cache-related metrics
+            # Cache-related metrics (following Anthropic's official field names)
             if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+                usage_dict["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cache_read_input_tokens"] = response.usage.cache_read_input_tokens
 
             # Enhanced cache metrics for 1-hour cache (beta feature)
             if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
                 cache_creation = response.usage.cache_creation
                 if hasattr(cache_creation, "ephemeral_5m_input_tokens"):
-                    usage_dict["cache_5m_write_tokens"] = cache_creation.ephemeral_5m_input_tokens
+                    usage_dict["cache_5m_creation_tokens"] = cache_creation.ephemeral_5m_input_tokens
                 if hasattr(cache_creation, "ephemeral_1h_input_tokens"):
-                    usage_dict["cache_1h_write_tokens"] = cache_creation.ephemeral_1h_input_tokens
+                    usage_dict["cache_1h_creation_tokens"] = cache_creation.ephemeral_1h_input_tokens
+
+            # Enhanced cache read metrics for different TTLs
+            if hasattr(response.usage, "cache_read") and response.usage.cache_read:
+                cache_read = response.usage.cache_read
+                if hasattr(cache_read, "ephemeral_5m_input_tokens"):
+                    usage_dict["cache_5m_read_tokens"] = cache_read.ephemeral_5m_input_tokens
+                if hasattr(cache_read, "ephemeral_1h_input_tokens"):
+                    usage_dict["cache_1h_read_tokens"] = cache_read.ephemeral_1h_input_tokens
 
             model_response.response_usage = usage_dict
 
         return model_response
+
+    def log_cache_performance(self, response_usage: Dict[str, Any], debug: bool = False) -> None:
+        """
+        Log cache performance metrics in debug mode.
+
+        Args:
+            response_usage: Usage metrics from the response
+            debug: Whether to output detailed cache performance logs
+        """
+        if not debug:
+            return
+
+        cache_creation = response_usage.get("cache_creation_input_tokens", 0)
+        cache_read = response_usage.get("cache_read_input_tokens", 0)
+        input_tokens = response_usage.get("input_tokens", 0)
+
+        print("\n🔍 CACHE PERFORMANCE DEBUG:")
+        print(f"   📊 Input tokens (not cached): {input_tokens}")
+        print(f"   ✍️  Cache creation tokens: {cache_creation}")
+        print(f"   📖 Cache read tokens: {cache_read}")
+
+        # Calculate cache efficiency
+        total_input = input_tokens + cache_read
+        if total_input > 0:
+            cache_hit_rate = (cache_read / total_input) * 100
+            print(f"   📈 Cache hit rate: {cache_hit_rate:.1f}%")
+
+            if cache_read > 0:
+                # Cost analysis
+                base_cost = (total_input * 0.003) / 1000  # $3 per 1M tokens
+                cached_cost = (cache_read * 0.0003 + input_tokens * 0.003) / 1000
+                savings = base_cost - cached_cost
+                savings_percent = (savings / base_cost) * 100 if base_cost > 0 else 0
+
+                print(f"   💰 Cost without cache: ${base_cost:.6f}")
+                print(f"   💰 Cost with cache: ${cached_cost:.6f}")
+                print(f"   💰 Savings: ${savings:.6f} ({savings_percent:.1f}%)")
+
+        # Enhanced TTL-specific metrics
+        cache_5m_create = response_usage.get("cache_5m_creation_tokens", 0)
+        cache_1h_create = response_usage.get("cache_1h_creation_tokens", 0)
+        cache_5m_read = response_usage.get("cache_5m_read_tokens", 0)
+        cache_1h_read = response_usage.get("cache_1h_read_tokens", 0)
+
+        if any([cache_5m_create, cache_1h_create, cache_5m_read, cache_1h_read]):
+            print(f"   🕐 5m cache created: {cache_5m_create}")
+            print(f"   🕐 5m cache read: {cache_5m_read}")
+            print(f"   🕓 1h cache created: {cache_1h_create}")
+            print(f"   🕓 1h cache read: {cache_1h_read}")
+
+        print("")
 
     def parse_provider_response_delta(
         self, response: Union[ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent]
@@ -753,20 +829,28 @@ class Claude(Model):
                 "output_tokens": response.usage.output_tokens or 0,
             }
 
-            # Cache-related metrics
+            # Cache-related metrics (following Anthropic's official field names)
             if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+                usage_dict["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cache_read_input_tokens"] = response.usage.cache_read_input_tokens
 
             # Enhanced cache metrics for 1-hour cache (beta feature)
             if hasattr(response.usage, "cache_creation") and response.usage.cache_creation:
                 cache_creation = response.usage.cache_creation
                 if hasattr(cache_creation, "ephemeral_5m_input_tokens"):
-                    usage_dict["cache_5m_write_tokens"] = cache_creation.ephemeral_5m_input_tokens
+                    usage_dict["cache_5m_creation_tokens"] = cache_creation.ephemeral_5m_input_tokens
                 if hasattr(cache_creation, "ephemeral_1h_input_tokens"):
-                    usage_dict["cache_1h_write_tokens"] = cache_creation.ephemeral_1h_input_tokens
+                    usage_dict["cache_1h_creation_tokens"] = cache_creation.ephemeral_1h_input_tokens
+
+            # Enhanced cache read metrics for different TTLs
+            if hasattr(response.usage, "cache_read") and response.usage.cache_read:
+                cache_read = response.usage.cache_read
+                if hasattr(cache_read, "ephemeral_5m_input_tokens"):
+                    usage_dict["cache_5m_read_tokens"] = cache_read.ephemeral_5m_input_tokens
+                if hasattr(cache_read, "ephemeral_1h_input_tokens"):
+                    usage_dict["cache_1h_read_tokens"] = cache_read.ephemeral_1h_input_tokens
 
             model_response.response_usage = usage_dict
 
