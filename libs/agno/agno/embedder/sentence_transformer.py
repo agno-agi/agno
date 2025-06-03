@@ -17,6 +17,7 @@ except ImportError:
 @dataclass
 class SentenceTransformerEmbedder(Embedder):
     id: str = "sentence-transformers/all-MiniLM-L6-v2"
+    dimensions: int = 384
     sentence_transformer_client: Optional[SentenceTransformer] = None
 
     def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
