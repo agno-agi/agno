@@ -666,7 +666,6 @@ class Agent:
                     if message.role == "assistant":
                         parser_model_response_message = message
                         break
-
                 if parser_model_response_message is not None:
                     run_messages.messages.append(parser_model_response_message)
                     model_response.parsed = parser_model_response.parsed
@@ -1120,10 +1119,11 @@ class Agent:
         # If a parser model is provided, structure the response separately
         if self.parser_model is not None:
             if self.response_model is not None:
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response)
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
                 parser_model_response: ModelResponse = await self.parser_model.aresponse(
                     messages=messages_for_parser_model,
-                    response_format=self.response_model,
+                    response_format=parser_response_format,
                 )
                 parser_model_response_message: Optional[Message] = None
                 for message in reversed(messages_for_parser_model):
@@ -4806,7 +4806,7 @@ class Agent:
             else "You are tasked with creating a structured output from the provided data."
         )
 
-        if response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"} and self.response_model is not None:  # type: ignore
             system_content += f"{get_json_output_prompt(self.response_model)}"
 
         return [
