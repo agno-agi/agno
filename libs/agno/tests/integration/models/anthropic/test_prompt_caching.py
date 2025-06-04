@@ -14,7 +14,6 @@ import pytest
 
 from agno.agent import Agent, RunResponse
 from agno.models.anthropic import Claude
-from agno.utils.log import log_warning
 from agno.utils.media import download_file
 
 
