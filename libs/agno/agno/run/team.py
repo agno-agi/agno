@@ -182,23 +182,27 @@ class TeamRunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
-    run_state: RunStatus = RunStatus.running
+    status: RunStatus = RunStatus.running
 
     @property
     def is_paused(self):
-        return self.run_state == RunStatus.paused
+        return self.status == RunStatus.paused
 
     @property
     def is_cancelled(self):
-        return self.run_state == RunStatus.cancelled
+        return self.status == RunStatus.cancelled
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k not in ["messages", "status", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
+
+        if self.status is not None:
+            _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 

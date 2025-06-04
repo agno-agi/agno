@@ -4360,7 +4360,7 @@ class Team:
             model=model,
             messages=messages,
             extra_data=extra_data,
-            run_state=run_state,
+            status=run_state,
         )
         if formatted_tool_calls:
             rr.formatted_tool_calls = formatted_tool_calls

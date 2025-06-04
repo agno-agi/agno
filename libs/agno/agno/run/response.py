@@ -230,7 +230,8 @@ class RunResponse:
             and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
 
-        _dict["status"] = self.status.value
+        if self.status is not None:
+            _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
