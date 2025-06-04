@@ -4435,6 +4435,7 @@ class Team:
                 message=user_message,
                 session_id=session_id,
                 stream=self.stream or False,
+                    stream_intermediate_steps=self.stream_intermediate_steps,
                 async_mode=False,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
@@ -4451,6 +4452,7 @@ class Team:
                 self.get_transfer_task_function(
                     session_id=session_id,
                     stream=self.stream or False,
+                    stream_intermediate_steps=self.stream_intermediate_steps,
                     async_mode=False,
                     images=images,  # type: ignore
                     videos=videos,  # type: ignore
@@ -4466,6 +4468,7 @@ class Team:
             run_member_agents_func = self.get_run_member_agents_function(
                 session_id=session_id,
                 stream=self.stream or False,
+                stream_intermediate_steps=self.stream_intermediate_steps,
                 async_mode=False,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
@@ -5253,6 +5256,7 @@ class Team:
         self,
         session_id: str,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         async_mode: bool = False,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -5330,7 +5334,7 @@ class Team:
                 
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
+                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True, stream_intermediate_steps=stream_intermediate_steps
                     )
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -5497,6 +5501,7 @@ class Team:
         self,
         session_id: str,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         async_mode: bool = False,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -5591,6 +5596,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5718,6 +5724,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5860,6 +5867,7 @@ class Team:
         message: Message,
         session_id: str,
         stream: bool = False,
+        stream_intermediate_steps: bool = False,
         async_mode: bool = False,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -5921,6 +5929,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
                 )
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
@@ -6042,6 +6051,7 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=True,
+                    stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
                 )
                 async for member_agent_run_response_event in member_agent_run_response_stream:

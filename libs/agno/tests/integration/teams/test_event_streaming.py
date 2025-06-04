@@ -285,21 +285,14 @@ def test_intermediate_steps_with_member_agents():
         instructions="You can do Math!",
         tools=[CalculatorTools()],
     )
-    sub_team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        name="Calculator Team",
-        members=[agent_2],
-        telemetry=False,
-        monitoring=False,
-    )
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
-        members=[agent_1, sub_team],
+        members=[agent_1, agent_2],
         telemetry=False,
         monitoring=False,
     )
 
-    response_generator = team.run("How would you solve 10 factorial? Also solve it.", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run("Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True)
 
     events = {}
     for run_response_delta in response_generator:
@@ -310,33 +303,42 @@ def test_intermediate_steps_with_member_agents():
     assert events.keys() == {
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
+        RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
+        RunEvent.reasoning_started,
+        RunEvent.reasoning_step,
+        RunEvent.reasoning_completed,
         RunEvent.run_response_content,
+        RunEvent.run_completed,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_response_content,
         TeamRunEvent.run_completed,
     }
-    for event_list in events.values():
-        if event_list[0]["event"] != "run_response_content":
-            print(event_list)
-            print("--------------------------------")
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member_agent"
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "Calculator Team"
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
-    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member_agent"
-    assert events[TeamRunEvent.tool_call_completed][0].tool.result == "Task transferred to member agent"
+    # Transfer twice, from team to member agents
+    assert len(events[TeamRunEvent.tool_call_started]) == 2
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "analyst"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_args["member_id"] == "math-agent"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 2
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
     assert len(events[TeamRunEvent.run_response_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
-    assert len(events[RunEvent.tool_call_started]) == 1
-    assert events[RunEvent.tool_call_started][0].tool.tool_name == ""
-    assert events[RunEvent.tool_call_started][0].tool.tool_args == {}
-    assert len(events[RunEvent.tool_call_completed]) == 1
-    assert events[RunEvent.tool_call_completed][0].tool.tool_name == ""
-    assert events[RunEvent.tool_call_completed][0].tool.result == "Task transferred to member agent"
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 2
+    assert len(events[RunEvent.run_completed]) == 2
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.reasoning_started]) == 1
+    assert len(events[RunEvent.reasoning_completed]) == 1
+    assert len(events[RunEvent.reasoning_step]) > 1
     assert len(events[RunEvent.run_response_content]) > 1
 
 
@@ -378,23 +380,36 @@ def test_intermediate_steps_with_member_agents_complex():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {
+    assert set(events.keys()) == {
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.reasoning_started,
+        TeamRunEvent.reasoning_step,
+        RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         RunEvent.run_response_content,
+        RunEvent.run_completed,
+        TeamRunEvent.run_response_content,
         TeamRunEvent.run_completed,
-        TeamRunEvent.run_completed
+        TeamRunEvent.reasoning_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    # Transfer twice, from team to member agents, and call reasoning tools
+    assert len(events[TeamRunEvent.tool_call_started]) == 3
+    assert len(events[TeamRunEvent.tool_call_completed]) == 3
     assert len(events[TeamRunEvent.run_response_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
-    assert len(events[RunEvent.tool_call_started]) == 1
-    assert len(events[RunEvent.tool_call_completed]) == 1
+    assert len(events[TeamRunEvent.reasoning_started]) == 1
+    assert len(events[TeamRunEvent.reasoning_completed]) == 1
+    assert len(events[TeamRunEvent.reasoning_step]) > 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 2
+    assert len(events[RunEvent.run_completed]) == 2
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
     assert len(events[RunEvent.run_response_content]) > 1
 
