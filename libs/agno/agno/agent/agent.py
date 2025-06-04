@@ -740,6 +740,10 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+        
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield create_run_response_started_event(run_response)
 
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages)
@@ -748,9 +752,6 @@ class Agent:
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield create_run_response_started_event(run_response)
 
         # 2. Process model response
         for event in self._handle_model_response_stream(
@@ -1174,6 +1175,9 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield create_run_response_started_event(run_response)
 
         # 1. Reason about the task if reasoning is enabled
         async for item in self._ahandle_reasoning_stream(run_messages=run_messages):
@@ -1182,10 +1186,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield create_run_response_started_event(run_response)
 
         # 2. Generate a response from the Model
         async for event in self._ahandle_model_response_stream(

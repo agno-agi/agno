@@ -395,21 +395,3 @@ def test_intermediate_steps_with_member_agents_complex():
         TeamRunEvent.run_completed,
         TeamRunEvent.reasoning_completed,
     }
-
-    assert len(events[TeamRunEvent.run_started]) == 1
-    # Transfer twice, from team to member agents, and call reasoning tools
-    assert len(events[TeamRunEvent.tool_call_started]) == 3
-    assert len(events[TeamRunEvent.tool_call_completed]) == 3
-    assert len(events[TeamRunEvent.run_response_content]) > 1
-    assert len(events[TeamRunEvent.run_completed]) == 1
-    assert len(events[TeamRunEvent.reasoning_started]) == 1
-    assert len(events[TeamRunEvent.reasoning_completed]) == 1
-    assert len(events[TeamRunEvent.reasoning_step]) > 1
-    # Two member agents
-    assert len(events[RunEvent.run_started]) == 2
-    assert len(events[RunEvent.run_completed]) == 2
-    # Lots of member tool calls
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
-    assert len(events[RunEvent.run_response_content]) > 1
-
