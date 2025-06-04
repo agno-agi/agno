@@ -6,7 +6,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 
 evaluation = AccuracyEval(
-    name="Calculator Evaluation with Tools",
+    name="Tools Evaluation",
     model=OpenAIChat(id="o4-mini"),
     agent=Agent(
         model=OpenAIChat(id="gpt-4o-mini"),

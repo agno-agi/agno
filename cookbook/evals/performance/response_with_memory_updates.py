@@ -25,7 +25,7 @@ def run_agent():
 
 
 response_with_memory_updates_perf = PerformanceEval(
-    name="Response with Memory Updates",
+    name="Memory Updates Performance",
     func=run_agent, num_iterations=5, warmup_runs=0
 )
 
