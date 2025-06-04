@@ -669,6 +669,8 @@ class Agent:
                 run_messages.messages.append(parser_model_response_message)
                 model_response.parsed = parser_model_response.parsed
                 model_response.content = parser_model_response.content
+            else:
+                log_warning("Unable to parse response with parser model")
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1127,6 +1129,8 @@ class Agent:
                 run_messages.messages.append(parser_model_response_message)
                 model_response.parsed = parser_model_response.parsed
                 model_response.content = parser_model_response.content
+            else:
+                log_warning("Unable to parse response with parser model")
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
