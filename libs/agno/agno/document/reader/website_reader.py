@@ -77,18 +77,29 @@ class WebsiteReader(Reader):
         :param soup: The BeautifulSoup object to extract the main content from.
         :return: The main content.
         """
-        # Try to find main content by specific tags or class names
-        for tag in ["article", "main"]:
-            element = soup.find(tag)
-            if element:
-                return element.get_text(strip=True, separator=" ")
 
-        for class_name in ["content", "main-content", "post-content"]:
-            element = soup.find(class_=class_name)
-            if element:
-                return element.get_text(strip=True, separator=" ")
+        def match(tag: Tag) -> bool:
+            """
+            Check if the tag matches any of the relevant tags or class names
+            """
+            if tag.name in ["article", "main"]:
+                return True
+            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):  # type: ignore
+                return True
+            return False
 
-        return ""
+        # Use a single call to 'find' with a custom function to match tags or classes
+        element = soup.find(match)
+        if element:
+            return element.get_text(strip=True, separator=" ")
+
+        # If we only have a div without specific content classes, return empty string
+        if soup.find("div") and not any(
+            soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]
+        ):
+            return ""
+
+        return soup.get_text(strip=True, separator=" ")
 
     def crawl(self, url: str, starting_depth: int = 1) -> Dict[str, str]:
         """
@@ -101,6 +112,10 @@ class WebsiteReader(Reader):
         Returns:
         - Dict[str, str]: A dictionary where each key is a URL and the corresponding value is the main
                           content extracted from that URL.
+
+        Raises:
+        - httpx.HTTPStatusError: If there's an HTTP status error.
+        - httpx.RequestError: If there's a request-related error (connection, timeout, etc).
 
         Note:
         The function focuses on extracting the main content by prioritizing content inside common HTML tags
@@ -172,9 +187,29 @@ class WebsiteReader(Reader):
                         ):
                             self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
+            except httpx.HTTPStatusError as e:
+                # Log HTTP status errors but continue crawling other pages
+                logger.warning(f"HTTP status error while crawling {current_url}: {e}")
+                # For the initial URL, we should raise the error
+                if current_url == url and not crawler_result:
+                    raise
+            except httpx.RequestError as e:
+                # Log request errors but continue crawling other pages
+                logger.warning(f"Request error while crawling {current_url}: {e}")
+                # For the initial URL, we should raise the error
+                if current_url == url and not crawler_result:
+                    raise
             except Exception as e:
-                logger.warning(f"Failed to crawl: {current_url}: {e}")
-                pass
+                # Log other exceptions but continue crawling other pages
+                logger.warning(f"Failed to crawl {current_url}: {e}")
+                # For the initial URL, we should raise the error
+                if current_url == url and not crawler_result:
+                    # Wrap non-HTTP exceptions in a RequestError
+                    raise httpx.RequestError(f"Failed to crawl starting URL {url}: {str(e)}", request=None) from e
+
+        # If we couldn't crawl any pages, raise an error
+        if not crawler_result:
+            raise httpx.RequestError(f"Failed to extract any content from {url}", request=None)
 
         return crawler_result
 
@@ -189,6 +224,10 @@ class WebsiteReader(Reader):
         Returns:
         - Dict[str, str]: A dictionary where each key is a URL and the corresponding value is the main
                         content extracted from that URL.
+
+        Raises:
+        - httpx.HTTPStatusError: If there's an HTTP status error.
+        - httpx.RequestError: If there's a request-related error (connection, timeout, etc).
         """
         num_links = 0
         crawler_result: Dict[str, str] = {}
@@ -199,7 +238,7 @@ class WebsiteReader(Reader):
         self._urls_to_crawl = [(url, starting_depth)]
 
         client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -249,8 +288,31 @@ class WebsiteReader(Reader):
                             ):
                                 self._urls_to_crawl.append((full_url_str, current_depth + 1))
 
+                except httpx.HTTPStatusError as e:
+                    # Log HTTP status errors but continue crawling other pages
+                    logger.warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
+                    # For the initial URL, we should raise the error
+                    if current_url == url and not crawler_result:
+                        raise
+                except httpx.RequestError as e:
+                    # Log request errors but continue crawling other pages
+                    logger.warning(f"Request error while crawling asynchronously {current_url}: {e}")
+                    # For the initial URL, we should raise the error
+                    if current_url == url and not crawler_result:
+                        raise
                 except Exception as e:
-                    logger.warning(f"Failed to crawl asynchronously: {current_url}: {e}")
+                    # Log other exceptions but continue crawling other pages
+                    logger.warning(f"Failed to crawl asynchronously {current_url}: {e}")
+                    # For the initial URL, we should raise the error
+                    if current_url == url and not crawler_result:
+                        # Wrap non-HTTP exceptions in a RequestError
+                        raise httpx.RequestError(
+                            f"Failed to crawl starting URL {url} asynchronously: {str(e)}", request=None
+                        ) from e
+
+        # If we couldn't crawl any pages, raise an error
+        if not crawler_result:
+            raise httpx.RequestError(f"Failed to extract any content from {url} asynchronously", request=None)
 
         return crawler_result
 
@@ -263,30 +325,39 @@ class WebsiteReader(Reader):
 
         :param url: The URL of the website to read.
         :return: A list of documents.
+        :raises httpx.HTTPStatusError: If there's an HTTP status error.
+        :raises httpx.RequestError: If there's a request-related error.
         """
 
         log_debug(f"Reading: {url}")
-        crawler_result = self.crawl(url)
-        documents = []
-        for crawled_url, crawled_content in crawler_result.items():
-            if self.chunk:
-                documents.extend(
-                    self.chunk_document(
-                        Document(
-                            name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
+        try:
+            crawler_result = self.crawl(url)
+            documents = []
+            for crawled_url, crawled_content in crawler_result.items():
+                if self.chunk:
+                    documents.extend(
+                        self.chunk_document(
+                            Document(
+                                name=url,
+                                id=str(crawled_url),
+                                meta_data={"url": str(crawled_url)},
+                                content=crawled_content,
+                            )
                         )
                     )
-                )
-            else:
-                documents.append(
-                    Document(
-                        name=url,
-                        id=str(crawled_url),
-                        meta_data={"url": str(crawled_url)},
-                        content=crawled_content,
+                else:
+                    documents.append(
+                        Document(
+                            name=url,
+                            id=str(crawled_url),
+                            meta_data={"url": str(crawled_url)},
+                            content=crawled_content,
+                        )
                     )
-                )
-        return documents
+            return documents
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            logger.error(f"Error reading website {url}: {e}")
+            raise
 
     async def async_read(self, url: str) -> List[Document]:
         """
@@ -297,36 +368,43 @@ class WebsiteReader(Reader):
 
         :param url: The URL of the website to read.
         :return: A list of documents.
+        :raises httpx.HTTPStatusError: If there's an HTTP status error.
+        :raises httpx.RequestError: If there's a request-related error.
         """
         log_debug(f"Reading asynchronously: {url}")
-        crawler_result = await self.async_crawl(url)
-        documents = []
+        try:
+            crawler_result = await self.async_crawl(url)
+            documents = []
 
-        # Process documents in parallel
-        async def process_document(crawled_url, crawled_content):
-            if self.chunk:
-                doc = Document(
-                    name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
-                )
-                return self.chunk_document(doc)
-            else:
-                return [
-                    Document(
-                        name=url,
-                        id=str(crawled_url),
-                        meta_data={"url": str(crawled_url)},
-                        content=crawled_content,
+            # Process documents in parallel
+            async def process_document(crawled_url, crawled_content):
+                if self.chunk:
+                    doc = Document(
+                        name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
                     )
-                ]
+                    return self.chunk_document(doc)
+                else:
+                    return [
+                        Document(
+                            name=url,
+                            id=str(crawled_url),
+                            meta_data={"url": str(crawled_url)},
+                            content=crawled_content,
+                        )
+                    ]
 
-        # Use asyncio.gather to process all documents in parallel
-        tasks = [
-            process_document(crawled_url, crawled_content) for crawled_url, crawled_content in crawler_result.items()
-        ]
-        results = await asyncio.gather(*tasks)
+            # Use asyncio.gather to process all documents in parallel
+            tasks = [
+                process_document(crawled_url, crawled_content)
+                for crawled_url, crawled_content in crawler_result.items()
+            ]
+            results = await asyncio.gather(*tasks)
 
-        # Flatten the results
-        for doc_list in results:
-            documents.extend(doc_list)
+            # Flatten the results
+            for doc_list in results:
+                documents.extend(doc_list)
 
-        return documents
+            return documents
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            logger.error(f"Error reading website asynchronously {url}: {e}")
+            raise

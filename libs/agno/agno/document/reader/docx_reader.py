@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 from typing import IO, Any, List, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -34,7 +35,7 @@ class DocxReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=doc_name,
+                    id=str(uuid4()),
                     content=doc_content,
                 )
             ]

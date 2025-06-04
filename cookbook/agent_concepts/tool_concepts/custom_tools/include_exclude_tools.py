@@ -6,12 +6,17 @@ from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.toolkit import Toolkit
-
 from agno.utils.log import logger
+
 
 class CustomerDBTools(Toolkit):
     def __init__(self, *args, **kwargs):
-        super().__init__(name="customer_db", tools=[self.retrieve_customer_profile, self.delete_customer_profile], *args, **kwargs)
+        super().__init__(
+            name="customer_db",
+            tools=[self.retrieve_customer_profile, self.delete_customer_profile],
+            *args,
+            **kwargs,
+        )
 
     async def retrieve_customer_profile(self, customer_id: str):
         """
@@ -41,7 +46,6 @@ class CustomerDBTools(Toolkit):
         """
         logger.info(f"Deleting customer profile for {customer_id}")
         return f"Customer profile for {customer_id}"
-
 
 
 agent = Agent(

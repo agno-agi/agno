@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
@@ -22,6 +22,10 @@ class MovieScript(BaseModel):
     characters: List[str] = Field(..., description="Name of characters for this movie.")
     storyline: str = Field(
         ..., description="3 sentence storyline for the movie. Make it exciting!"
+    )
+    rating: Dict[str, int] = Field(
+        ...,
+        description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
     )
 
 

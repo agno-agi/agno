@@ -80,7 +80,6 @@ class Clickhouse(VectorDb):
         if self.async_client is None:
             self.async_client = await clickhouse_connect.get_async_client(
                 host=self.host,
-                username=self.username,
                 password=self.password,
                 database=self.database_name,
                 port=self.port,
@@ -192,9 +191,9 @@ class Clickhouse(VectorDb):
             else:
                 raise NotImplementedError(f"Not implemented index {type(self.index)!r} is passed")
 
-            await self.async_client.command("SET enable_json_type = 1")
+            await self.async_client.command("SET enable_json_type = 1")  # type: ignore
 
-            await self.async_client.command(
+            await self.async_client.command(  # type: ignore
                 f"""CREATE TABLE IF NOT EXISTS {{database_name:Identifier}}.{{table_name:Identifier}}
                 (
                     id String,
@@ -400,7 +399,7 @@ class Clickhouse(VectorDb):
         await self.async_insert(documents=documents, filters=filters)
 
         parameters = self._get_base_parameters()
-        await self.async_client.query(
+        await self.async_client.query(  # type: ignore
             "SELECT id FROM {database_name:Identifier}.{table_name:Identifier} FINAL",
             parameters=parameters,
         )
@@ -413,13 +412,13 @@ class Clickhouse(VectorDb):
 
         parameters = self._get_base_parameters()
         where_query = ""
-        if filters:
-            query_filters: List[str] = []
-            for key, value in filters.values():
-                query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
-                parameters[f"{key}_key"] = key
-                parameters[f"{key}_value"] = value
-            where_query = f"WHERE {' AND '.join(query_filters)}"
+        # if filters:
+        #     query_filters: List[str] = []
+        #     for key, value in filters.values():
+        #         query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
+        #         parameters[f"{key}_key"] = key
+        #         parameters[f"{key}_value"] = value
+        #     where_query = f"WHERE {' AND '.join(query_filters)}"
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -477,13 +476,13 @@ class Clickhouse(VectorDb):
 
         parameters = self._get_base_parameters()
         where_query = ""
-        if filters:
-            query_filters: List[str] = []
-            for key, value in filters.values():
-                query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
-                parameters[f"{key}_key"] = key
-                parameters[f"{key}_value"] = value
-            where_query = f"WHERE {' AND '.join(query_filters)}"
+        # if filters:
+        #     query_filters: List[str] = []
+        #     for key, value in filters.values():
+        #         query_filters.append(f"{{{key}_key:String}} = {{{key}_value:String}}")
+        #         parameters[f"{key}_key"] = key
+        #         parameters[f"{key}_value"] = value
+        #     where_query = f"WHERE {' AND '.join(query_filters)}"
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -542,7 +541,7 @@ class Clickhouse(VectorDb):
         if await self.async_exists():
             log_debug(f"Async dropping table: {self.table_name}")
             parameters = self._get_base_parameters()
-            await self.async_client.command(
+            await self.async_client.command(  # type: ignore
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )

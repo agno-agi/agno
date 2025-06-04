@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from pathlib import Path
 from typing import IO, Any, List, Union
 
@@ -27,7 +28,7 @@ class TextReader(Reader):
             documents = [
                 Document(
                     name=file_name,
-                    id=file_name,
+                    id=str({uuid.uuid4()}),
                     content=file_contents,
                 )
             ]
@@ -66,7 +67,7 @@ class TextReader(Reader):
 
             document = Document(
                 name=file_name,
-                id=file_name,
+                id=str({uuid.uuid4()}),
                 content=file_contents,
             )
 

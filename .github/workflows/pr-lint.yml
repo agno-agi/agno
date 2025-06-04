@@ -1,0 +1,27 @@
+name: PR Lint
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+jobs:
+  lint-pr:
+    name: Lint PR Title and Body
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR Title Format
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
+          REGEX='^(\[(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)\][[:space:]]+.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert):[[:space:]]+.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)-[a-z0-9-]+)$'
+
+          if [[ "$TITLE_LOWER" =~ $REGEX ]]; then
+            echo "✅ PR Title format is valid."
+          else
+            echo "❌ PR Title '$TITLE' does not match the required format."
+            echo "   Use one of: [feat] title, feat: title, or feat-some-title"
+            exit 1
+          fi
