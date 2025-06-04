@@ -13,8 +13,6 @@ def get_weather(city: Literal["nyc", "sf"]):
         return "It might be cloudy in nyc"
     elif city == "sf":
         return "It's always sunny in sf"
-    else:
-        raise AssertionError("Unknown city")
 
 
 tools = [get_weather]
@@ -24,7 +22,7 @@ def instantiate_agent():
     return Agent(model=OpenAIChat(id="gpt-4o"), tools=tools)
 
 
-instantiation_perf = PerformanceEval(func=instantiate_agent, num_iterations=1000)
+instantiation_perf = PerformanceEval(name="Tool Instantiation Performance", func=instantiate_agent, num_iterations=1000)
 
 if __name__ == "__main__":
     instantiation_perf.run(print_results=True, print_summary=True)

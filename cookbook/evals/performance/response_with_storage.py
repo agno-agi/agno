@@ -19,6 +19,7 @@ def run_agent():
 
 
 response_with_storage_perf = PerformanceEval(
+    name="Storage Performance",
     func=run_agent, num_iterations=1, warmup_runs=0
 )
 
