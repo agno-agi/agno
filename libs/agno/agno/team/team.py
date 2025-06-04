@@ -209,8 +209,10 @@ class Team:
     add_session_summary_references: Optional[bool] = None
 
     # --- Team History ---
-    # If True, enable the team history
+    # If True, enable the team history (Deprecated in favor of add_history_to_messages)
     enable_team_history: bool = False
+    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_messages: bool = False
     # Deprecated in favor of num_history_runs: Number of interactions from history
     num_of_interactions_from_history: Optional[int] = None
     # Number of historical runs to include in the messages
@@ -287,6 +289,7 @@ class Team:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
+        add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
         num_history_runs: int = 3,
         storage: Optional[Storage] = None,
@@ -358,6 +361,7 @@ class Team:
         self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
+        self.add_history_to_messages = add_history_to_messages
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
 
@@ -4722,7 +4726,7 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.enable_team_history:
+        if self.enable_team_history or self.add_history_to_messages:
             from copy import deepcopy
 
             history = []

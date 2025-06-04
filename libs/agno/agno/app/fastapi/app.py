@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class FastAPIApp(BaseAPIApp):
+    type = "fastapi"
+
     def get_router(self) -> APIRouter:
         return get_sync_router(agent=self.agent, team=self.team)
 
