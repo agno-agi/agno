@@ -12,9 +12,9 @@ from agno.run.response import RunEvent
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
-    event: str
     run_id: str
     created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
