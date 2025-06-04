@@ -3,8 +3,9 @@ import csv
 import io
 import os
 from pathlib import Path
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 
@@ -29,7 +30,7 @@ class CSVReader(Reader):
                 logger.info(f"Reading: {file}")
                 file_content = file.open(newline="", mode="r", encoding="utf-8")
             else:
-                logger.info(f"Reading uploaded file: {file.name}")
+                logger.info(f"Reading retrieved file: {file.name}")
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -43,7 +44,7 @@ class CSVReader(Reader):
             documents = [
                 Document(
                     name=csv_name,
-                    id=csv_name,
+                    id=str(uuid4()),
                     content=csv_content,
                 )
             ]
@@ -81,7 +82,7 @@ class CSVReader(Reader):
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
             else:
-                logger.info(f"Reading uploaded file async: {file.name}")
+                logger.info(f"Reading retrieved file async: {file.name}")
                 file.seek(0)
                 file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
@@ -97,7 +98,7 @@ class CSVReader(Reader):
                 documents = [
                     Document(
                         name=csv_name,
-                        id=csv_name,
+                        id=str(uuid4()),
                         content=csv_content,
                     )
                 ]
@@ -113,7 +114,7 @@ class CSVReader(Reader):
 
                     return Document(
                         name=csv_name,
-                        id=f"{csv_name}_page{page_number}",
+                        id=str(uuid4()),
                         meta_data={"page": page_number, "start_row": start_row, "rows": len(page_rows)},
                         content=page_content,
                     )
@@ -134,20 +135,23 @@ class CSVReader(Reader):
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
 
         logger.info(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
-        response = fetch_with_retry(url)
+        response = fetch_with_retry(url, proxy=self.proxy)
 
         parsed_url = urlparse(url)
         filename = os.path.basename(parsed_url.path) or "data.csv"
 
         file_obj = io.BytesIO(response.content)
         file_obj.name = filename
-
         documents = CSVReader().read(file=file_obj)
 
         file_obj.close()
@@ -162,7 +166,8 @@ class CSVUrlReader(Reader):
 
         logger.info(f"Reading async: {url}")
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
             parsed_url = urlparse(url)

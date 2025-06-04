@@ -280,10 +280,10 @@ class SingleStore(VectorDb):
 
         stmt = select(*columns)
 
-        if filters is not None:
-            for key, value in filters.items():
-                if hasattr(self.table.c, key):
-                    stmt = stmt.where(getattr(self.table.c, key) == value)
+        # if filters is not None:
+        #     for key, value in filters.items():
+        #         if hasattr(self.table.c, key):
+        #             stmt = stmt.where(getattr(self.table.c, key) == value)
 
         if self.distance == Distance.l2:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))

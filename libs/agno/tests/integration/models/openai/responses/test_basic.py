@@ -122,8 +122,9 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    assert len(agent.memory.messages) == 5
-    assert [m.role for m in agent.memory.messages] == ["system", "user", "assistant", "user", "assistant"]
+    messages = agent.get_messages_for_session()
+    assert len(messages) == 5
+    assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
     # Test metrics structure and types
     _assert_metrics(response2)
@@ -205,7 +206,6 @@ def test_persistent_memory():
         model=OpenAIResponses(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[

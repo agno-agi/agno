@@ -4,26 +4,25 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
-        ReasoningTools(
-            think=True,
-            analyze=True,
-            add_instructions=True,
-            add_few_shot=True,
-        ),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(enable_all=True),
     ],
-    instructions="Use tables where possible",
-    stream_intermediate_steps=True,
-    show_tool_calls=True,
+    instructions="Use tables to display data.",
     markdown=True,
 )
+
+# Semiconductor market analysis example
 reasoning_agent.print_response(
-    "Write a report comparing NVDA to TSLA", stream=True, show_full_reasoning=True
+    """\
+    Analyze the semiconductor market performance focusing on:
+    - NVIDIA (NVDA)
+    - AMD (AMD)
+    - Intel (INTC)
+    - Taiwan Semiconductor (TSM)
+    Compare their market positions, growth metrics, and future outlook.""",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
 )

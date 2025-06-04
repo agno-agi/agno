@@ -65,7 +65,7 @@ class PostgresMemoryDb(MemoryDb):
             self.table_name,
             self.metadata,
             Column("id", String, primary_key=True),
-            Column("user_id", String),
+            Column("user_id", String, index=True),
             Column("memory", postgresql.JSONB, server_default=text("'{}'::jsonb")),
             Column("created_at", DateTime(timezone=True), server_default=text("now()")),
             Column("updated_at", DateTime(timezone=True), onupdate=text("now()")),
@@ -171,11 +171,13 @@ class PostgresMemoryDb(MemoryDb):
             return False
 
     def clear(self) -> bool:
-        with self.Session() as sess, sess.begin():
-            stmt = delete(self.table)
-            log_info(f"Clearing table: {self.table.name}")
-            sess.execute(stmt)
-            return True
+        if self.table_exists():
+            with self.Session() as sess, sess.begin():
+                stmt = delete(self.table)
+                log_info(f"Clearing table: {self.table.name}")
+                sess.execute(stmt)
+                return True
+        return False
 
     def __deepcopy__(self, memo):
         """

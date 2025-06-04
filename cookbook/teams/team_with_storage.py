@@ -57,6 +57,7 @@ multi_language_team = Team(
     ],
     show_members_responses=True,
     enable_team_history=True,
+    num_history_runs=3,
 )
 
 multi_language_team.print_response(

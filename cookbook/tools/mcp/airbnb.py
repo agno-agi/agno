@@ -10,6 +10,7 @@ import asyncio
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
+from agno.utils.pprint import apprint_run_response
 
 
 async def run_agent(message: str) -> None:
@@ -21,7 +22,9 @@ async def run_agent(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        await agent.aprint_response(message, stream=True)
+
+        response_stream = await agent.arun(message, stream=True)
+        await apprint_run_response(response_stream, markdown=True)
 
 
 if __name__ == "__main__":

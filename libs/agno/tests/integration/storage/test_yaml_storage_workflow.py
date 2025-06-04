@@ -93,7 +93,8 @@ def test_multiple_interactions(workflow_with_storage, workflow_storage):
     stored_session = workflow_storage.read(session_id)
     assert stored_session is not None
     assert "runs" in stored_session.memory
-    assert len(stored_session.memory["runs"]) == 2  # Should have 2 runs
+    runs = stored_session.memory["runs"]
+    assert len(runs) == 2  # Should have 2 runs
 
 
 def test_session_retrieval_by_user(workflow_storage):

@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -17,7 +18,7 @@ try:
     from groq import Groq as GroqClient
     from groq.types.chat import ChatCompletion
     from groq.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta, ChoiceDeltaToolCall
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`groq` not installed. Please install using `pip install groq`")
 
 
@@ -39,7 +40,6 @@ class Groq(Model):
     logprobs: Optional[bool] = None
     max_tokens: Optional[int] = None
     presence_penalty: Optional[float] = None
-    response_format: Optional[Dict[str, Any]] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     temperature: Optional[float] = None
@@ -94,7 +94,7 @@ class Groq(Model):
         Returns:
             GroqClient: An instance of the Groq client.
         """
-        if self.client:
+        if self.client and not self.client.is_closed():
             return self.client
 
         client_params: Dict[str, Any] = self._get_client_params()
@@ -124,8 +124,12 @@ class Groq(Model):
             )
         return AsyncGroqClient(**client_params)
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -139,7 +143,7 @@ class Groq(Model):
             "logprobs": self.logprobs,
             "max_tokens": self.max_tokens,
             "presence_penalty": self.presence_penalty,
-            "response_format": self.response_format,
+            "response_format": response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -152,10 +156,10 @@ class Groq(Model):
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
-        if self._tools is not None:
-            request_params["tools"] = self._tools
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+        if tools is not None:
+            request_params["tools"] = tools
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
@@ -176,7 +180,6 @@ class Groq(Model):
                 "logprobs": self.logprobs,
                 "max_tokens": self.max_tokens,
                 "presence_penalty": self.presence_penalty,
-                "response_format": self.response_format,
                 "seed": self.seed,
                 "stop": self.stop,
                 "temperature": self.temperature,
@@ -187,16 +190,14 @@ class Groq(Model):
                 "extra_query": self.extra_query,
             }
         )
-        if self._tools is not None:
-            model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def format_message(self, message: Message) -> Dict[str, Any]:
+    def format_message(
+        self,
+        message: Message,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Format a message into the format expected by Groq.
 
@@ -218,8 +219,9 @@ class Groq(Model):
         if (
             message.role == "system"
             and isinstance(message.content, str)
-            and self.response_format is not None
-            and self.response_format.get("type") == "json_object"
+            and response_format is not None
+            and isinstance(response_format, dict)
+            and response_format.get("type") == "json_object"
         ):
             # This is required by Groq to ensure the model outputs in the correct format
             message.content += "\n\nYour output should be in JSON format."
@@ -231,6 +233,9 @@ class Groq(Model):
                 message_dict["content"] = [{"type": "text", "text": message.content}]
                 message_dict["content"].extend(images_to_message(images=message.images))
 
+        if message.files is not None and len(message.files) > 0:
+            log_warning("File input is currently unsupported.")
+
         if message.audio is not None and len(message.audio) > 0:
             log_warning("Audio input is currently unsupported.")
 
@@ -239,21 +244,21 @@ class Groq(Model):
 
         return message_dict
 
-    def invoke(self, messages: List[Message]) -> ChatCompletion:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            ChatCompletion: The chat completion response from the API.
         """
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -267,21 +272,21 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> ChatCompletion:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            ChatCompletion: The chat completion response from the API.
         """
         try:
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -295,22 +300,22 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -324,15 +329,15 @@ class Groq(Model):
             log_error(f"Unexpected error calling Groq API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Sends an asynchronous streaming chat completion request to the Groq API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: An asynchronous iterator of chat completion chunks.
         """
 
         try:
@@ -340,7 +345,7 @@ class Groq(Model):
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.request_kwargs,
+                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in stream:  # type: ignore
                 yield chunk
@@ -397,7 +402,7 @@ class Groq(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: ChatCompletion) -> ModelResponse:
+    def parse_provider_response(self, response: ChatCompletion, **kwargs) -> ModelResponse:
         """
         Parse the Groq response into a ModelResponse.
 

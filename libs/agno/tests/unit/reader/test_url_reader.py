@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
+from agno.document.chunking.fixed import FixedSizeChunking
 from agno.document.reader.url_reader import URLReader
 
 
@@ -97,7 +98,7 @@ def test_chunking(mock_response):
     with patch("httpx.get", return_value=mock_response):
         reader = URLReader()
         reader.chunk = True
-        reader.chunk_size = 100
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = reader.read(url)
 
         assert len(documents) > 1
@@ -198,7 +199,7 @@ async def test_async_chunking():
     with patch("httpx.AsyncClient", return_value=mock_client):
         reader = URLReader()
         reader.chunk = True
-        reader.chunk_size = 100
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = await reader.async_read(url)
 
         assert len(documents) > 1
