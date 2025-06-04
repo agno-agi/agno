@@ -368,7 +368,7 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream( 
+    async def ainvoke_stream(
         self,
         messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -399,7 +399,7 @@ class Claude(Model):
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 ) as stream:
-                    async for chunk in stream: 
+                    async for chunk in stream:
                         yield chunk
             else:
                 async with self.get_async_client().messages.stream(
@@ -424,7 +424,7 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def format_function_call_results( 
+    def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
     ) -> None:
         """

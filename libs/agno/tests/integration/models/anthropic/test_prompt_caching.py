@@ -31,7 +31,7 @@ def _assert_cache_metrics(response: RunResponse, expect_cache_write: bool = Fals
     """Assert cache-related metrics in response."""
     if response.metrics is None:
         pytest.fail("Response metrics is None")
-    
+
     cache_write_tokens = response.metrics.get("cache_write_tokens", [0])
     cache_read_tokens = response.metrics.get("cached_tokens", [0])
 
@@ -111,16 +111,16 @@ def test_prompt_caching_with_agent():
     response = agent.run("Explain the key principles of microservices architecture")
 
     print(f"First response metrics: {response.metrics}")
-    
+
     if response.metrics is None:
         pytest.fail("Response metrics is None")
-    
+
     cache_creation_tokens = response.metrics.get("cache_write_tokens", [0])[0]
     cache_hit_tokens = response.metrics.get("cached_tokens", [0])[0]
-    
+
     print(f"Cache creation tokens: {cache_creation_tokens}")
     print(f"Cache hit tokens: {cache_hit_tokens}")
-    
+
     cache_activity = cache_creation_tokens > 0 or cache_hit_tokens > 0
     if not cache_activity:
         print("No cache activity detected. This might be due to:")
@@ -128,7 +128,7 @@ def test_prompt_caching_with_agent():
         print("2. Cache already existing from previous runs")
         print("Skipping cache assertions...")
         return
-    
+
     assert response.content is not None
 
     if cache_creation_tokens > 0:
@@ -159,7 +159,3 @@ async def test_async_prompt_caching():
     assert response.content is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
