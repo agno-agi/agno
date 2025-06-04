@@ -5,10 +5,11 @@ from agno.utils.log import log_info
 
 
 class SleepTools(Toolkit):
-    def __init__(self):
-        super().__init__(name="sleep")
+    def __init__(self, **kwargs):
+        tools = []
+        tools.append(self.sleep)
 
-        self.register(self.sleep)
+        super().__init__(name="sleep", tools=tools, **kwargs)
 
     def sleep(self, seconds: int) -> str:
         """Use this function to sleep for a given number of seconds."""

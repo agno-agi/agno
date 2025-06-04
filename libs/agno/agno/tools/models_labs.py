@@ -1,12 +1,13 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.models.response import FileType
+from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
 
@@ -37,9 +38,8 @@ class ModelsLabTools(Toolkit):
         add_to_eta: int = 15,
         max_wait_time: int = 60,
         file_type: FileType = FileType.MP4,
+        **kwargs,
     ):
-        super().__init__(name="models_labs")
-
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]
         self.fetch_url = MODELS_LAB_FETCH_URLS[file_type_str]
@@ -52,7 +52,10 @@ class ModelsLabTools(Toolkit):
         if not self.api_key:
             logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
-        self.register(self.generate_media)
+        tools: List[Any] = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="models_labs", tools=tools, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
@@ -83,7 +86,9 @@ class ModelsLabTools(Toolkit):
 
         return base_payload
 
-    def _add_media_artifact(self, agent: Agent, media_id: str, media_url: str, eta: Optional[str] = None) -> None:
+    def _add_media_artifact(
+        self, agent: Union[Agent, Team], media_id: str, media_url: str, eta: Optional[str] = None
+    ) -> None:
         """Add appropriate media artifact based on file type."""
         if self.file_type == FileType.MP4:
             agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
@@ -116,7 +121,7 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, agent: Agent, prompt: str) -> str:
+    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """Generate media (video, image, or audio) given a prompt."""
         if not self.api_key:
             return "Please set the MODELS_LAB_API_KEY"

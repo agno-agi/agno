@@ -24,12 +24,23 @@ class TeamRun:
     response: Optional[TeamRunResponse] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        response = {
-            "message": self.message.to_dict() if self.message else None,
-            "member_responses": [run.to_dict() for run in self.member_runs] if self.member_runs else None,
-            "response": self.response.to_dict() if self.response else None,
+        message = self.message.to_dict() if self.message else None
+        member_responses = [run.to_dict() for run in self.member_runs] if self.member_runs else None
+        response = self.response.to_dict() if self.response else None
+        return {
+            "message": message,
+            "member_responses": member_responses,
+            "response": response,
         }
-        return {k: v for k, v in response.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TeamRun":
+        message = Message.model_validate(data.get("message")) if data.get("message") else None
+        member_runs = (
+            [AgentRun.model_validate(run) for run in data.get("member_runs", [])] if data.get("member_runs") else None
+        )
+        response = TeamRunResponse.from_dict(data.get("response", {})) if data.get("response") else None
+        return cls(message=message, member_runs=member_runs, response=response)
 
 
 @dataclass
@@ -121,20 +132,20 @@ class TeamMemory:
 
     def get_team_context_str(self) -> str:
         if self.team_context and self.team_context.text:
-            return f"<team context>\n{self.team_context.text}\n</team context>\n"
+            return f"<team_context>\n{self.team_context.text}\n</team_context>"
         return ""
 
     def get_team_member_interactions_str(self) -> str:
         team_member_interactions_str = ""
         if self.team_context and self.team_context.member_interactions:
-            team_member_interactions_str += "<member interactions>\n"
+            team_member_interactions_str += "<member_interactions>\n"
 
             for interaction in self.team_context.member_interactions:
                 team_member_interactions_str += f"Member: {interaction.member_name}\n"
                 team_member_interactions_str += f"Task: {interaction.task}\n"
                 team_member_interactions_str += f"Response: {interaction.response.to_dict().get('content', '')}\n"
                 team_member_interactions_str += "\n"
-            team_member_interactions_str += "</member interactions>\n"
+            team_member_interactions_str += "</member_interactions>\n"
         return team_member_interactions_str
 
     def get_team_context_images(self) -> List[ImageArtifact]:
@@ -381,3 +392,24 @@ class TeamMemory:
         self.load_user_memories()
         self.updating_memory = False
         return response
+
+    def deep_copy(self) -> "TeamMemory":
+        from copy import deepcopy
+
+        # Create a shallow copy of the object
+        copied_obj = self.__class__(**self.to_dict())
+
+        # Manually deepcopy fields that are known to be safe
+        for field_name, field_value in self.__dict__.items():
+            if field_name not in ["db", "classifier", "manager"]:
+                try:
+                    setattr(copied_obj, field_name, deepcopy(field_value))
+                except Exception as e:
+                    log_warning(f"Failed to deepcopy field: {field_name} - {e}")
+                    setattr(copied_obj, field_name, field_value)
+
+        copied_obj.db = self.db
+        copied_obj.classifier = self.classifier
+        copied_obj.manager = self.manager
+
+        return copied_obj

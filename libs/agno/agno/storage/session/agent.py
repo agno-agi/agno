@@ -14,8 +14,8 @@ class AgentSession:
     session_id: str
     # ID of the user interacting with this agent
     user_id: Optional[str] = None
-    # ID of the team this agent session is associated with
-    team_id: Optional[str] = None
+    # ID of the team session this agent session is associated with
+    team_session_id: Optional[str] = None
     # Agent Memory
     memory: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
@@ -50,7 +50,7 @@ class AgentSession:
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             agent_id=data.get("agent_id"),
-            team_id=data.get("team_id"),
+            team_session_id=data.get("team_session_id"),
             user_id=data.get("user_id"),
             memory=data.get("memory"),
             agent_data=data.get("agent_data"),

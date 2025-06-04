@@ -22,6 +22,7 @@ class DynamoDbStorage(Storage):
     def __init__(
         self,
         table_name: str,
+        profile_name: Optional[str] = None,
         region_name: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
@@ -35,6 +36,7 @@ class DynamoDbStorage(Storage):
         Args:
             table_name (str): The name of the DynamoDB table.
             region_name (Optional[str]): AWS region name.
+            profile_name (Optional[str]): AWS profile name to use for credentials.
             aws_access_key_id (Optional[str]): AWS access key ID.
             aws_secret_access_key (Optional[str]): AWS secret access key.
             endpoint_url (Optional[str]): The complete URL to use for the constructed client.
@@ -43,20 +45,30 @@ class DynamoDbStorage(Storage):
         """
         super().__init__(mode)
         self.table_name = table_name
+        self.profile_name = profile_name
         self.region_name = region_name
         self.endpoint_url = endpoint_url
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
         self.create_table_if_not_exists = create_table_if_not_exists
 
-        # Initialize DynamoDB resource
-        self.dynamodb = boto3.resource(
-            "dynamodb",
-            region_name=self.region_name,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-            endpoint_url=self.endpoint_url,
-        )
+        # Create session using profile name if provided
+        if self.profile_name:
+            session = boto3.Session(profile_name=self.profile_name)
+            self.dynamodb = session.resource(
+                "dynamodb",
+                region_name=self.region_name,
+                endpoint_url=self.endpoint_url,
+            )
+        else:
+            # Initialize DynamoDB resource with default credentials
+            self.dynamodb = boto3.resource(
+                "dynamodb",
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                region_name=self.region_name,
+                endpoint_url=self.endpoint_url,
+            )
 
         # Initialize table
         self.table = self.dynamodb.Table(self.table_name)
@@ -91,6 +103,7 @@ class DynamoDbStorage(Storage):
             if e.response["Error"]["Code"] == "ResourceNotFoundException":
                 log_debug(f"Creating table '{self.table_name}'.")
 
+                attribute_definitions = []
                 if self.mode == "agent":
                     attribute_definitions = [
                         {"AttributeName": "session_id", "AttributeType": "S"},
@@ -105,7 +118,7 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "team_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
-                else:
+                elif self.mode == "workflow":
                     attribute_definitions = [
                         {"AttributeName": "session_id", "AttributeType": "S"},
                         {"AttributeName": "user_id", "AttributeType": "S"},
@@ -157,7 +170,7 @@ class DynamoDbStorage(Storage):
                             },
                         }
                     )
-                else:
+                elif self.mode == "workflow":
                     secondary_indexes.append(
                         {
                             "IndexName": "workflow_id-index",
@@ -257,14 +270,14 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("team_id").eq(entity_id),
                         ProjectionExpression="session_id",
                     )
-                else:
+                elif self.mode == "workflow":
                     # Query using workflow_id index
                     response = self.table.query(
                         IndexName="workflow_id-index",
                         KeyConditionExpression=Key("workflow_id").eq(entity_id),
                         ProjectionExpression="session_id",
                     )
-                items = response.get("Items", [])
+                items = response.get("Items", [])  # type: ignore
                 session_ids.extend([item["session_id"] for item in items if "session_id" in item])
             else:
                 # Scan the whole table
@@ -294,23 +307,24 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, agent_id, user_id, team_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
                     )
                 elif self.mode == "team":
                     # Query using user_id index
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
-                else:
+                elif self.mode == "workflow":
                     # Query using user_id index
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                     )
-                items = response.get("Items", [])
+
+                items = response.get("Items", [])  # type: ignore
                 for item in items:
                     item = self._deserialize_item(item)
                     _session: Optional[Session] = None
@@ -326,23 +340,23 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="agent_id-index",
                         KeyConditionExpression=Key("agent_id").eq(entity_id),
-                        ProjectionExpression="session_id, agent_id, user_id, team_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
                     )
                 elif self.mode == "team":
                     # Query using team_id index
                     response = self.table.query(
                         IndexName="team_id-index",
                         KeyConditionExpression=Key("team_id").eq(entity_id),
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
                     )
-                else:
+                elif self.mode == "workflow":
                     # Query using workflow_id index
                     response = self.table.query(
                         IndexName="workflow_id-index",
                         KeyConditionExpression=Key("workflow_id").eq(entity_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                     )
-                items = response.get("Items", [])
+                items = response.get("Items", [])  # type: ignore
                 for item in items:
                     item = self._deserialize_item(item)
                     if self.mode == "agent":
@@ -355,13 +369,13 @@ class DynamoDbStorage(Storage):
                 # Scan the whole table
                 if self.mode == "agent":
                     response = self.table.scan(
-                        ProjectionExpression="session_id, agent_id, user_id, team_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
                     )
                 elif self.mode == "team":
                     response = self.table.scan(
-                        ProjectionExpression="session_id, team_id, user_id, memory, team_data, session_data, extra_data, created_at, updated_at"
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at"
                     )
-                else:
+                elif self.mode == "workflow":
                     response = self.table.scan(
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at"
                     )
@@ -378,6 +392,112 @@ class DynamoDbStorage(Storage):
                         sessions.append(_session)
         except Exception as e:
             logger.error(f"Error retrieving sessions: {e}")
+        return sessions
+
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        sessions: List[Session] = []
+        try:
+            if user_id is not None:
+                if self.mode == "agent":
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "team":
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "workflow":
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+            elif entity_id is not None:
+                if self.mode == "agent":
+                    response = self.table.query(
+                        IndexName="agent_id-index",
+                        KeyConditionExpression=Key("agent_id").eq(entity_id),
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "team":
+                    response = self.table.query(
+                        IndexName="team_id-index",
+                        KeyConditionExpression=Key("team_id").eq(entity_id),
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "workflow":
+                    response = self.table.query(
+                        IndexName="workflow_id-index",
+                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
+            else:
+                # If no filters, scan the table and sort by created_at
+                if self.mode == "agent":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "team":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                        Limit=limit if limit is not None else None,
+                    )
+                elif self.mode == "workflow":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
+                        Limit=limit if limit is not None else None,
+                    )
+
+            items = response.get("Items", [])
+            for item in items:
+                item = self._deserialize_item(item)
+                session: Optional[Session] = None
+
+                if self.mode == "agent":
+                    session = AgentSession.from_dict(item)
+                elif self.mode == "team":
+                    session = TeamSession.from_dict(item)
+                elif self.mode == "workflow":
+                    session = WorkflowSession.from_dict(item)
+
+                if session is not None:
+                    sessions.append(session)
+
+        except Exception as e:
+            logger.error(f"Error getting last {limit} sessions: {e}")
+
         return sessions
 
     def upsert(self, session: Session) -> Optional[Session]:

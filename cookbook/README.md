@@ -13,13 +13,11 @@ The concepts cookbook walks through the core concepts of Agno.
 - [Knowledge](./agent_concepts/knowledge)
 - [Memory](./agent_concepts/memory)
 - [Storage](storage)
-- [Tools](./agent_concepts/tools)
-- [Reasoning](./agent_concepts/reasoning)
-- [Vector DBs](./agent_concepts/vector_dbs)
+- [Tools](./tools)
+- [Reasoning](./reasoning)
+- [Vector DBs](./agent_concepts/knowledge/vector_dbs)
 - [Multi-modal Agents](./agent_concepts/multimodal)
-- [Agent Teams](teams)
-- [Hybrid Search](./agent_concepts/hybrid_search)
-- [Agent Session](./agent_concepts/agent_session)
+- [Agent Teams](./teams)
 - [Other](./agent_concepts/other)
 
 ## Examples

@@ -5,8 +5,8 @@ from agno.models.groq import Groq
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
 
-thinking_agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+thinking_llama = Agent(
+    model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[
         ThinkingTools(),
         YFinanceTools(
@@ -33,6 +33,4 @@ thinking_agent = Agent(
     show_tool_calls=True,
     markdown=True,
 )
-thinking_agent.print_response(
-    "Write a report on NVDA and make a recommendation", stream=True
-)
+thinking_llama.print_response("Write a report comparing NVDA to TSLA", stream=True)

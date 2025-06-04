@@ -1,6 +1,6 @@
 from agno.api.api import api
 from agno.api.routes import ApiRoutes
-from agno.api.schemas.team import TeamRunCreate
+from agno.api.schemas.team import TeamCreate, TeamRunCreate, TeamSessionCreate
 from agno.cli.settings import agno_cli_settings
 from agno.utils.log import log_debug
 
@@ -36,3 +36,50 @@ async def acreate_team_run(run: TeamRunCreate, monitor: bool = False) -> None:
             response.raise_for_status()
         except Exception as e:
             log_debug(f"Could not create Team run: {e}")
+
+
+def upsert_team_session(session: TeamSessionCreate, monitor: bool = False) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    log_debug("--**-- Logging Team Session")
+    with api.AuthenticatedClient() as api_client:
+        try:
+            if monitor:
+                api_client.post(
+                    ApiRoutes.TEAM_SESSION_CREATE,
+                    json={"session": session.model_dump(exclude_none=True)},
+                )
+        except Exception as e:
+            log_debug(f"Could not create Agent session: {e}")
+    return
+
+
+def create_team(team: TeamCreate) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    with api.AuthenticatedClient() as api_client:
+        try:
+            api_client.post(
+                ApiRoutes.TEAM_CREATE,
+                json=team.model_dump(exclude_none=True),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Team: {e}")
+
+
+async def acreate_team(team: TeamCreate) -> None:
+    if not agno_cli_settings.api_enabled:
+        return
+
+    async with api.AuthenticatedAsyncClient() as api_client:
+        try:
+            await api_client.post(
+                ApiRoutes.TEAM_CREATE,
+                json=team.model_dump(exclude_none=True),
+            )
+        except Exception as e:
+            print(f"Could not create Team: {e}")
+
+            log_debug(f"Could not create Team: {e}")

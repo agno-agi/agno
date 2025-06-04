@@ -65,6 +65,8 @@ class AgentMemory(BaseModel):
     # True when memory is being updated
     updating_memory: bool = False
 
+    version: int = 1
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -96,8 +98,25 @@ class AgentMemory(BaseModel):
 
     def add_run(self, agent_run: AgentRun) -> None:
         """Adds an AgentRun to the runs list."""
-        self.runs.append(agent_run)
-        log_debug("Added AgentRun to AgentMemory")
+        # Initialize runs list if it doesn't exist
+        if self.runs is None:
+            self.runs = []
+
+        # Process run if it has a valid response with run_id
+        if agent_run.response and agent_run.response.run_id:
+            run_id = agent_run.response.run_id
+
+            # Check for existing run with same ID
+            for i, run in enumerate(self.runs):
+                if run.response and run.response.run_id == run_id:
+                    # Replace existing run
+                    self.runs[i] = agent_run
+                    log_debug(f"Replaced existing AgentRun with run_id {run_id} in memory")
+                    return
+
+            # Add new run if not found
+            self.runs.append(agent_run)
+            log_debug("Added AgentRun to AgentMemory")
 
     def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
         """Add the system messages to the messages list"""
@@ -272,7 +291,15 @@ class AgentMemory(BaseModel):
         return False
 
     def update_memory(self, input: str, force: bool = False) -> Optional[str]:
-        """Creates a memory from a message and adds it to the memory db."""
+        """Creates a memory from a message and adds it to the memory db.
+
+        Args:
+            input: The input message to create a memory from.
+            force: If True, the memory will be created even if the classifier returns False.
+
+        Returns:
+            The response from the memory manager.
+        """
         from agno.memory.manager import MemoryManager
 
         if input is None or not isinstance(input, str):
@@ -305,9 +332,15 @@ class AgentMemory(BaseModel):
         return response
 
     async def aupdate_memory(self, input: str, force: bool = False) -> Optional[str]:
-        """Creates a memory from a message and adds it to the memory db."""
-        from agno.memory.manager import MemoryManager
+        """Creates a memory from a message and adds it to the memory db.
 
+        Args:
+            input: The input message to create a memory from.
+            force: If True, the memory will be created even if the classifier returns False.
+
+        Returns:
+            The response from the memory manager.
+        """
         if input is None or not isinstance(input, str):
             return "Invalid message content"
 

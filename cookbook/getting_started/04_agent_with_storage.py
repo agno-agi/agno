@@ -1,4 +1,4 @@
-"""🧠 Recipe Expert with Storage - Your AI Thai Cooking Assistant!
+"""🧠 Agent with Storage - Your AI Thai Cooking Assistant!
 
 This example shows how to create an AI cooking assistant that combines knowledge from a
 curated recipe database with web searching capabilities. The agent uses a PDF knowledge base

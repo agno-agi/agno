@@ -6,7 +6,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
     from sqlalchemy.dialects import postgresql
@@ -70,6 +70,7 @@ class PostgresStorage(Storage):
         self.schema_version: int = schema_version
         # Automatically upgrade schema if True
         self.auto_upgrade_schema: bool = auto_upgrade_schema
+        self._schema_up_to_date: bool = False
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -108,18 +109,20 @@ class PostgresStorage(Storage):
         ]
 
         # Mode-specific columns
+        specific_columns = []
         if self.mode == "agent":
             specific_columns = [
                 Column("agent_id", String, index=True),
-                Column("team_id", String, index=True, nullable=True),
+                Column("team_session_id", String, index=True, nullable=True),
                 Column("agent_data", postgresql.JSONB),
             ]
         elif self.mode == "team":
             specific_columns = [
                 Column("team_id", String, index=True),
+                Column("team_session_id", String, index=True, nullable=True),
                 Column("team_data", postgresql.JSONB),
             ]
-        else:
+        elif self.mode == "workflow":
             specific_columns = [
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", postgresql.JSONB),
@@ -350,10 +353,74 @@ class PostgresStorage(Storage):
             self.create()
         return []
 
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                # Build the base query
+                stmt = select(self.table)
+
+                # Add filters
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
+                if entity_id is not None:
+                    if self.mode == "agent":
+                        stmt = stmt.where(self.table.c.agent_id == entity_id)
+                    elif self.mode == "team":
+                        stmt = stmt.where(self.table.c.team_id == entity_id)
+                    elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+
+                # Order by created_at desc and limit results
+                stmt = stmt.order_by(self.table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                # Execute query
+                rows = sess.execute(stmt).fetchall()
+                if rows is not None:
+                    sessions: List[Session] = []
+                    for row in rows:
+                        session: Optional[Session] = None
+                        if self.mode == "agent":
+                            session = AgentSession.from_dict(row._mapping)  # type: ignore
+                        elif self.mode == "team":
+                            session = TeamSession.from_dict(row._mapping)  # type: ignore
+                        elif self.mode == "workflow":
+                            session = WorkflowSession.from_dict(row._mapping)  # type: ignore
+
+                        if session is not None:
+                            sessions.append(session)
+                    return sessions
+                return []
+
+        except Exception as e:
+            if "does not exist" in str(e):
+                log_debug(f"Table does not exist: {self.table.name}")
+                log_debug("Creating table for future transactions")
+                self.create()
+            else:
+                log_debug(f"Exception reading from table: {e}")
+            return []
+
     def upgrade_schema(self) -> None:
         """
         Upgrade the schema to the latest version.
-        Currently handles adding the team_id column for agent mode.
+        Currently handles adding the team_session_id column for agent mode.
         """
         if not self.auto_upgrade_schema:
             log_debug("Auto schema upgrade disabled. Skipping upgrade.")
@@ -362,12 +429,12 @@ class PostgresStorage(Storage):
         try:
             if self.mode == "agent" and self.table_exists():
                 with self.Session() as sess:
-                    # Check if team_id column exists
+                    # Check if team_session_id column exists
                     column_exists_query = text(
                         """
                         SELECT 1 FROM information_schema.columns
                         WHERE table_schema = :schema AND table_name = :table
-                        AND column_name = 'team_id'
+                        AND column_name = 'team_session_id'
                         """
                     )
                     column_exists = (
@@ -376,10 +443,13 @@ class PostgresStorage(Storage):
                     )
 
                     if not column_exists:
-                        log_info(f"Adding 'team_id' column to {self.schema}.{self.table_name}")
-                        alter_table_query = text(f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_id TEXT")
+                        log_info(f"Adding 'team_session_id' column to {self.schema}.{self.table_name}")
+                        alter_table_query = text(
+                            f"ALTER TABLE {self.schema}.{self.table_name} ADD COLUMN team_session_id TEXT"
+                        )
                         sess.execute(alter_table_query)
                         sess.commit()
+                        self._schema_up_to_date = True
                         log_info("Schema upgrade completed successfully")
         except Exception as e:
             logger.error(f"Error during schema upgrade: {e}")
@@ -397,7 +467,7 @@ class PostgresStorage(Storage):
             Optional[Session]: The upserted Session, or None if operation failed.
         """
         # Perform schema upgrade if auto_upgrade_schema is enabled
-        if self.auto_upgrade_schema:
+        if self.auto_upgrade_schema and not self._schema_up_to_date:
             self.upgrade_schema()
 
         try:
@@ -407,7 +477,7 @@ class PostgresStorage(Storage):
                     stmt = postgresql.insert(self.table).values(
                         session_id=session.session_id,
                         agent_id=session.agent_id,  # type: ignore
-                        team_id=session.team_id,  # type: ignore
+                        team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
                         memory=session.memory,
                         agent_data=session.agent_data,  # type: ignore
@@ -420,7 +490,7 @@ class PostgresStorage(Storage):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=session.agent_id,  # type: ignore
-                            team_id=session.team_id,  # type: ignore
+                            team_session_id=session.team_session_id,  # type: ignore
                             user_id=session.user_id,
                             memory=session.memory,
                             agent_data=session.agent_data,  # type: ignore
@@ -434,6 +504,7 @@ class PostgresStorage(Storage):
                         session_id=session.session_id,
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
+                        team_session_id=session.team_session_id,  # type: ignore
                         memory=session.memory,
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
@@ -446,6 +517,7 @@ class PostgresStorage(Storage):
                         set_=dict(
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
+                            team_session_id=session.team_session_id,  # type: ignore
                             memory=session.memory,
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,
@@ -480,13 +552,17 @@ class PostgresStorage(Storage):
 
                 sess.execute(stmt)
         except Exception as e:
-            log_debug(f"Exception upserting into table: {e}")
             if create_and_retry and not self.table_exists():
                 log_debug(f"Table does not exist: {self.table.name}")
                 log_debug("Creating table and retrying upsert")
                 self.create()
                 return self.upsert(session, create_and_retry=False)
-            return None
+            else:
+                log_warning(f"Exception upserting into table: {e}")
+                log_warning(
+                    "A table upgrade might be required, please review these docs for more information: https://agno.link/upgrade-schema"
+                )
+                return None
         return self.read(session_id=session.session_id)
 
     def delete_session(self, session_id: Optional[str] = None):
@@ -549,7 +625,7 @@ class PostgresStorage(Storage):
             if k in {"metadata", "table", "inspector"}:
                 continue
             # Reuse db_engine and Session without copying
-            elif k in {"db_engine", "Session"}:
+            elif k in {"db_engine", "SqlSession"}:
                 setattr(copied_obj, k, v)
             else:
                 setattr(copied_obj, k, deepcopy(v, memo))

@@ -26,13 +26,15 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Article(BaseModel):
-    title: str
-    summary: str
-    reference_links: List[str]
+    title: str = Field(..., description="The title of the article")
+    summary: str = Field(..., description="A summary of the article")
+    reference_links: List[str] = Field(
+        ..., description="A list of reference links to the article"
+    )
 
 
 hn_researcher = Agent(
@@ -60,7 +62,7 @@ article_reader = Agent(
 hn_team = Team(
     name="HackerNews Team",
     mode="coordinate",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3"),
     members=[hn_researcher, web_searcher, article_reader],
     instructions=[
         "First, search hackernews for what the user is asking about.",
@@ -70,9 +72,9 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     response_model=Article,
+    add_member_tools_to_system_message=False,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
     enable_agentic_context=True,
 )

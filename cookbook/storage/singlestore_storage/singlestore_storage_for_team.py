@@ -75,7 +75,7 @@ hn_team = Team(
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher],
     storage=SingleStoreStorage(
-        table_name="agent_sessions",
+        table_name="team_sessions",
         db_engine=db_engine,
         schema=DATABASE,
         auto_upgrade_schema=True,
@@ -88,7 +88,6 @@ hn_team = Team(
     response_model=Article,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 

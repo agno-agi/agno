@@ -73,7 +73,7 @@ def print_messages(agent):
                 json.dumps(
                     [
                         m.model_dump(include={"role", "content"})
-                        for m in agent.memory.messages
+                        for m in agent.get_messages_for_session()
                     ]
                 ),
                 indent=4,

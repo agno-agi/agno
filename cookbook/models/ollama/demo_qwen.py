@@ -1,10 +1,18 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=Ollama(id="qwen2.5:latest "), tools=[DuckDuckGoTools()], markdown=True
+    model=Ollama(id="qwen3:8b"),
+    tools=[
+        YFinanceTools(
+            stock_price=True,
+            analyst_recommendations=True,
+            company_info=True,
+            company_news=True,
+        ),
+    ],
+    instructions="Use tables to display data.",
 )
 
-# Print the response in the terminal
-agent.print_response("What is happening in France?")
+agent.print_response("Write a report on NVDA", stream=True, markdown=True)

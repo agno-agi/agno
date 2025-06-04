@@ -1,4 +1,4 @@
-from typing import Iterator, List
+from typing import AsyncIterator, Iterator, List
 
 from agno.document import Document
 from agno.document.reader.csv_reader import CSVUrlReader
@@ -15,5 +15,13 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
         for url in self.urls:
             if url.endswith(".csv"):
                 yield self.reader.read(url=url)
+            else:
+                logger.error(f"Unsupported URL: {url}")
+
+    @property
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
+        for url in self.urls:
+            if url.endswith(".csv"):
+                yield await self.reader.async_read(url=url)
             else:
                 logger.error(f"Unsupported URL: {url}")

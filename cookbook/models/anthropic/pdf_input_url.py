@@ -12,5 +12,4 @@ agent.print_response(
     files=[
         File(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"),
     ],
-    stream=True,
 )

@@ -1,8 +1,6 @@
 import json
-from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.functions import cache_result
 from agno.utils.log import log_debug
 
 try:
@@ -39,36 +37,30 @@ class YFinanceTools(Toolkit):
         technical_indicators: bool = False,
         historical_prices: bool = False,
         enable_all: bool = False,
-        cache_results: bool = False,
-        cache_ttl: int = 3600,
-        cache_dir: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="yfinance_tools")
-
+        tools = []
         if stock_price or enable_all:
-            self.register(self.get_current_stock_price)
+            tools.append(self.get_current_stock_price)
         if company_info or enable_all:
-            self.register(self.get_company_info)
+            tools.append(self.get_company_info)
         if stock_fundamentals or enable_all:
-            self.register(self.get_stock_fundamentals)
+            tools.append(self.get_stock_fundamentals)
         if income_statements or enable_all:
-            self.register(self.get_income_statements)
+            tools.append(self.get_income_statements)
         if key_financial_ratios or enable_all:
-            self.register(self.get_key_financial_ratios)
+            tools.append(self.get_key_financial_ratios)
         if analyst_recommendations or enable_all:
-            self.register(self.get_analyst_recommendations)
+            tools.append(self.get_analyst_recommendations)
         if company_news or enable_all:
-            self.register(self.get_company_news)
+            tools.append(self.get_company_news)
         if technical_indicators or enable_all:
-            self.register(self.get_technical_indicators)
+            tools.append(self.get_technical_indicators)
         if historical_prices or enable_all:
-            self.register(self.get_historical_stock_prices)
+            tools.append(self.get_historical_stock_prices)
 
-        self.cache_results = cache_results
-        self.cache_ttl = cache_ttl
-        self.cache_dir = cache_dir
+        super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 
-    @cache_result()
     def get_current_stock_price(self, symbol: str) -> str:
         """
         Use this function to get the current stock price for a given symbol.
@@ -88,7 +80,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching current price for {symbol}: {e}"
 
-    @cache_result()
     def get_company_info(self, symbol: str) -> str:
         """Use this function to get company information and overview for a given stock symbol.
 
@@ -140,7 +131,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company profile for {symbol}: {e}"
 
-    @cache_result()
     def get_historical_stock_prices(self, symbol: str, period: str = "1mo", interval: str = "1d") -> str:
         """
         Use this function to get the historical stock price for a given symbol.
@@ -163,7 +153,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching historical prices for {symbol}: {e}"
 
-    @cache_result()
     def get_stock_fundamentals(self, symbol: str) -> str:
         """Use this function to get fundamental data for a given stock symbol yfinance API.
 
@@ -208,7 +197,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error getting fundamentals for {symbol}: {e}"
 
-    @cache_result()
     def get_income_statements(self, symbol: str) -> str:
         """Use this function to get income statements for a given stock symbol.
 
@@ -226,7 +214,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching income statements for {symbol}: {e}"
 
-    @cache_result()
     def get_key_financial_ratios(self, symbol: str) -> str:
         """Use this function to get key financial ratios for a given stock symbol.
 
@@ -244,7 +231,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching key financial ratios for {symbol}: {e}"
 
-    @cache_result()
     def get_analyst_recommendations(self, symbol: str) -> str:
         """Use this function to get analyst recommendations for a given stock symbol.
 
@@ -262,7 +248,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching analyst recommendations for {symbol}: {e}"
 
-    @cache_result()
     def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
 
@@ -280,7 +265,6 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
-    @cache_result()
     def get_technical_indicators(self, symbol: str, period: str = "3mo") -> str:
         """Use this function to get technical indicators for a given stock symbol.
 
