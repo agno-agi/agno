@@ -306,6 +306,10 @@ class RunResponse:
         messages = [Message.model_validate(message) for message in messages] if messages else None
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
+        # To make it backwards compatible
+        if "event" in data:
+            data.pop("event")
         return cls(messages=messages, tools=tools, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
