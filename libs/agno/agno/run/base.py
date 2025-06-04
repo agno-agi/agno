@@ -14,10 +14,10 @@ from agno.utils.log import log_error
 
 @dataclass
 class BaseRunResponseEvent:
-    run_id: str
-    session_id: str
-    event: str
     created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
