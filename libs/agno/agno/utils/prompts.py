@@ -1,5 +1,5 @@
 import json
-from typing import Union
+from typing import Type, Union
 
 from pydantic import BaseModel
 
@@ -95,10 +95,10 @@ def get_json_output_prompt(response_model: Union[str, list, BaseModel]) -> str:
     return json_output_prompt
 
 
-def get_response_model_format_prompt(response_model: BaseModel) -> str:
+def get_response_model_format_prompt(response_model: Type[BaseModel]) -> str:
     """Return the format prompt for the response model."""
 
-    message = "Make sure your response is a valid string that mentions the following topics:"
+    message = "Make sure your response is a valid string (NOT JSON) that mentions the following topics:"
 
     # Extract field names and descriptions
     for field_name, field_info in response_model.model_fields.items():
