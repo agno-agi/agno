@@ -25,7 +25,6 @@ from typing import (
 from uuid import uuid4
 
 from pydantic import BaseModel
-from regex import F
 
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
@@ -2491,23 +2490,9 @@ class Agent:
             function_call=function_call,
             success=False,
         )
-        print(f"Function call result: {function_call_result}")
-        # DO NOT add function_call_result to messages - this creates invalid tool messages for OpenAI
-        # run_messages.messages.append(function_call_result)
 
-        tool.confirmed = False
-        tool.requires_confirmation = False
-        tool.requires_user_input = False  
-        tool.external_execution_required = False
-        tool.result = "Tool call was rejected"
-        tool.tool_call_error = True 
+        # DO NOT add function_call_result to messages - this creates invalid tool messages for OpenAI
         run_messages.messages.append(function_call_result)
-        # Return a RunResponse for tool call rejected event
-        return self.create_run_response(
-            content=f"Tool call '{tool.tool_name}' was rejected: {function_call.error}",
-            event=RunEvent.tool_call_completed,
-            session_id=session_id,
-        )
 
     async def _arun_tool(
         self, run_messages: RunMessages, tool: ToolExecution, session_id: Optional[str] = None
@@ -2661,9 +2646,11 @@ class Agent:
                         yield event
                 else:
                     print(f"Rejected tool***************************: {_t.tool_name}")
-                    # _t.result = "Tool call was rejected"
                     _t.confirmed = False
-                    yield self._reject_tool_call(run_messages, _t, session_id)
+                    _t.result = "Tool call was rejected"
+                    _t.tool_call_error = True 
+                    _t.requires_confirmation = False
+                    self._reject_tool_call(run_messages, _t, session_id)
                 _t.requires_confirmation = False
 
             elif _t.requires_confirmation is None:
