@@ -17,14 +17,14 @@ summary.
 from agno.agent import Agent
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.vllm import vLLMOpenAI
+from agno.models.vllm import vLLM
 from agno.storage.postgres import PostgresStorage
 
 # Change this if your Postgres container is running elsewhere
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 agent = Agent(
-    model=vLLMOpenAI(id="microsoft/Phi-3-mini-128k-instruct"),
+    model=vLLM(id="microsoft/Phi-3-mini-128k-instruct"),
     memory=Memory(
         db=PostgresMemoryDb(table_name="agent_memory", db_url=DB_URL),
     ),

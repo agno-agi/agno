@@ -1,14 +1,14 @@
 """Code generation example with DeepSeek-Coder.
 Run vLLM model: vllm serve deepseek-ai/deepseek-coder-6.7b-instruct \
         --dtype float32 \
-        --tool-call-parser pythonic  
+        --tool-call-parser pythonic
 """
 
 from agno.agent import Agent
-from agno.models.vllm import vLLMOpenAI
+from agno.models.vllm import vLLM
 
 agent = Agent(
-    model=vLLMOpenAI(id="deepseek-ai/deepseek-coder-6.7b-instruct"),
+    model=vLLM(id="deepseek-ai/deepseek-coder-6.7b-instruct"),
     description="You are an expert Python developer.",
     markdown=True,
 )

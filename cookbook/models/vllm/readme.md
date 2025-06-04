@@ -17,7 +17,7 @@ source ~/.venvs/aienv/bin/activate
 pip install vllm
 ```
 
-### 3. Serve a model
+### 3. Serve a model (this downloads the model to your local machine the first time you run it)
 
 ```shell
 vllm serve Qwen/Qwen2.5-7B-Instruct \

@@ -8,7 +8,7 @@ from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class vLLMOpenAI(OpenAILike):
+class vLLM(OpenAILike):
     """
     Class for interacting with vLLM models via OpenAI-compatible API.
 
