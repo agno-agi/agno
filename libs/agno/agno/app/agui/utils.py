@@ -293,6 +293,7 @@ async def async_stream_agno_response_as_agui_events(
     message_id = str(uuid.uuid4())
     message_started = False
     event_buffer = EventBuffer()
+    pending_tool_call_id = None
 
     async for chunk in response_stream:
         # Handle the lifecycle end event

@@ -39,8 +39,10 @@ Now you need to run a `AGUIApp` exposing your Agent. You can run the `cookbook/a
 
 You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo), an advanced and customizable option to use as frontend for AG-UI agents.
 
-1. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
-2. Update `apps/dojo/src/menu.ts` to add your Agno integration:
+1. Clone the project: `git clone https://github.com/ag-ui-protocol/ag-ui.git`
+2. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
+3. Remember to install the dependencies in `/ag-ui/typescript-sdk` with `pnpm install`.
+3. Update `dojo/src/menu.ts` to add your Agno integration:
 ```ts
 // ...
 export const menuIntegrations: MenuIntegrationConfig[] = [
@@ -52,14 +54,14 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
   })
 // ...
 ```
-3. Update `apps/dojo/src/agents.ts`:
+4. Update `dojo/src/agents.ts`:
 ```ts
 import { HttpAgent } from "@ag-ui/client";
 // ...
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   // ...
   {
-    id: "agno-backend",
+    id: "agno",
     agents: async () => {
       return {
         agentic_chat: new HttpAgent({
@@ -70,7 +72,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
   }
   // ...
 ```
-4. You can now run your Dojo. It will connect to our running backend.
+5. You can now run your Dojo. It will connect to our running backend.
 
 
 ### Chat with your Agent
@@ -83,4 +85,5 @@ If you are running Dojo as your frontend, you can now go to http://localhost:300
 Check out these example agents and teams:
 
 - [Chat Agent](./basic.py) - Simple conversational agent
+- [Agent with Tools](./agent_with_tools.py) - An agent using tools
 - [Research Team](./research_team.py) - Team of agents working together
