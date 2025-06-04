@@ -231,7 +231,7 @@ class Agent:
     # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
-    # Provide a parser model to parse the response from the Model
+    # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
@@ -649,28 +649,31 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            **({"response_format": response_format} if self.parser_model is None else {}),
+            response_format=response_format if self.parser_model is None else None,
         )
 
         # If a parser model is provided, structure the response separately
         if self.parser_model is not None:
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response)
-            parser_model_response: ModelResponse = self.parser_model.response(
-                messages=messages_for_parser_model,
-                response_format=self.response_model,
-            )
-            parser_model_response_message: Optional[Message] = None
-            for message in reversed(messages_for_parser_model):
-                if message.role == "assistant":
-                    parser_model_response_message = message
-                    break
+            if self.response_model is not None:
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response)
+                parser_model_response: ModelResponse = self.parser_model.response(
+                    messages=messages_for_parser_model,
+                    response_format=self.response_model,
+                )
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
 
-            if parser_model_response_message is not None:
-                run_messages.messages.append(parser_model_response_message)
-                model_response.parsed = parser_model_response.parsed
-                model_response.content = parser_model_response.content
+                if parser_model_response_message is not None:
+                    run_messages.messages.append(parser_model_response_message)
+                    model_response.parsed = parser_model_response.parsed
+                    model_response.content = parser_model_response.content
+                else:
+                    log_warning("Unable to parse response with parser model")
             else:
-                log_warning("Unable to parse response with parser model")
+                log_warning("A response model is required to parse the response with a parser model")
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1110,27 +1113,30 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            **({"response_format": response_format} if self.parser_model is None else {}),
+            response_format=response_format if self.parser_model is None else None,
         )
 
         # If a parser model is provided, structure the response separately
         if self.parser_model is not None:
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response)
-            parser_model_response: ModelResponse = await self.parser_model.aresponse(
-                messages=messages_for_parser_model,
-                response_format=self.response_model,
-            )
-            parser_model_response_message: Optional[Message] = None
-            for message in reversed(messages_for_parser_model):
-                if message.role == "assistant":
-                    parser_model_response_message = message
-                    break
-            if parser_model_response_message is not None:
-                run_messages.messages.append(parser_model_response_message)
-                model_response.parsed = parser_model_response.parsed
-                model_response.content = parser_model_response.content
+            if self.response_model is not None:
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response)
+                parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                    messages=messages_for_parser_model,
+                    response_format=self.response_model,
+                )
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_messages.messages.append(parser_model_response_message)
+                    model_response.parsed = parser_model_response.parsed
+                    model_response.content = parser_model_response.content
+                else:
+                    log_warning("Unable to parse response with parser model")
             else:
-                log_warning("Unable to parse response with parser model")
+                log_warning("A response model is required to parse the response with a parser model")
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -4794,7 +4800,7 @@ class Agent:
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from a string response."
+            else "You are tasked with creating a structured output from the provided data."
         )
 
         return [
