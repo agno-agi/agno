@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
@@ -12,6 +14,7 @@ from agno.utils.models.mistral import format_messages
 try:
     from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
+    from mistralai.extra import response_format_from_pydantic_model
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
     from mistralai.models import (
         AssistantMessage,
@@ -52,7 +55,6 @@ class MistralChat(Model):
     random_seed: Optional[int] = None
     safe_mode: bool = False
     safe_prompt: bool = False
-    response_format: Optional[Union[Dict[str, Any], ChatCompletionResponse]] = None
     request_params: Optional[Dict[str, Any]] = None
     # -*- Client parameters
     api_key: Optional[str] = None
@@ -105,8 +107,9 @@ class MistralChat(Model):
         # Remove None values
         return {k: v for k, v in client_params.items() if v is not None}
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(
+        self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         """
         Get the API kwargs for the Mistral model.
 
@@ -126,12 +129,12 @@ class MistralChat(Model):
             _request_params["safe_mode"] = self.safe_mode
         if self.safe_prompt:
             _request_params["safe_prompt"] = self.safe_prompt
-        if self._tools:
-            _request_params["tools"] = self._tools
-            if self.tool_choice is None:
+        if tools:
+            _request_params["tools"] = tools
+            if tool_choice is None:
                 _request_params["tool_choice"] = "auto"
             else:
-                _request_params["tool_choice"] = self.tool_choice
+                _request_params["tool_choice"] = tool_choice
         if self.request_params:
             _request_params.update(self.request_params)
         return _request_params
@@ -151,37 +154,40 @@ class MistralChat(Model):
                 "random_seed": self.random_seed,
                 "safe_mode": self.safe_mode,
                 "safe_prompt": self.safe_prompt,
-                "response_format": self.response_format,
             }
         )
         cleaned_dict = {k: v for k, v in _dict.items() if v is not None}
         return cleaned_dict
 
-    def invoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send a chat completion request to the Mistral model.
-
-        Args:
-            messages (List[Message]): The messages to send to the model.
-
-        Returns:
-            ChatCompletionResponse: The response from the model.
         """
         mistral_messages = format_messages(messages)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if self.response_format is not None and self.structured_outputs:
-                response = self.get_client().chat.parse(
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
+                response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,  # type: ignore
-                    **self.request_kwargs,
+                    response_format=response_format_from_pydantic_model(response_format),
+                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
                 response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
-                    **self.request_kwargs,
+                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             return response
 
@@ -192,22 +198,22 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Any]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[Any]:
         """
         Stream the response from the Mistral model.
-
-        Args:
-            messages (List[Message]): The messages to send to the model.
-
-        Returns:
-            Iterator[Any]: The streamed response.
         """
         mistral_messages = format_messages(messages)
         try:
             stream = self.get_client().chat.stream(
                 model=self.id,
                 messages=mistral_messages,
-                **self.request_kwargs,
+                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
             )
             return stream
         except HTTPValidationError as e:
@@ -217,31 +223,35 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Union[ChatCompletionResponse, ParsedChatCompletionResponse]:
         """
         Send an asynchronous chat completion request to the Mistral API.
-
-        Args:
-            messages (List[Message]): The messages to send to the model.
-
-        Returns:
-            ChatCompletionResponse: The response from the model.
         """
         mistral_messages = format_messages(messages)
         try:
             response: Union[ChatCompletionResponse, ParsedChatCompletionResponse]
-            if self.response_format is not None and self.structured_outputs:
-                response = await self.get_client().chat.parse_async(
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
+                response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=self.response_format,  # type: ignore
-                    **self.request_kwargs,
+                    response_format=response_format_from_pydantic_model(response_format),
+                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
-                    **self.request_kwargs,
+                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             return response
         except HTTPValidationError as e:
@@ -251,22 +261,22 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> Any:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Stream an asynchronous response from the Mistral API.
-
-        Args:
-            messages (List[Message]): The messages to send to the model.
-
-        Returns:
-            Any: The streamed response.
         """
         mistral_messages = format_messages(messages)
         try:
             stream = await self.get_client().chat.stream_async(
                 model=self.id,
                 messages=mistral_messages,
-                **self.request_kwargs,
+                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
             )
             if stream is None:
                 raise ValueError("Chat stream returned None")
@@ -279,7 +289,7 @@ class MistralChat(Model):
             log_error(f"SDKError from Mistral: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def parse_provider_response(self, response: ChatCompletionResponse) -> ModelResponse:
+    def parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the response from the Mistral model.
 

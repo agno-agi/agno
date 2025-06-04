@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,13 +30,12 @@ def test_tool_use_stream():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -46,14 +44,14 @@ def test_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -62,7 +60,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -81,13 +78,14 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -96,14 +94,14 @@ async def test_async_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
     full_content = ""
     for r in responses:
-        full_content += r.content
+        full_content += r.content or ""
     assert "TSLA" in full_content
 
 
@@ -111,7 +109,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -133,7 +130,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -162,7 +158,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -192,7 +187,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -211,7 +205,6 @@ def test_tool_call_list_parameters():
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

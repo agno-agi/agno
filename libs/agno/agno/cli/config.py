@@ -60,7 +60,7 @@ class AgnoCliConfig:
         self.ws_config_map.clear()
         self._active_ws_dir = None
         agno_cli_settings.ai_conversations_path.unlink(missing_ok=True)
-        logger.info("Workspaces cleared, please setup again using `ag ws setup`")
+        logger.info("Workspaces cleared. If applicable, please setup your workspace using `ag ws setup`")
 
     ######################################################
     ## Workspace functions

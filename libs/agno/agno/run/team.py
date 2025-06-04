@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
+from agno.models.response import ToolExecution
 from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
 
 
@@ -21,6 +22,7 @@ class TeamRunResponse:
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
+    model_provider: Optional[str] = None
 
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
@@ -28,7 +30,7 @@ class TeamRunResponse:
     team_id: Optional[str] = None
     session_id: Optional[str] = None
 
-    tools: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images from member runs
@@ -49,7 +51,7 @@ class TeamRunResponse:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
         }
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -58,13 +60,13 @@ class TeamRunResponse:
             _dict["extra_data"] = self.extra_data.to_dict()
 
         if self.images is not None:
-            _dict["images"] = [img.model_dump(exclude_none=True) for img in self.images]
+            _dict["images"] = [img.to_dict() for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.model_dump(exclude_none=True) for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.model_dump(exclude_none=True) for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() for aud in self.audio]
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
@@ -73,10 +75,21 @@ class TeamRunResponse:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
 
         if self.citations is not None:
-            _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            if isinstance(self.citations, Citations):
+                _dict["citations"] = self.citations.model_dump(exclude_none=True)
+            else:
+                _dict["citations"] = self.citations
 
-        if isinstance(self.content, BaseModel):
+        if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if self.tools is not None:
+            _dict["tools"] = []
+            for tool in self.tools:
+                if isinstance(tool, ToolExecution):
+                    _dict["tools"].append(tool.to_dict())
+                else:
+                    _dict["tools"].append(tool)
 
         return _dict
 
@@ -114,6 +127,9 @@ class TeamRunResponse:
         audio = data.pop("audio", None)
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
+        tools = data.pop("tools", None)
+        tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
@@ -125,6 +141,7 @@ class TeamRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            tools=tools,
             **data,
         )
 

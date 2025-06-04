@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
@@ -674,7 +674,21 @@ class Memory:
         if not self.runs:
             self.runs = {}
 
-        self.runs.setdefault(session_id, []).append(run)
+        if session_id not in self.runs:
+            self.runs[session_id] = []
+
+        # Check if run already exists with the same run_id
+        if hasattr(run, "run_id") and run.run_id:
+            run_id = run.run_id
+            # Look for existing run with same ID
+            for i, existing_run in enumerate(self.runs[session_id]):
+                if hasattr(existing_run, "run_id") and existing_run.run_id == run_id:
+                    # Replace existing run
+                    self.runs[session_id][i] = run
+                    log_debug(f"Replaced existing run with run_id {run_id} in memory")
+                    return
+
+        self.runs[session_id].append(run)
         log_debug("Added RunResponse to Memory")
 
     def get_messages_from_last_n_runs(
@@ -789,24 +803,21 @@ class Memory:
         else:  # Default to last_n
             return self._get_last_n_memories(user_id=user_id, limit=limit)
 
-    def _update_model_for_agentic_search(self) -> None:
+    def get_response_format(self) -> Union[Dict[str, Any], Type[BaseModel]]:
         model = self.get_model()
         if model.supports_native_structured_outputs:
-            model.response_format = MemorySearchResponse
-            model.structured_outputs = True
+            return MemorySearchResponse
 
         elif model.supports_json_schema_outputs:
-            model.response_format = {
+            return {
                 "type": "json_schema",
                 "json_schema": {
                     "name": MemorySearchResponse.__name__,
                     "schema": MemorySearchResponse.model_json_schema(),
                 },
             }
-            model.structured_outputs = False
         else:
-            model.response_format = {"type": "json_object"}
-            model.structured_outputs = False
+            return {"type": "json_object"}
 
     def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using agentic search."""
@@ -815,7 +826,7 @@ class Memory:
 
         model = self.get_model()
 
-        self._update_model_for_agentic_search()
+        response_format = self.get_response_format()
 
         log_debug("Searching for memories", center=True)
 
@@ -833,7 +844,7 @@ class Memory:
         system_message_str += "\n</user_memories>\n\n"
         system_message_str += "REMEMBER: Only return the IDs of the memories that are related to the query."
 
-        if model.response_format == {"type": "json_object"}:
+        if response_format == {"type": "json_object"}:
             system_message_str += "\n" + get_json_output_prompt(MemorySearchResponse)  # type: ignore
 
         messages_for_model = [
@@ -845,7 +856,7 @@ class Memory:
         ]
 
         # Generate a response from the Model (includes running function calls)
-        response = model.response(messages=messages_for_model)
+        response = model.response(messages=messages_for_model, response_format=response_format)
         log_debug("Search for memories complete", center=True)
 
         memory_search: Optional[MemorySearchResponse] = None
@@ -948,6 +959,7 @@ class Memory:
             self.db.clear()
         self.memories = {}
         self.summaries = {}
+        self.runs = {}
 
     def deep_copy(self) -> "Memory":
         from copy import deepcopy

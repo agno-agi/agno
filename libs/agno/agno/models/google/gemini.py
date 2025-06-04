@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -13,8 +13,9 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message
+from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -134,12 +135,14 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    def _get_request_kwargs(self, system_message: Optional[str] = None) -> Dict[str, Any]:
+    def _get_request_kwargs(
+        self,
+        system_message: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns the request keyword arguments for the GenerativeModel client.
-
-        Returns:
-            Dict[str, Any]: The request keyword arguments.
         """
         request_params = {}
         # User provides their own generation config
@@ -175,13 +178,14 @@ class Gemini(Model):
         if system_message is not None:
             config["system_instruction"] = system_message  # type: ignore
 
-        if (
-            self.response_format is not None
-            and isinstance(self.response_format, type)
-            and issubclass(self.response_format, BaseModel)
-        ):
+        if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = self.response_format
+            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
+
+            # Get the normalized schema for Gemini
+            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
+            gemini_schema = convert_schema(normalized_schema)
+            config["response_schema"] = gemini_schema
 
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
@@ -203,8 +207,8 @@ class Gemini(Model):
             log_info("Search enabled. External tools will be disabled.")
             config["tools"] = [Tool(google_search=GoogleSearch())]
 
-        elif self._tools:
-            config["tools"] = [format_function_definitions(self._tools)]
+        elif tools:
+            config["tools"] = [format_function_definitions(tools)]
 
         config = {k: v for k, v in config.items() if v is not None}
 
@@ -217,18 +221,18 @@ class Gemini(Model):
 
         return request_params
 
-    def invoke(self, messages: List[Message]):
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
         """
         Invokes the model with a list of messages and returns the response.
-
-        Args:
-            messages (List[Message]): The list of messages to send to the model.
-
-        Returns:
-            GenerateContentResponse: The response from the model.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self._get_request_kwargs(system_message)
+        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
@@ -248,19 +252,19 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]):
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
         """
         Invokes the model with a list of messages and returns the response as a stream.
-
-        Args:
-            messages (List[Message]): The list of messages to send to the model.
-
-        Returns:
-            Iterator[GenerateContentResponse]: The response from the model as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message)
+        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -279,13 +283,19 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]):
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
         """
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message)
+        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
 
         try:
             return await self.get_client().aio.models.generate_content(
@@ -305,13 +315,19 @@ class Gemini(Model):
             log_error(f"Unknown error from Gemini API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]):
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
         """
         Invokes the model with a list of messages and returns the response as a stream.
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message)
+        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
 
         try:
             async_stream = await self.get_client().aio.models.generate_content_stream(
@@ -653,7 +669,7 @@ class Gemini(Model):
                 )
             )
 
-    def parse_provider_response(self, response: GenerateContentResponse) -> ModelResponse:
+    def parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -675,7 +691,7 @@ class Gemini(Model):
             model_response.role = self.role_map[response_message.role]
 
         # Add content
-        if response_message.parts is not None:
+        if response_message.parts is not None and len(response_message.parts) > 0:
             for part in response_message.parts:
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
@@ -733,6 +749,10 @@ class Gemini(Model):
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
+
+        # If we have no content but have a role, add a default empty content
+        if model_response.role and model_response.content is None and not model_response.tool_calls:
+            model_response.content = ""
 
         return model_response
 
@@ -841,9 +861,5 @@ class Gemini(Model):
 
         # Explicitly set client to None
         setattr(new_instance, "client", None)
-
-        # Clear the new model to remove any references to the old model
-        if hasattr(new_instance, "clear"):
-            new_instance.clear()
 
         return new_instance

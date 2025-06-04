@@ -11,7 +11,6 @@ def test_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -39,7 +37,7 @@ def test_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -48,7 +46,7 @@ def test_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -61,7 +59,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -82,7 +79,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -90,7 +86,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -99,7 +97,7 @@ async def test_async_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -114,9 +112,8 @@ def test_tool_use_with_native_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         telemetry=False,
@@ -141,7 +138,6 @@ def test_tool_use_with_json_structured_outputs():
         tools=[YFinanceTools(cache_results=True)],
         exponential_backoff=True,
         delay_between_retries=5,
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         use_json_mode=True,
@@ -160,7 +156,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -184,7 +179,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
