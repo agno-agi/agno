@@ -1,13 +1,9 @@
-from pathlib import Path
-
 import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.langdb import LangDB
 from agno.storage.sqlite import SqliteStorage
-from agno.utils.log import log_warning
-from agno.utils.media import download_file
 
 
 def _assert_metrics(response: RunResponse):
@@ -39,7 +35,7 @@ def test_basic_stream():
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
-    # Verify it's an iterator   
+    # Verify it's an iterator
     assert hasattr(response_stream, "__iter__")
 
     responses = list(response_stream)
@@ -54,7 +50,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=LangDB(id="gemini-1.5-pro-latest"), markdown=True, telemetry=False, monitoring=False)   
+    agent = Agent(model=LangDB(id="gemini-1.5-pro-latest"), markdown=True, telemetry=False, monitoring=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -112,7 +108,7 @@ def test_structured_output():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=LangDB(id="gemini-1.5-pro-latest"), response_model=MovieScript, telemetry=False, monitoring=False 
+        model=LangDB(id="gemini-1.5-pro-latest"), response_model=MovieScript, telemetry=False, monitoring=False
     )
 
     response = agent.run("Create a movie about time travel")

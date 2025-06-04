@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Optional, Dict, Any
-import inspect
-from agno.utils.log import logger
+from typing import Any, Dict, Optional
+
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import logger
 
 
 @dataclass
