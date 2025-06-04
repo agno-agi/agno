@@ -14,7 +14,8 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.memory import Memory
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
-from agno.run.response import RunEvent, RunResponse, RunResponseEvent  # noqa: F401
+from agno.run.response import RunEvent, RunResponse  # noqa: F401
+from agno.run.workflow import RunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team

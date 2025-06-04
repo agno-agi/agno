@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from time import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel
 
@@ -50,3 +50,9 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
     event: str = RunEvent.workflow_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
+
+
+RunResponseEvent = Union[
+    WorkflowRunResponseStartedEvent,
+    WorkflowCompletedEvent
+]
