@@ -40,15 +40,15 @@ class RunEvent(str, Enum):
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
-    agent_id: Optional[str] = None
+    agent_id: str = ""
 
 
 @dataclass
 class RunResponseStartedEvent(BaseAgentRunResponseEvent):
     """Event sent when the run starts"""
     event: str = RunEvent.run_started.value
-    model: str  # type: ignore[misc]
-    model_provider: str  # type: ignore[misc]
+    model: str = ""
+    model_provider: str = ""
 
 
 @dataclass
@@ -128,44 +128,32 @@ class ReasoningStartedEvent(BaseAgentRunResponseEvent):
 @dataclass
 class ReasoningStepEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
-    content: Any  # type: ignore[misc]
+    content: Optional[Any] = None
     content_type: str = "str"
-    reasoning_content: str  # type: ignore[misc]
+    reasoning_content: str = ""
 
 
 @dataclass
 class ReasoningCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.reasoning_completed.value
-    content: Any  # type: ignore[misc]
+    content: Optional[Any] = None
     content_type: str = "str"
 
 
 @dataclass
 class ToolCallStartedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
-    tool: ToolExecution  # type: ignore[misc]
+    tool: Optional[ToolExecution] = None
 
 
 @dataclass
 class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
-    tool: ToolExecution  # type: ignore[misc]
+    tool: Optional[ToolExecution] = None
     content: Optional[Any] = None
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
-
-
-@dataclass
-class WorkflowRunResponseStartedEvent(BaseRunResponseEvent):
-    event: str = RunEvent.run_started.value
-
-
-@dataclass
-class WorkflowCompletedEvent(BaseRunResponseEvent):
-    event: str = RunEvent.workflow_completed.value
-    content: Optional[Any] = None
-    content_type: str = "str"
 
 
 RunResponseEvent = Union[
@@ -183,8 +171,6 @@ RunResponseEvent = Union[
     MemoryUpdateCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
-    WorkflowRunResponseStartedEvent,
-    WorkflowCompletedEvent,
 ]
 
 

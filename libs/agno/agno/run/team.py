@@ -34,15 +34,15 @@ class RunEvent(str, Enum):
 
 @dataclass
 class BaseTeamRunResponseEvent(BaseRunResponseEvent):
-    team_id: Optional[str] = None
+    team_id: str = ""
 
 
 @dataclass
 class RunResponseStartedEvent(BaseTeamRunResponseEvent):
     """Event sent when the run starts"""
     event: str = RunEvent.run_started.value
-    model: str  # type: ignore[misc]
-    model_provider: str  # type: ignore[misc]
+    model: str = ""
+    model_provider: str = ""
 
 
 @dataclass
@@ -104,28 +104,28 @@ class ReasoningStartedEvent(BaseTeamRunResponseEvent):
 @dataclass
 class ReasoningStepEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
-    content: Any  # type: ignore[misc]
+    content: Optional[Any] = None
     content_type: str = "str"
-    reasoning_content: str  # type: ignore[misc]
+    reasoning_content: str  = ""
 
 
 @dataclass
 class ReasoningCompletedEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.reasoning_completed.value
-    content: Any  # type: ignore[misc]
+    content: Optional[Any] = None
     content_type: str = "str"
 
 
 @dataclass
 class ToolCallStartedEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.tool_call_started.value
-    tool: ToolExecution  # type: ignore[misc]
+    tool: Optional[ToolExecution] = None
 
 
 @dataclass
 class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.tool_call_completed.value
-    tool: ToolExecution  # type: ignore[misc]
+    tool: Optional[ToolExecution] = None
     content: Optional[Any] = None
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
     videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call

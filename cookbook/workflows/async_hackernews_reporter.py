@@ -8,7 +8,7 @@ from typing import AsyncIterator
 
 import httpx
 from agno.agent import Agent, RunResponse
-from agno.run.response import WorkflowCompletedEvent
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
