@@ -50,7 +50,7 @@ from typing import Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import WorkflowCompletedEvent
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger

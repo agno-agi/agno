@@ -1846,7 +1846,7 @@ class Team:
 
                     yield create_team_tool_call_completed_event(
                         from_run_response=run_response,
-                        tool=tool,
+                        tool=tool_call,
                         content=model_response_chunk.content,
                     )
 

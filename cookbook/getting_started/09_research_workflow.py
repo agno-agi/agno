@@ -31,7 +31,8 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunResponse, Workflow, WorkflowCompletedEvent
+from agno.workflow import RunResponse, Workflow
+from agno.run.workflow import WorkflowCompletedEvent
 from pydantic import BaseModel, Field
 
 

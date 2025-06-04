@@ -9,9 +9,7 @@ from typing import Iterator
 
 from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
-from agno.run.response import (
-    WorkflowCompletedEvent,
-)
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.workflow.sqlite import SqliteWorkflowStorage
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response

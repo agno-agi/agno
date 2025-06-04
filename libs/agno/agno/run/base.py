@@ -14,9 +14,9 @@ from agno.utils.log import log_error
 
 @dataclass
 class BaseRunResponseEvent:
+    run_id: str
+    session_id: str
     event: str
-    run_id: Optional[str] = None
-    session_id: Optional[str] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     def to_dict(self) -> Dict[str, Any]:
