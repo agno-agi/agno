@@ -54,6 +54,9 @@ personal_agent = Agent(
 
 slack_api_app = SlackAPI(
     agent=personal_agent,
+    name="Agent with User Memory",
+    app_id="agent_with_user_memory",
+    description="A agent with user memory that can chat with the user about things and make them feel good.",
 )
 app = slack_api_app.get_app()
 
