@@ -41,7 +41,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecutio
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.team import RunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
@@ -5262,23 +5262,9 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def run_member_agents(task_description: str, expected_output: Optional[str] = None) -> Iterator[str]:
-            """
-            Send the same task to all the member agents and return the responses.
-
-            Args:
-                task_description (str): The task description to send to the member agents.
-                expected_output (str): The expected output from the member agents.
-
-            Returns:
-                str: The responses from the member agents.
-            """
-            # Make sure for the member agent, we are using the agent logger
-            use_agent_logger()
-            self.memory = cast(TeamMemory, self.memory)
-
-            # 2. Determine team context to send
+        
+        
+        def _determine_team_context(self, session_id: str) -> str:
             if isinstance(self.memory, TeamMemory):
                 self.memory = cast(TeamMemory, self.memory)
                 team_context_str = None
@@ -5309,37 +5295,41 @@ class Team:
                         videos.extend([Video.from_artifact(vid) for vid in context_videos])
                     if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
                         audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+            return team_context_str, team_member_interactions_str
+
+       
+
+        def run_member_agents(task_description: str, expected_output: Optional[str] = None) -> Iterator[str]:
+            """
+            Send the same task to all the member agents and return the responses.
+
+            Args:
+                task_description (str): The task description to send to the member agents.
+                expected_output (str): The expected output from the member agents.
+
+            Returns:
+                str: The responses from the member agents.
+            """
+            # Make sure for the member agent, we are using the agent logger
+            use_agent_logger()
+            self.memory = cast(TeamMemory, self.memory)
+
+            # 2. Determine team context to send
+            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = "You are a member of a team of agents that collaborate to complete a task."
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
-
-            if expected_output is not None:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            if team_context_str:
-                member_agent_task += f"\n\n{team_context_str}"
-            if team_member_interactions_str:
-                member_agent_task += f"\n\n{team_member_interactions_str}"
+            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
 
             for member_agent_index, member_agent in enumerate(self.members):
                 self._initialize_member(member_agent, session_id=session_id)
+                
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True
                     )
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
-                        if (
-                            hasattr(member_agent_run_response_chunk, "content")
-                            and member_agent_run_response_chunk.content is not None
-                        ):
-                            yield member_agent_run_response_chunk.content
-                        elif (
-                            hasattr(member_agent_run_response_chunk, "tool")
-                            and member_agent_run_response_chunk.tool is not None
-                        ):
-                            yield member_agent_run_response_chunk.tool.result or ""
+                        yield member_agent_run_response_chunk
                 else:
                     member_agent_run_response = member_agent.run(
                         member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
@@ -5347,27 +5337,24 @@ class Team:
 
                     check_if_run_cancelled(member_agent_run_response)
 
-                    if member_agent_run_response.content is None and (
-                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                    ):
-                        yield f"Agent {member_agent.name}: No response from the member agent."
-                    elif isinstance(member_agent_run_response.content, str):
-                        if len(member_agent_run_response.content.strip()) > 0:
-                            yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
-                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                            yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
-                    elif issubclass(type(member_agent_run_response.content), BaseModel):
-                        try:
+                    try:
+                        if member_agent_run_response.content is None and (
+                            member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                        ):
+                            yield f"Agent {member_agent.name}: No response from the member agent."
+                        elif isinstance(member_agent_run_response.content, str):
+                            if len(member_agent_run_response.content.strip()) > 0:
+                                yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
+                            elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                                yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
+                        elif issubclass(type(member_agent_run_response.content), BaseModel):
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
-                        except Exception as e:
-                            yield f"Agent {member_agent.name}: Error - {str(e)}"
-                    else:
-                        try:
+                        else:
                             import json
 
                             yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"
-                        except Exception as e:
-                            yield f"Agent {member_agent.name}: Error - {str(e)}"
+                    except Exception as e:
+                        yield f"Agent {member_agent.name}: Error - {str(e)}"
 
                 # Update the memory
                 member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -5418,48 +5405,10 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = "You are a member of a team of agents that collaborate to complete a task."
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
-
-            if expected_output is not None:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            if team_context_str:
-                member_agent_task += f"\n\n{team_context_str}"
-            if team_member_interactions_str:
-                member_agent_task += f"\n\n{team_member_interactions_str}"
+            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
 
             # Create tasks for all member agents
             tasks = []
@@ -5501,25 +5450,22 @@ class Team:
                     # Update the team media
                     self._update_team_media(agent.run_response)
 
-                    if response.content is None and (response.tools is None or len(response.tools) == 0):
-                        return f"Agent {member_name}: No response from the member agent."
-                    elif isinstance(response.content, str):
-                        if len(response.content.strip()) > 0:
-                            return f"Agent {member_name}: {response.content}"
-                        elif response.tools is not None and len(response.tools) > 0:
-                            return f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
-                    elif issubclass(type(response.content), BaseModel):
-                        try:
+                    try:
+                        if response.content is None and (response.tools is None or len(response.tools) == 0):
+                            return f"Agent {member_name}: No response from the member agent."
+                        elif isinstance(response.content, str):
+                            if len(response.content.strip()) > 0:
+                                return f"Agent {member_name}: {response.content}"
+                            elif response.tools is not None and len(response.tools) > 0:
+                                return f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
+                        elif issubclass(type(response.content), BaseModel):
                             return f"Agent {member_name}: {response.content.model_dump_json(indent=2)}"  # type: ignore
-                        except Exception as e:
-                            return f"Agent {member_name}: Error - {str(e)}"
-                    else:
-                        try:
+                        else:
                             import json
 
                             return f"Agent {member_name}: {json.dumps(response.content, indent=2)}"
-                        except Exception as e:
-                            return f"Agent {member_name}: Error - {str(e)}"
+                    except Exception as e:
+                        return f"Agent {member_name}: Error - {str(e)}"
 
                     return f"Agent {member_name}: No Response"
 
@@ -5561,31 +5507,8 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def transfer_task_to_member(
-            member_id: str, task_description: str, expected_output: Optional[str] = None
-        ) -> Iterator[str]:
-            """Use this function to transfer a task to the selected team member.
-            You must provide a clear and concise description of the task the member should achieve AND the expected output.
-
-            Args:
-                member_id (str): The ID of the member to transfer the task to.
-                task_description (str): A clear and concise description of the task the member should achieve.
-                expected_output (str): The expected output from the member (optional).
-            Returns:
-                str: The result of the delegated task.
-            """
-
-            # Find the member agent using the helper function
-            result = self._find_member_by_id(member_id)
-            if result is None:
-                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
-                return
-
-            member_agent_index, member_agent = result
-            self._initialize_member(member_agent, session_id=session_id)
-
-            # 2. Determine team context to send
+            
+        def _determine_team_context(self, session_id: str) -> str:
             if isinstance(self.memory, TeamMemory):
                 self.memory = cast(TeamMemory, self.memory)
                 team_context_str = None
@@ -5616,23 +5539,42 @@ class Team:
                         videos.extend([Video.from_artifact(vid) for vid in context_videos])
                     if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
                         audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+            return team_context_str, team_member_interactions_str
+
+       
+
+        def transfer_task_to_member(
+            member_id: str, task_description: str, expected_output: Optional[str] = None
+        ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
+            """Use this function to transfer a task to the selected team member.
+            You must provide a clear and concise description of the task the member should achieve AND the expected output.
+
+            Args:
+                member_id (str): The ID of the member to transfer the task to.
+                task_description (str): A clear and concise description of the task the member should achieve.
+                expected_output (str): The expected output from the member (optional).
+            Returns:
+                str: The result of the delegated task.
+            """
+            # 1. Find the member agent using the helper function
+            result = self._find_member_by_id(member_id)
+            if result is None:
+                yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{self.get_members_system_message_content(indent=0)}"
+                return
+
+            member_agent_index, member_agent = result
+            self._initialize_member(member_agent, session_id=session_id)
+
+            # 2. Determine team context to send
+            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
-
-            if expected_output is not None:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            if team_context_str:
-                member_agent_task += f"\n\n{team_context_str}"
-            if team_member_interactions_str:
-                member_agent_task += f"\n\n{team_member_interactions_str}"
+            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
 
-            # Handle enable_agentic_knowledge_filters
+            # Handle enable_agentic_knowledge_filters on the member agent
             if self.enable_agentic_knowledge_filters and not member_agent.enable_agentic_knowledge_filters:
                 member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
@@ -5648,18 +5590,11 @@ class Team:
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
                 )
-                for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    check_if_run_cancelled(member_agent_run_response_chunk)
-                    if (
-                        hasattr(member_agent_run_response_chunk, "content")
-                        and member_agent_run_response_chunk.content is not None
-                    ):
-                        yield member_agent_run_response_chunk.content
-                    elif (
-                        hasattr(member_agent_run_response_chunk, "tool")
-                        and member_agent_run_response_chunk.tool is not None
-                    ):
-                        yield member_agent_run_response_chunk.tool.result or ""
+                for member_agent_run_response_event in member_agent_run_response_stream:
+                    check_if_run_cancelled(member_agent_run_response_event)
+                    
+                    # Yield the member event directly
+                    yield member_agent_run_response_event
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
@@ -5675,34 +5610,32 @@ class Team:
 
                 check_if_run_cancelled(member_agent_run_response)
 
-                if member_agent_run_response.content is None and (
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):
-                    if len(member_agent_run_response.content.strip()) > 0:
-                        yield member_agent_run_response.content
+                try:
+                    if member_agent_run_response.content is None and (
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                    ):
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):
+                        content = member_agent_run_response.content.strip()
+                        if len(content) > 0:
+                            yield content
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
+                        # If the content is empty but we have tool calls
+                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                            tool_str = ""
+                            for tool in member_agent_run_response.tools:
+                                if tool.result:
+                                    tool_str += f"{tool.result},"
+                            yield tool_str.rstrip(",")
 
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
-                    try:
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    except Exception as e:
-                        yield str(e)
-                else:
-                    try:
+                    else:
                         import json
 
                         yield json.dumps(member_agent_run_response.content, indent=2)
-                    except Exception as e:
-                        yield str(e)
+                except Exception as e:
+                    yield str(e)
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -5760,48 +5693,10 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
-
-            if expected_output is not None:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
-
-            if team_context_str:
-                member_agent_task += f"\n\n{team_context_str}"
-            if team_member_interactions_str:
-                member_agent_task += f"\n\n{team_member_interactions_str}"
+            member_agent_task = self._formate_member_agent_task(self, task_description, expected_output, team_context_str, team_member_interactions_str)
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -5822,18 +5717,9 @@ class Team:
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
                 )
-                async for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    check_if_run_cancelled(member_agent_run_response_chunk)
-                    if (
-                        hasattr(member_agent_run_response_chunk, "content")
-                        and member_agent_run_response_chunk.content is not None
-                    ):
-                        yield member_agent_run_response_chunk.content
-                    elif (
-                        hasattr(member_agent_run_response_chunk, "tool")
-                        and member_agent_run_response_chunk.tool is not None
-                    ):
-                        yield member_agent_run_response_chunk.tool.result or ""
+                async for member_agent_run_response_event in member_agent_run_response_stream:
+                    check_if_run_cancelled(member_agent_run_response_event)
+                    yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
@@ -5848,29 +5734,26 @@ class Team:
                 )
                 check_if_run_cancelled(member_agent_run_response)
 
-                if member_agent_run_response.content is None and (
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):
-                    if len(member_agent_run_response.content.strip()) > 0:
-                        yield member_agent_run_response.content
+                try:
+                    if member_agent_run_response.content is None and (
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                    ):
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):
+                        if len(member_agent_run_response.content.strip()) > 0:
+                            yield member_agent_run_response.content
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
-                    try:
+                        # If the content is empty but we have tool calls
+                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                            yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    except Exception as e:
-                        yield str(e)
-                else:
-                    try:
+                    else:
                         import json
 
                         yield json.dumps(member_agent_run_response.content, indent=2)
-                    except Exception as e:
-                        yield str(e)
+                except Exception as e:
+                    yield str(e)
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -5911,7 +5794,20 @@ class Team:
         transfer_func = Function.from_callable(transfer_function, strict=True)
 
         return transfer_func
+    
+    def _formate_member_agent_task(self, task_description: str, expected_output: Optional[str] = None, team_context_str: Optional[str] = None, team_member_interactions_str: Optional[str] = None) -> str:
+            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
+            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
+            if expected_output is not None:
+                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
+
+            if team_context_str:
+                member_agent_task += f"\n\n{team_context_str}"
+            if team_member_interactions_str:
+                member_agent_task += f"\n\n{team_member_interactions_str}"
+            
+            return member_agent_task
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
@@ -6013,72 +5909,56 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                if not member_agent.knowledge_filters and member_agent.knowledge:
-                    member_agent_run_response_stream = member_agent.run(
-                        member_agent_task,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                        knowledge_filters=knowledge_filters,
-                    )
-                else:
-                    member_agent_run_response_stream = member_agent.run(
-                        member_agent_task,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                    )
+                member_agent_run_response_stream = member_agent.run(
+                    member_agent_task,
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=True,
+                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                )
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    if hasattr(member_agent_run_response_chunk, "content"):
-                        yield member_agent_run_response_chunk.content or ""
+                    check_if_run_cancelled(member_agent_run_response_chunk)
+                    yield member_agent_run_response_chunk
             else:
-                if not member_agent.knowledge_filters and member_agent.knowledge:
-                    member_agent_run_response = member_agent.run(
-                        member_agent_task,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        knowledge_filters=knowledge_filters,
-                    )
-                else:
-                    member_agent_run_response = member_agent.run(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
-                    )
+                member_agent_run_response = member_agent.run(
+                    member_agent_task,
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=False,
+                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                )
+                check_if_run_cancelled(member_agent_run_response)
 
-                if member_agent_run_response.content is None and (
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):
-                    if len(member_agent_run_response.content.strip()) > 0:
-                        yield member_agent_run_response.content
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        tool_str = ""
-                        for tool in member_agent_run_response.tools:
-                            if tool.result:
-                                tool_str += f"{tool.result},"
-                        yield tool_str.rstrip(",")
+                try:
+                    if member_agent_run_response.content is None and (
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                    ):
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):
+                        if len(member_agent_run_response.content.strip()) > 0:
+                            yield member_agent_run_response.content
 
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
-                    try:
+                        # If the content is empty but we have tool calls
+                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                            tool_str = ""
+                            for tool in member_agent_run_response.tools:
+                                if tool.result:
+                                    tool_str += f"{tool.result},"
+                            yield tool_str.rstrip(",")
+
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    except Exception as e:
-                        yield str(e)
-                else:
-                    try:
+                    else:
                         import json
 
                         yield json.dumps(member_agent_run_response.content, indent=2)
-                    except Exception as e:
-                        yield str(e)
+                except Exception as e:
+                    yield str(e)
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -6150,29 +6030,18 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                if not member_agent.knowledge_filters and member_agent.knowledge:
-                    member_agent_run_response_stream = await member_agent.arun(
-                        member_agent_task,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                        knowledge_filters=knowledge_filters,
-                    )
-                else:
-                    member_agent_run_response_stream = await member_agent.arun(
-                        member_agent_task,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=True,
-                    )
-                async for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    check_if_run_cancelled(member_agent_run_response_chunk)
-                    if hasattr(member_agent_run_response_chunk, "content"):
-                        yield member_agent_run_response_chunk.content or ""
+                member_agent_run_response_stream = await member_agent.arun(
+                    member_agent_task,
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=True,
+                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                )
+                async for member_agent_run_response_event in member_agent_run_response_stream:
+                    check_if_run_cancelled(member_agent_run_response_event)
+                    yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
@@ -6186,29 +6055,26 @@ class Team:
                     else None,
                 )
 
-                if member_agent_run_response.content is None and (
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):
-                    if len(member_agent_run_response.content.strip()) > 0:
-                        yield member_agent_run_response.content
+                try:
+                    if member_agent_run_response.content is None and (
+                        member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                    ):
+                        yield "No response from the member agent."
+                    elif isinstance(member_agent_run_response.content, str):
+                        if len(member_agent_run_response.content.strip()) > 0:
+                            yield member_agent_run_response.content
 
-                    # If the content is empty but we have tool calls
-                    elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
-                        yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
-                elif issubclass(type(member_agent_run_response.content), BaseModel):
-                    try:
+                        # If the content is empty but we have tool calls
+                        elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                            yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
                         yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
-                    except Exception as e:
-                        yield str(e)
-                else:
-                    try:
+                    else:
                         import json
 
                         yield json.dumps(member_agent_run_response.content, indent=2)
-                    except Exception as e:
-                        yield str(e)
+                except Exception as e:
+                    yield str(e)
 
             # Afterward, switch back to the team logger
             use_team_logger()

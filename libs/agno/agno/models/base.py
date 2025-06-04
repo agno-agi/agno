@@ -3,7 +3,7 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
+from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -12,6 +12,8 @@ from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.run.response import RunResponseContentEvent, RunResponseEvent
+from agno.run.team import TeamRunResponseEvent, RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
@@ -1127,13 +1129,14 @@ class Model(ABC):
             tool_args=function_call.arguments,
             tool_call_error=True,
         )
+        
 
     def run_function_call(
         self,
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1172,9 +1175,23 @@ class Model(ABC):
 
         if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_call.result:
-                function_call_output += str(item)
-                if function_call.function.show_result:
-                    yield ModelResponse(content=str(item))
+                # This function yields agent/team run events
+                if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))):
+                    # We only capture content events
+                    if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        # Capture output
+                        function_call_output += item.content
+                        
+                        if function_call.function.show_result:
+                            yield ModelResponse(content=item.content)
+                    
+                    # Yield the event itself to bubble it up
+                    yield item
+                    
+                else:    
+                    function_call_output += str(item)
+                    if function_call.function.show_result:
+                        yield ModelResponse(content=str(item))
         else:
             function_call_output = str(function_call.result)
             if function_call.function.show_result:
@@ -1210,7 +1227,7 @@ class Model(ABC):
         additional_messages: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
@@ -1503,14 +1520,41 @@ class Model(ABC):
             function_call_output: str = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                    
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            # Capture output
+                            function_call_output += item.content
+                            
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                        
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                     # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            # Capture output
+                            function_call_output += item.content
+                            
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                        
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             else:
                 function_call_output = str(fc.result)
                 if fc.function.show_result:

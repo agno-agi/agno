@@ -2,8 +2,10 @@ from textwrap import dedent
 
 import pytest
 
+from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import RunEvent, Team
+from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -266,3 +268,48 @@ def test_intermediate_steps_with_memory(team_storage, memory):
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1
+
+
+def test_intermediate_steps_with_member_agents():
+    agent_1 = Agent(
+        name="Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert problem-solving assistant with strong analytical skills! 🧠",
+        tools=[ReasoningTools(add_instructions=True)],
+    )
+    agent_2 = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, agent_2],
+        enable_user_memories=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("How would you solve 10 factorial?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+        RunEvent.memory_update_started,
+        RunEvent.memory_update_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[RunEvent.memory_update_started]) == 1
+    assert len(events[RunEvent.memory_update_completed]) == 1
+
