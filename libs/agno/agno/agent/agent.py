@@ -649,16 +649,17 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            response_format=response_format if self.parser_model is None else None,
+            response_format=response_format,
         )
 
         # If a parser model is provided, structure the response separately
         if self.parser_model is not None:
             if self.response_model is not None:
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response)
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
                 parser_model_response: ModelResponse = self.parser_model.response(
                     messages=messages_for_parser_model,
-                    response_format=self.response_model,
+                    response_format=parser_response_format,
                 )
                 parser_model_response_message: Optional[Message] = None
                 for message in reversed(messages_for_parser_model):
@@ -960,7 +961,7 @@ class Agent:
 
         # Prepare arguments for the model
         self.set_default_model()
-        response_format = self._get_response_format()
+        response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         self.determine_tools_for_model(
@@ -1113,7 +1114,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-            response_format=response_format if self.parser_model is None else None,
+            response_format=response_format,
         )
 
         # If a parser model is provided, structure the response separately
@@ -1387,7 +1388,7 @@ class Agent:
 
         # Prepare arguments for the model
         self.set_default_model()
-        response_format = self._get_response_format()
+        response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
         self.determine_tools_for_model(
@@ -3638,8 +3639,8 @@ class Agent:
             and (not self.use_json_mode or self.structured_outputs)
         )
 
-    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, self.model)
+    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+        self.model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
@@ -4795,13 +4796,18 @@ class Agent:
 
         return run_messages
 
-    def get_messages_for_parser_model(self, model_response: ModelResponse) -> List[Message]:
+    def get_messages_for_parser_model(
+        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
         """Get the messages for the parser model."""
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
             else "You are tasked with creating a structured output from the provided data."
         )
+
+        if response_format == {"type": "json_object"}:
+            system_content += f"{get_json_output_prompt(self.response_model)}"
 
         return [
             Message(role="system", content=system_content),

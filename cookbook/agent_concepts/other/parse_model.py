@@ -57,10 +57,10 @@ class NationalParkAdventure(BaseModel):
 
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIChat(id="gpt-4o"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
     response_model=NationalParkAdventure,
-    parser_model=OpenAIChat(id="gpt-4o"),
+    parser_model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # Get the response in a variable
