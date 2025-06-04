@@ -12,7 +12,7 @@ print(f"Dimensions: {len(embeddings)}")
 knowledge_base = AgentKnowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        table_name="openai_embeddings",
+        table_name="langdb_embeddings",
         embedder=LangDBEmbedder(),
     ),
     num_documents=2,
