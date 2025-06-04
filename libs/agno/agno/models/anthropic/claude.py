@@ -63,6 +63,7 @@ class Claude(Model):
     name: str = "Claude"
     provider: str = "Anthropic"
 
+    # Request parameters
     max_tokens: Optional[int] = 4096
     thinking: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
@@ -74,10 +75,12 @@ class Claude(Model):
     request_params: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
 
+    # Client parameters
     api_key: Optional[str] = None
     default_headers: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
 
+    # Anthropic clients
     client: Optional[AnthropicClient] = None
     async_client: Optional[AsyncAnthropicClient] = None
 
@@ -88,8 +91,10 @@ class Claude(Model):
         if not self.api_key:
             log_error("ANTHROPIC_API_KEY not set. Please set the ANTHROPIC_API_KEY environment variable.")
 
+        # Add API key to client parameters
         client_params["api_key"] = self.api_key
 
+        # Add additional client parameters
         if self.client_params is not None:
             client_params.update(self.client_params)
         if self.default_headers is not None:
@@ -458,6 +463,7 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
+        # Add role (Claude always uses 'assistant')
         model_response.role = response.role or "assistant"
 
         if response.content:
@@ -468,15 +474,18 @@ class Claude(Model):
                     else:
                         model_response.content += block.text
 
+                    # Capture citations from the response
                     if block.citations is not None:
                         if model_response.citations is None:
                             model_response.citations = Citations(raw=[], urls=[], documents=[])
                         for citation in block.citations:
                             model_response.citations.raw.append(citation.model_dump())  # type: ignore
+                            # Web search citations
                             if isinstance(citation, CitationsWebSearchResultLocation):
                                 model_response.citations.urls.append(  # type: ignore
                                     UrlCitation(url=citation.url, title=citation.cited_text)
                                 )
+                            # Document citations
                             elif isinstance(citation, CitationPageLocation):
                                 model_response.citations.documents.append(  # type: ignore
                                     DocumentCitation(
@@ -492,6 +501,7 @@ class Claude(Model):
                 elif block.type == "redacted_thinking":
                     model_response.redacted_thinking = block.data
 
+        # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
                 if block.type == "tool_use":
@@ -512,6 +522,7 @@ class Claude(Model):
                         }
                     )
 
+        # Add usage metrics
         if response.usage is not None:
             usage_dict = {
                 "input_tokens": response.usage.input_tokens,
@@ -547,8 +558,10 @@ class Claude(Model):
                 model_response.redacted_thinking = response.content_block.data
 
         if isinstance(response, ContentBlockDeltaEvent):
+            # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
+            # Handle thinking content
             elif response.delta.type == "thinking_delta":
                 model_response.thinking = response.delta.thinking
             elif response.delta.type == "signature_delta":
@@ -557,6 +570,7 @@ class Claude(Model):
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
+            # Handle tool calls
             if response.content_block.type == "tool_use":
                 tool_use = response.content_block
                 tool_name = tool_use.name
@@ -577,6 +591,7 @@ class Claude(Model):
                     }
                 ]
 
+        # Capture citations from the final response
         elif isinstance(response, MessageStopEvent):
             model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
@@ -586,8 +601,10 @@ class Claude(Model):
                     continue
                 for citation in citations:
                     model_response.citations.raw.append(citation.model_dump())
+                    # Web search citations
                     if isinstance(citation, CitationsWebSearchResultLocation):
                         model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))
+                    # Document citations
                     elif isinstance(citation, CitationPageLocation):
                         model_response.citations.documents.append(
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
@@ -607,6 +624,7 @@ class Claude(Model):
 
             model_response.response_usage = usage_dict
 
+        # Capture the Beta response
         try:
             if (
                 isinstance(response, BetaRawContentBlockDeltaEvent)
