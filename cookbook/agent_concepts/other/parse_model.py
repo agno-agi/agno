@@ -7,6 +7,13 @@ from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
+"""Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
+
+from agno.agent import Agent
+from agno.storage.postgres import PostgresStorage
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
 
 class NationalParkAdventure(BaseModel):
     park_name: str = Field(..., description="Name of the national park")
@@ -56,11 +63,16 @@ class NationalParkAdventure(BaseModel):
     )
 
 
-movie_agent = Agent(
+agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
     response_model=NationalParkAdventure,
     parser_model=OpenAIChat(id="gpt-4o"),
+    storage=PostgresStorage(
+        table_name="agent_sessions_test_parse_model",
+        db_url=db_url,
+        auto_upgrade_schema=True,
+    ),
 )
 
 # Get the response in a variable
@@ -76,8 +88,8 @@ national_parks = [
     "Great Smoky Mountains National Park",
     "Rocky National Park",
 ]
-run: RunResponse = movie_agent.run(
-    national_parks[random.randint(0, len(national_parks) - 1)]
-)
+run: RunResponse = agent.run(national_parks[random.randint(0, len(national_parks) - 1)])
 
 pprint(run.content)
+
+print(agent.session_metrics)

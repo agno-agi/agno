@@ -118,13 +118,10 @@ class Agent:
     # --- Agent Knowledge ---
     knowledge: Optional[AgentKnowledge] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
-
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
-
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
-
     add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
@@ -362,6 +359,7 @@ class Agent:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
+        parser_model_prompt: Optional[str] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
@@ -458,6 +456,7 @@ class Agent:
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
         self.parser_model = parser_model
+        self.parser_model_prompt = parser_model_prompt
         self.response_model = response_model
         self.parse_response = parse_response
 
@@ -644,33 +643,32 @@ class Agent:
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        if self.parser_model is not None:
-            model_response: ModelResponse = self.model.response(
-                messages=run_messages.messages,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
-                tool_choice=self.tool_choice,
-                tool_call_limit=self.tool_call_limit,
-            )
-        else:
-            model_response: ModelResponse = self.model.response(
-                messages=run_messages.messages,
-                response_format=response_format,
-                tools=self._tools_for_model,
-                functions=self._functions_for_model,
-                tool_choice=self.tool_choice,
-                tool_call_limit=self.tool_call_limit,
-            )
+        model_response: ModelResponse = self.model.response(
+            messages=run_messages.messages,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+            **({"response_format": response_format} if self.parser_model is None else {}),
+        )
 
-        # Parse the response if a parser model is provided
+        # If a parser model is provided, structure the response separately
         if self.parser_model is not None:
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response)
             parser_model_response: ModelResponse = self.parser_model.response(
-                messages=self.get_messages_for_parser_model(model_response),
+                messages=messages_for_parser_model,
                 response_format=self.response_model,
             )
-            run_messages.messages.append(Message(role="assistant", content=parser_model_response.content))
-            model_response.parsed = parser_model_response.parsed
-            model_response.content = parser_model_response.content
+            parser_model_response_message: Optional[Message] = None
+            for message in reversed(messages_for_parser_model):
+                if message.role == "assistant":
+                    parser_model_response_message = message
+                    break
+
+            if parser_model_response_message is not None:
+                run_messages.messages.append(parser_model_response_message)
+                model_response.parsed = parser_model_response.parsed
+                model_response.content = parser_model_response.content
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1106,12 +1104,29 @@ class Agent:
         # 2. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
-            response_format=response_format,
             tools=self._tools_for_model,
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            **({"response_format": response_format} if self.parser_model is None else {}),
         )
+
+        # If a parser model is provided, structure the response separately
+        if self.parser_model is not None:
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=self.response_model,
+            )
+            parser_model_response_message: Optional[Message] = None
+            for message in reversed(messages_for_parser_model):
+                if message.role == "assistant":
+                    parser_model_response_message = message
+                    break
+            if parser_model_response_message is not None:
+                run_messages.messages.append(parser_model_response_message)
+                model_response.parsed = parser_model_response.parsed
+                model_response.content = parser_model_response.content
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -4772,18 +4787,16 @@ class Agent:
 
     def get_messages_for_parser_model(self, model_response: ModelResponse) -> List[Message]:
         """Get the messages for the parser model."""
-        if self.parser_model_prompt is None:
-            return [
-                Message(
-                    role="system", content="You are tasked with creating a structed output from a string response."
-                ),
-                Message(role="user", content=model_response.content),
-            ]
-        else:
-            return [
-                Message(role="system", content=self.parser_model_prompt),
-                Message(role="user", content=model_response.content),
-            ]
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from a string response."
+        )
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
 
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""

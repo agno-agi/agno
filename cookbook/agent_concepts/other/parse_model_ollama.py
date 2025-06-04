@@ -56,7 +56,7 @@ class NationalParkAdventure(BaseModel):
     )
 
 
-national_park_agent = Agent(
+agent = Agent(
     model=OpenAIChat(id="o3"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
     response_model=NationalParkAdventure,
@@ -76,7 +76,5 @@ national_parks = [
     "Rocky National Park",
 ]
 # Get the response in a variable
-run: RunResponse = national_park_agent.run(
-    national_parks[random.randint(0, len(national_parks) - 1)]
-)
+run: RunResponse = agent.run(national_parks[random.randint(0, len(national_parks) - 1)])
 pprint(run.content)
