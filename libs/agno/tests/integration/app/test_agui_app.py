@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType
 
-from agno.app.agui.utils import EventBuffer, stream_agno_response_as_agui_events
+from agno.app.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
 from agno.run.response import RunResponse
 
 
@@ -155,7 +155,7 @@ def test_event_buffer_blocking_behavior_edge_cases():
 
 @pytest.mark.asyncio
 async def test_stream_basic():
-    """Test the stream_agno_response_as_agui_events function emits all expected events in a basic case."""
+    """Test the async_stream_agno_response_as_agui_events function emits all expected events in a basic case."""
     from agno.run.response import RunEvent
 
     async def mock_stream():
@@ -171,7 +171,7 @@ async def test_stream_basic():
         yield completed_response
 
     events = []
-    async for event in stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
         events.append(event)
 
     assert len(events) == 4
@@ -225,7 +225,7 @@ async def test_stream_with_tool_call_blocking():
         yield completed_response
 
     events = []
-    async for event in stream_agno_response_as_agui_events(mock_stream_with_tool_calls(), "thread_1", "run_1"):
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_tool_calls(), "thread_1", "run_1"):
         events.append(event)
 
     # Asserting all expected events are present
