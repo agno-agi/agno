@@ -31,7 +31,7 @@ try:
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
-         # MessageDeltaEvent,  # Currently broken
+        # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
     )
     from anthropic.types import (
@@ -407,7 +407,7 @@ class Claude(Model):
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 ) as stream:
-                    async for chunk in stream:
+                    async for chunk in stream:  # type: ignore
                         yield chunk
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
@@ -573,8 +573,8 @@ class Claude(Model):
 
         elif isinstance(response, ContentBlockStopEvent):
             # Handle tool calls
-            if response.content_block.type == "tool_use":
-                tool_use = response.content_block
+            if response.content_block.type == "tool_use":  # type: ignore
+                tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
 
@@ -597,18 +597,18 @@ class Claude(Model):
         elif isinstance(response, MessageStopEvent):
             model_response.content = ""
             model_response.citations = Citations(raw=[], urls=[], documents=[])
-            for block in response.message.content:
+            for block in response.message.content:  # type: ignore
                 citations = getattr(block, "citations", None)
                 if not citations:
                     continue
                 for citation in citations:
-                    model_response.citations.raw.append(citation.model_dump())
+                    model_response.citations.raw.append(citation.model_dump())  # type: ignore
                     # Web search citations
                     if isinstance(citation, CitationsWebSearchResultLocation):
-                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))
+                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
                     # Document citations
                     elif isinstance(citation, CitationPageLocation):
-                        model_response.citations.documents.append(
+                        model_response.citations.documents.append(  # type: ignore
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
