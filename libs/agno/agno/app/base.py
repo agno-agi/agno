@@ -31,7 +31,6 @@ class BaseAPIApp(ABC):
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
-
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
 
