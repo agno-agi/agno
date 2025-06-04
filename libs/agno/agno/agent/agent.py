@@ -3189,7 +3189,7 @@ class Agent:
                                     metrics.time
                                 )
                         yield create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool_call, content=model_response_chunk.content
+                            from_run_response=run_response, tool=tool_call, content=model_response_event.content
                         )
 
                 if stream_intermediate_steps:
