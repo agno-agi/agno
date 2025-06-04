@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from time import time
 from typing import Any, Dict, Optional, Union
 
@@ -7,9 +8,12 @@ from pydantic import BaseModel
 from agno.utils.log import log_error
 
 
-from agno.run.response import RunEvent
 
+class RunEvent(str, Enum):
+    """Events that can be sent by the run() functions"""
 
+    workflow_started = "WorkflowStarted"
+    workflow_completed = "WorkflowCompleted"
 @dataclass
 class BaseWorkflowRunResponseEvent:
     run_id: str
@@ -42,7 +46,7 @@ class BaseWorkflowRunResponseEvent:
 
 @dataclass
 class WorkflowRunResponseStartedEvent(BaseWorkflowRunResponseEvent):
-    event: str = RunEvent.run_started.value
+    event: str = RunEvent.workflow_started.value
 
 
 @dataclass
