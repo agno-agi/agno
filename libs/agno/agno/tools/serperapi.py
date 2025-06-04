@@ -25,7 +25,7 @@ class SerperApiTools(Toolkit):
     def __init__(
         self,
         api_key: str = "",
-        gl: str = "us",
+        location: str = "us",
         num_results: int = 10,
     ):
         """
@@ -42,17 +42,17 @@ class SerperApiTools(Toolkit):
         if not self.api_key:
             log_debug("No Serper API key provided")
 
-        self.gl = gl
+        self.location = location
         self.num_results = num_results
         self.register(self.search_google)
 
-    def search_google(self, query: str, gl: Optional[str] = None) -> str:
+    def search_google(self, query: str, location: Optional[str] = None) -> str:
         """
         Searches Google for the provided query using the Serper API.
 
         Args:
             query (str): The search query to search for on Google.
-            gl (str, optional): The Google location code for search results. If not provided, the default class attribute is used.
+            location (str, optional): The Google location code for search results. If not provided, the default class attribute is used.
 
         Returns:
             str: The search results in JSON format or an error message if the search fails.
@@ -68,7 +68,7 @@ class SerperApiTools(Toolkit):
             url = "https://google.serper.dev/search"
             headers = {"X-API-KEY": self.api_key, "Content-Type": "application/json"}
             # Use the gl parameter from the method if provided, otherwise use the class attribute
-            search_gl = gl if gl is not None else self.gl
+            search_gl = location if location is not None else self.location
             params = {"q": query, "num": self.num_results, "gl": search_gl}
             payload = json.dumps(params)
             response = requests.request("POST", url, headers=headers, data=payload)
