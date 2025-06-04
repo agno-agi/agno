@@ -1,7 +1,7 @@
 [project]
 name = "agno"
-version = "1.5.4"
-description = "Agno: a lightweight library for building Reasoning Agents"
+version = "1.5.8"
+description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -54,7 +54,7 @@ integration-tests = [
     "duckduckgo-search",
     "yfinance",
     "sqlalchemy",
-    "Pillow",
+    "Pillow"
 ]
 
 # Dependencies for Telemetry
@@ -65,44 +65,46 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
-azure = ["azure-ai-inference", "aiohttp"]
 anthropic = ["anthropic"]
+azure = ["azure-ai-inference", "aiohttp"]
+cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 google = ["google-genai"]
 groq = ["groq"]
-mistral = ["mistralai"]
-openai = ["openai"]
-ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
-lmstudio = ["lmstudio"]
 litellm = ["litellm"]
+lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-cerebras = ["cerebras-cloud-sdk"]
+mistral = ["mistralai"]
+ollama = ["ollama"]
+openai = ["openai"]
 
 # Dependencies for Tools
+agentql = ["agentql"]
 apify = ["apify-client"]
+brave = ["brave-search"]
+browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-exa = ["exa_py"]
-mem0 = ["mem0ai"]
-yfinance = ["yfinance"]
+confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
-newspaper = ["newspaper4k", "lxml_html_clean"]
-youtube = ["youtube_transcript_api"]
+elevenlabs = ["elevenlabs"]
+exa = ["exa_py"]
+fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
-googlemaps = ["googlemaps", "google-maps-places"]
-todoist = ["todoist-api-python"]
-elevenlabs = ["elevenlabs"]
-fal = ["fal_client"]
-webex = ["webexpythonsdk"]
-mcp = ["mcp"]
-browserbase = ["browserbase", "playwright"]
-agentql = ["agentql"]
-confluence = ["atlassian-python-api"]
-zep = ["zep-cloud"]
 google_bigquery = ["google-cloud-bigquery"]
+googlemaps = ["googlemaps", "google-maps-places"]
+matplotlib = ["matplotlib"]
+mcp = ["mcp"]
+mem0 = ["mem0ai"]
+newspaper = ["newspaper4k", "lxml_html_clean"]
+todoist = ["todoist-api-python"]
+webex = ["webexpythonsdk"]
+yfinance = ["yfinance"]
+youtube = ["youtube_transcript_api"]
+zep = ["zep-cloud"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -121,7 +123,7 @@ cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
-milvusdb = ["pymilvus"]
+milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 
@@ -130,6 +132,15 @@ pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
+markdown = ["unstructured", "markdown", "aiofiles"]
+
+# Dependencies for AG-UI integration
+agui = ["ag-ui-protocol"]
+
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -147,21 +158,22 @@ aws = ["agno-aws", "agno-docker"]
 models = [
   "agno[anthropic]",
   "agno[azure]",
+  "agno[cerebras]",
   "agno[cohere]",
   "agno[google]",
   "agno[groq]",
-  "agno[mistral]",
-  "agno[ollama]",
-  "agno[openai]",
   "agno[ibm]",
   "agno[litellm]",
   "agno[meta]",
-  "agno[cerebras]"
+  "agno[mistral]",
+  "agno[ollama]",
+  "agno[openai]"
 ]
 
 # All tools
 tools = [
   "agno[apify]",
+  "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
   "agno[ddg]",
@@ -173,6 +185,7 @@ tools = [
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
+  "agno[matplotlib]",
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
@@ -216,7 +229,13 @@ knowledge = [
   "agno[pdf]",
   "agno[docx]",
   "agno[text]",
-  "agno[csv]"
+  "agno[csv]",
+  "agno[markdown]"
+]
+
+# All embedders
+embedders = [
+  "agno[huggingface]"
 ]
 
 # All libraries for testing
@@ -227,8 +246,10 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
+    "agno[agui]",
     "twine",
     "build",
 ]
@@ -273,6 +294,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "ag_ui.*",
   "agentql.*",
   "aiofiles.*",
   "altair.*",
@@ -286,6 +308,7 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "brave.*",
   "browserbase.*",
   "cassio.*",
   "cerebras.*",
@@ -304,6 +327,7 @@ module = [
   "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "fastembed.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",
@@ -325,6 +349,7 @@ module = [
   "llama_index.*",
   "llama_api_client.*",
   "litellm.*",
+  "matplotlib.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",

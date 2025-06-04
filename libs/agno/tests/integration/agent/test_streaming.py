@@ -8,7 +8,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def test_streaming():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -29,7 +28,6 @@ def test_streaming():
 async def test_async_streaming():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -51,7 +49,6 @@ def test_tool_streaming():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -75,7 +72,6 @@ async def test_async_tool_streaming():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -98,7 +94,6 @@ async def test_async_tool_streaming():
 def test_streaming_with_intermediate_steps():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,
         stream_intermediate_steps=True,
         markdown=True,
         telemetry=False,
@@ -130,7 +125,6 @@ def test_streaming_with_intermediate_steps():
 async def test_async_streaming_with_intermediate_steps():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,
         stream_intermediate_steps=True,
         markdown=True,
         telemetry=False,
@@ -163,7 +157,6 @@ def test_tool_call_streaming_with_intermediate_steps():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         stream_intermediate_steps=True,
         markdown=True,
         telemetry=False,
@@ -204,7 +197,6 @@ async def test_async_tool_call_streaming_with_intermediate_steps():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         stream_intermediate_steps=True,
         markdown=True,
         telemetry=False,

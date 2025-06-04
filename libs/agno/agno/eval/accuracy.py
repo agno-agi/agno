@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Callable, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -11,6 +11,7 @@ from agno.api.schemas.evals import EvalType
 from agno.eval.utils import log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
+from agno.team.team import Team
 from agno.utils.log import logger, set_log_level_to_debug, set_log_level_to_info
 
 if TYPE_CHECKING:
@@ -129,7 +130,7 @@ class AccuracyResult:
 
 @dataclass
 class AccuracyEval:
-    """Interface to evaluate the accuracy of an Agent, given a prompt and expected answer"""
+    """Interface to evaluate the accuracy of an Agent or Team, given a prompt and expected answer"""
 
     # Input to evaluate
     input: Union[str, Callable]
@@ -137,6 +138,8 @@ class AccuracyEval:
     expected_output: Union[str, Callable]
     # Agent to evaluate
     agent: Optional[Agent] = None
+    # Team to evaluate
+    team: Optional[Team] = None
 
     # Evaluation name
     name: Optional[str] = None
@@ -286,6 +289,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_summary: bool = True,
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
+        if self.agent is None and self.team is None:
+            logger.error("You need to provide an agent or a team to run the evaluation.")
+
+        if self.agent is not None and self.team is not None:
+            logger.error("Provide only one of 'agent' or 'team' to run the evaluation.")
+
         from rich.console import Console
         from rich.live import Live
         from rich.status import Status
@@ -303,15 +312,17 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             eval_input = self.get_eval_input()
             eval_expected_output = self.get_eval_expected_output()
 
-            self.agent = cast(Agent, self.agent)
-
             for i in range(self.num_iterations):
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
-                agent_output = self.agent.run(message=eval_input).content
-                if not agent_output:
-                    logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {agent_output}")
+                if self.agent is not None:
+                    output = self.agent.run(message=eval_input).content
+                elif self.team is not None:
+                    output = self.team.run(message=eval_input).content
+
+                if not output:
+                    logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
                     continue
 
                 evaluation_input = dedent(f"""\
@@ -324,16 +335,16 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     </expected_output>
 
                     <agent_output>
-                    {agent_output}
+                    {output}
                     </agent_output>\
                     """)
-                logger.debug(f"Agent output #{i + 1}: {agent_output}")
+                logger.debug(f"Agent output #{i + 1}: {output}")
                 result = self.evaluate_answer(
                     input=eval_input,
                     evaluator_agent=evaluator_agent,
                     evaluation_input=evaluation_input,
                     evaluator_expected_output=eval_expected_output,
-                    agent_output=agent_output,
+                    agent_output=output,
                 )
                 if result is None:
                     logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
@@ -361,18 +372,30 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             self.result.print_summary(console)
 
         # Log results to the Agno platform if requested
+        if self.agent is not None:
+            agent_id = self.agent.agent_id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+            evaluated_entity_name = self.agent.name
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.team_id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+            evaluated_entity_name = self.team.name
+
         if self.monitoring:
             log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=self.agent.agent_id if self.agent is not None else None,
-                model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
-                model_provider=self.agent.model.provider
-                if self.agent is not None and self.agent.model is not None
-                else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+                evaluated_entity_name=evaluated_entity_name,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -438,17 +461,29 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 )
         # Log results to the Agno platform if requested
         if self.monitoring:
+            if self.agent is not None:
+                agent_id = self.agent.agent_id
+                team_id = None
+                model_id = self.agent.model.id if self.agent.model is not None else None
+                model_provider = self.agent.model.provider if self.agent.model is not None else None
+                evaluated_entity_name = self.agent.name
+            elif self.team is not None:
+                agent_id = None
+                team_id = self.team.team_id
+                model_id = self.team.model.id if self.team.model is not None else None
+                model_provider = self.team.model.provider if self.team.model is not None else None
+                evaluated_entity_name = self.team.name
+
             log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=self.agent.agent_id if self.agent is not None else None,
-                model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
-                model_provider=self.agent.model.provider
-                if self.agent is not None and self.agent.model is not None
-                else None,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                evaluated_entity_name=evaluated_entity_name,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

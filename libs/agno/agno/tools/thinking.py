@@ -27,6 +27,8 @@ class ThinkingTools(Toolkit):
             ## Rules
             - Use the think tool generously to jot down thoughts and ideas.\
             """)
+        else:
+            self.instructions = instructions
 
         tools = []
         if think:
@@ -34,7 +36,7 @@ class ThinkingTools(Toolkit):
 
         super().__init__(
             name="thinking_tools",
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             tools=tools,
             **kwargs,

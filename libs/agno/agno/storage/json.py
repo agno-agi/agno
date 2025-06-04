@@ -122,6 +122,71 @@ class JsonStorage(Storage):
                         sessions.append(_session)
         return sessions
 
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        sessions: List[Session] = []
+        # List of (created_at, data) tuples for sorting
+        session_data: List[tuple[int, dict]] = []
+
+        # First pass: collect and filter sessions
+        for file in self.dir_path.glob("*.json"):
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    data = self.deserialize(f.read())
+
+                    if user_id and data["user_id"] != user_id:
+                        continue
+
+                    if entity_id:
+                        if self.mode == "agent" and data["agent_id"] != entity_id:
+                            continue
+                        elif self.mode == "team" and data["team_id"] != entity_id:
+                            continue
+                        elif self.mode == "workflow" and data["workflow_id"] != entity_id:
+                            continue
+
+                    # Store with created_at for sorting
+                    created_at = data.get("created_at", 0)
+                    session_data.append((created_at, data))
+
+            except Exception as e:
+                logger.error(f"Error reading session file {file}: {e}")
+                continue
+
+        # Sort by created_at descending and take only num_history_sessions
+        session_data.sort(key=lambda x: x[0], reverse=True)
+        if limit is not None:
+            session_data = session_data[:limit]
+
+        # Convert filtered and sorted data to Session objects
+        for _, data in session_data:
+            session: Optional[Session] = None
+            if self.mode == "agent":
+                session = AgentSession.from_dict(data)
+            elif self.mode == "team":
+                session = TeamSession.from_dict(data)
+            elif self.mode == "workflow":
+                session = WorkflowSession.from_dict(data)
+
+            if session is not None:
+                sessions.append(session)
+
+        return sessions
+
     def upsert(self, session: Session) -> Optional[Session]:
         """Insert or update a Session in storage."""
         try:

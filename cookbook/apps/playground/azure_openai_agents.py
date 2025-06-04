@@ -149,9 +149,13 @@ youtube_agent = Agent(
     markdown=True,
 )
 
-app = Playground(
-    agents=[web_agent, finance_agent, youtube_agent, research_agent, image_agent]
-).get_app()
+playground = Playground(
+    agents=[web_agent, finance_agent, youtube_agent, research_agent, image_agent],
+    name="Azure OpenAI Agents",
+    description="A playground for Azure OpenAI agents",
+    app_id="azure-openai-agents",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("azure_openai_agents:app", reload=True)
+    playground.serve(app="azure_openai_agents:app", reload=True)

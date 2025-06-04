@@ -7,7 +7,6 @@ def test_session_metrics():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -45,7 +44,6 @@ def test_session_metrics():
 def test_run_response_metrics():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,
         markdown=True,
     )
 

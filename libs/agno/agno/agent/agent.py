@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
+from threading import Thread
 from typing import (
     Any,
     AsyncIterator,
@@ -81,6 +83,8 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
+    search_previous_sessions_history: Optional[bool] = False
+    num_history_sessions: Optional[int] = None
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -266,6 +270,13 @@ class Agent:
     team_session_id: Optional[str] = None
     # Optional team ID. Indicates this agent is part of a team.
     team_id: Optional[str] = None
+
+    # Optional app ID. Indicates this agent is part of an app.
+    app_id: Optional[str] = None
+
+    # Optional workflow ID. Indicates this agent is part of a workflow.
+    workflow_id: Optional[str] = None
+
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
 
@@ -289,6 +300,8 @@ class Agent:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        search_previous_sessions_history: Optional[bool] = False,
+        num_history_sessions: Optional[int] = None,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -365,12 +378,13 @@ class Agent:
         self.name = name
         self.agent_id = agent_id
         self.introduction = introduction
-
         self.user_id = user_id
 
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
+        self.search_previous_sessions_history = search_previous_sessions_history
+        self.num_history_sessions = num_history_sessions
 
         self.context = context
         self.add_context = add_context
@@ -540,6 +554,23 @@ class Agent:
 
         if self.num_history_responses is not None:
             self.num_history_runs = self.num_history_responses
+
+    def reset_session_state(self) -> None:
+        self.session_name = None
+        self.session_state = None
+        self.team_session_state = None
+        self.session_metrics = None
+        self.images = None
+        self.videos = None
+        self.audio = None
+        self.files = None
+        self.agent_session = None
+
+    def reset_run_state(self) -> None:
+        self.run_id = None
+        self.run_input = None
+        self.run_messages = None
+        self.run_response = None
 
     def initialize_agent(self) -> None:
         self.set_defaults()
@@ -774,7 +805,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -793,7 +824,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -817,6 +848,12 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
         """Run the Agent and return the response."""
+
+        self.reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -869,6 +906,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -877,7 +916,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -906,6 +945,10 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Register Agent
+        thread = Thread(target=self.register_agent)
+        thread.start()
 
         for attempt in range(num_attempts):
             try:
@@ -940,6 +983,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     messages=messages,
+                    knowledge_filters=effective_filters,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1103,7 +1147,7 @@ class Agent:
 
         Steps:
         1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model (includes running function calls)
+        2. Generate a response from the Model
         3. Add the run to memory
         4. Update Agent Memory
         5. Calculate session metrics
@@ -1208,6 +1252,11 @@ class Agent:
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
+        self.reset_run_state()
+
+        if session_id is not None:
+            # Reset session state if a session_id is provided
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1262,6 +1311,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1270,7 +1321,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1299,6 +1350,9 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Register Agent
+        asyncio.create_task(self._aregister_agent())
 
         for attempt in range(num_attempts):
             try:
@@ -1333,6 +1387,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     messages=messages,
+                    knowledge_filters=effective_filters,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1401,8 +1456,9 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[False] = False,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1415,8 +1471,9 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Literal[True] = True,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
@@ -1428,14 +1485,31 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Union[RunResponse, Iterator[RunResponse]]:
-        """Continue a previous run."""
+        """Continue a previous run.
+
+        Args:
+            run_response: The run response to continue.
+            run_id: The run id to continue. Alternative to passing run_response.
+            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            stream: Whether to stream the response.
+            stream_intermediate_steps: Whether to stream the intermediate steps.
+            user_id: The user id to continue the run for.
+            session_id: The session id to continue the run for.
+            retries: The number of retries to continue the run for.
+            knowledge_filters: The knowledge filters to use for the run.
+        """
+        if session_id is not None:
+            self.reset_run_state()
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1488,6 +1562,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1496,14 +1572,19 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
+            # The run is continued from a provided run_response. This contains the updated tools.
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
+            # The run is continued from a run_id. This requires the updated tools to be passed.
+            if updated_tools is None:
+                raise ValueError("Updated tools are required to continue a run from a run_id.")
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -1512,12 +1593,13 @@ class Agent:
                 run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
+            run_response.tools = updated_tools
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
         else:
             self.run_response = cast(RunResponse, self.run_response)
-            # We are continuing from a previous run
+            # We are continuing from a previous run_response in state
             run_response = self.run_response
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
@@ -1576,6 +1658,9 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
+
+            # Reset the event to run_response
+            run_response.event = RunEvent.run_response
 
             try:
                 if stream and self.is_streamable:
@@ -1742,6 +1827,11 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
+
+        # Start the Run by yielding a RunContinued event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
+
         # 1. Handle the updated tools
         yield from self._handle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages, session_id=session_id
@@ -1750,10 +1840,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunContinued event
-        if stream_intermediate_steps:
-            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
 
         # 2. Process model response
         for event in self._handle_model_response_stream(
@@ -1825,14 +1911,31 @@ class Agent:
         run_response: Optional[RunResponse] = None,
         *,
         run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """Continue a previous run."""
+        """Continue a previous run.
+
+        Args:
+            run_response: The run response to continue.
+            run_id: The run id to continue. Alternative to passing run_response.
+            updated_tools: The updated tools to use for the run. Required to be used with `run_id`.
+            stream: Whether to stream the response.
+            stream_intermediate_steps: Whether to stream the intermediate steps.
+            user_id: The user id to continue the run for.
+            session_id: The session id to continue the run for.
+            retries: The number of retries to continue the run for.
+            knowledge_filters: The knowledge filters to use for the run.
+        """
+        if session_id is not None:
+            self.reset_run_state()
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            self.reset_session_state()
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1885,6 +1988,8 @@ class Agent:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1893,14 +1998,19 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id, user_id=user_id)
+        self.read_from_storage(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
+            # The run is continued from a provided run_response. This contains the updated tools.
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_response.run_id
         elif run_id is not None:
+            # The run is continued from a run_id. This requires the updated tools to be passed.
+            if updated_tools is None:
+                raise ValueError("Updated tools are required to continue a run from a run_id.")
+
             if isinstance(self.memory, Memory):
                 runs = self.memory.get_runs(session_id=session_id)
                 run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
@@ -1909,11 +2019,12 @@ class Agent:
                 run_response = next((r for r in runs if r.response.run_id == run_id), None)  # type: ignore
             if run_response is None:
                 raise RuntimeError(f"No runs found for run ID {run_id}")
+            run_response.tools = updated_tools
             messages = run_response.messages or []
             self.run_response = run_response
             self.run_id = run_id
         else:
-            # We are continuing from a previous run
+            # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
             messages = self.run_response.messages or []
@@ -1973,6 +2084,9 @@ class Agent:
                 messages=messages,
                 session_id=session_id,
             )
+
+            # Reset the event to run_response
+            run_response.event = RunEvent.run_response
 
             try:
                 if stream and self.is_streamable:
@@ -2140,6 +2254,10 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
+        # Start the Run by yielding a RunContinued event
+        if stream_intermediate_steps:
+            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
+
         # 1. Handle the updated tools
         async for event in self._ahandle_tool_call_updates_stream(
             run_response=run_response, run_messages=run_messages, session_id=session_id
@@ -2149,10 +2267,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunContinued event
-        if stream_intermediate_steps:
-            yield self.create_run_response("Run continued", session_id=session_id, event=RunEvent.run_continued)
 
         # 2. Process model response
         async for event in self._ahandle_model_response_stream(
@@ -2227,8 +2341,12 @@ class Agent:
         user_id: Optional[str] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> RunResponse:
+        # Set the run response to paused
+        run_response.event = RunEvent.run_paused
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
+
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
@@ -2238,7 +2356,6 @@ class Agent:
         self.save_run_response_to_file(message=message, session_id=session_id)
 
         # We return and await confirmation/completion for the tools that require it
-        run_response.event = RunEvent.run_paused
         return run_response
 
     def _handle_agent_run_paused_stream(
@@ -2248,6 +2365,9 @@ class Agent:
         user_id: Optional[str] = None,
         message: Optional[Union[str, List, Dict, Message]] = None,
     ) -> Iterator[RunResponse]:
+        # Set the run response to paused
+        run_response.event = RunEvent.run_paused
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
@@ -3170,17 +3290,28 @@ class Agent:
         user_id: Optional[str] = None,
         messages: Optional[List[Message]] = None,
     ) -> None:
-        session_messages: List[Message] = []
-        self.memory = cast(Memory, self.memory)
-        if self.enable_user_memories and run_messages.user_message is not None:
-            log_debug("Creating user memories.")
-            self.memory.create_user_memories(message=run_messages.user_message.get_content_string(), user_id=user_id)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            # TODO: Possibly do both of these in one step
+        self.memory = cast(Memory, self.memory)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+
+            # Create user memories from single message
+            if self.enable_user_memories and run_messages.user_message is not None:
+                log_debug("Creating user memories.")
+                futures.append(
+                    executor.submit(
+                        self.memory.create_user_memories,
+                        message=run_messages.user_message.get_content_string(),
+                        user_id=user_id,
+                    )
+                )
+
+            # Parse messages if provided
             if messages is not None and len(messages) > 0:
                 parsed_messages = []
                 for _im in messages:
-                    # Parse the message and convert to a Message object if possible
                     if isinstance(_im, Message):
                         parsed_messages.append(_im)
                     elif isinstance(_im, dict):
@@ -3193,17 +3324,25 @@ class Agent:
                         continue
 
                 if len(parsed_messages) > 0:
-                    if session_messages is None:
-                        session_messages = []
-                    session_messages.extend(parsed_messages)
-                    self.memory.create_user_memories(messages=parsed_messages, user_id=user_id)
+                    futures.append(
+                        executor.submit(self.memory.create_user_memories, messages=parsed_messages, user_id=user_id)
+                    )
                 else:
                     log_warning("Unable to add messages to memory")
 
-        # Update the session summary if needed
-        if self.enable_session_summaries:
-            log_debug("Creating session summary.")
-            self.memory.create_session_summary(session_id=session_id, user_id=user_id)
+            # Create session summary
+            if self.enable_session_summaries:
+                log_debug("Creating session summary.")
+                futures.append(
+                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                )
+
+            # Wait for all operations to complete and handle any errors
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    log_warning(f"Error in memory/summary operation: {str(e)}")
 
     async def _amake_memories_and_summaries(
         self,
@@ -3213,41 +3352,48 @@ class Agent:
         messages: Optional[List[Message]] = None,
     ) -> None:
         self.memory = cast(Memory, self.memory)
-        session_messages: List[Message] = []
+        tasks = []
+
+        # Create user memories from single message
         if self.enable_user_memories and run_messages.user_message is not None:
             log_debug("Creating user memories.")
-            await self.memory.acreate_user_memories(
-                message=run_messages.user_message.get_content_string(), user_id=user_id
+            tasks.append(
+                self.memory.acreate_user_memories(
+                    message=run_messages.user_message.get_content_string(), user_id=user_id
+                )
             )
 
-            # TODO: Possibly do both of these in one step
-            if messages is not None and len(messages) > 0:
-                parsed_messages = []
-                for _im in messages:
-                    # Parse the message and convert to a Message object if possible
-                    if isinstance(_im, Message):
-                        parsed_messages.append(_im)
-                    elif isinstance(_im, dict):
-                        try:
-                            parsed_messages.append(Message(**_im))
-                        except Exception as e:
-                            log_warning(f"Failed to validate message during memory update: {e}")
-                    else:
-                        log_warning(f"Unsupported message type: {type(_im)}")
-                        continue
-
-                if len(parsed_messages) > 0:
-                    if session_messages is None:
-                        session_messages = []
-                    session_messages.extend(parsed_messages)
-                    await self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id)
+        # Parse messages if provided
+        if messages is not None and len(messages) > 0:
+            parsed_messages = []
+            for _im in messages:
+                if isinstance(_im, Message):
+                    parsed_messages.append(_im)
+                elif isinstance(_im, dict):
+                    try:
+                        parsed_messages.append(Message(**_im))
+                    except Exception as e:
+                        log_warning(f"Failed to validate message during memory update: {e}")
                 else:
-                    log_warning("Unable to add messages to memory")
+                    log_warning(f"Unsupported message type: {type(_im)}")
+                    continue
 
-        # Update the session summary if needed
+            if len(parsed_messages) > 0:
+                tasks.append(self.memory.acreate_user_memories(messages=parsed_messages, user_id=user_id))
+            else:
+                log_warning("Unable to add messages to memory")
+
+        # Create session summary
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
-            await self.memory.acreate_session_summary(session_id=session_id, user_id=user_id)
+            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
+
+        # Execute all tasks concurrently and handle any errors
+        if tasks:
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as e:
+                log_warning(f"Error in memory/summary operation: {str(e)}")
 
     def _raise_if_async_tools(self) -> None:
         """Raise an exception if any tools contain async functions"""
@@ -3298,6 +3444,12 @@ class Agent:
             agent_tools.append(self.get_chat_history_function(session_id=session_id))
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
+        if self.search_previous_sessions_history:
+            agent_tools.append(
+                self.get_previous_sessions_messages_function(
+                    num_history_sessions=self.num_history_sessions, user_id=user_id
+                )
+            )
 
         if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
@@ -3782,9 +3934,11 @@ class Agent:
     def read_from_storage(
         self,
         session_id: str,
-        user_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
         """Load the AgentSession from storage
+
+        Args:
+            session_id: The session_id to load from storage.
 
         Returns:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
@@ -3795,9 +3949,6 @@ class Agent:
             if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
-            else:
-                # New session, just reset the state
-                self.session_name = None
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -3848,7 +3999,7 @@ class Agent:
         if self.storage is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading AgentSession: {self.session_id}")
-            self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+            self.read_from_storage(session_id=self.session_id)  # type: ignore
 
             # Create a new session if it does not exist
             if self.agent_session is None:
@@ -3878,8 +4029,6 @@ class Agent:
         - Load the new session
         """
         self.agent_session = None
-        if self.model is not None:
-            self.model.clear()
         if self.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 self.memory.clear()
@@ -3895,6 +4044,7 @@ class Agent:
 
         format_variables = ChainMap(
             self.session_state or {},
+            self.team_session_state or {},
             self.context or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
@@ -4193,6 +4343,7 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -4215,7 +4366,9 @@ class Agent:
 
             retrieval_timer = Timer()
             retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(query=message_str, **kwargs)
+            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                query=message_str, filters=knowledge_filters, **kwargs
+            )
             if docs_from_knowledge is not None:
                 references = MessageReferences(
                     query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
@@ -4267,9 +4420,21 @@ class Agent:
             )
 
         # 3. Build the default user message for the Agent
-        # If the message is None, return None
         if message is None:
-            return None
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role,
+                    content="",
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+            else:
+                # If the message is None, return None
+                return None
 
         user_msg_content = message
         # Format the message with the session state variables
@@ -4314,6 +4479,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4393,6 +4559,7 @@ class Agent:
                 history = self.memory.get_messages_from_last_n_runs(
                     session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role
                 )
+
             if len(history) > 0:
                 # Create a deep copy of the history messages to avoid modifying the original messages
                 history_copy = [deepcopy(msg) for msg in history]
@@ -4410,7 +4577,13 @@ class Agent:
         # 4.1 Build user message if message is None, str or list
         if message is None or isinstance(message, str) or isinstance(message, list):
             user_message = self.get_user_message(
-                message=message, audio=audio, images=images, videos=videos, files=files, **kwargs
+                message=message,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
             )
         # 4.2 If message is provided as a Message, use it directly
         elif isinstance(message, Message):
@@ -4609,7 +4782,7 @@ class Agent:
         from dataclasses import fields
 
         # Do not copy agent_session and session_name to the new agent
-        excluded_fields = ["agent_session", "session_name"]
+        excluded_fields = ["agent_session"]
         # Extract the fields to set for the new Agent
         fields_for_new_agent: Dict[str, Any] = {}
 
@@ -5084,7 +5257,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -5101,7 +5274,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -5157,7 +5330,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+        self.read_from_storage(session_id=self.session_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -5175,18 +5348,15 @@ class Agent:
         # -*- Delete session
         self.storage.delete_session(session_id=session_id)
 
-    def get_messages_for_session(
-        self, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> List[Message]:
+    def get_messages_for_session(self, session_id: Optional[str] = None) -> List[Message]:
         """Get messages for a session"""
         _session_id = session_id or self.session_id
-        _user_id = user_id or self.user_id
         if _session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
 
         if self.memory is None:
-            self.read_from_storage(session_id=_session_id, user_id=_user_id)
+            self.read_from_storage(session_id=_session_id)
 
         if self.memory is None:
             return []
@@ -6115,6 +6285,53 @@ class Agent:
             )
 
         return run_data
+
+    def register_agent(self) -> None:
+        """Register this agent with Agno's platform."""
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        from agno.api.agent import AgentCreate, create_agent
+
+        try:
+            # Ensure we have a valid session_id
+            if not self.session_id:
+                self.session_id = str(uuid4())
+
+            create_agent(
+                agent=AgentCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
+                    team_id=self.team_id,
+                    app_id=self.app_id,
+                    config=self.get_agent_config_dict(),
+                )
+            )
+        except Exception as e:
+            log_warning(f"Could not create Agent: {e}")
+
+    async def _aregister_agent(self) -> None:
+        self.set_monitoring()
+        if not self.monitoring:
+            return
+
+        from agno.api.agent import AgentCreate, acreate_agent
+
+        try:
+            await acreate_agent(
+                agent=AgentCreate(
+                    name=self.name,
+                    agent_id=self.agent_id,
+                    workflow_id=self.workflow_id,
+                    team_id=self.team_id,
+                    app_id=self.app_id,
+                    config=self.get_agent_config_dict(),
+                )
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent app: {e}")
 
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()
@@ -7205,6 +7422,66 @@ class Agent:
 
         return effective_filters
 
+    def get_previous_sessions_messages_function(
+        self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
+    ) -> Callable:
+        """Factory function to create a get_previous_session_messages function.
+
+        Args:
+            user_id: The user ID to get sessions for
+            num_history_sessions: The last n sessions to be taken from db
+
+        Returns:
+            Callable: A function that retrieves messages from previous sessions
+        """
+
+        def get_previous_session_messages() -> str:
+            """Use this function to retrieve messages from previous chat sessions.
+            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+
+            Returns:
+                str: JSON formatted list of message pairs from previous sessions
+            """
+            import json
+
+            if self.storage is None:
+                return "Storage not available"
+
+            selected_sessions = self.storage.get_recent_sessions(limit=num_history_sessions, user_id=user_id)
+
+            all_messages = []
+            seen_message_pairs = set()
+
+            for session in selected_sessions:
+                if isinstance(session, AgentSession) and session.memory:
+                    message_count = 0
+                    for run in session.memory.get("runs", []):
+                        messages = run.get("messages", [])
+                        for i in range(0, len(messages) - 1, 2):
+                            if i + 1 < len(messages):
+                                try:
+                                    user_msg = messages[i]
+                                    assistant_msg = messages[i + 1]
+                                    user_content = user_msg.get("content")
+                                    assistant_content = assistant_msg.get("content")
+
+                                    if user_content is None or assistant_content is None:
+                                        continue  # Skip this pair if either message has no content
+
+                                    msg_pair_id = f"{user_content}:{assistant_content}"
+                                    if msg_pair_id not in seen_message_pairs:
+                                        seen_message_pairs.add(msg_pair_id)
+                                        all_messages.append(Message.model_validate(user_msg))
+                                        all_messages.append(Message.model_validate(assistant_msg))
+                                        message_count += 1
+                                except Exception as e:
+                                    log_warning(f"Error processing message pair: {e}")
+                                    continue
+
+            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+
+        return get_previous_session_messages
+
     def cli_app(
         self,
         message: Optional[str] = None,
@@ -7245,6 +7522,80 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+
+    def get_agent_config_dict(self) -> Dict[str, Any]:
+        tools: List[Dict[str, Any]] = []
+        if self.tools is not None:
+            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
+                team_model = self.model
+                session_id = self.session_id
+                if team_model and session_id is not None:
+                    self.determine_tools_for_model(model=team_model, session_id=session_id)
+
+            if self._tools_for_model is not None:
+                for tool in self._tools_for_model:
+                    if isinstance(tool, dict) and tool.get("type") == "function":
+                        tools.append(tool["function"])
+        model = None
+        if self.model is not None:
+            model = {
+                "name": str(self.model.__class__.__name__),
+                "model": str(self.model.id),
+                "provider": str(self.model.provider),
+            }
+
+        payload = {
+            "instructions": self.instructions if self.instructions is not None else [],
+            "tools": tools,
+            "memory": (
+                {
+                    "name": self.memory.__class__.__name__,
+                    "model": (
+                        {
+                            "name": self.memory.model.__class__.__name__,
+                            "model": self.memory.model.id,
+                            "provider": self.memory.model.provider,
+                        }
+                        if hasattr(self.memory, "model") and self.memory.model is not None
+                        else (
+                            {
+                                "name": self.model.__class__.__name__,
+                                "model": self.model.id,
+                                "provider": self.model.provider,
+                            }
+                            if self.model is not None
+                            else None
+                        )
+                    ),
+                    "db": (
+                        {
+                            "name": self.memory.db.__class__.__name__,
+                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
+                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
+                        }
+                        if hasattr(self.memory, "db") and self.memory.db is not None
+                        else None
+                    ),
+                }
+                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
+                else None
+            ),
+            "storage": {
+                "name": self.storage.__class__.__name__,
+            }
+            if self.storage is not None
+            else None,
+            "knowledge": {
+                "name": self.knowledge.__class__.__name__,
+            }
+            if self.knowledge is not None
+            else None,
+            "model": model,
+            "name": self.name,
+            "description": self.description,
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return payload
 
     async def acli_app(
         self,

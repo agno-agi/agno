@@ -172,7 +172,6 @@ def test_with_reasoning():
         reasoning_model=Groq(
             id="deepseek-r1-distill-llama-70b",
         ),
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
