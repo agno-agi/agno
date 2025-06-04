@@ -109,8 +109,8 @@ def get_sync_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = N
             },
         )
 
-    @router.post("/agui/awp")
-    def run_agent_agui_awp(run_input: RunAgentInput):
+    @router.post("/agui")
+    def run_agent_agui(run_input: RunAgentInput):
         return _run(run_input)
 
     @router.get("/status")

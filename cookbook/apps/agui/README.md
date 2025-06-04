@@ -65,7 +65,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     agents: async () => {
       return {
         agentic_chat: new HttpAgent({
-          url: "http://127.0.0.1:8000/agui/awp",
+          url: "http://127.0.0.1:8000/agui",
         }),
       };
     },
