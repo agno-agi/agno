@@ -31,6 +31,7 @@ try:
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
+         # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
     )
     from anthropic.types import (
@@ -39,6 +40,7 @@ try:
 except ImportError as e:
     raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
 
+# Import Beta types
 try:
     from anthropic.types.beta import (
         BetaMessage,
