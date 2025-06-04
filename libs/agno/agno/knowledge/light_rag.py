@@ -6,6 +6,7 @@ import textract
 
 from pydantic import Field
 
+from agno.document import Document
 from agno.document.reader.markdown_reader import MarkdownReader
 from agno.document.reader.pdf_reader import PDFReader, PDFUrlReader
 from agno.document.reader.url_reader import URLReader
@@ -31,8 +32,15 @@ class LightRagKnowledgeBase(AgentKnowledge):
     url_reader: URLReader = URLReader()
     
     @property
-    def document_lists(self) -> Iterator[List[str]]:
-        """Iterate over documents and yield lists of text content."""
+    def document_lists(self) -> Iterator[List[Document]]:
+        """Iterate over documents and yield lists of Document objects."""
+        # Convert text lists to Document objects to match parent class signature
+        for text_list in self._text_document_lists():
+            documents = [Document(content=text) for text in text_list]
+            yield documents
+
+    def _text_document_lists(self) -> Iterator[List[str]]:
+        """Internal method to iterate over documents and yield lists of text content."""
         if self.path is not None:
             yield from self._process_paths()
         
@@ -44,10 +52,15 @@ class LightRagKnowledgeBase(AgentKnowledge):
 
     def _process_paths(self) -> Iterator[List[str]]:
         """Process path-based documents."""
+        if self.path is None:
+            return
+            
         if isinstance(self.path, list):
             for item in self.path:
                 if isinstance(item, dict) and "path" in item:
-                    yield from self._process_single_path(Path(item["path"]))
+                    path_value = item["path"]
+                    if isinstance(path_value, (str, Path)):
+                        yield from self._process_single_path(Path(path_value))
         else:
             yield from self._process_single_path(Path(self.path))
 
@@ -72,11 +85,17 @@ class LightRagKnowledgeBase(AgentKnowledge):
 
     def _process_urls(self) -> Iterator[List[str]]:
         """Process URL-based documents."""
+        if self.urls is None:
+            return
+            
         log_info(f"Processing URLs: {self.urls}")
         for item in self.urls:
             if isinstance(item, dict) and "url" in item:
-                yield from self._process_url_with_metadata(item["url"], item.get("metadata", {}))
-            else:
+                url = item["url"]
+                config = item.get("metadata", {})
+                if isinstance(url, str) and isinstance(config, dict):
+                    yield from self._process_url_with_metadata(url, config)
+            elif isinstance(item, str):
                 yield from self._process_simple_url(item)
 
     def _process_url_with_metadata(self, url: str, config: Dict[str, Any]) -> Iterator[List[str]]:
@@ -113,15 +132,39 @@ class LightRagKnowledgeBase(AgentKnowledge):
                 text_contents = [doc.content for doc in documents]
                 yield text_contents
 
-    async def load(self) -> None:
-        """Load all documents into the LightRAG server."""
+    async def load(
+        self,
+        recreate: bool = False,
+        upsert: bool = False, 
+        skip_existing: bool = True,
+    ) -> None:
+        """Load the knowledge base to the LightRAG server asynchronously.
+        
+        Note: The LightRAG implementation is inherently async.
+        """
         logger.debug("Loading LightRagKnowledgeBase")
-        for text_list in self.document_lists:
+        for text_list in self._text_document_lists():
             for text in text_list:
                 await self._insert_text(text)
         
-    async def load_text(self, text: str) -> None:
-        """Load a single text into the LightRAG server."""
+    async def aload(
+        self,
+        recreate: bool = False,
+        upsert: bool = False,
+        skip_existing: bool = True,
+    ) -> None:
+        """Load all documents into the LightRAG server asynchronously."""
+        # Delegate to load() since both are async for LightRAG
+        await self.load(recreate=recreate, upsert=upsert, skip_existing=skip_existing)
+        
+    async def load_text(
+        self, 
+        text: str, 
+        upsert: bool = False, 
+        skip_existing: bool = True, 
+        filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Load a single text into the LightRAG server asynchronously."""
         await self._insert_text(text)
         
     async def async_search(
@@ -129,7 +172,7 @@ class LightRagKnowledgeBase(AgentKnowledge):
         query: str, 
         num_documents: Optional[int] = None, 
         filters: Optional[Dict[str, Any]] = None
-    ) -> Any:
+    ) -> List[Document]:
         """Override the async_search method from AgentKnowledge to query the LightRAG server."""
         import httpx
         
@@ -145,7 +188,14 @@ class LightRagKnowledgeBase(AgentKnowledge):
             response.raise_for_status()
             result = response.json()
             logger.info(f"Query result: {result}")
-            return result
+            
+            # Convert result to Document objects to match parent class signature
+            if isinstance(result, dict) and 'response' in result:
+                return [Document(content=result['response'], meta_data={"query": query, "mode": mode})]
+            elif isinstance(result, list):
+                return [Document(content=str(item), meta_data={"query": query, "mode": mode}) for item in result]
+            else:
+                return [Document(content=str(result), meta_data={"query": query, "mode": mode})]
     
     async def _insert_text(self, text: str) -> Dict[str, Any]:
         """Insert text into the LightRAG server."""
