@@ -2,33 +2,21 @@
 
 import logging
 import uuid
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, Optional
 
 from ag_ui.core import (
     BaseEvent,
     EventType,
     RunAgentInput,
     RunErrorEvent,
-    RunFinishedEvent,
     RunStartedEvent,
-    StepFinishedEvent,
-    StepStartedEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallStartEvent,
 )
-from ag_ui.core.types import Message as AGUIMessage
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.models.message import Message as AgnoMessage
-from agno.run.response import RunEvent, RunResponse
-from agno.run.team import TeamRunResponse
+from agno.app.agui.utils import get_last_user_message, stream_agno_response_as_agui_events
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
@@ -40,7 +28,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
     try:
         # Preparing the input for the Agent and emitting the run started event
-        message = _get_last_user_message(run_input.messages)
+        message = get_last_user_message(run_input.messages)
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Request streaming response from agent
@@ -51,8 +39,8 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
             stream_intermediate_steps=True,
         )
 
-        # Stream the response content
-        async for event in _stream_response_content(
+        # Stream the response content in AG-UI format
+        async for event in stream_agno_response_as_agui_events(
             response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
         ):
             yield event
@@ -68,7 +56,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # Extract the last user message for team execution
-        user_message = _get_last_user_message(input.messages) if input.messages else ""
+        user_message = get_last_user_message(input.messages) if input.messages else ""
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Request streaming response from team
@@ -79,249 +67,15 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             stream_intermediate_steps=True,
         )
 
-        # Stream the response content
-        async for event in _stream_team_response_content(
+        # Stream the response content in AG-UI format
+        async for event in stream_agno_response_as_agui_events(
             response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
         ):
             yield event
 
     except Exception as e:
-        logger.error("Error in run_team: %s", e, exc_info=True)
+        logger.error(f"Error running team: {e}", exc_info=True)
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
-
-
-async def _stream_response_content(
-    response_stream: AsyncIterator[RunResponse], thread_id: str, run_id: str
-) -> AsyncIterator[BaseEvent]:
-    """Map the Agno response stream to AG-UI format."""
-    message_id = str(uuid.uuid4())
-    message_started = False
-    active_tool_call_id = None
-    ended_tool_call_ids = []
-
-    async for chunk in response_stream:
-        content = _extract_response_chunk_content(chunk)
-
-        # Handle text responses
-        if chunk.event == RunEvent.run_response:
-            # Emit an event fTeamRunResponse the message
-            if not message_started:
-                message_started = True
-                yield TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
-                    message_id=message_id,
-                    role="assistant",
-                )
-            # We need to end any active tool call if it exists and it hasn't been ended yet
-            if active_tool_call_id is not None:
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=active_tool_call_id,
-                )
-                ended_tool_call_ids.append(active_tool_call_id)
-            # Emit an event for each streamed delta of the message
-            if content is not None and content != "":
-                yield TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT,
-                    message_id=message_id,
-                    delta=content,
-                )
-
-        # Handle tool calls
-        if chunk.event == RunEvent.tool_call_started:
-            # We need to end the previous tool call if it exists and it hasn't been ended yet
-            if active_tool_call_id is not None:
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=active_tool_call_id,
-                )
-                ended_tool_call_ids.append(active_tool_call_id)
-            if chunk.tools is not None and len(chunk.tools) != 0:
-                tool_call = chunk.tools[0]
-                yield ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    tool_call_name=tool_call.tool_name,  # type: ignore
-                    parent_message_id=message_id,
-                )
-                yield ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    delta=str(tool_call.tool_args),
-                )
-                active_tool_call_id = tool_call.tool_call_id
-        if chunk.event == RunEvent.tool_call_completed:
-            if chunk.tools is not None and len(chunk.tools) != 0:
-                tool_call = chunk.tools[0]
-                if tool_call.tool_call_id not in ended_tool_call_ids:
-                    yield ToolCallEndEvent(
-                        type=EventType.TOOL_CALL_END,
-                        tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    )
-
-        # Handle reasoning
-        if chunk.event == RunEvent.reasoning_started:
-            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        if chunk.event == RunEvent.reasoning_completed:
-            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-
-        # Handle the lifecycle end events
-        if chunk.event == RunEvent.run_completed:
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
-
-
-async def _stream_team_response_content(
-    response_stream: AsyncIterator[TeamRunResponse], thread_id: str, run_id: str
-) -> AsyncIterator[BaseEvent]:
-    """Map the Agno Team response stream to AG-UI format."""
-    message_id = str(uuid.uuid4())
-    message_started = False
-    active_tool_call_id = None
-    ended_tool_call_ids = []
-
-    async for chunk in response_stream:
-        content = _extract_team_response_chunk_content(chunk)
-
-        # Handle text responses
-        if chunk.event == RunEvent.run_response:
-            # Emit an event fTeamRunResponse the message
-            if not message_started:
-                message_started = True
-                yield TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
-                    message_id=message_id,
-                    role="assistant",
-                )
-            # We need to end the previous tool call if it exists and it hasn't been ended yet
-            if active_tool_call_id is not None:
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=active_tool_call_id,
-                )
-                ended_tool_call_ids.append(active_tool_call_id)
-            # Emit an event for each streamed delta of the message
-            if content is not None and content != "":
-                yield TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT,
-                    message_id=message_id,
-                    delta=content,
-                )
-
-        # Handle tool calls
-        if chunk.event == RunEvent.tool_call_started:
-            # We need to end the previous tool call if it exists and it hasn't been ended yet
-            if active_tool_call_id is not None:
-                yield ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=active_tool_call_id,
-                )
-                ended_tool_call_ids.append(active_tool_call_id)
-            if chunk.tools is not None and len(chunk.tools) != 0:
-                tool_call = chunk.tools[0]
-                yield ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    tool_call_name=tool_call.tool_name,  # type: ignore
-                    parent_message_id=message_id,
-                )
-                yield ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    delta=str(tool_call.tool_args),
-                )
-                active_tool_call_id = tool_call.tool_call_id
-        if chunk.event == RunEvent.tool_call_completed:
-            if chunk.tools is not None and len(chunk.tools) != 0:
-                tool_call = chunk.tools[0]
-                if tool_call.tool_call_id not in ended_tool_call_ids:
-                    yield ToolCallEndEvent(
-                        type=EventType.TOOL_CALL_END,
-                        tool_call_id=tool_call.tool_call_id,  # type: ignore
-                    )
-
-        # Handle reasoning
-        if chunk.event == RunEvent.reasoning_started:
-            yield StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        if chunk.event == RunEvent.reasoning_completed:
-            yield StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-
-        # Handle the lifecycle end events
-        if chunk.event == RunEvent.run_completed:
-            yield TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-            yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
-
-
-def _get_last_user_message(messages: Optional[List[AGUIMessage]]) -> str:
-    if not messages:
-        return ""
-
-    for msg in reversed(messages):
-        if msg.role == "user" and msg.content:
-            return msg.content
-    return ""
-
-
-def _extract_response_chunk_content(response: RunResponse) -> str:
-    """Given a response stream chunk, find and extract the content."""
-    # Handle response with message list (for Agent)
-    if hasattr(response, "messages") and response.messages:
-        for msg in reversed(response.messages):
-            if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
-                return str(msg.content)
-
-    return str(response.content) if response.content else ""
-
-
-def _extract_team_response_chunk_content(response: TeamRunResponse) -> str:
-    """Given a response stream chunk, find and extract the content."""
-
-    # Handle Team members' responses
-    members_content = []
-    if hasattr(response, "member_responses") and response.member_responses:
-        for member_resp in response.member_responses:
-            if isinstance(member_resp, RunResponse):
-                member_content = _extract_response_chunk_content(member_resp)
-                if member_content:
-                    members_content.append(f"Team member: {member_content}")
-            elif isinstance(member_resp, TeamRunResponse):
-                member_content = _extract_team_response_chunk_content(member_resp)
-                if member_content:
-                    members_content.append(f"Team member: {member_content}")
-    members_response = "\n".join(members_content) if members_content else ""
-
-    return str(response.content) + members_response
-
-
-def _convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[AgnoMessage]:
-    """Map AG-UI messages to Agno format."""
-    converted = []
-    for msg in messages:
-        agno_msg = AgnoMessage(
-            role=msg.role,
-            content=msg.content,
-            name=getattr(msg, "name", None),
-        )
-
-        # Handle messages containing tool calls
-        if msg.role == "tool":
-            agno_msg.tool_call_id = getattr(msg, "tool_call_id", None)
-        elif msg.role == "assistant" and hasattr(msg, "tool_calls") and msg.tool_calls:
-            agno_msg.tool_calls = [
-                {
-                    "id": tc.id,
-                    "type": tc.type,
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in msg.tool_calls
-                if hasattr(tc, "function")
-            ]
-
-        converted.append(agno_msg)
-    return converted
 
 
 def get_async_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
