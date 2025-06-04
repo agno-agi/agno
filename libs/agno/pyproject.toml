@@ -134,6 +134,9 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 
+# Dependencies for AG-UI integration
+agui = ["ag-ui-protocol"]
+
 # Dependencies for Embedders
 huggingface = [
     "huggingface-hub",
@@ -246,6 +249,7 @@ tests = [
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
+    "agno[agui]",
     "twine",
     "build",
 ]
@@ -290,6 +294,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "ag_ui.*",
   "agentql.*",
   "aiofiles.*",
   "altair.*",
