@@ -14,7 +14,7 @@ class SerperApiTools(Toolkit):
 
     Attributes:
         api_key (str): The API key for accessing the Serper API.
-        gl (str): The Google search location to be used for the search (default is "us").
+        location (str): The Google search location to be used for the search (default is "us").
         num_results (int): The number of search results to return (default is 10).
 
     Methods:
@@ -24,7 +24,7 @@ class SerperApiTools(Toolkit):
 
     def __init__(
         self,
-        api_key: str = "",
+        api_key: Optional[str] = None,
         location: str = "us",
         num_results: int = 10,
     ):

@@ -15,8 +15,8 @@ def clear_env(monkeypatch):
 
 @pytest.fixture
 def api_tools():
-    """SerperApiTools with a known API key, custom gl, and fewer results for testing."""
-    return SerperApiTools(api_key="test_key", gl="us", num_results=5)
+    """SerperApiTools with a known API key, custom location, and fewer results for testing."""
+    return SerperApiTools(api_key="test_key", location="us", num_results=5)
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_search_google_empty_query(api_tools):
     assert api_tools.search_google("") == "Please provide a query to search for"
 
 
-def test_search_google_success_default_gl(api_tools, mock_search_response):
+def test_search_google_success_default_location(api_tools, mock_search_response):
     """A successful search should return the raw response.text and call requests.request correctly."""
     with patch("requests.request", return_value=mock_search_response) as mock_req:
         result = api_tools.search_google("pytest testing")
@@ -67,10 +67,10 @@ def test_search_google_success_default_gl(api_tools, mock_search_response):
         )
 
 
-def test_search_google_success_override_gl(api_tools, mock_search_response):
-    """Overriding the gl parameter should be respected in the request payload."""
+def test_search_google_success_override_location(api_tools, mock_search_response):
+    """Overriding the location parameter should be respected in the request payload."""
     with patch("requests.request", return_value=mock_search_response) as mock_req:
-        result = api_tools.search_google("pytest testing", gl="uk")
+        result = api_tools.search_google("pytest testing", location="uk")
         assert result == mock_search_response.text
 
         mock_req.assert_called_once_with(
