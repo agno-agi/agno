@@ -2477,7 +2477,11 @@ class Team:
                             _response_content += resp.content
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
-                    if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
+                    if (
+                        hasattr(resp, "extra_data")
+                        and resp.extra_data is not None
+                        and resp.extra_data.reasoning_steps is not None
+                    ):
                         reasoning_steps = resp.extra_data.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
@@ -2493,7 +2497,7 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and resp.member_responses:
+                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -2655,7 +2659,11 @@ class Team:
             response_timer.stop()
 
             # Add citations
-            if resp.citations is not None and resp.citations.urls is not None:
+            if (
+                hasattr(resp, "citations")
+                and resp.citations is not None
+                and resp.citations.urls is not None
+            ):
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -2860,7 +2868,11 @@ class Team:
                 final_panels.append(response_panel)
 
             # Add team citations
-            if resp.citations is not None and resp.citations.urls is not None:
+            if (
+                hasattr(resp, "citations")
+                and resp.citations is not None
+                and resp.citations.urls is not None
+            ):
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -3329,7 +3341,11 @@ class Team:
                             _response_content += resp.content
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
-                    if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
+                    if (
+                        hasattr(resp, "extra_data")
+                        and resp.extra_data is not None
+                        and resp.extra_data.reasoning_steps is not None
+                    ):
                         reasoning_steps = resp.extra_data.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
@@ -3345,7 +3361,7 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and resp.member_responses:
+                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -3442,7 +3458,11 @@ class Team:
             response_timer.stop()
 
             # Add citations
-            if resp.citations is not None and resp.citations.urls is not None:
+            if (
+                hasattr(resp, "citations")
+                and resp.citations is not None
+                and resp.citations.urls is not None
+            ):
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -3652,7 +3672,11 @@ class Team:
                 final_panels.append(response_panel)
 
             # Add team citations
-            if resp.citations is not None and resp.citations.urls is not None:
+            if (
+                hasattr(resp, "citations")
+                and resp.citations is not None
+                and resp.citations.urls is not None
+            ):
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
