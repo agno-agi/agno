@@ -32,7 +32,7 @@ from textwrap import dedent
 from typing import Iterator
 
 from agno.agent import Agent, RunResponse
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     # Initialize the investment analyst workflow
     investment_report_generator = InvestmentReportGenerator(
         session_id=f"investment-report-{url_safe_companies}",
-        storage=SqliteWorkflowStorage(
+        storage=SqliteStorage(
             table_name="investment_report_workflows",
             db_file="tmp/agno_workflows.db",
         ),

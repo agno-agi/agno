@@ -1,3 +1,4 @@
+import warnings
 from typing import List
 
 from agno.document.base import Document
@@ -11,6 +12,12 @@ class RecursiveChunking(ChunkingStrategy):
         # overlap must be less than chunk size
         if overlap >= chunk_size:
             raise ValueError(f"Invalid parameters: overlap ({overlap}) must be less than chunk size ({chunk_size}).")
+
+        if overlap > chunk_size * 0.15:
+            warnings.warn(
+                f"High overlap: {overlap} > 15% of chunk size ({chunk_size}). May cause slow processing.",
+                RuntimeWarning,
+            )
 
         self.chunk_size = chunk_size
         self.overlap = overlap
@@ -46,6 +53,11 @@ class RecursiveChunking(ChunkingStrategy):
             meta_data["chunk_size"] = len(chunk)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))
 
-            start = max(start, end - self.overlap)
+            new_start = end - self.overlap
+            if new_start <= start:  # Prevent infinite loop
+                new_start = min(
+                    len(content), start + max(1, self.chunk_size // 10)
+                )  # Move forward by at least 10% of chunk size
+            start = new_start
 
         return chunks

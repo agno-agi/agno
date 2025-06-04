@@ -38,26 +38,23 @@ agent = Agent(
 # Example 1: Business Search
 print("\n=== Business Search Example ===")
 agent.print_response(
-    "Find me highly rated Indian restaurants in Phoenix, AZ with their contact details",
-    markdown=True,
+    "Find me highly rated Chinese restaurants in Phoenix, AZ with their contact details",
     stream=True,
 )
 
 # Example 2: Directions
 print("\n=== Directions Example ===")
 agent.print_response(
-    """Get driving directions from 'Phoenix Sky Harbor Airport' to 'Desert Botanical Garden', 
+    """Get driving directions from 'Phoenix Sky Harbor Airport' to 'Desert Botanical Garden',
     avoiding highways if possible""",
-    markdown=True,
     stream=True,
 )
 
 # Example 3: Address Validation and Geocoding
 print("\n=== Address Validation and Geocoding Example ===")
 agent.print_response(
-    """Please validate and geocode this address: 
+    """Please validate and geocode this address:
     '1600 Amphitheatre Parkway, Mountain View, CA'""",
-    markdown=True,
     stream=True,
 )
 
@@ -67,16 +64,14 @@ agent.print_response(
     """Calculate the travel time and distance between these locations in Phoenix:
     Origins: ['Phoenix Sky Harbor Airport', 'Downtown Phoenix']
     Destinations: ['Desert Botanical Garden', 'Phoenix Zoo']""",
-    markdown=True,
     stream=True,
 )
 
 # Example 5: Nearby Places and Details
 print("\n=== Nearby Places Example ===")
 agent.print_response(
-    """Find coffee shops near Arizona State University Tempe campus. 
+    """Find coffee shops near Arizona State University Tempe campus.
     Include ratings and opening hours if available.""",
-    markdown=True,
     stream=True,
 )
 
@@ -85,7 +80,6 @@ print("\n=== Reverse Geocoding and Timezone Example ===")
 agent.print_response(
     """Get the address and timezone information for these coordinates:
     Latitude: 33.4484, Longitude: -112.0740 (Phoenix)""",
-    markdown=True,
     stream=True,
 )
 
@@ -94,13 +88,12 @@ print("\n=== Multi-step Route Planning Example ===")
 agent.print_response(
     """Plan a route with multiple stops in Phoenix:
     Start: Phoenix Sky Harbor Airport
-    Stops: 
+    Stops:
     1. Arizona Science Center
     2. Heard Museum
     3. Desert Botanical Garden
     End: Return to Airport
     Please include estimated travel times between each stop.""",
-    markdown=True,
     stream=True,
 )
 
@@ -114,7 +107,6 @@ agent.print_response(
     2. Nearby landmarks
     3. Elevation data
     4. Local timezone""",
-    markdown=True,
     stream=True,
 )
 
@@ -126,7 +118,6 @@ agent.print_response(
     2. Have wheelchair accessibility
     3. Within 5 miles of downtown
     Include their opening hours and contact information.""",
-    markdown=True,
     stream=True,
 )
 
@@ -138,6 +129,5 @@ agent.print_response(
     2. Walking
     3. Transit (if available)
     Include estimated time and distance for each option.""",
-    markdown=True,
     stream=True,
 )

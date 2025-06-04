@@ -9,9 +9,9 @@ try:
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it with `pip install pymongo`")
 
-from agno.memory.db import MemoryDb
+from agno.memory.db.base import MemoryDb
 from agno.memory.row import MemoryRow
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class MongoMemoryDb(MemoryDb):
@@ -96,7 +96,7 @@ class MongoMemoryDb(MemoryDb):
             for doc in cursor:
                 # Remove MongoDB _id before converting to MemoryRow
                 doc.pop("_id", None)
-                memories.append(MemoryRow(id=doc["id"], user_id=doc["user_id"], memory=doc["memory"]))
+                memories.append(MemoryRow(user_id=doc["user_id"], memory=doc["memory"]))
         except PyMongoError as e:
             logger.error(f"Error reading memories: {e}")
         return memories
@@ -152,9 +152,9 @@ class MongoMemoryDb(MemoryDb):
         try:
             result = self.collection.delete_one({"id": id})
             if result.deleted_count == 0:
-                logger.debug(f"No memory found with id: {id}")
+                log_debug(f"No memory found with id: {id}")
             else:
-                logger.debug(f"Successfully deleted memory with id: {id}")
+                log_debug(f"Successfully deleted memory with id: {id}")
         except PyMongoError as e:
             logger.error(f"Error deleting memory: {e}")
             raise

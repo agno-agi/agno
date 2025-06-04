@@ -15,7 +15,7 @@ knowledge_base = AgentKnowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="gemini_embeddings",
-        embedder=GeminiEmbedder(dimensions=1536),
+        embedder=GeminiEmbedder(),
     ),
     num_documents=2,
 )

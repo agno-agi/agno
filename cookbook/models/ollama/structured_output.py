@@ -32,7 +32,6 @@ structured_output_agent = Agent(
     model=Ollama(id="llama3.2"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 # Run the agent synchronously

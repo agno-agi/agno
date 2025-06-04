@@ -3,7 +3,7 @@ from agno.models.mistral import MistralChat
 
 
 agent = Agent(
-    model=MistralChat(id="mistral-large-latest"),
+    model=MistralChat(id="mistral-small-latest"),
     markdown=True,
 )
 

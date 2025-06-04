@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 
 agent = Agent(
     model=Cohere(
-        id="command-r-08-2024",
+        id="command-a-03-2025",
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
@@ -39,7 +39,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# json_mode_response: RunResponse = await json_mode_agent.arun("New York")
-# pprint(json_mode_response.content)
+# response: RunResponse = await agent.arun("New York")
+# pprint(response.content)
 
 asyncio.run(agent.aprint_response("Find a cool movie idea about London and write it."))

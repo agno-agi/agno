@@ -14,14 +14,15 @@ Prerequisites:
 import json
 from datetime import datetime
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
 try:
     import googlemaps
+    from google.maps import places_v1
 except ImportError:
-    print("Error importing googlemaps. Please install the package using `pip install googlemaps`.")
+    print("Error importing googlemaps. Please install the package using `pip install googlemaps google-maps-places`.")
 
 
 class GoogleMapTools(Toolkit):
@@ -36,30 +37,34 @@ class GoogleMapTools(Toolkit):
         get_distance_matrix: bool = True,
         get_elevation: bool = True,
         get_timezone: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="google_maps")
-
-        api_key = key or getenv("GOOGLE_MAPS_API_KEY")
-        if not api_key:
+        self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
+        if not self.api_key:
             raise ValueError("GOOGLE_MAPS_API_KEY is not set in the environment variables.")
-        self.client = googlemaps.Client(key=api_key)
+        self.client = googlemaps.Client(key=self.api_key)
 
+        self.places_client = places_v1.PlacesClient()
+
+        tools: List[Any] = []
         if search_places:
-            self.register(self.search_places)
+            tools.append(self.search_places)
         if get_directions:
-            self.register(self.get_directions)
+            tools.append(self.get_directions)
         if validate_address:
-            self.register(self.validate_address)
+            tools.append(self.validate_address)
         if geocode_address:
-            self.register(self.geocode_address)
+            tools.append(self.geocode_address)
         if reverse_geocode:
-            self.register(self.reverse_geocode)
+            tools.append(self.reverse_geocode)
         if get_distance_matrix:
-            self.register(self.get_distance_matrix)
+            tools.append(self.get_distance_matrix)
         if get_elevation:
-            self.register(self.get_elevation)
+            tools.append(self.get_elevation)
         if get_timezone:
-            self.register(self.get_timezone)
+            tools.append(self.get_timezone)
+
+        super().__init__(name="google_maps", tools=tools, **kwargs)
 
     def search_places(self, query: str) -> str:
         """
@@ -74,37 +79,23 @@ class GoogleMapTools(Toolkit):
         """
         try:
             # Perform places search
-            places_result = self.client.places(query)
-
-            if not places_result or "results" not in places_result:
-                return str([])
+            request = places_v1.SearchTextRequest(
+                text_query=query,
+            )
+            response = self.places_client.search_text(request=request, metadata=[("x-goog-fieldmask", "*")])
 
             places = []
-            for place in places_result["results"]:
+            for place in response.places:
                 place_info = {
-                    "name": place.get("name", ""),
-                    "address": place.get("formatted_address", ""),
-                    "rating": place.get("rating", 0.0),
-                    "reviews": place.get("user_ratings_total", 0),
-                    "place_id": place.get("place_id", ""),
+                    "name": place.display_name.text,
+                    "address": place.formatted_address,
+                    "rating": place.rating,
+                    "reviews": [{"text": review.text.text, "rating": review.rating} for review in place.reviews],
+                    "place_id": place.id,
+                    "phone": place.international_phone_number,
+                    "website": place.website_uri,
+                    "hours": [description for description in place.regular_opening_hours.weekday_descriptions],
                 }
-
-                # Get place details for additional information
-                if place_info.get("place_id"):
-                    try:
-                        details = self.client.place(place_info["place_id"])
-                        if details and "result" in details:
-                            result = details["result"]
-                            place_info.update(
-                                {
-                                    "phone": result.get("formatted_phone_number", ""),
-                                    "website": result.get("website", ""),
-                                    "hours": result.get("opening_hours", {}).get("weekday_text", []),
-                                }
-                            )
-                    except Exception as e:
-                        print(f"Error getting place details: {str(e)}")
-                        # Continue with basic place info if details fetch fails
 
                 places.append(place_info)
 
