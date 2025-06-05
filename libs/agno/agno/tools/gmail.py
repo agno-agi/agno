@@ -26,9 +26,11 @@ How to Get These Credentials:
      * Client ID (GOOGLE_CLIENT_ID)
      * Client Secret (GOOGLE_CLIENT_SECRET)
    - The Project ID (GOOGLE_PROJECT_ID) is visible in the project dropdown at the top of the page
+   
 5. Add auth redirect URI:
    - Go to https://console.cloud.google.com/auth/clients and add the redirect URI as http://127.0.0.1/
-5. Set up environment variables:
+
+6. Set up environment variables:
    Create a .envrc file in your project root with:
    ```
    export GOOGLE_CLIENT_ID=your_client_id_here
