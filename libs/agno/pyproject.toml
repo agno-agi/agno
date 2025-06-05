@@ -344,6 +344,7 @@ module = [
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
+  "infinity_client.*",
   "jira.*",
   "kubernetes.*",
   "lancedb.*",
