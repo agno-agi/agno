@@ -503,8 +503,8 @@ def get_async_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -878,8 +878,8 @@ def get_async_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     team_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None
