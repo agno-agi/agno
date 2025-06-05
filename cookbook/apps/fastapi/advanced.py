@@ -1,11 +1,14 @@
 
+from textwrap import dedent
 from agno.agent import Agent
 from agno.app.fastapi.app import FastAPIApp
 from agno.memory.v2 import Memory
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 agent_storage_file: str = "tmp/agents.db"
@@ -78,6 +81,44 @@ finance_agent = Agent(
     markdown=True,
 )
 
+research_agent = Agent(
+    name="Research Agent",
+    role="Research agent",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=["You are a research agent"],
+    tools=[DuckDuckGoTools(), ExaTools()],
+    agent_id="research_agent",
+    memory=memory,
+    storage=SqliteStorage(
+        table_name="research_agent", db_file=agent_storage_file, auto_upgrade_schema=True
+    ),
+    enable_user_memories=True,
+)
+
+research_team = Team(
+    name="Research Team",
+    description="A team of agents that research the web",
+    members=[research_agent, simple_agent],
+    model=OpenAIChat(id="gpt-4o"),
+    mode="coordinate",
+    team_id="research_team",
+    success_criteria=dedent("""\
+        A comprehensive research report with clear sections and data-driven insights.
+    """),
+    instructions=[
+        "You are the lead researcher of a research team! 🔍",
+    ],
+    memory=memory,
+    enable_user_memories=True,
+    add_datetime_to_instructions=True,
+    show_tool_calls=True,
+    markdown=True,
+    enable_agentic_context=True,
+    storage=SqliteStorage(
+        table_name="research_team", db_file=agent_storage_file, auto_upgrade_schema=True, mode="team"
+    ),
+)
+
 
 fastapi_app = FastAPIApp(
     agents=[
@@ -85,6 +126,7 @@ fastapi_app = FastAPIApp(
         web_agent,
         finance_agent,
     ],
+    teams=[research_team],
     app_id="advanced-app",
     name="Advanced FastAPI App",
     description="A FastAPI app for advanced agents",
