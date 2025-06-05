@@ -1,6 +1,5 @@
 """
 Gmail Agent that can read, draft and send emails using the Gmail.
-Now supports sending emails with attachments!
 """
 
 from agno.agent import Agent
@@ -28,7 +27,7 @@ agent = Agent(
         "Based on user query, you can read, draft and send emails using Gmail.",
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
-        "We can send emails with attachments - single files or multiple files.",
+        "Attachments can be added to the email",
     ],
     markdown=True,
     show_tool_calls=False,
