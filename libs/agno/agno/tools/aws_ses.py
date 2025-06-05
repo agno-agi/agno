@@ -16,14 +16,15 @@ class AWSSESTool(Toolkit):
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
     ):
-        super().__init__(name="aws_ses_tool")
+        super().__init__(name="aws_ses_tool", tools=[self.send_email])
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name
-        self.register(self.send_email)
 
     def send_email(self, subject: str, body: str, receiver_email: str) -> str:
         """
+        Use this tool to send an email using AWS SES.
+
         Args: subject: The subject of the email
                 body: The body of the email
                 receiver_email: The email address of the receiver
