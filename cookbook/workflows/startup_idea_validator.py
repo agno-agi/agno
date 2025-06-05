@@ -50,6 +50,7 @@ from typing import Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger
@@ -205,8 +206,8 @@ class StartupIdeaValidator(Workflow):
         )
 
         if idea_clarification is None:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
+                run_id=self.run_id,
                 content=f"Sorry, could not even clarify the idea: {startup_idea}",
             )
             return
@@ -217,8 +218,8 @@ class StartupIdeaValidator(Workflow):
         )
 
         if market_research is None:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
+                run_id=self.run_id,
                 content="Market research failed",
             )
             return
@@ -240,9 +241,7 @@ class StartupIdeaValidator(Workflow):
             )
         )
 
-        yield RunResponse(
-            content=final_response.content, event=RunEvent.workflow_completed
-        )
+        yield WorkflowCompletedEvent(run_id=self.run_id, content=final_response.content)
 
 
 # Run the workflow if the script is executed directly

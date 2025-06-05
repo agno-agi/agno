@@ -8,6 +8,7 @@ from typing import AsyncIterator
 
 import httpx
 from agno.agent import Agent, RunResponse
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -81,10 +82,9 @@ class AsyncHackerNewsReporter(Workflow):
         logger.info(f"Getting top {num_stories} stories from HackerNews.")
         top_stories: RunResponse = await self.hn_agent.arun(num_stories=num_stories)
         if top_stories is None or not top_stories.content:
-            yield RunResponse(
+            yield WorkflowCompletedEvent(
                 run_id=self.run_id,
                 content="Sorry, could not get the top stories.",
-                event=RunEvent.workflow_completed,
             )
             return
 
@@ -95,9 +95,8 @@ class AsyncHackerNewsReporter(Workflow):
         # Stream the writer's response directly
         async for response in writer_response:
             if response.content:
-                yield RunResponse(
-                    content=response.content, event=response.event, run_id=self.run_id
-                )
+                response.run_id = self.run_id
+                yield response
 
 
 if __name__ == "__main__":
@@ -119,9 +118,7 @@ if __name__ == "__main__":
 
         # Create final response with combined content
         if final_content:
-            final_response = RunResponse(
-                content="".join(final_content), event=RunEvent.workflow_completed
-            )
+            final_response = RunResponse(content="".join(final_content))
             # Pretty print the final response
             pprint_run_response(final_response, markdown=True, show_time=True)
 

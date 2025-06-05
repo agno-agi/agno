@@ -168,11 +168,9 @@ class ContentPlanningWorkflow(Workflow):
         logger.info(f"Response: {response}")
 
         if response:
-            return RunResponse(content=response, event=RunEvent.workflow_completed)
+            return RunResponse(content=response)
         else:
-            return RunResponse(
-                content="Failed to schedule content.", event=RunEvent.workflow_completed
-            )
+            return RunResponse(content="Failed to schedule content.")
 
     def run(self, blog_post_url, post_type) -> RunResponse:
         """

@@ -109,26 +109,36 @@ finance_agent = Agent(
     enable_user_memories=True,
     show_tool_calls=True,
     markdown=True,
+    storage=PostgresStorage(
+        table_name="finance_agent", db_url=db_url, auto_upgrade_schema=True
+    ),
 )
 
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
+    agent_id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     memory=memory,
     enable_user_memories=True,
+    storage=PostgresStorage(
+        table_name="simple_agent", db_url=db_url, auto_upgrade_schema=True
+    ),
 )
 
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
+    agent_id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
-    agent_id="research_agent",
     memory=memory,
     enable_user_memories=True,
+    storage=PostgresStorage(
+        table_name="research_agent", db_url=db_url, auto_upgrade_schema=True
+    ),
 )
 
 research_team = Team(
