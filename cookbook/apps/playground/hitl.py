@@ -102,6 +102,7 @@ class EmailTools(Toolkit):
 
 
 user_input_required_agent = Agent(
+    agent_id="user-input-required-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[send_email],
     markdown=True,
