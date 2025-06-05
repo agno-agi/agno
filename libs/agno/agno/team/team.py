@@ -127,6 +127,8 @@ class Team:
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # If True, add the current location to the instructions to give the team a sense of location
+    add_location_to_instructions: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -261,6 +263,7 @@ class Team:
         success_criteria: Optional[str] = None,
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
+        add_location_to_instructions: bool = False,
         add_member_tools_to_system_message: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
@@ -325,6 +328,7 @@ class Team:
         self.additional_context = additional_context
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.add_location_to_instructions = add_location_to_instructions
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.success_criteria = success_criteria
 
@@ -4491,6 +4495,17 @@ class Team:
             from datetime import datetime
 
             additional_information.append(f"The current time is {datetime.now()}")
+
+        # 1.3.3 Add the current location
+        if self.add_location_to_instructions:
+            from agno.utils.location import get_location
+            location = get_location()
+            if location:
+                location_str = ", ".join(
+                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                )
+                if location_str:
+                    additional_information.append(f"Your approximate location is: {location_str}.")
 
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
