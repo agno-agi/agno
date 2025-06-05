@@ -3355,8 +3355,9 @@ class Agent:
             model = run_response.model
             messages = run_response.messages
             extra_data = run_response.extra_data
-            content = run_response.content
-            content_type = run_response.content_type
+            if not content:
+                content = run_response.content
+                content_type = run_response.content_type
             audio = run_response.audio
             images = run_response.images
             videos = run_response.videos
