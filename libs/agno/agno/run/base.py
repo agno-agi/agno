@@ -26,7 +26,6 @@ class BaseRunResponseEvent:
             if v is not None
             and k
             not in [
-                "messages",
                 "tools",
                 "tool",
                 "extra_data",
@@ -38,9 +37,6 @@ class BaseRunResponseEvent:
                 "citations",
             ]
         }
-        if hasattr(self, "messages") and self.messages is not None:
-            _dict["messages"] = [m.to_dict() for m in self.messages]
-
         if hasattr(self, "extra_data") and self.extra_data is not None:
             _dict["extra_data"] = (
                 self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
