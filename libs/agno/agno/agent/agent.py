@@ -2520,7 +2520,7 @@ class Agent:
         import json
 
         self.model = cast(Model, self.model)
-        #Skipping tool without user_input_schema so that toolcall_id is not repeated
+        # Skipping tool without user_input_schema so that tool_call_id is not repeated
         if not hasattr(tool, 'user_input_schema') or not tool.user_input_schema:
            return
         user_input_result = [
