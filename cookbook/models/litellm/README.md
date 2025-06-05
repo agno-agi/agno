@@ -12,6 +12,12 @@ Regardless of the model used—OpenAI, Hugging Face, or XAI—the API key is ref
 export LITELLM_API_KEY=***
 ```
 
+You can also reference the API key depending on the model you will use, e.g. `OPENAI_API_KEY` if you will use an OpenAI model like GPT-4o.
+
+```shell
+export OPENAI_API_KEY=***
+```
+
 ### 3. Install libraries
 
 ```shell

@@ -83,7 +83,7 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
 
-    assert "async_search_knowledge_base" in [
+    assert "asearch_knowledge_base" in [
         call["function"]["name"] for call in tool_calls if call.get("type") == "function"
     ]
 
@@ -110,6 +110,6 @@ async def test_website_knowledge_base_async_single_url(setup_vector_db):
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
 
-    assert "async_search_knowledge_base" in [
+    assert "asearch_knowledge_base" in [
         call["function"]["name"] for call in tool_calls if call.get("type") == "function"
     ]

@@ -1,17 +1,34 @@
 import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from anthropic.types import (
         TextBlock,
         ToolUseBlock,
     )
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+
+
+@dataclass
+class MCPToolConfiguration:
+    enabled: bool = True
+    allowed_tools: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MCPServerConfiguration:
+    type: str
+    url: str
+    name: str
+    tool_configuration: Optional[MCPToolConfiguration] = None
+    authorization_token: Optional[str] = None
+
 
 ROLE_MAP = {
     "system": "system",
@@ -33,12 +50,12 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # 'filetype' used as a fallback
     try:
         import imghdr
-    except (ModuleNotFoundError, ImportError):
+    except ImportError:
         try:
             import filetype
 
             using_filetype = True
-        except (ModuleNotFoundError, ImportError):
+        except ImportError:
             raise ImportError("`filetype` not installed. Please install using `pip install filetype`")
 
     type_mapping = {
@@ -50,6 +67,10 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     }
 
     try:
+        # Case 0: Image is an Anthropic uploaded file
+        if image.content is not None and hasattr(image.content, "id"):
+            return {"type": "image", "source": {"type": "file", "file_id": image.content.id}}
+
         # Case 1: Image is a URL
         if image.url is not None:
             return {"type": "image", "source": {"type": "url", "url": image.url}}
@@ -116,6 +137,16 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "application/pdf": "base64",
         "text/plain": "text",
     }
+
+    # Case 0: File is an Anthropic uploaded file
+    if file.external is not None and hasattr(file.external, "id"):
+        return {
+            "type": "document",
+            "source": {
+                "type": "file",
+                "file_id": file.external.id,
+            },
+        }
 
     # Case 1: Document is a URL
     if file.url is not None:
@@ -206,12 +237,14 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     if file_content:
                         content.append(file_content)
 
+            if message.audio is not None and len(message.audio) > 0:
+                log_warning("Audio input is currently unsupported.")
+
+            if message.videos is not None and len(message.videos) > 0:
+                log_warning("Video input is currently unsupported.")
+
         elif message.role == "assistant":
             content = []
-
-            # In case the model returns no response, add a default message.
-            if message.content is None:
-                content.append(TextBlock(text="No response received from model", type="text"))
 
             if message.thinking is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
@@ -229,7 +262,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
                 content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
 
-            if isinstance(message.content, str) and message.content:
+            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:

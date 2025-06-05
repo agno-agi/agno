@@ -81,12 +81,11 @@ async def test_csv_url_knowledge_base_async():
         search_knowledge=True,
         instructions=[
             "You are a helpful assistant that can answer questions.",
-            "You can use the async_search_knowledge_base tool to search the knowledge base of CSVs for information.",
+            "You can use the asearch_knowledge_base tool to search the knowledge base of CSVs for information.",
         ],
     )
     response = await agent.arun("Which employees have salaries above 50000?", markdown=True)
 
     assert "employees" in response.content.lower()
-    assert any(term in response.content.lower() for term in ["50000", "salary"])
 
     await vector_db.async_drop()

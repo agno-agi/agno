@@ -13,15 +13,18 @@ class EmailTools(Toolkit):
         sender_passkey: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(name="email_tools", **kwargs)
-
         self.receiver_email: Optional[str] = receiver_email
         self.sender_name: Optional[str] = sender_name
         self.sender_email: Optional[str] = sender_email
         self.sender_passkey: Optional[str] = sender_passkey
-        self.register(self.email_user)
 
-    def email_user(self, subject: str, body: str) -> str:
+        tools = []
+        tools.append(self.email_user)
+
+        # Call superclass with tools list
+        super().__init__(name="email_tools", tools=tools, **kwargs)
+
+    def email_user(self, subject: str, body: str, **kwargs) -> str:
         """Emails the user with the given subject and body.
 
         :param subject: The subject of the email.

@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
 from agno.document.base import Document
+from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.base import Reader
 from agno.utils.log import log_debug, logger
 
 try:
-    from firecrawl import FirecrawlApp
+    from firecrawl import FirecrawlApp  # type: ignore[attr-defined]
 except ImportError:
     raise ImportError("The `firecrawl` package is not installed. Please install it via `pip install firecrawl-py`.")
 
@@ -17,6 +18,23 @@ class FirecrawlReader(Reader):
     api_key: Optional[str] = None
     params: Optional[Dict] = None
     mode: Literal["scrape", "crawl"] = "scrape"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        params: Optional[Dict] = None,
+        mode: Literal["scrape", "crawl"] = "scrape",
+        chunk: bool = True,
+        chunk_size: int = 5000,
+        chunking_strategy: Optional[ChunkingStrategy] = None,
+    ) -> None:
+        # Initialise base Reader (handles chunk_size / strategy)
+        super().__init__(chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy)
+
+        # Firecrawl-specific attributes
+        self.api_key = api_key
+        self.params = params
+        self.mode = mode
 
     def scrape(self, url: str) -> List[Document]:
         """
@@ -32,9 +50,15 @@ class FirecrawlReader(Reader):
         log_debug(f"Scraping: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)
-        scraped_data = app.scrape_url(url, params=self.params)
-        # print(scraped_data)
-        content = scraped_data.get("markdown", "")
+
+        if self.params:
+            scraped_data = app.scrape_url(url, **self.params)
+        else:
+            scraped_data = app.scrape_url(url)
+        if isinstance(scraped_data, dict):
+            content = scraped_data.get("markdown", "")
+        else:
+            content = getattr(scraped_data, "markdown", "")
 
         # Debug logging
         log_debug(f"Received content type: {type(content)}")
@@ -80,14 +104,23 @@ class FirecrawlReader(Reader):
         log_debug(f"Crawling: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)
-        crawl_result = app.crawl_url(url, params=self.params)
+
+        if self.params:
+            crawl_result = app.crawl_url(url, **self.params)
+        else:
+            crawl_result = app.crawl_url(url)
         documents = []
 
-        # Extract data from crawl results
-        results_data = crawl_result.get("data", [])
+        if isinstance(crawl_result, dict):
+            results_data = crawl_result.get("data", [])
+        else:
+            results_data = getattr(crawl_result, "data", [])
         for result in results_data:
             # Get markdown content, default to empty string if not found
-            content = result.get("markdown", "")
+            if isinstance(result, dict):
+                content = result.get("markdown", "")
+            else:
+                content = getattr(result, "markdown", "")
 
             if content:  # Only create document if content exists
                 if self.chunk:

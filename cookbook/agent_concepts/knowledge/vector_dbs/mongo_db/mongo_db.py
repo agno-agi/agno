@@ -46,6 +46,7 @@ knowledge_base = PDFUrlKnowledgeBase(
     vector_db=MongoDb(
         collection_name="recipes",
         db_url=mdb_connection_string,
+        search_index_name="recipes",
     ),
 )
 

@@ -74,7 +74,6 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         self.vector_db.create()
 
         log_info("Loading knowledge base")
-        num_documents = 0
 
         # Given that the crawler needs to parse the URL before existence can be checked
         # We check if the website url exists in the vector db if recreate is False
@@ -86,17 +85,20 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                     log_debug(f"Skipping {url} as it exists in the vector db")
                     urls_to_read.remove(url)
 
+        num_documents = 0
         for url in urls_to_read:
-            document_list = self.reader.read(url=url)
-            # Filter out documents which already exist in the vector db
-            if not recreate:
-                document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
-            if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=document_list, filters=filters)
-            else:
-                self.vector_db.insert(documents=document_list, filters=filters)
-            num_documents += len(document_list)
-            log_info(f"Loaded {num_documents} documents to knowledge base")
+            if document_list := self.reader.read(url=url):
+                # Filter out documents which already exist in the vector db
+                if not recreate:
+                    document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
+                    if not document_list:
+                        continue
+                if upsert and self.vector_db.upsert_available():
+                    self.vector_db.upsert(documents=document_list, filters=filters)
+                else:
+                    self.vector_db.insert(documents=document_list, filters=filters)
+                num_documents += len(document_list)
+                log_info(f"Loaded {num_documents} documents to knowledge base")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
             log_debug("Optimizing Vector DB")

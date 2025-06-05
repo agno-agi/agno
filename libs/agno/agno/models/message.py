@@ -55,6 +55,12 @@ class MessageMetrics:
     output_tokens: int = 0
     total_tokens: int = 0
 
+    audio_tokens: int = 0
+    input_audio_tokens: int = 0
+    output_audio_tokens: int = 0
+    cached_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     prompt_tokens_details: Optional[dict] = None
@@ -100,6 +106,12 @@ class MessageMetrics:
             total_tokens=self.total_tokens + other.total_tokens,
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            audio_tokens=self.audio_tokens + other.audio_tokens,
+            input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
+            output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
         # Handle prompt_tokens_details
@@ -320,7 +332,12 @@ class Message(BaseModel):
                 tool_call_arguments = tool_call.get("function", {}).get("arguments")
                 if tool_call_arguments:
                     try:
-                        arguments = ", ".join(f"{k}: {v}" for k, v in json.loads(tool_call_arguments).items())
+                        tool_call_args: dict = (
+                            tool_call_arguments
+                            if isinstance(tool_call_arguments, dict)
+                            else json.loads(tool_call_arguments)
+                        )
+                        arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
                         tool_calls_list.append(f"    Arguments: '{arguments}'")
                     except json.JSONDecodeError:
                         tool_calls_list.append("    Arguments: 'Invalid JSON format'")
@@ -348,6 +365,14 @@ class Message(BaseModel):
                 token_metrics.append(f"output={self.metrics.output_tokens}")
             if self.metrics.total_tokens:
                 token_metrics.append(f"total={self.metrics.total_tokens}")
+            if self.metrics.cached_tokens:
+                token_metrics.append(f"cached={self.metrics.cached_tokens}")
+            if self.metrics.cache_write_tokens:
+                token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
+            if self.metrics.reasoning_tokens:
+                token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
+            if self.metrics.audio_tokens:
+                token_metrics.append(f"audio={self.metrics.audio_tokens}")
             if token_metrics:
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
