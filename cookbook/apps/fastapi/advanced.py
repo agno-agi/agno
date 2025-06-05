@@ -1,5 +1,5 @@
-
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.app.fastapi.app import FastAPIApp
 from agno.memory.v2 import Memory
@@ -90,7 +90,9 @@ research_agent = Agent(
     agent_id="research_agent",
     memory=memory,
     storage=SqliteStorage(
-        table_name="research_agent", db_file=agent_storage_file, auto_upgrade_schema=True
+        table_name="research_agent",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
     ),
     enable_user_memories=True,
 )
@@ -101,7 +103,7 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research_team",
+    team_id="research-team",
     success_criteria=dedent("""\
         A comprehensive research report with clear sections and data-driven insights.
     """),
@@ -115,7 +117,10 @@ research_team = Team(
     markdown=True,
     enable_agentic_context=True,
     storage=SqliteStorage(
-        table_name="research_team", db_file=agent_storage_file, auto_upgrade_schema=True, mode="team"
+        table_name="research_team",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+        mode="team",
     ),
 )
 
@@ -134,4 +139,11 @@ fastapi_app = FastAPIApp(
 app = fastapi_app.get_app()
 
 if __name__ == "__main__":
+    """
+    Now you can reach your agents/teams with the following URLs:
+    - http://localhost:8001/runs?agent_id=simple-agent
+    - http://localhost:8001/runs?agent_id=web-agent
+    - http://localhost:8001/runs?agent_id=finance-agent
+    - http://localhost:8001/runs?team_id=research-team
+    """
     fastapi_app.serve(app="advanced:app", port=8001, reload=True)

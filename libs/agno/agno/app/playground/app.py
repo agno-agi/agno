@@ -44,13 +44,13 @@ class Playground:
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
-        
+
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
-        
+
         self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
-        
+
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
@@ -241,4 +241,3 @@ class Playground:
         }
         payload = {k: v for k, v in payload.items() if v is not None}
         return payload
-

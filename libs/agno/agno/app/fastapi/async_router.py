@@ -1,7 +1,7 @@
+import json
 from dataclasses import asdict
 from io import BytesIO
-import json
-from typing import AsyncGenerator, List, Optional, cast
+from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -84,7 +84,9 @@ async def team_chat_response_streamer(
         return
 
 
-def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None, workflows: Optional[List[Workflow]] = None) -> APIRouter:
+def get_async_router(
+    agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None, workflows: Optional[List[Workflow]] = None
+) -> APIRouter:
     router = APIRouter()
 
     if agents is None and teams is None and workflows is None:
@@ -250,7 +252,7 @@ def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[
 
     @router.post("/runs")
     async def run_agent_or_team_or_workflow(
-        message: str = Form(...),
+        message: str = Form(None),
         stream: bool = Form(False),
         monitor: bool = Form(False),
         session_id: Optional[str] = Form(None),
@@ -259,6 +261,7 @@ def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
+        workflow_input: Optional[Dict[str, Any]] = Form(None),
     ):
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -269,39 +272,39 @@ def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[
         agent = None
         team = None
         workflow = None
-        
+
         # Only one of agent_id, team_id or workflow_id can be provided
         if agent_id and team_id or agent_id and workflow_id or team_id and workflow_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id, team_id or workflow_id can be provided")
-        
-        if agent_id:
+
+        if not agent_id and not team_id and not workflow_id:
+            raise HTTPException(status_code=400, detail="One of agent_id, team_id or workflow_id must be provided")
+
+        if agent_id and agents:
             agent = next((agent for agent in agents if agent.agent_id == agent_id), None)
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
-        if team_id:
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if team_id and teams:
             team = next((team for team in teams if team.team_id == team_id), None)
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
-        if workflow_id:
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if workflow_id and workflows:
             workflow = next((workflow for workflow in workflows if workflow.workflow_id == workflow_id), None)
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
+            if not workflow_input:
+                raise HTTPException(status_code=400, detail="Workflow input is required")
 
         if agent:
-            if monitor:
-                agent.monitoring = True
-            else:
-                agent.monitoring = False
+            agent.monitoring = bool(monitor)
         elif team:
-            if monitor:
-                team.monitoring = True
-            else:
-                team.monitoring = False
+            team.monitoring = bool(monitor)
         elif workflow:
-            if monitor:
-                workflow.monitoring = True
-            else:
-                workflow.monitoring = False
+            workflow.monitoring = bool(monitor)
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -346,7 +349,7 @@ def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(message)),
+                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(**(workflow_input or {}))),
                     media_type="text/event-stream",
                 )
         else:
@@ -376,10 +379,10 @@ def get_async_router(agents: Optional[List[Agent]] = None, teams: Optional[List[
                     stream=False,
                 )
                 return team_run_response.to_dict()
-            else:
+            elif workflow:
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return await workflow_instance.arun(message).to_dict()
+                return (await workflow_instance.arun(**(workflow_input or {}))).to_dict()
 
     return router

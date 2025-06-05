@@ -1,7 +1,7 @@
+import json
 from dataclasses import asdict
 from io import BytesIO
-import json
-from typing import Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -84,7 +84,9 @@ def team_chat_response_streamer(
         return
 
 
-def get_sync_router(agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None, workflows: Optional[List[Workflow]] = None) -> APIRouter:
+def get_sync_router(
+    agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None, workflows: Optional[List[Workflow]] = None
+) -> APIRouter:
     router = APIRouter()
 
     if agents is None and teams is None and workflows is None:
@@ -250,12 +252,13 @@ def get_sync_router(agents: Optional[List[Agent]] = None, teams: Optional[List[T
 
     @router.post("/runs")
     def run_agent_or_team_or_workflow(
-        message: str = Form(...),
+        message: str = Form(None),
         stream: bool = Form(True),
         monitor: bool = Form(False),
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
+        workflow_input: Optional[Dict[str, Any]] = Form(None),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -265,43 +268,43 @@ def get_sync_router(agents: Optional[List[Agent]] = None, teams: Optional[List[T
         else:
             logger.debug("Creating new session")
             session_id = str(uuid4())
-            
+
         # Only one of agent_id, team_id or workflow_id can be provided
         if agent_id and team_id or agent_id and workflow_id or team_id and workflow_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id, team_id or workflow_id can be provided")
 
+        if not agent_id and not team_id and not workflow_id:
+            raise HTTPException(status_code=400, detail="One of agent_id, team_id or workflow_id must be provided")
+
         agent = None
         team = None
         workflow = None
-        
-        if agent_id:
+
+        if agent_id and agents:
             agent = next((agent for agent in agents if agent.agent_id == agent_id), None)
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
-        if team_id:
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if team_id and teams:
             team = next((team for team in teams if team.team_id == team_id), None)
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
-        if workflow_id:
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if workflow_id and workflows:
             workflow = next((workflow for workflow in workflows if workflow.workflow_id == workflow_id), None)
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
+            if not workflow_input:
+                raise HTTPException(status_code=400, detail="Workflow input is required")
 
         if agent:
-            if monitor:
-                agent.monitoring = True
-            else:
-                agent.monitoring = False
+            agent.monitoring = bool(monitor)
         elif team:
-            if monitor:
-                team.monitoring = True
-            else:
-                team.monitoring = False
+            team.monitoring = bool(monitor)
         elif workflow:
-            if monitor:
-                workflow.monitoring = True
-            else:
-                workflow.monitoring = False
+            workflow.monitoring = bool(monitor)
 
         if files:
             if agent:
@@ -342,7 +345,7 @@ def get_sync_router(agents: Optional[List[Agent]] = None, teams: Optional[List[T
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in workflow_instance.run(message)),
+                    (json.dumps(asdict(result)) for result in workflow_instance.run(**(workflow_input or {}))),
                     media_type="text/event-stream",
                 )
         else:
@@ -376,6 +379,6 @@ def get_sync_router(agents: Optional[List[Agent]] = None, teams: Optional[List[T
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return workflow_instance.run(message).to_dict()
+                return workflow_instance.run(**(workflow_input or {})).to_dict()
 
     return router
