@@ -1,5 +1,3 @@
-import platform
-import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -9,10 +7,9 @@ from agno.utils.log import logger
 try:
     from sentence_transformers import SentenceTransformer
 
-    if platform.system() == "Windows":
-        import numpy as np
 except ImportError:
     raise ImportError("`sentence-transformers` not installed, please run `pip install sentence-transformers`")
+
 
 @dataclass
 class SentenceTransformerEmbedder(Embedder):

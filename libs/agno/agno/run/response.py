@@ -207,7 +207,7 @@ class RunResponse:
 
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
-    
+
         images = data.pop("images", None)
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
