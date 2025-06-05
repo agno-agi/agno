@@ -2412,6 +2412,11 @@ class Agent:
     def _get_paused_content(self, run_response: RunResponse) -> str:
         paused_content = ""
         for tool in run_response.tools or []:
+            # Initialize flags for each tool
+            confirmation_required = False
+            user_input_required = False
+            external_execution_required = False
+            
             if tool.requires_confirmation is not None and tool.requires_confirmation is True and not tool.confirmed:
                 confirmation_required = True
             if tool.requires_user_input is not None and tool.requires_user_input is True:
