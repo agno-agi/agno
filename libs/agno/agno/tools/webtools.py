@@ -8,13 +8,13 @@ class WebTools(Toolkit):
     """
     A toolkit for working with web-related tools.
     """
+
     def __init__(self, retries: int = 3):
         super().__init__(name="web_tools")
 
         self.retries = retries
 
         self.register(self.expand_url)
-
 
     def expand_url(self, url: str) -> str:
         """

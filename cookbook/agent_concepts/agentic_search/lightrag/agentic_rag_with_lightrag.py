@@ -1,21 +1,23 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.light_rag import LightRagKnowledgeBase, lightrag_retriever
 from agno.models.anthropic import Claude
-import asyncio
 
 # Create a knowledge base, loaded with documents from a URL
 knowledge_base = LightRagKnowledgeBase(
     lightrag_server_url="http://localhost:9621",
-    path="tmp/", # Load documents from a local directory
-    urls=["https://docs.agno.com/introduction/agents.md"], # Load documents from a URL
+    path="tmp/",  # Load documents from a local directory
+    urls=["https://docs.agno.com/introduction/agents.md"],  # Load documents from a URL
 )
 
 # Load the knowledge base with the documents from the local directory and the URL
 asyncio.run(knowledge_base.load())
 
 # Load the knowledge base with the text
-asyncio.run(knowledge_base.load_text(text="Dogs and cats are not pets, they are friends."))
-
+asyncio.run(
+    knowledge_base.load_text(text="Dogs and cats are not pets, they are friends.")
+)
 
 
 # Create an agent with the knowledge base and the retriever
@@ -32,8 +34,13 @@ agent = Agent(
         "Always search your knowledge before answering the question.",
         "Use the async_search method to search the knowledge base.",
     ],
-    markdown=True)
+    markdown=True,
+)
 
 
-asyncio.run(agent.aprint_response("Which candidates are available for the role of a Senior Software Engineer?"))
+asyncio.run(
+    agent.aprint_response(
+        "Which candidates are available for the role of a Senior Software Engineer?"
+    )
+)
 asyncio.run(agent.aprint_response("What are Agno Agents?"))
