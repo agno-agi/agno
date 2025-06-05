@@ -41,7 +41,7 @@ You can use [Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-
 
 1. Clone the project: `git clone https://github.com/ag-ui-protocol/ag-ui.git`
 2. Follow the instructions [here](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) to learn how to install the needed dependencies and run the project.
-3. Remember to install the dependencies in `/ag-ui/typescript-sdk` with `pnpm install`.
+3. Remember to install the dependencies in `/ag-ui/typescript-sdk` with `pnpm install`, and to build the Agno package in `/integrations/agno` with `pnpm run build`.
 3. Update `dojo/src/menu.ts` to add your Agno integration:
 ```ts
 // ...
@@ -56,7 +56,7 @@ export const menuIntegrations: MenuIntegrationConfig[] = [
 ```
 4. Update `dojo/src/agents.ts`:
 ```ts
-import { HttpAgent } from "@ag-ui/client";
+import { AgnoAgent } from "@ag-ui/agno";
 // ...
 export const agentsIntegrations: AgentIntegrationConfig[] = [
   // ...
@@ -64,7 +64,7 @@ export const agentsIntegrations: AgentIntegrationConfig[] = [
     id: "agno",
     agents: async () => {
       return {
-        agentic_chat: new HttpAgent({
+        agentic_chat: new AgnoAgent({
           url: "http://127.0.0.1:8000/agui",
         }),
       };
