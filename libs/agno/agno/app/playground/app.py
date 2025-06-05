@@ -15,6 +15,7 @@ from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.playground.async_router import get_async_playground_router
 from agno.app.playground.sync_router import get_sync_playground_router
+from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
 from agno.playground.settings import PlaygroundSettings
@@ -43,10 +44,13 @@ class Playground:
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
+
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
+
         self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
+
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
@@ -237,10 +241,3 @@ class Playground:
         }
         payload = {k: v for k, v in payload.items() if v is not None}
         return payload
-
-
-def generate_id(name: Optional[str] = None) -> str:
-    if name:
-        return name.lower().replace(" ", "-").replace("_", "-")
-    else:
-        return str(uuid4())

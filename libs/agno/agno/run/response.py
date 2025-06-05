@@ -177,7 +177,7 @@ class RunResponse:
                 _dict["citations"] = self.citations
 
         if self.content and isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
+            _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
         if self.tools is not None:
             _dict["tools"] = []
