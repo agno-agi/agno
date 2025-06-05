@@ -1,5 +1,4 @@
-import asyncio
-from time import sleep
+
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -8,7 +7,7 @@ import httpx
 from agno.document.base import Document
 from agno.document.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug
 
 
 class URLReader(Reader):
@@ -22,7 +21,7 @@ class URLReader(Reader):
         if not url:
             raise ValueError("No url provided")
 
-        log_info(f"Reading: {url}")
+        log_debug(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url, proxy=self.proxy)
 
@@ -36,7 +35,7 @@ class URLReader(Reader):
         if not url:
             raise ValueError("No url provided")
 
-        log_info(f"Reading async: {url}")
+        log_debug(f"Reading async: {url}")
         client_args = {"proxy": self.proxy} if self.proxy else {}
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
