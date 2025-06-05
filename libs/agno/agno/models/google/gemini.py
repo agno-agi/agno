@@ -862,8 +862,4 @@ class Gemini(Model):
         # Explicitly set client to None
         setattr(new_instance, "client", None)
 
-        # Clear the new model to remove any references to the old model
-        if hasattr(new_instance, "clear"):
-            new_instance.clear()
-
         return new_instance

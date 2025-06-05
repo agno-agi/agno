@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 
 import httpx
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
@@ -159,3 +159,7 @@ class Searxng(Toolkit):
             return json.dumps(resp)
         except Exception as e:
             return f"Error fetching results from searxng: {e}"
+
+
+# Alias for consistency with other tools
+SearxngTools = Searxng
