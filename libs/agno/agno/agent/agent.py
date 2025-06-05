@@ -43,7 +43,6 @@ from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.location import get_location
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -4198,6 +4197,7 @@ class Agent:
 
         # 3.2.3 Add the current location
         if self.add_location_to_instructions:
+            from agno.utils.location import get_location
             location = get_location()
             if location:
                 location_str = ", ".join(
