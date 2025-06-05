@@ -1,6 +1,7 @@
 from typing import Optional
 
 from agno.tools import Toolkit
+from agno.utils.log import log_debug
 
 try:
     import boto3
@@ -30,11 +31,12 @@ class AWSSESTool(Toolkit):
         if not self.client:
             raise Exception("AWS SES client not initialized. Please check the configuration.")
         if not subject:
-            raise ValueError("Email subject cannot be empty.")
+            return "Email subject cannot be empty."
         if not body:
-            raise ValueError("Email body cannot be empty.")
+            return "Email body cannot be empty."
         try:
             response = self.client.send_email(
+                Source=f"{self.sender_name} <{self.sender_email}>",
                 Destination={
                     "ToAddresses": [receiver_email],
                 },
@@ -50,8 +52,8 @@ class AWSSESTool(Toolkit):
                         "Data": subject,
                     },
                 },
-                Source=f"{self.sender_name} <{self.sender_email}>",
             )
-            return f"Email sent successfully. Message ID: {response['MessageId']}"
+            log_debug(f"Email sent with message ID: {response['MessageId']}")
+            return "Email sent successfully!"
         except Exception as e:
             raise Exception(f"Failed to send email: {e}")

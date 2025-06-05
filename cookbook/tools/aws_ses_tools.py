@@ -1,11 +1,7 @@
 """
 AWS SES (Simple Email Service) Setup Instructions:
 
-1. Create an AWS account if you don't have one
-   - Go to https://aws.amazon.com and sign up
-   - Add a payment method (required even for free tier)
-
-2. Go to AWS SES Console and verify your domain or email address:
+1. Go to AWS SES Console and verify your domain or email address:
    - For production:
      a. Go to AWS SES Console > Verified Identities > Create Identity
      b. Choose "Domain" and follow DNS verification steps
@@ -14,16 +10,7 @@ AWS SES (Simple Email Service) Setup Instructions:
      a. Choose "Email Address" verification
      b. Click verification link sent to your email
 
-3. Check SES Sending Limits:
-   - New accounts start in sandbox mode with limits:
-     * 200 emails per 24-hour period
-     * 1 email per second
-   - To increase limits:
-     a. Go to SES Console > Account Dashboard
-     b. Click "Request Production Access"
-     c. Fill out the form with your use case
-
-4. Configure AWS Credentials:
+2. Configure AWS Credentials:
    a. Create an IAM user:
       - Go to IAM Console > Users > Add User
       - Enable "Programmatic access"
@@ -38,45 +25,22 @@ AWS SES (Simple Email Service) Setup Instructions:
       # Enter your default region
       ```
 
-      Method 2 - Manual credentials file:
-      Create ~/.aws/credentials with:
-      ```
-      [default]
-      aws_access_key_id = YOUR_ACCESS_KEY
-      aws_secret_access_key = YOUR_SECRET_KEY
-      ```
-
-      Method 3 - Environment variables:
+      Method 2 - Set environment variables:
       ```
       export AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY
       export AWS_SECRET_ACCESS_KEY=YOUR_SECRET_KEY
       ```
 
-5. Configure OpenAI API:
-   a. Get your API key from https://platform.openai.com/api-keys
-   b. Set the environment variable:
-      ```
-      export OPENAI_API_KEY=your_openai_api_key
-      ```
-
-6. Install required Python packages:
+3. Install required Python packages:
    ```
    pip install boto3 agno
    ```
 
-7. Update the variables below with your configuration:
+4. Update the variables below with your configuration:
    - sender_email: Your verified sender email address
    - sender_name: Display name that appears in email clients
    - region_name: AWS region where SES is set up (e.g., 'us-east-1', 'ap-south-1')
 
-Troubleshooting:
-- If emails aren't sending, check:
-  * Both sender and recipient are verified (in sandbox mode)
-  * AWS credentials are correctly configured
-  * You're within sending limits
-  * Your IAM user has correct SES permissions
-- Check CloudWatch for delivery metrics and errors
-- Use SES Console's 'Send Test Email' feature to verify setup
 """
 
 from agno.agent import Agent
@@ -85,9 +49,9 @@ from agno.tools.aws_ses import AWSSESTool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Configure email settings
-sender_email = "<sender_email>"  # Your verified SES email
+sender_email = "coolmusta@gmail.com"  # Your verified SES email
 sender_name = "AI Research Updates"
-region_name = "ap-south-1"  # Your AWS region
+region_name = "us-west-2"  # Your AWS region
 
 # Create an agent that can research and send personalized email updates
 agent = Agent(
@@ -97,7 +61,7 @@ agent = Agent(
     newsletters about the latest developments in artificial intelligence and technology.""",
     instructions=[
         "When given a prompt:",
-        "1. Extract the recipient's email from the natural language prompt",
+        "1. Extract the recipient's email address carefully. Look for the complete email in format 'user@domain.com'.",
         "2. Research the latest AI developments using DuckDuckGo",
         "3. Compose a concise, engaging email with:",
         "   - A compelling subject line",
@@ -105,13 +69,13 @@ agent = Agent(
         "   - Brief explanations of why they matter",
         "   - Links to sources",
         "4. Format the content in a clean, readable way",
-        "5. Send the email using AWS SES to the extracted recipient",
+        "5. Send the email using AWS SES. IMPORTANT: The receiver_email parameter must be the COMPLETE email address including the @ symbol and domain (e.g., if the user says 'send to mustafa@agno.com', you must use receiver_email='mustafa@agno.com', NOT 'mustafacom' or any other variation).",
     ],
     tools=[
         AWSSESTool(
             sender_email=sender_email, sender_name=sender_name, region_name=region_name
         ),
-        DuckDuckGoTools(),
+          DuckDuckGoTools(),
     ],
     markdown=True,
     show_tool_calls=True,
@@ -119,11 +83,15 @@ agent = Agent(
 
 # Example 1: Send an email
 agent.print_response(
-    "Research AI developments in healthcare from the past week and email a summary " 
-    "to health-team@company.com. Focus on practical applications in clinical settings.",
-    markdown=True
+    "Research AI developments in healthcare from the past week with a focus on practical applications in clinical settings. Send the summary via email to mustafa@agno.com"
 )
 
-# Note: Make sure you have the necessary AWS credentials set up in your environment
-# or use AWS CLI's configure command to set them up before running this script.
-# Also ensure that both sender and recipient emails are verified in AWS SES (required in sandbox mode).
+"""
+Troubleshooting:
+- If emails aren't sending, check:
+  * Both sender and recipient are verified (in sandbox mode)
+  * AWS credentials are correctly configured
+  * You're within sending limits
+  * Your IAM user has correct SES permissions
+- Use SES Console's 'Send Test Email' feature to verify setup
+"""
