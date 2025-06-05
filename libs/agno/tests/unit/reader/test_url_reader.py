@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -82,9 +82,11 @@ def test_read_url_request_error():
 def test_read_url_http_error():
     """Test URL reading when fetch_with_retry raises HTTPStatusError"""
     url = "https://example.com"
-    
-    with patch("agno.document.reader.url_reader.fetch_with_retry", 
-               side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock())):
+
+    with patch(
+        "agno.document.reader.url_reader.fetch_with_retry",
+        side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock()),
+    ):
         reader = URLReader()
         with pytest.raises(httpx.HTTPStatusError):
             reader.read(url)
@@ -146,7 +148,7 @@ async def test_async_read_url_with_proxy(mock_response):
         call_args = mock_fetch.call_args
         assert call_args[0][0] == url  # First positional arg is url
         assert "client" in call_args[1]  # client should be in kwargs
-        
+
         assert len(documents) == 1
         assert documents[0].content == "Hello, World!"
 
@@ -156,8 +158,9 @@ async def test_async_read_url_request_error():
     """Test async URL reading when async_fetch_with_retry raises RequestError"""
     url = "https://example.com"
 
-    with patch("agno.document.reader.url_reader.async_fetch_with_retry", 
-               side_effect=httpx.RequestError("Connection failed")):
+    with patch(
+        "agno.document.reader.url_reader.async_fetch_with_retry", side_effect=httpx.RequestError("Connection failed")
+    ):
         reader = URLReader()
         with pytest.raises(httpx.RequestError):
             await reader.async_read(url)
@@ -168,8 +171,10 @@ async def test_async_read_url_http_error():
     """Test async URL reading when async_fetch_with_retry raises HTTPStatusError"""
     url = "https://example.com"
 
-    with patch("agno.document.reader.url_reader.async_fetch_with_retry",
-               side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock())):
+    with patch(
+        "agno.document.reader.url_reader.async_fetch_with_retry",
+        side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock()),
+    ):
         reader = URLReader()
         with pytest.raises(httpx.HTTPStatusError):
             await reader.async_read(url)
