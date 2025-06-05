@@ -392,7 +392,7 @@ def get_async_playground_router(
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
-            return JSONResponse(status_code=404, content="Agent not found.")
+            raise HTTPException(status_code=404, detail="Agent not found")
 
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
@@ -543,11 +543,11 @@ def get_async_playground_router(
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
-            return JSONResponse(status_code=404, content="Workflow not found.")
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
         # Ensure storage is enabled for the workflow
         if not workflow.storage:
-            return JSONResponse(status_code=404, content="Workflow does not have storage enabled.")
+            raise HTTPException(status_code=404, detail="Workflow does not have storage enabled")
 
         # Retrieve all sessions for the given workflow and user
         try:
@@ -555,7 +555,7 @@ def get_async_playground_router(
                 user_id=user_id, entity_id=workflow_id
             )  # type: ignore
         except Exception as e:
-            return JSONResponse(status_code=500, content=f"Error retrieving sessions: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []
