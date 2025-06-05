@@ -1,7 +1,7 @@
 [project]
 name = "agno"
-version = "1.5.6"
-description = "Agno: a lightweight library for building Reasoning Agents"
+version = "1.5.8"
+description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -69,6 +69,7 @@ anthropic = ["anthropic"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
+infinity = ["infinity_client"]
 google = ["google-genai"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
@@ -92,6 +93,7 @@ elevenlabs = ["elevenlabs"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
@@ -123,7 +125,7 @@ cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
-milvusdb = ["pymilvus"]
+milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 
@@ -133,6 +135,9 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+
+# Dependencies for AG-UI integration
+agui = ["ag-ui-protocol"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -178,6 +183,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
   "agno[googlemaps]",
@@ -246,6 +252,7 @@ tests = [
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
+    "agno[agui]",
     "twine",
     "build",
 ]
@@ -290,6 +297,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "ag_ui.*",
   "agentql.*",
   "aiofiles.*",
   "altair.*",
@@ -314,6 +322,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "daytona_sdk.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
