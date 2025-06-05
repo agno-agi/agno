@@ -75,7 +75,7 @@ agent = Agent(
         AWSSESTool(
             sender_email=sender_email, sender_name=sender_name, region_name=region_name
         ),
-          DuckDuckGoTools(),
+        DuckDuckGoTools(),
     ],
     markdown=True,
     show_tool_calls=True,
