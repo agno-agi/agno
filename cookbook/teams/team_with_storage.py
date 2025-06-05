@@ -1,14 +1,12 @@
 from uuid import uuid4
 
 from agno.agent.agent import Agent
-from agno.memory.db.postgres import PgMemoryDb
-from agno.memory.team import TeamMemory
-from agno.models.anthropic.claude import Claude
+from agno.memory.v2 import Memory
+from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team import Team
-from sqlalchemy import create_engine
 
 french_agent = Agent(
     name="French Agent",
@@ -43,14 +41,10 @@ multi_language_team = Team(
         table_name="agent_team_sessions",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    memory=TeamMemory(
-        db=PgMemoryDb(
-            table_name="agent_team_memory",
-            db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        ),
-        user_id=user_id,
-        create_user_memories=True,
-        update_user_memories_after_run=True,
+    memory=Memory(
+        db=PostgresMemoryDb(
+            table_name="memories", db_url="postgres://ai:ai@localhost:5532/ai"
+        )
     ),
     show_tool_calls=True,
     markdown=True,
@@ -63,6 +57,7 @@ multi_language_team = Team(
     ],
     show_members_responses=True,
     enable_team_history=True,
+    num_history_runs=3,
 )
 
 multi_language_team.print_response(

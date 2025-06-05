@@ -1,7 +1,7 @@
 import time
 import uuid
 from os import getenv
-from typing import Any, Dict, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 from agno.agent import Agent
 from agno.media import VideoArtifact
@@ -30,9 +30,8 @@ class LumaLabTools(Toolkit):
         wait_for_completion: bool = True,
         poll_interval: int = 3,
         max_wait_time: int = 300,  # 5 minutes
+        **kwargs,
     ):
-        super().__init__(name="luma_lab")
-
         self.wait_for_completion = wait_for_completion
         self.poll_interval = poll_interval
         self.max_wait_time = max_wait_time
@@ -42,8 +41,12 @@ class LumaLabTools(Toolkit):
             logger.error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
 
         self.client = LumaAI(auth_token=self.api_key)
-        self.register(self.generate_video)
-        self.register(self.image_to_video)
+
+        tools: List[Any] = []
+        tools.append(self.generate_video)
+        tools.append(self.image_to_video)
+
+        super().__init__(name="luma_lab", tools=tools, **kwargs)
 
     def image_to_video(
         self,

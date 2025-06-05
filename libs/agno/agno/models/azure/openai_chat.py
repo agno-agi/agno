@@ -9,7 +9,7 @@ from agno.models.openai.like import OpenAILike
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
     from openai import AzureOpenAI as AzureOpenAIClient
-except (ModuleNotFoundError, ImportError):
+except ImportError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
 
@@ -49,6 +49,9 @@ class AzureOpenAI(OpenAILike):
     azure_ad_token: Optional[str] = None
     azure_ad_token_provider: Optional[Any] = None
 
+    default_headers: Optional[Dict[str, str]] = None
+    default_query: Optional[Dict[str, Any]] = None
+
     client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
 
@@ -69,6 +72,10 @@ class AzureOpenAI(OpenAILike):
             "azure_ad_token_provider": self.azure_ad_token_provider,
             "http_client": self.http_client,
         }
+        if self.default_headers is not None:
+            _client_params["default_headers"] = self.default_headers
+        if self.default_query is not None:
+            _client_params["default_query"] = self.default_query
 
         _client_params.update({k: v for k, v in params_mapping.items() if v is not None})
         if self.client_params:
@@ -83,7 +90,7 @@ class AzureOpenAI(OpenAILike):
             AzureOpenAIClient: The OpenAI client.
 
         """
-        if self.client is not None:
+        if self.client is not None and not self.client.is_closed():
             return self.client
 
         _client_params: Dict[str, Any] = self._get_client_params()

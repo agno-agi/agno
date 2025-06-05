@@ -280,10 +280,10 @@ class SingleStore(VectorDb):
 
         stmt = select(*columns)
 
-        if filters is not None:
-            for key, value in filters.items():
-                if hasattr(self.table.c, key):
-                    stmt = stmt.where(getattr(self.table.c, key) == value)
+        # if filters is not None:
+        #     for key, value in filters.items():
+        #         if hasattr(self.table.c, key):
+        #             stmt = stmt.where(getattr(self.table.c, key) == value)
 
         if self.distance == Distance.l2:
             stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
@@ -414,4 +414,7 @@ class SingleStore(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

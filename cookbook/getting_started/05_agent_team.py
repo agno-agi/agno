@@ -1,17 +1,10 @@
-"""🗞️ Agent Team - Your Professional News & Finance Squad!
+"""🗞️ Multi-Agent Team - Your Professional News & Finance Squad!
 
 This example shows how to create a powerful team of AI agents working together
 to provide comprehensive financial analysis and news reporting. The team consists of:
 1. Web Agent: Searches and analyzes latest news
 2. Finance Agent: Analyzes financial data and market trends
 3. Lead Editor: Coordinates and combines insights from both agents
-
-Example prompts to try:
-- "What's the latest news and financial performance of Apple (AAPL)?"
-- "Analyze the impact of AI developments on NVIDIA's stock (NVDA)"
-- "How are EV manufacturers performing? Focus on Tesla (TSLA) and Rivian (RIVN)"
-- "What's the market outlook for semiconductor companies like AMD and Intel?"
-- "Summarize recent developments and stock performance of Microsoft (MSFT)"
 
 Run: `pip install openai duckduckgo-search yfinance agno` to install the dependencies
 """

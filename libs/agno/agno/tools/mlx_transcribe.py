@@ -47,9 +47,8 @@ class MLXTranscribeTools(Toolkit):
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         hallucination_silence_threshold: Optional[float] = None,
         decode_options: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="mlx_transcribe")
-
         self.base_dir: Path = base_dir or Path.cwd()
         self.path_or_hf_repo: str = path_or_hf_repo
         self.verbose: Optional[bool] = verbose
@@ -66,9 +65,11 @@ class MLXTranscribeTools(Toolkit):
         self.hallucination_silence_threshold: Optional[float] = hallucination_silence_threshold
         self.decode_options: Optional[dict] = decode_options
 
-        self.register(self.transcribe)
+        tools: List[Any] = [self.transcribe]
         if read_files_in_base_dir:
-            self.register(self.read_files)
+            tools.append(self.read_files)
+
+        super().__init__(name="mlx_transcribe", tools=tools, **kwargs)
 
     def transcribe(self, file_name: str) -> str:
         """

@@ -12,10 +12,11 @@ reasoning_agent = Agent(
             company_news=True,
         )
     ],
-    instructions=["Use tables where possible"],
+    instructions="Use tables to display data",
+    use_json_mode=True,
     show_tool_calls=True,
-    markdown=True,
     reasoning=True,
+    markdown=True,
 )
 reasoning_agent.print_response(
     "Write a report comparing NVDA to TSLA", stream=True, show_full_reasoning=True

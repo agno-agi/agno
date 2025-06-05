@@ -1,7 +1,9 @@
+import asyncio
 import json
 from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, List, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -37,7 +39,7 @@ class JSONReader(Reader):
             documents = [
                 Document(
                     name=json_name,
-                    id=f"{json_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=json.dumps(content),
                 )
@@ -51,3 +53,14 @@ class JSONReader(Reader):
             return documents
         except Exception:
             raise
+
+    async def async_read(self, path: Union[Path, IO[Any]]) -> List[Document]:
+        """Asynchronously read JSON files.
+
+        Args:
+            path (Union[Path, IO[Any]]): Path to a JSON file or a file-like object
+
+        Returns:
+            List[Document]: List of documents from the JSON file
+        """
+        return await asyncio.to_thread(self.read, path)

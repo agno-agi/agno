@@ -1,7 +1,6 @@
 from typing import Iterator  # noqa
 from pydantic import BaseModel
-from rich.pretty import pprint
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
@@ -53,7 +52,6 @@ team = Team(
     model=OpenAIChat("gpt-4o"),
     members=[stock_searcher, company_info_agent],
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 
