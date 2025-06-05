@@ -24,7 +24,6 @@ from typing import (
 )
 from uuid import uuid4
 
-from fastapi import requests
 from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
@@ -4108,8 +4107,7 @@ class Agent:
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
         return self._formatter.format(msg, **format_variables)  # type: ignore
-        
-    
+
     def get_system_message(self, session_id: str, user_id: Optional[str] = None) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -4197,19 +4195,17 @@ class Agent:
             time = datetime.now(tz) if tz else datetime.now()
 
             additional_information.append(f"The current time is {time}.")
+
         # 3.2.3 Add the current location
         if self.add_location_to_instructions:
-            
             location = get_location()
             if location:
-                location_str = ", ".join(filter(None, [
-                    location.get('city'),
-                    location.get('region'),
-                    location.get('country')
-                ]))
+                location_str = ", ".join(
+                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                )
                 if location_str:
                     additional_information.append(f"Your approximate location is: {location_str}.")
-                
+
         # 3.2.4 Add agent name if provided
         if self.name is not None and self.add_name_to_instructions:
             additional_information.append(f"Your name is: {self.name}.")

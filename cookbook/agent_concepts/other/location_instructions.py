@@ -5,8 +5,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     add_location_to_instructions=True,
-    tools=[DuckDuckGoTools(cache_results=True)]
+    tools=[DuckDuckGoTools(cache_results=True)],
 )
-agent.print_response(
-    "What is current news about my city?"
-)
+agent.print_response("What is current news about my city?")
