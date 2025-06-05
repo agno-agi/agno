@@ -52,7 +52,7 @@ agent.print_response(
 
 # Example 2: Send a new email with attachments
 # agent.print_response(
-#     """Send an email to user@example.com with subject 'Subject' 
+#     """Send an email to user@example.com with subject 'Subject'
 #     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
 #     markdown=True,
 #     stream=True,

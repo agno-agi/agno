@@ -6,7 +6,7 @@ from agno.reranker.base import Reranker
 from agno.utils.log import logger
 
 try:
-    from infinity_client import Client, AuthenticatedClient
+    from infinity_client import AuthenticatedClient, Client
     from infinity_client.api.default import rerank
     from infinity_client.models import RerankInput
 except ImportError:
@@ -50,19 +50,12 @@ class InfinityReranker(Reranker):
             return self._client
 
         base_url = self.base_url
-        
+
         if self.api_key:
-            self._client = AuthenticatedClient(
-                base_url=base_url,
-                token=self.api_key,
-                verify_ssl=self.verify_ssl
-            )
+            self._client = AuthenticatedClient(base_url=base_url, token=self.api_key, verify_ssl=self.verify_ssl)
         else:
-            self._client = Client(
-                base_url=base_url,
-                verify_ssl=self.verify_ssl
-            )
-        
+            self._client = Client(base_url=base_url, verify_ssl=self.verify_ssl)
+
         return self._client
 
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
@@ -76,14 +69,14 @@ class InfinityReranker(Reranker):
             top_n = None
 
         compressed_docs: list[Document] = []
-        
+
         try:
             # Prepare the request body for Infinity reranking
             rerank_input = {
                 "model": self.model,
                 "query": query,
                 "documents": [doc.content for doc in documents],
-                "return_documents": False  # We only need scores, we already have documents
+                "return_documents": False,  # We only need scores, we already have documents
             }
 
             # Add top_n to payload if specified
@@ -96,23 +89,23 @@ class InfinityReranker(Reranker):
             # Make request to Infinity rerank endpoint using the client
             with self.client as client:
                 result = rerank.sync(client=client, body=body)
-                
+
                 if result is None:
                     logger.error("Rerank request returned None")
                     return documents
 
                 # Process the response
                 # Infinity returns results with index and relevance_score
-                if hasattr(result, 'results') and result.results:
+                if hasattr(result, "results") and result.results:
                     for item in result.results:
                         doc_index = item.index
                         relevance_score = item.relevance_score
-                        
+
                         if doc_index < len(documents):
                             doc = documents[doc_index]
                             doc.reranking_score = relevance_score
                             compressed_docs.append(doc)
-                
+
                 # Order by relevance score
                 compressed_docs.sort(
                     key=lambda x: x.reranking_score if x.reranking_score is not None else float("-inf"),
@@ -148,14 +141,14 @@ class InfinityReranker(Reranker):
             top_n = None
 
         compressed_docs: list[Document] = []
-        
+
         try:
             # Prepare the request body for Infinity reranking
             rerank_input = {
                 "model": self.model,
                 "query": query,
                 "documents": [doc.content for doc in documents],
-                "return_documents": False  # We only need scores, we already have documents
+                "return_documents": False,  # We only need scores, we already have documents
             }
 
             # Add top_n to payload if specified
@@ -168,23 +161,23 @@ class InfinityReranker(Reranker):
             # Make async request to Infinity rerank endpoint using the client
             async with self.client as client:
                 result = await rerank.asyncio(client=client, body=body)
-                
+
                 if result is None:
                     logger.error("Async rerank request returned None")
                     return documents
 
                 # Process the response
                 # Infinity returns results with index and relevance_score
-                if hasattr(result, 'results') and result.results:
+                if hasattr(result, "results") and result.results:
                     for item in result.results:
                         doc_index = item.index
                         relevance_score = item.relevance_score
-                        
+
                         if doc_index < len(documents):
                             doc = documents[doc_index]
                             doc.reranking_score = relevance_score
                             compressed_docs.append(doc)
-                
+
                 # Order by relevance score
                 compressed_docs.sort(
                     key=lambda x: x.reranking_score if x.reranking_score is not None else float("-inf"),

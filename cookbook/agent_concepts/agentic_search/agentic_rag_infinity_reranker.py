@@ -90,47 +90,52 @@ agent = Agent(
     markdown=True,
 )
 
+
 def test_infinity_connection():
     """Test if Infinity server is running and accessible"""
     try:
         from infinity_client import Client
+
         client = Client(base_url="http://localhost:7997")
         print("✅ Successfully connected to Infinity server at localhost:7997")
         return True
     except Exception as e:
         print(f"❌ Failed to connect to Infinity server: {e}")
-        print("\nPlease make sure Infinity server is running. See setup instructions above.")
+        print(
+            "\nPlease make sure Infinity server is running. See setup instructions above."
+        )
         return False
+
 
 if __name__ == "__main__":
     print("🚀 Agentic RAG with Infinity Reranker Example")
     print("=" * 50)
-    
+
     # Test Infinity connection first
     if not test_infinity_connection():
         exit(1)
-    
+
     print("\n📚 Loading knowledge base...")
     # Load the knowledge base, comment after first run
     knowledge_base.load(recreate=True)
     print("✅ Knowledge base loaded successfully!")
-    
+
     print("\n🤖 Starting agent interaction...")
     print("=" * 50)
-    
+
     # Example questions to test the reranking capabilities
     questions = [
         "What are Agents and how do they work?",
         "How do I use tools with agents?",
         "What is the difference between knowledge and tools?",
     ]
-    
+
     for i, question in enumerate(questions, 1):
         print(f"\n🔍 Question {i}: {question}")
         print("-" * 40)
         agent.print_response(question, stream=True)
         print("\n" + "=" * 50)
-    
+
     print("\n🎉 Example completed!")
     print("\nThe Infinity reranker helped improve the relevance of retrieved documents")
     print("by reranking them based on semantic similarity to your queries.")

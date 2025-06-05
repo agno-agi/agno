@@ -97,4 +97,6 @@ social_media_agent = Agent(
     show_tool_calls=True,
 )
 
-social_media_agent.print_response("Analyze the sentiment of Agno and AgnoAGI on X (Twitter) for past 10 tweets")
+social_media_agent.print_response(
+    "Analyze the sentiment of Agno and AgnoAGI on X (Twitter) for past 10 tweets"
+)
