@@ -1,23 +1,25 @@
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
-    from google.cloud import firestore
-    from google.cloud.firestore import Client
-    from google.cloud.firestore import CollectionReference, DocumentReference
-    from google.cloud.firestore_v1.base_query import FieldFilter
-
-except ImportError:
-    raise ImportError(
-        "`firestore` not installed. Please install it with `pip install google-cloud-firestore`"
+    from google.api_core import exceptions as google_exceptions
+    from google.cloud.firestore_v1 import (
+        Client,
+        CollectionReference,
+        DocumentReference,
+        Query,
     )
+    from google.cloud.firestore_v1.base_query import FieldFilter
+except ImportError:
+    raise ImportError("`firestore` not installed. Please install it with `pip install google-cloud-firestore`")
 
 
 class FirestoreStorage(Storage):
@@ -27,152 +29,213 @@ class FirestoreStorage(Storage):
         db_name: Optional[str] = "(default)",
         project_id: Optional[str] = None,
         client: Optional[Client] = None,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
     ):
-        """
-        This class provides agent storage using Firestore.
-
-        Args:
-            collection_name: Name of the collection to store agent sessions
-            db_name: Firestore database name (uses free tier (default) if not specified)
-            project_id: Google Cloud project ID
-            client: Optional existing Firestore client
-        """
         super().__init__(mode)
-        self._client: Optional[Client] = client
+        self.collection_name = collection_name
+        self.db_name = db_name
+        self.project_id = project_id
+
+        # Initialize Firestore client
+        self._client = client
         if self._client is None:
-            self._client = firestore.Client(database=db_name, project=project_id)
+            self._client = self._initialize_client()
 
-        self.collection_name: str = collection_name
-        self.collection: CollectionReference = self._client.collection(
-            self.collection_name
-        )
+        # Get collection reference
+        self.collection: CollectionReference = self._client.collection(self.collection_name)
+        log_debug(f"Created FirestoreStorage with collection: '{self.collection_name}'")
 
-    # utilities to recursively delete all documents in a collection and the collection itself
-    def _delete_document(self, document: DocumentReference):
-        logger.debug(f"Deleting document: {document.path}")
+    def _initialize_client(self) -> Client:
+        """Initialize and return a Firestore client with proper error handling."""
+        try:
+            client = Client(database=self.db_name, project=self.project_id)
+            log_debug(f"Firestore client initialized with database: '{self.db_name}'")
+            return client
+        except google_exceptions.Unauthenticated as e:
+            raise ImportError(
+                "Failed to authenticate with Google Cloud. Please set up authentication:\n"
+                "1. Run: gcloud auth application-default login\n"
+                "2. Or set GOOGLE_APPLICATION_CREDENTIALS environment variable"
+            ) from e
+        except google_exceptions.PermissionDenied as e:
+            raise ImportError(
+                "Permission denied when accessing Firestore. Please ensure:\n"
+                "1. Your service account has the 'Cloud Datastore User' role\n"
+                "2. The Firestore API is enabled for your project"
+            ) from e
+        except Exception as e:
+            raise ImportError(f"Failed to initialize Firestore client: {e}") from e
+
+    def _delete_document(self, document: DocumentReference) -> None:
+        """Recursively delete a document and all its subcollections."""
+        log_debug(f"Deleting document: {document.path}")
         for collection in document.collections():
             self._delete_collection(collection)
         document.delete()
 
-    def _delete_collection(self, collection: CollectionReference):
+    def _delete_collection(self, collection: CollectionReference) -> None:
+        """Recursively delete all documents in a collection."""
         for document in collection.list_documents():
             self._delete_document(document)
 
-    def create(self) -> None:
-        """Create necessary indexes for the collection. Not needed for Firestore."""
+    def _build_query(
+        self, base_query: CollectionReference, user_id: Optional[str] = None, entity_id: Optional[str] = None
+    ) -> Union[Query, CollectionReference]:
+        """Build a Firestore query with optional filters."""
+        query: Union[Query, CollectionReference] = base_query
+
+        if user_id:
+            query = query.where(filter=FieldFilter("user_id", "==", user_id))
+
+        if entity_id:
+            if self.mode == "agent":
+                query = query.where(filter=FieldFilter("agent_id", "==", entity_id))
+            elif self.mode == "team":
+                query = query.where(filter=FieldFilter("team_id", "==", entity_id))
+            elif self.mode == "workflow":
+                query = query.where(filter=FieldFilter("workflow_id", "==", entity_id))
+
+        return query
+
+    def _parse_session(self, doc_data: Optional[Dict[str, Any]]) -> Optional[Session]:
+        """Parse document data into appropriate Session type."""
+        if not doc_data:
+            return None
+
         try:
-            logger.info(
-                f"Unnecessary call to create index for  '{self.collection_name}'"
-            )
+            if self.mode == "agent":
+                return AgentSession.from_dict(doc_data)
+            elif self.mode == "team":
+                return TeamSession.from_dict(doc_data)
+            elif self.mode == "workflow":
+                return WorkflowSession.from_dict(doc_data)
         except Exception as e:
-            logger.error(f"Error creating indexes for collection: {e}")
+            logger.error(f"Error parsing session data: {e}")
+            return None
+
+    def create(self) -> None:
+        """
+        Create storage if it doesn't exist.
+        For Firestore, this is a no-operation as collections are created automatically.
+        """
+        try:
+            if self._client:
+                list(self._client.collections())
+            log_debug("Firestore connection successful")
+        except Exception as e:
+            logger.error(f"Could not connect to Firestore: {e}")
             raise
 
     def read(self, session_id: str, user_id: Optional[str] = None) -> Optional[Session]:
-        """Read an session from Firestore
-        Args:
-            session_id: ID of the session to read
-            user_id: ID of the user associated with the session (optional)
-        Returns:
-            Session object if found, None otherwise
-        """
+        """Read a session from Firestore."""
         try:
-            query = self.collection.where(
-                filter=FieldFilter("session_id", "==", session_id)
-            )
+            query = self.collection.where(filter=FieldFilter("session_id", "==", session_id))
+
             if user_id:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
 
             docs = query.get()
             for doc in docs:
-                # return AgentSession.from_dict(doc.to_dict())
-                if self.mode == "agent":
-                    return AgentSession.from_dict(doc.to_dict())
-                elif self.mode == "workflow":
-                    return WorkflowSession.from_dict(doc.to_dict())
+                doc_dict = doc.to_dict()
+                if doc_dict:
+                    return self._parse_session(doc_dict)
+
             return None
         except Exception as e:
             logger.error(f"Error reading session: {e}")
             return None
 
-    def get_all_session_ids(
-        self, user_id: Optional[str] = None, entity_id: Optional[str] = None
-    ) -> List[str]:
-        """Get all session IDs matching the criteria
-        Args:
-            user_id: ID of the user associated with the session (optional)
-            entity_id: ID of the agent / workflow to read
-        Returns:
-            List of session IDs
-        """
+    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
+        """Get all session IDs, optionally filtered by user_id and/or entity_id."""
         try:
-            query = self.collection
-            if user_id:
-                query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if entity_id is not None:
-                if self.mode == "agent":
-                    query = query.where(filter=FieldFilter("agent_id", "==", entity_id))
-                elif self.mode == "workflow":
-                    query = query.where(
-                        filter=FieldFilter("workflow_id", "==", entity_id)
-                    )
-
+            query = self._build_query(self.collection, user_id, entity_id)
             docs = query.get()
-            # Sort in memory using Python's sorted function
-            sorted_docs = sorted(docs, key=lambda x: x.get("created_at"), reverse=True)
-            return [doc.get("session_id") for doc in sorted_docs]
+
+            # Sort by created_at descending and extract session IDs
+            session_ids: List[str] = []
+            doc_list = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                if doc_data:
+                    doc_list.append(doc_data)
+
+            sorted_docs = sorted(doc_list, key=lambda x: x.get("created_at", 0), reverse=True)
+
+            for doc_data in sorted_docs:
+                session_id = doc_data.get("session_id")
+                if session_id:
+                    session_ids.append(session_id)
+
+            return session_ids
         except Exception as e:
             logger.error(f"Error getting session IDs: {e}")
             return []
 
-    def get_all_sessions(
-        self, user_id: Optional[str] = None, agent_id: Optional[str] = None
-    ) -> List[AgentSession]:
-        """Get all sessions matching the criteria
-        Args:
-            user_id: ID of the user to read
-            agent_id: ID of the agent to read
-        Returns:
-            List[AgentSession]: List of sessions
-        """
+    def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
+        """Get all sessions, optionally filtered by user_id and/or entity_id."""
+        sessions: List[Session] = []
         try:
-            query = self.collection
-            if user_id:
-                query = query.where(filter=FieldFilter("user_id", "==", user_id))
-            if agent_id:
-                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
-
-            cursor = self.collection.find(query).sort("created_at", -1)
-            sessions = []
+            query = self._build_query(self.collection, user_id, entity_id)
             docs = query.get()
-            # Sort in memory using Python's sorted function
-            sorted_docs = sorted(docs, key=lambda x: x.get("created_at"), reverse=True)
-            for doc in sorted_docs:
-                if self.mode == "agent":
-                    _agent_session = AgentSession.from_dict(doc.to_dict())
-                    if _agent_session is not None:
-                        sessions.append(_agent_session)
-                elif self.mode == "workflow":
-                    _workflow_session = WorkflowSession.from_dict(doc.to_dict())
-                    if _workflow_session is not None:
-                        sessions.append(_workflow_session)
+
+            # Sort by created_at descending
+            doc_list = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                if doc_data:
+                    doc_list.append(doc_data)
+
+            sorted_docs = sorted(doc_list, key=lambda x: x.get("created_at", 0), reverse=True)
+
+            for doc_data in sorted_docs:
+                session = self._parse_session(doc_data)
+                if session:
+                    sessions.append(session)
+
             return sessions
         except Exception as e:
-            logger.error(f"Error getting sessions: {e}")
+            logger.error(f"Error getting all sessions: {e}")
             return []
 
-    def upsert(
-        self, session: AgentSession, create_and_retry: bool = True
-    ) -> Optional[AgentSession]:
-        """Upsert an agent session
-        Args:
-            session: Session object to upsert
-            create_and_retry: If True, create the session if it doesn't exist
-        Returns:
-            Session object if successful, None otherwise
-        """
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending."""
+        sessions: List[Session] = []
         try:
+            query = self._build_query(self.collection, user_id, entity_id)
+            docs = query.get()
+
+            # Sort by created_at descending
+            doc_list = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                if doc_data:
+                    doc_list.append(doc_data)
+
+            sorted_docs = sorted(doc_list, key=lambda x: x.get("created_at", 0), reverse=True)
+
+            # Apply limit
+            if limit is not None:
+                sorted_docs = sorted_docs[:limit]
+
+            for doc_data in sorted_docs:
+                session = self._parse_session(doc_data)
+                if session:
+                    sessions.append(session)
+
+            return sessions
+        except Exception as e:
+            logger.error(f"Error getting recent sessions: {e}")
+            return []
+
+    def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
+        """Insert or update a session in Firestore."""
+        try:
+            # Prepare session data
             session_dict = session.to_dict()
             now = datetime.now(timezone.utc)
             timestamp = int(now.timestamp())
@@ -180,16 +243,21 @@ class FirestoreStorage(Storage):
             if isinstance(session.session_id, UUID):
                 session_dict["session_id"] = str(session.session_id)
 
-            update_data = {**session_dict, "updated_at": timestamp}
+            # Add timestamps
+            session_dict["updated_at"] = timestamp
 
-            # Check if document exists
+            # Get document reference
             doc_ref = self.collection.document(session_dict["session_id"])
             doc = doc_ref.get()
 
+            # Add created_at for new documents
             if not doc.exists:
-                update_data["created_at"] = timestamp
+                session_dict["created_at"] = timestamp
 
-            doc_ref.set(update_data)
+            # Save to Firestore
+            doc_ref.set(session_dict)
+
+            # Return the updated session
             return self.read(session_id=session_dict["session_id"])
 
         except Exception as e:
@@ -197,46 +265,28 @@ class FirestoreStorage(Storage):
             return None
 
     def delete_session(self, session_id: Optional[str] = None) -> None:
-        """Delete an agent session
-        Args:
-            session_id: ID of the session to delete
-        """
+        """Delete a session from Firestore."""
         if session_id is None:
             logger.warning("No session_id provided for deletion")
             return
 
         try:
             self.collection.document(session_id).delete()
-            logger.debug(f"Successfully deleted session with session_id: {session_id}")
+            log_debug(f"Deleted session: {session_id}")
         except Exception as e:
             logger.error(f"Error deleting session: {e}")
 
     def drop(self) -> None:
-        """Delete all documents in the collection, dropping the collection"""
+        """Drop all sessions from storage."""
         try:
             self._delete_collection(self.collection)
+            log_debug(f"Dropped all sessions in collection: {self.collection_name}")
         except Exception as e:
             logger.error(f"Error dropping collection: {e}")
 
     def upgrade_schema(self) -> None:
-        """Placeholder for schema upgrades"""
+        """
+        Upgrade the schema of the storage.
+        For Firestore, this is a no-op as it's schema-less.
+        """
         pass
-
-    def __deepcopy__(self, memo):
-        """Create a deep copy of the FirestoreAgentStorage instance"""
-        from copy import deepcopy
-
-        # Create a new instance without calling __init__
-        cls = self.__class__
-        copied_obj = cls.__new__(cls)
-        memo[id(self)] = copied_obj
-
-        # Deep copy attributes
-        for k, v in self.__dict__.items():
-            if k in {"_client", "collection"}:
-                # Reuse Firestore connections without copying
-                setattr(copied_obj, k, v)
-            else:
-                setattr(copied_obj, k, deepcopy(v, memo))
-
-        return copied_obj
