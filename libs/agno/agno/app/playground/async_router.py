@@ -571,7 +571,7 @@ def get_async_playground_router(
             )
         return workflow_sessions
 
-    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
+    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
     ):
