@@ -15,7 +15,8 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.memory import Memory
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
 from agno.run.response import RunResponse
-from agno.run.workflow import RunResponseEvent
+from agno.run.response import RunResponseEvent
+from agno.run.workflow import RunResponseEvent as WorkflowRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team
@@ -202,7 +203,7 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
@@ -309,7 +310,7 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 async for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id

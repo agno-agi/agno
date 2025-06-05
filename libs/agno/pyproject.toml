@@ -123,7 +123,7 @@ cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
 weaviate = ["weaviate-client"]
-milvusdb = ["pymilvus"]
+milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 
@@ -133,6 +133,9 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+
+# Dependencies for AG-UI integration
+agui = ["ag-ui-protocol"]
 
 # Dependencies for Embedders
 huggingface = [
@@ -246,6 +249,7 @@ tests = [
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
+    "agno[agui]",
     "twine",
     "build",
 ]
@@ -290,6 +294,7 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "ag_ui.*",
   "agentql.*",
   "aiofiles.*",
   "altair.*",
