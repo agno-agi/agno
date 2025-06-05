@@ -117,7 +117,7 @@ class DaytonaTools(Toolkit):
             execution = self.sandbox.process.code_run(executable_code)
 
             self.last_execution = execution
-            self.result: str = execution.result
+            self.result = execution.result
             return self.result
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
@@ -128,7 +128,7 @@ class DaytonaTools(Toolkit):
             response = self.sandbox.process.code_run(code)
 
             self.last_execution = response
-            self.result: str = response.result
+            self.result = response.result
             return self.result
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})

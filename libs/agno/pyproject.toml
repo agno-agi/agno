@@ -319,6 +319,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "daytona_sdk.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
