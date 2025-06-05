@@ -36,6 +36,10 @@ print_heading "Installing agno in editable mode with tests dependencies"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[tests]
 VIRTUAL_ENV=${VENV_DIR} uv pip install yfinance
 
+VIRTUAL_ENV=${VENV_DIR} uv pip install google-genai==1.17.0
+VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
+VIRTUAL_ENV=${VENV_DIR} uv pip install crawl4ai==0.6.3
+
 print_heading "Installing agno-docker"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DOCKER_DIR}/requirements.txt"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DOCKER_DIR}/requirements.txt
