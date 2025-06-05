@@ -8,7 +8,7 @@ from pydantic import Field
 
 from agno.document import Document
 from agno.document.reader.markdown_reader import MarkdownReader
-from agno.document.reader.pdf_reader import PDFReader, PDFUrlReader
+from agno.document.reader.pdf_reader import PDFUrlReader
 from agno.document.reader.url_reader import URLReader
 from agno.knowledge.agent import AgentKnowledge
 from agno.utils.log import log_debug, log_info, logger
@@ -26,7 +26,6 @@ class LightRagKnowledgeBase(AgentKnowledge):
     urls: Optional[Union[List[str], List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     exclude_files: List[str] = Field(default_factory=list)
 
-    pdf_reader: PDFReader = PDFReader()
     pdf_url_reader: PDFUrlReader = PDFUrlReader()
     markdown_reader: MarkdownReader = MarkdownReader()
     url_reader: URLReader = URLReader()
