@@ -10,8 +10,10 @@ from agno.app.base import BaseAPIApp
 from agno.app.fastapi.async_router import get_async_router
 from agno.app.fastapi.sync_router import get_sync_router
 from agno.app.playground.settings import PlaygroundSettings
+from agno.app.utils import generate_id
 from agno.team.team import Team
 from agno.utils.log import log_info
+from agno.workflow.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ class FastAPIApp(BaseAPIApp):
         self,
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
+        workflows: Optional[List[Workflow]] = None,
         settings: Optional[PlaygroundSettings] = None,
         api_app: Optional[FastAPI] = None,
         router: Optional[APIRouter] = None,
@@ -36,6 +39,8 @@ class FastAPIApp(BaseAPIApp):
 
         self.agents: Optional[List[Agent]] = agents
         self.teams: Optional[List[Team]] = teams
+        self.workflows: Optional[List[Workflow]] = workflows
+        
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
@@ -66,12 +71,22 @@ class FastAPIApp(BaseAPIApp):
                         member.initialize_agent()
                     elif isinstance(member, Team):
                         member.initialize_team()
+                        
+                        
+        
+        if self.workflows:
+            for workflow in self.workflows:
+                if not workflow.app_id:
+                    workflow.app_id = self.app_id
+                if not workflow.workflow_id:
+                    workflow.workflow_id = generate_id(workflow.name)
+
 
     def get_router(self) -> APIRouter:
-        return get_sync_router(agents=self.agents, teams=self.teams)
+        return get_sync_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
 
     def get_async_router(self) -> APIRouter:
-        return get_async_router(agents=self.agents, teams=self.teams)
+        return get_async_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
 
     def serve(
         self,
