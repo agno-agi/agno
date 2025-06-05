@@ -10,7 +10,6 @@ luma_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[LumaLabTools()],  # Using the LumaLab tool we created
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
     instructions=[
         "You are an agent designed to generate videos using the Luma AI API.",

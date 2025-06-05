@@ -13,8 +13,9 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message
+from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -179,7 +180,12 @@ class Gemini(Model):
 
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = response_format
+            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
+
+            # Get the normalized schema for Gemini
+            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
+            gemini_schema = convert_schema(normalized_schema)
+            config["response_schema"] = gemini_schema
 
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
@@ -685,7 +691,7 @@ class Gemini(Model):
             model_response.role = self.role_map[response_message.role]
 
         # Add content
-        if response_message.parts is not None:
+        if response_message.parts is not None and len(response_message.parts) > 0:
             for part in response_message.parts:
                 # Extract text if present
                 if hasattr(part, "text") and part.text is not None:
@@ -743,6 +749,10 @@ class Gemini(Model):
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
+
+        # If we have no content but have a role, add a default empty content
+        if model_response.role and model_response.content is None and not model_response.tool_calls:
+            model_response.content = ""
 
         return model_response
 
@@ -851,9 +861,5 @@ class Gemini(Model):
 
         # Explicitly set client to None
         setattr(new_instance, "client", None)
-
-        # Clear the new model to remove any references to the old model
-        if hasattr(new_instance, "clear"):
-            new_instance.clear()
 
         return new_instance

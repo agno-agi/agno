@@ -38,29 +38,29 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        super().__init__(name="todoist", **kwargs)
-
         self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
         if not self.api_token:
             raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
 
         self.api = TodoistAPI(self.api_token)
 
-        # Register enabled functions
+        tools: List[Any] = []
         if create_task:
-            self.register(self.create_task)
+            tools.append(self.create_task)
         if get_task:
-            self.register(self.get_task)
+            tools.append(self.get_task)
         if update_task:
-            self.register(self.update_task)
+            tools.append(self.update_task)
         if close_task:
-            self.register(self.close_task)
+            tools.append(self.close_task)
         if delete_task:
-            self.register(self.delete_task)
+            tools.append(self.delete_task)
         if get_active_tasks:
-            self.register(self.get_active_tasks)
+            tools.append(self.get_active_tasks)
         if get_projects:
-            self.register(self.get_projects)
+            tools.append(self.get_projects)
+
+        super().__init__(name="todoist", tools=tools, **kwargs)
 
     def _task_to_dict(self, task: Any) -> Dict[str, Any]:
         """Convert a Todoist task to a dictionary with proper typing."""
@@ -74,16 +74,18 @@ class TodoistTools(Toolkit):
             "order": task.order,
             "priority": task.priority,
             "url": task.url,
-            "comment_count": task.comment_count,
             "creator_id": task.creator_id,
             "created_at": task.created_at,
             "labels": task.labels,
         }
+        if hasattr(task, "comment_count"):
+            task_dict["comment_count"] = task.comment_count
         if task.due:
             task_dict["due"] = {
                 "date": task.due.date,
                 "string": task.due.string,
-                "datetime": task.due.datetime,
+                "lang": task.due.lang,
+                "is_recurring": task.due.is_recurring,
                 "timezone": task.due.timezone,
             }
         return task_dict
@@ -115,7 +117,7 @@ class TodoistTools(Toolkit):
             )
             # Convert task to a dictionary and handle the Due object
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to create task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -125,7 +127,7 @@ class TodoistTools(Toolkit):
         try:
             task = self.api.get_task(task_id)
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to get task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -215,12 +217,13 @@ class TodoistTools(Toolkit):
     def get_active_tasks(self) -> str:
         """Get all active (not completed) tasks."""
         try:
-            tasks = self.api.get_tasks()
+            tasks_response = self.api.get_tasks()
+            tasks = list(tasks_response)[0]
             tasks_list = []
             for task in tasks:
                 task_dict = self._task_to_dict(task)
                 tasks_list.append(task_dict)
-            return json.dumps(tasks_list)
+            return json.dumps(tasks_list, default=str)
         except Exception as e:
             logger.error(f"Failed to get active tasks: {str(e)}")
             return json.dumps({"error": str(e)})
