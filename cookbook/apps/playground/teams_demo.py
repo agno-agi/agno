@@ -134,7 +134,6 @@ research_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
-    agent_id="research_agent",
     memory=memory,
     enable_user_memories=True,
     storage=PostgresStorage(
