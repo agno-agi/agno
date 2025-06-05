@@ -529,16 +529,16 @@ def get_sync_playground_router(
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
-    @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
+    @playground_router.get("/workflows/{workflow_id}/sessions")
     def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+            return JSONResponse(status_code=404, content="Workflow not found.")
 
         # Ensure storage is enabled for the workflow
         if not workflow.storage:
-            raise HTTPException(status_code=404, detail="Workflow does not have storage enabled")
+            return JSONResponse(status_code=404, content="Workflow does not have storage enabled.")
 
         # Retrieve all sessions for the given workflow and user
         try:
@@ -546,18 +546,21 @@ def get_sync_playground_router(
                 user_id=user_id, entity_id=workflow_id
             )  # type: ignore
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
+            return JSONResponse(status_code=500, content=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
-        return [
-            WorkflowSessionResponse(
-                title=get_session_title_from_workflow_session(session),
-                session_id=session.session_id,
-                session_name=session.session_data.get("session_name") if session.session_data else None,
-                created_at=session.created_at,
+        workflow_sessions: List[WorkflowSessionResponse] = []
+        for session in all_workflow_sessions:
+            title = get_session_title_from_workflow_session(session)
+            workflow_sessions.append(
+                {
+                    "title": title,
+                    "session_id": session.session_id,
+                    "session_name": session.session_data.get("session_name") if session.session_data else None,
+                    "created_at": session.created_at,
+                }
             )
-            for session in all_workflow_sessions
-        ]
+        return workflow_sessions
 
     @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
     def get_workflow_session(workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
