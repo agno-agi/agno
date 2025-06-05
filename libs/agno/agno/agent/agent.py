@@ -4807,7 +4807,7 @@ class Agent:
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}" # type: ignore
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),

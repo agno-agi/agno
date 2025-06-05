@@ -4,7 +4,6 @@ from agno.agent import Agent
 from agno.knowledge.pdf import PDFBytesKnowledgeBase
 from agno.vectordb.lancedb import LanceDb
 
-
 vector_db = LanceDb(
     table_name="recipes_async",
     uri="tmp/lancedb",
