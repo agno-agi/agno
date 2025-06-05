@@ -14,7 +14,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
     @property
     def document_lists(self) -> Iterator[List[Document]]:
         """Iterate over PDF URLs and yield lists of documents."""
-        if not self.urls:
+        if self.urls is None:
             raise ValueError("URLs are not set")
 
         for item in self.urls:

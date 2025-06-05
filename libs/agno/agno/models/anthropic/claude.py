@@ -526,12 +526,19 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            model_response.response_usage = {
-                "cache_write_tokens": response.usage.cache_creation_input_tokens,
-                "cached_tokens": response.usage.cache_read_input_tokens,
+            usage_dict = {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
             }
+
+            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+
+            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+
+            model_response.response_usage = usage_dict
+
         return model_response
 
     def parse_provider_response_delta(
@@ -606,12 +613,18 @@ class Claude(Model):
                         )
 
         if hasattr(response, "usage") and response.usage is not None:
-            model_response.response_usage = {
-                "cache_write_tokens": response.usage.cache_creation_input_tokens or 0,
-                "cached_tokens": response.usage.cache_read_input_tokens or 0,
+            usage_dict = {
                 "input_tokens": response.usage.input_tokens or 0,
                 "output_tokens": response.usage.output_tokens or 0,
             }
+
+            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
+                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
+
+            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
+                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+
+            model_response.response_usage = usage_dict
 
         # Capture the Beta response
         try:

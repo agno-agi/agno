@@ -7,7 +7,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[Crawl4aiTools(use_pruning=True)],
     instructions="You are a helpful assistant that can crawl the web and extract information. Use have access to crawl4ai tools to extract information from the web.",
-    show_tool_calls=True,
 )
 agent.print_response(
     "Give me a detailed summary of the Agno project from https://github.com/agno-agi/agno and what are its main features?"
