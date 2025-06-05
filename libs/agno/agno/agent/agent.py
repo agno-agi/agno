@@ -2435,7 +2435,9 @@ class Agent:
         import json
 
         self.model = cast(Model, self.model)
-
+        #Skipping tool without user_input_schema so that toolcall_id is not repeated
+        if not hasattr(tool, 'user_input_schema') or not tool.user_input_schema:
+           return
         user_input_result = [
             {"name": user_input_field.name, "value": user_input_field.value}
             for user_input_field in tool.user_input_schema or []
@@ -2482,7 +2484,7 @@ class Agent:
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
-    def _reject_tool_call(self, run_messages: RunMessages, tool: ToolExecution, session_id: Optional[str] = None):
+    def _reject_tool_call(self, run_messages: RunMessages, tool: ToolExecution):
         self.model = cast(Model, self.model)
         function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
         function_call.error = tool.confirmation_note or "Function call was rejected by the user"
@@ -2538,28 +2540,32 @@ class Agent:
                     deque(self._run_tool(run_messages, _t), maxlen=0)
                 else:
                     self._reject_tool_call(run_messages, _t)
+                    _t.confirmed = False
+                    _t.result = "Tool call was rejected"
+                    _t.tool_call_error = True 
                 _t.requires_confirmation = False
-
-            # Case 2: Handle external execution required tools
-            if _t.external_execution_required is not None and _t.external_execution_required is True:
-                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
-
-            # Case 3: Agentic user input required
-            if (
-                _t.tool_name == "get_user_input"
-                and _t.requires_user_input is not None
-                and _t.requires_user_input is True
-            ):
-                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
-                _t.requires_user_input = False
-
-            # Case 4: Handle user input required tools
-            if _t.requires_user_input is not None and _t.requires_user_input is True:
-                self._handle_user_input_update(tool=_t)
-                _t.requires_user_input = False
-                # Consume the generator without yielding
-                deque(self._run_tool(run_messages, _t), maxlen=0)
-
+            elif _t.requires_confirmation is None:
+                # Case 2: Handle external execution required tools
+                if _t.external_execution_required is not None and _t.external_execution_required is True:
+                    self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+    
+                # Case 3: Agentic user input required
+                if (
+                    _t.tool_name == "get_user_input"
+                    and _t.requires_user_input is not None
+                    and _t.requires_user_input is True
+                ):
+                    self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                    _t.requires_user_input = False
+    
+                # Case 4: Handle user input required tools
+                if _t.requires_user_input is not None and _t.requires_user_input is True:
+                    self._handle_user_input_update(tool=_t)
+                    _t.requires_user_input = False
+                    _t.answered = True
+                    # Consume the generator without yielding
+                    deque(self._run_tool(run_messages, _t), maxlen=0)
+    
     def _handle_tool_call_updates_stream(
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
     ) -> Iterator[RunResponse]:
@@ -2570,30 +2576,36 @@ class Agent:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     yield from self._run_tool(run_messages, _t, session_id)
-                elif _t.rejected is not None and _t.rejected is True:
-                    yield self._reject_tool_call(run_messages, _t, session_id)
+                else:
+                    self._reject_tool_call(run_messages, _t, session_id)
+                    _t.confirmed = False
+                    _t.result = "Tool call was rejected"
+                    _t.tool_call_error = True 
                 _t.requires_confirmation = False
+
+            elif _t.requires_confirmation is None:
             # Case 2: Handle external execution required tools
-            if _t.external_execution_required is not None and _t.external_execution_required is True:
-                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+                if _t.external_execution_required is not None and _t.external_execution_required is True:
+                    self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+    
+                # Case 3: Agentic user input required
+                if (
+                    _t.tool_name == "get_user_input"
+                    and _t.requires_user_input is not None
+                    and _t.requires_user_input is True
+                ):
+                    self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                    _t.requires_user_input = False
+                    _t.answered = True
+    
+                # Case 4: Handle user input required tools
+                if _t.requires_user_input is not None and _t.requires_user_input is True:
+                    self._handle_user_input_update(tool=_t)
 
-            # Case 3: Agentic user input required
-            if (
-                _t.tool_name == "get_user_input"
-                and _t.requires_user_input is not None
-                and _t.requires_user_input is True
-            ):
-                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
-                _t.requires_user_input = False
-                _t.answered = True
-
-            # Case 4: Handle user input required tools
-            if _t.requires_user_input is not None and _t.requires_user_input is True:
-                self._handle_user_input_update(tool=_t)
-                _t.answered = True
 
                 yield from self._run_tool(run_messages, _t, session_id)
                 _t.requires_user_input = False
+                _t.answered = True
 
     async def _ahandle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
@@ -2605,33 +2617,36 @@ class Agent:
                     async for _ in self._arun_tool(run_messages, _t):
                         pass
                 else:
-                    print(f"Rejected tool***************************: {_t.tool_name}")
+                    self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
-                    
-                    yield self._reject_tool_call(run_messages, _t)
+                    _t.result = "Tool call was rejected"
+                    _t.tool_call_error = True 
                 _t.requires_confirmation = False
 
+            elif _t.requires_confirmation is None:
 
-            # Case 2: Handle external execution required tools
-            if _t.external_execution_required is not None and _t.external_execution_required is True:
-                self._handle_external_execution_update(run_messages=run_messages, tool=_t)
-
-            # Case 3: Agentic user input required
-            if (
-                _t.tool_name == "get_user_input"
-                and _t.requires_user_input is not None
-                and _t.requires_user_input is True
-            ):
-                self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
-                _t.requires_user_input = False
-
-            # Case 4: Handle user input required tools
-            if _t.requires_user_input is not None and _t.requires_user_input is True:
-                self._handle_user_input_update(tool=_t)
-
-                async for _ in self._arun_tool(run_messages, _t):
-                    pass
-                _t.requires_user_input = False
+                 # Case 2: Handle external execution required tools
+                if _t.external_execution_required is not None and _t.external_execution_required is True:
+                    self._handle_external_execution_update(run_messages=run_messages, tool=_t)
+       
+                # Case 3: Agentic user input required
+                if (
+                    _t.tool_name == "get_user_input"
+                    and _t.requires_user_input is not None
+                    and _t.requires_user_input is True
+                ):
+                    self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
+                    _t.requires_user_input = False
+                    _t.answered = True
+       
+                # Case 4: Handle user input required tools
+                if _t.requires_user_input is not None and _t.requires_user_input is True:
+                   self._handle_user_input_update(tool=_t)
+   
+                   async for _ in self._arun_tool(run_messages, _t):
+                       pass
+                   _t.requires_user_input = False 
+                   _t.answered = True
 
     async def _ahandle_tool_call_updates_stream(
         self, run_response: RunResponse, run_messages: RunMessages, session_id: str
@@ -2645,12 +2660,10 @@ class Agent:
                     async for event in self._arun_tool(run_messages, _t):
                         yield event
                 else:
-                    print(f"Rejected tool***************************: {_t.tool_name}")
+                    self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
                     _t.result = "Tool call was rejected"
                     _t.tool_call_error = True 
-                    _t.requires_confirmation = False
-                    self._reject_tool_call(run_messages, _t, session_id)
                 _t.requires_confirmation = False
 
             elif _t.requires_confirmation is None:
@@ -2672,6 +2685,7 @@ class Agent:
                 # # Case 4: Handle user input required tools
                 if _t.requires_user_input is not None and _t.requires_user_input is True:
                     self._handle_user_input_update(tool=_t)
+
     
                     async for event in self._arun_tool(run_messages, _t):
                         yield event
