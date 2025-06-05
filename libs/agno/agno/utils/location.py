@@ -7,7 +7,9 @@ from agno.utils.log import log_warning
 def get_location() -> Dict[str, Any]:
     """Get approximate location using IP geolocation."""
     try:
-        response = requests.get('https://ipapi.co/json/', timeout=5)
+        response = requests.get('https://api.ipify.org?format=json', timeout=5)
+        ip = response.json()['ip']
+        response = requests.get(f'https://ipapi.co/{ip}/json/', timeout=5)
         if response.status_code == 200:
             data = response.json()
             return {
