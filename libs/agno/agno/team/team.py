@@ -4594,16 +4594,16 @@ class Team:
 
         # Then add memories to the system prompt
         if self.memory:
-            if isinstance(self.memory, Memory) and (self.add_memory_references):
+            if isinstance(self.memory, Memory) and self.add_memory_references:
                 if not user_id:
                     user_id = "default"
-                user_memories = self.memory.memories.get(user_id, {})  # type: ignore
+                user_memories = self.memory.get_user_memories(user_id=user_id) # type: ignore
                 if user_memories and len(user_memories) > 0:
                     system_message_content += (
                         "You have access to memories from previous interactions with the user that you can use:\n\n"
                     )
                     system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in user_memories.values():  # type: ignore
+                    for _memory in user_memories:  # type: ignore
                         system_message_content += f"\n- {_memory.memory}"
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (
