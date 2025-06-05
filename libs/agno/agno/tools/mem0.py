@@ -18,6 +18,7 @@ class Mem0Tools(Toolkit):
         config: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        infer: bool = True,
         **kwargs,
     ):
         super().__init__(
@@ -33,6 +34,7 @@ class Mem0Tools(Toolkit):
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
         self.client: Union[Memory, MemoryClient]
+        self.infer = infer
 
         try:
             if self.api_key:
@@ -97,6 +99,7 @@ class Mem0Tools(Toolkit):
             result = self.client.add(
                 messages_list,
                 user_id=resolved_user_id,
+                infer=self.infer,
             )
             return json.dumps(result)
         except Exception as e:
