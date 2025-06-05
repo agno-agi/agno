@@ -2580,8 +2580,6 @@ class Agent:
             function_call=function_call,
             success=False,
         )
-
-        # DO NOT add function_call_result to messages - this creates invalid tool messages for OpenAI
         run_messages.messages.append(function_call_result)
 
     async def _arun_tool(
