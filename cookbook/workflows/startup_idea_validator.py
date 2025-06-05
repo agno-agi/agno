@@ -263,6 +263,8 @@ if __name__ == "__main__":
         session_id=f"validate-startup-idea-{url_safe_idea}",
         storage=SqliteStorage(
             table_name="validate_startup_ideas_workflow",
+            mode="workflow",
+            auto_upgrade_schema=True,
             db_file="tmp/agno_workflows.db",
         ),
     )

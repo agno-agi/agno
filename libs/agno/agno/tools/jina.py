@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from pydantic import BaseModel, Field, HttpUrl
@@ -28,8 +28,6 @@ class JinaReaderTools(Toolkit):
         search_query: bool = False,
         **kwargs,
     ):
-        super().__init__(name="jina_reader_tools", **kwargs)
-
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
             api_key=api_key,
             base_url=base_url,
@@ -38,10 +36,13 @@ class JinaReaderTools(Toolkit):
             timeout=timeout,
         )
 
+        tools: List[Any] = []
         if read_url:
-            self.register(self.read_url)
+            tools.append(self.read_url)
         if search_query:
-            self.register(self.search_query)
+            tools.append(self.search_query)
+
+        super().__init__(name="jina_reader_tools", tools=tools, **kwargs)
 
     def read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""

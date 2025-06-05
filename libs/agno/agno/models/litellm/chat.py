@@ -1,7 +1,9 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Type, Union
+
+from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -103,8 +105,7 @@ class LiteLLM(Model):
 
         return formatted_messages
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_kwargs(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -123,8 +124,8 @@ class LiteLLM(Model):
             base_params["api_key"] = self.api_key
         if self.api_base:
             base_params["api_base"] = self.api_base
-        if self._tools:
-            base_params["tools"] = self._tools
+        if tools:
+            base_params["tools"] = tools
             base_params["tool_choice"] = "auto"
 
         # Add additional request params if provided
@@ -134,28 +135,52 @@ class LiteLLM(Model):
 
         return request_params
 
-    def invoke(self, messages: List[Message]) -> Mapping[str, Any]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Mapping[str, Any]:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs
+        completion_kwargs = self.get_request_kwargs(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         return self.get_client().completion(**completion_kwargs)
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Mapping[str, Any]]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[Mapping[str, Any]]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs
+        completion_kwargs = self.get_request_kwargs(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
         return self.get_client().completion(**completion_kwargs)
 
-    async def ainvoke(self, messages: List[Message]) -> Mapping[str, Any]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Mapping[str, Any]:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs
+        completion_kwargs = self.get_request_kwargs(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         return await self.get_client().acompletion(**completion_kwargs)
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[Any]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.request_kwargs
+        completion_kwargs = self.get_request_kwargs(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
 
@@ -169,7 +194,7 @@ class LiteLLM(Model):
             log_error(f"Error in streaming response: {e}")
             raise
 
-    def parse_provider_response(self, response: Any) -> ModelResponse:
+    def parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
         """Parse the provider response."""
         model_response = ModelResponse()
 
@@ -189,12 +214,8 @@ class LiteLLM(Model):
                     }
                 )
 
-        if hasattr(response, "usage"):
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+        if response.usage is not None:
+            model_response.response_usage = response.usage
 
         return model_response
 

@@ -130,7 +130,7 @@ def _process_image_url(image_url: str) -> Dict[str, Any]:
         raise ValueError("Image URL must start with 'data:image' or 'http(s)://'.")
 
 
-def _process_image(image: Image) -> Optional[Dict[str, Any]]:
+def process_image(image: Image) -> Optional[Dict[str, Any]]:
     """Process an image based on the format."""
     image_payload: Optional[Dict[str, Any]] = None  # Initialize
     try:
@@ -185,7 +185,7 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
     # Add images to the message content
     for image in images:
         try:
-            image_data = _process_image(image)
+            image_data = process_image(image)
             if image_data:
                 image_messages.append(image_data)
         except Exception as e:

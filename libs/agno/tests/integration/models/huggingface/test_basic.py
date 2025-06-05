@@ -166,29 +166,6 @@ def test_json_response_mode():
     assert response.content.plot is not None
 
 
-def test_structured_outputs_deprecated():
-    class MovieScript(BaseModel):
-        title: str = Field(..., description="Movie title")
-        genre: str = Field(..., description="Movie genre")
-        plot: str = Field(..., description="Brief plot summary")
-
-    agent = Agent(
-        model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
-        structured_outputs=False,  # They don't support native structured outputs
-        telemetry=False,
-        monitoring=False,
-        response_model=MovieScript,
-    )
-
-    response = agent.run("Create a movie about time travel")
-
-    # Verify structured output
-    assert isinstance(response.content, MovieScript)
-    assert response.content.title is not None
-    assert response.content.genre is not None
-    assert response.content.plot is not None
-
-
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
@@ -212,7 +189,6 @@ def test_persistent_memory():
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[
