@@ -139,3 +139,8 @@ app = playground.get_app()
 
 if __name__ == "__main__":
     playground.serve(app="hitl:app", reload=True) 
+
+
+# Send an email with the body 'What is the weather in Tokyo?
+# Fetch the top 2 hackernews stories.
+# Send an email with the subject 'Hello' and the body 'Hello, world!
