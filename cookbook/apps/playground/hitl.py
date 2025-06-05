@@ -4,22 +4,21 @@ This example shows how to use the UserControlFlowTools to allow the agent to get
 If the agent doesn't have enough information to complete a task, it will use the toolkit to get the information it needs from the user.
 """
 
+import json
 from typing import Any, Dict, List
 
+import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground, serve_playground_app
 from agno.storage.postgres import PostgresStorage
+from agno.tools import tool
 from agno.tools.function import UserInputField
 from agno.tools.toolkit import Toolkit
 from agno.tools.user_control_flow import UserControlFlowTools
 from agno.utils import pprint
-from agno.tools import tool
-import httpx
-import json
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 
 
 @tool(requires_confirmation=True)
@@ -48,6 +47,7 @@ def get_top_hackernews_stories(num_stories: int) -> str:
         all_stories.append(story)
     return json.dumps(all_stories)
 
+
 @tool(requires_user_input=True, user_input_fields=["to_address"])
 def send_email(subject: str, body: str, to_address: str) -> str:
     """
@@ -59,6 +59,7 @@ def send_email(subject: str, body: str, to_address: str) -> str:
         to_address (str): The address to send the email to.
     """
     return f"Sent email to {to_address} with subject {subject} and body {body}"
+
 
 class EmailTools(Toolkit):
     def __init__(self, *args, **kwargs):
@@ -99,8 +100,6 @@ class EmailTools(Toolkit):
         ]
 
 
-
-
 user_input_required_agent = Agent(
     agent_id="user-input-required-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -130,8 +129,12 @@ confirmation_required_agent = Agent(
     ),
 )
 playground = Playground(
-    agents=[agentic_user_input_agent, confirmation_required_agent, user_input_required_agent],
-    app_id="hitl-playground-app", 
+    agents=[
+        agentic_user_input_agent,
+        confirmation_required_agent,
+        user_input_required_agent,
+    ],
+    app_id="hitl-playground-app",
     name="HITL Playground",
     description="A playground for HITL",
 )
@@ -139,7 +142,7 @@ playground = Playground(
 app = playground.get_app()
 
 if __name__ == "__main__":
-    playground.serve(app="hitl:app", reload=True) 
+    playground.serve(app="hitl:app", reload=True)
 
 
 # Send an email with the body 'What is the weather in Tokyo?
