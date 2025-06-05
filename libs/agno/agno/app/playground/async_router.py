@@ -109,7 +109,7 @@ async def team_chat_response_streamer(
     except Exception as e:
         import traceback
 
-        traceback.print_exc(limit=3)
+        traceback.print_exc()
         error_response = TeamRunResponseErrorEvent(
             content=str(e),
         )

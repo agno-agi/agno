@@ -35,12 +35,17 @@ class BaseRunResponseEvent:
                 "audio",
                 "response_audio",
                 "citations",
+                "member_responses",
             ]
         }
+        
         if hasattr(self, "extra_data") and self.extra_data is not None:
             _dict["extra_data"] = (
                 self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
             )
+            
+        if hasattr(self, "member_responses") and self.member_responses:
+            _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
 
         if hasattr(self, "images") and self.images is not None:
             _dict["images"] = []
@@ -111,6 +116,7 @@ class BaseRunResponseEvent:
         except Exception:
             log_error("Failed to convert response to json", exc_info=True)
             raise
+        
 
         return json.dumps(_dict, indent=2)
 
