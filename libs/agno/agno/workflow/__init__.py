@@ -1,4 +1,4 @@
-from agno.run.workflow import WorkflowRunResponseStartedEvent, WorkflowCompletedEvent, RunEvent, RunResponseEvent
+from agno.run.workflow import WorkflowRunResponseStartedEvent, WorkflowCompletedEvent, RunEvent, WorkflowRunResponseEvent
 from agno.workflow.workflow import RunResponse, Workflow, WorkflowSession
 
 __all__ = [
@@ -6,7 +6,7 @@ __all__ = [
     "RunResponse",
     "Workflow",
     "WorkflowSession",
-    "RunResponseEvent",
+    "WorkflowRunResponseEvent",
     "WorkflowRunResponseStartedEvent",
     "WorkflowCompletedEvent",
 ]

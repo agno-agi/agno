@@ -1,16 +1,17 @@
 import json
-from typing import AsyncIterable, Iterable, Union
+from typing import AsyncIterable, Iterable, Union, get_args
 
 from pydantic import BaseModel
 
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
+from agno.run.workflow import WorkflowRunResponseEvent
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
 
 def pprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]],
+    run_response: Union[RunResponse, Iterable[RunResponseEvent], TeamRunResponse, Iterable[TeamRunResponseEvent]],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
@@ -24,7 +25,7 @@ def pprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
+    if isinstance(run_response, tuple) or isinstance(run_response, TeamRunResponse):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -52,7 +53,7 @@ def pprint_run_response(
             response_timer = Timer()
             response_timer.start()
             for resp in run_response:
-                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(
+                if (isinstance(resp, tuple(get_args(RunResponseEvent))) or isinstance(resp, tuple(get_args(TeamRunResponseEvent))) or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))) and hasattr(resp, "content") and isinstance(
                     resp.content, str
                 ):
                     streaming_response_content += resp.content
@@ -111,7 +112,7 @@ async def apprint_run_response(
             response_timer.start()
 
             async for resp in run_response:
-                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(
+                if (isinstance(resp, tuple(get_args(RunResponseEvent))) or isinstance(resp, tuple(get_args(TeamRunResponseEvent))) or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))) and hasattr(resp, "content") and isinstance(
                     resp.content, str
                 ):
                     streaming_response_content += resp.content

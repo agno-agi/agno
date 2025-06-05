@@ -56,7 +56,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
     content_type: str = "str"
 
 
-RunResponseEvent = Union[
+WorkflowRunResponseEvent = Union[
     WorkflowRunResponseStartedEvent,
     WorkflowCompletedEvent
 ]

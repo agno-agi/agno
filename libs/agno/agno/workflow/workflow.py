@@ -16,7 +16,8 @@ from agno.memory.v2.memory import Memory
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
 from agno.run.response import RunResponse
 from agno.run.response import RunResponseEvent
-from agno.run.workflow import RunResponseEvent as WorkflowRunResponseEvent
+from agno.run.team import TeamRunResponseEvent
+from agno.run.workflow import WorkflowRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team
@@ -203,14 +204,14 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
                         item.workflow_id = self.workflow_id
 
                         # Update the run_response with the content from the result
-                        if item.content is not None and isinstance(item.content, str):
+                        if hasattr(item, "content") and item.content is not None and isinstance(item.content, str):
                             self.run_response.content += item.content
                     else:
                         logger.warning(f"Workflow.run() should only yield RunResponseEvent objects, got: {type(item)}")
@@ -310,14 +311,14 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 async for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
                         item.workflow_id = self.workflow_id
 
                         # Update the run_response with the content from the result
-                        if item.content is not None and isinstance(item.content, str):
+                        if hasattr(item, "content") and item.content is not None and isinstance(item.content, str):
                             self.run_response.content += item.content
                     else:
                         logger.warning(f"Workflow.arun() should only yield RunResponseEvent objects, got: {type(item)}")
