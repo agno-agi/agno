@@ -2,14 +2,13 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Optional
 
-from daytona_sdk import Daytona
-
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import logger
 
 try:
     from daytona_sdk import (
+        Daytona,
         CodeLanguage,
         CreateSandboxParams,
         DaytonaConfig,
@@ -38,7 +37,7 @@ class DaytonaTools(Toolkit):
         timeout: int = 300,  # 5 minutes default timeout
         **kwargs,
     ):
-        """Initialize Daytona Toolkit, useful for remote code execution.
+        """Daytona Toolkit for remote code execution.
 
         Args:
             api_key: Daytona API key (defaults to DAYTONA_API_KEY environment variable)
@@ -60,9 +59,6 @@ class DaytonaTools(Toolkit):
             raise ValueError("DAYTONA_API_KEY not set. Please set the DAYTONA_API_KEY environment variable.")
 
         self.api_url = api_url or getenv("DAYTONA_API_URL")
-        if not self.api_url:
-            raise ValueError("DAYTONA_API_URL not set. Please set the DAYTONA_API_URL environment variable.")
-
         self.sandbox_target_region = sandbox_target_region
         self.organization_id = organization_id
         self.sandbox_language = sandbox_language
