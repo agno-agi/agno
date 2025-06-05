@@ -12,6 +12,9 @@ basic_agent = Agent(
 
 slack_api_app = SlackAPI(
     agent=basic_agent,
+    name="Basic Agent Slack",
+    app_id="basic_agent",
+    description="A basic agent that can answer questions and help with tasks.",
 )
 app = slack_api_app.get_app()
 

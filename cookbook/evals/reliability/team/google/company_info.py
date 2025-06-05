@@ -31,6 +31,7 @@ expected_tool_calls = [
 def evaluate_team_reliability():
     response: TeamRunResponse = team.run("What is the current stock price of NVDA?")
     evaluation = ReliabilityEval(
+        name="Team Reliability Evaluation",
         team_response=response,
         expected_tool_calls=expected_tool_calls,
     )
