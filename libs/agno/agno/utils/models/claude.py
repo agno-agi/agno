@@ -256,6 +256,10 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                         type="thinking",
                     )
                 )
+            if message.thinking is not None and message.provider_data is None:
+                content.append(
+                    TextBlock(text=f"Thinking: {message.thinking}", type="text")
+                )
 
             if message.redacted_thinking is not None:
                 from anthropic.types import RedactedThinkingBlock
@@ -277,6 +281,5 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
-
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
