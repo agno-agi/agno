@@ -4092,9 +4092,13 @@ class Agent:
                 self.memory.clear()
         self.session_id = str(uuid4())
         self.load_session(force=True)
+    
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""
+        import re
+        import string
+
         if not isinstance(msg, str):
             return msg
 
@@ -4105,7 +4109,21 @@ class Agent:
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
-        return self._formatter.format(msg, **format_variables)  # type: ignore
+        converted_msg = msg
+        for var_name in format_variables.keys():
+            # Only convert standalone {var_name} patterns, not nested ones
+            pattern = r"\{" + re.escape(var_name) + r"\}"
+            replacement = "${" + var_name + "}"
+            converted_msg = re.sub(pattern, replacement, converted_msg)
+
+        # Use Template to safely substitute variables
+        template = string.Template(converted_msg)
+        try:
+            result = template.safe_substitute(format_variables)
+            return result
+        except Exception as e:
+            log_warning(f"Template substitution failed: {e}")
+            return msg
 
     def get_system_message(self, session_id: str, user_id: Optional[str] = None) -> Optional[Message]:
         """Return the system message for the Agent.

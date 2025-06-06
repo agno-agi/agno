@@ -4844,17 +4844,38 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
 
-    def _format_message_with_state_variables(self, message: str, user_id: Optional[str] = None) -> Any:
+    
+    def _format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""
+        import re
+        import string
+
+        if not isinstance(msg, str):
+            return msg
+
         format_variables = ChainMap(
             self.session_state or {},
             self.team_session_state or {},
             self.context or {},
             self.extra_data or {},
-            {"user_id": user_id} if user_id is not None else {},
+            {"user_id": self.user_id} if self.user_id is not None else {},
         )
-        return self._formatter.format(message, **format_variables)  # type: ignore
+        converted_msg = msg
+        for var_name in format_variables.keys():
+            # Only convert standalone {var_name} patterns, not nested ones
+            pattern = r"\{" + re.escape(var_name) + r"\}"
+            replacement = "${" + var_name + "}"
+            converted_msg = re.sub(pattern, replacement, converted_msg)
 
+        # Use Template to safely substitute variables
+        template = string.Template(converted_msg)
+        try:
+            result = template.safe_substitute(format_variables)
+            return result
+        except Exception as e:
+            log_warning(f"Template substitution failed: {e}")
+            return msg
+        
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
