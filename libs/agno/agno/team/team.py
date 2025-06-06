@@ -740,7 +740,9 @@ class Team:
                         )
 
             if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters)
+                user_message = self._get_user_message(
+                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     session_id=session_id,
@@ -1205,7 +1207,9 @@ class Team:
                         )
 
             if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters)
+                user_message = self._get_user_message(
+                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     session_id=session_id,
@@ -4777,7 +4781,15 @@ class Team:
                 run_messages.messages += history_copy
 
         # 3. Add user message to run_messages
-        user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=knowledge_filters, **kwargs)
+        user_message = self._get_user_message(
+            message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            **kwargs,
+        )
 
         # Add user message to run_messages
         if user_message is not None:
@@ -4828,8 +4840,7 @@ class Team:
                 log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
             except Exception as e:
                 log_warning(f"Failed to get references: {e}")
-        
-        
+
         # Build user message if message is None, str or list
         user_message_content: str = ""
         if isinstance(message, str) or isinstance(message, list):
