@@ -40,7 +40,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
 
-        return FileMedia(content=content, mime_type=file.content_type)
+        return FileMedia(content=content)
     except Exception as e:
         logger.error(f"Error processing document {file.filename}: {e}")
         return None
