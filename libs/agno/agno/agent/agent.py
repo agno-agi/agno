@@ -128,7 +128,7 @@ class Agent:
     # Signature:
     # def retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
-    retriever: Optional[Callable[..., Optional[List[Dict]]]] = None
+    retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Storage ---
@@ -322,7 +322,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
-        retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
+        retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         storage: Optional[Storage] = None,
         extra_data: Optional[Dict[str, Any]] = None,
@@ -3365,7 +3365,7 @@ class Agent:
                 )
 
             # Parse messages if provided
-            if messages is not None and len(messages) > 0:
+            if self.enable_user_memories and messages is not None and len(messages) > 0:
                 parsed_messages = []
                 for _im in messages:
                     if isinstance(_im, Message):
@@ -3420,7 +3420,7 @@ class Agent:
             )
 
         # Parse messages if provided
-        if messages is not None and len(messages) > 0:
+        if self.enable_user_memories and messages is not None and len(messages) > 0:
             parsed_messages = []
             for _im in messages:
                 if isinstance(_im, Message):
@@ -4198,6 +4198,7 @@ class Agent:
         # 3.2.3 Add the current location
         if self.add_location_to_instructions:
             from agno.utils.location import get_location
+
             location = get_location()
             if location:
                 location_str = ", ".join(
@@ -4441,23 +4442,26 @@ class Agent:
             else:
                 raise Exception("message must be a string or a callable when add_references is True")
 
-            retrieval_timer = Timer()
-            retrieval_timer.start()
-            docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                query=message_str, filters=knowledge_filters, **kwargs
-            )
-            if docs_from_knowledge is not None:
-                references = MessageReferences(
-                    query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+            try:
+                retrieval_timer = Timer()
+                retrieval_timer.start()
+                docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                    query=message_str, filters=knowledge_filters, **kwargs
                 )
-                # Add the references to the run_response
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
-            retrieval_timer.stop()
-            log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                if docs_from_knowledge is not None:
+                    references = MessageReferences(
+                        query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    )
+                    # Add the references to the run_response
+                    if self.run_response.extra_data is None:
+                        self.run_response.extra_data = RunResponseExtraData()
+                    if self.run_response.extra_data.references is None:
+                        self.run_response.extra_data.references = []
+                    self.run_response.extra_data.references.append(references)
+                retrieval_timer.stop()
+                log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            except Exception as e:
+                log_warning(f"Failed to get references: {e}")
 
         # 1. If the user_message is provided, use that.
         if self.user_message is not None:
@@ -5065,7 +5069,7 @@ class Agent:
 
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant docs from the knowledge base to answer a query.
 
         Args:
@@ -5107,8 +5111,8 @@ class Agent:
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
-                log_error(f"Retriever failed: {e}")
-                return None
+                log_warning(f"Retriever failed: {e}")
+                raise e
 
         # Use knowledge base search
         try:
@@ -5133,11 +5137,11 @@ class Agent:
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
             log_warning(f"Error searching knowledge base: {e}")
-            return None
+            raise e
 
     async def aget_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
 
@@ -5173,8 +5177,8 @@ class Agent:
 
                 return result
             except Exception as e:
-                log_error(f"Retriever failed: {e}")
-                return None
+                log_warning(f"Retriever failed: {e}")
+                raise e
 
         # Use knowledge base search
         try:
@@ -5199,9 +5203,9 @@ class Agent:
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
             log_warning(f"Error searching knowledge base: {e}")
-            return None
+            raise e
 
-    def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
+    def convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
         if docs is None or len(docs) == 0:
             return ""
 
@@ -5588,7 +5592,10 @@ class Agent:
             from agno.reasoning.openai import is_openai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
+                reasoning_model=reasoning_model,
+                monitoring=self.monitoring,
+                telemetry=self.telemetry,
+                debug_mode=self.debug_mode,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5799,7 +5806,10 @@ class Agent:
             from agno.reasoning.openai import is_openai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model, monitoring=self.monitoring
+                reasoning_model=reasoning_model,
+                monitoring=self.monitoring,
+                telemetry=self.telemetry,
+                debug_mode=self.debug_mode,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
