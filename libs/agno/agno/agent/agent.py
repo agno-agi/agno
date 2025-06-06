@@ -5737,7 +5737,7 @@ class Agent:
                             log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                             break
 
-                        reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
+                        reasoning_steps = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
                     if self.stream_intermediate_steps:
@@ -5968,7 +5968,7 @@ class Agent:
                             log_warning("Reasoning error. Reasoning steps are empty, continuing regular session...")
                             break
 
-                        reasoning_steps: List[ReasoningStep] = reasoning_agent_response.content.reasoning_steps
+                        reasoning_steps = reasoning_agent_response.content.reasoning_steps
                     all_reasoning_steps.extend(reasoning_steps)
                     # Yield reasoning steps
                     if self.stream_intermediate_steps:
