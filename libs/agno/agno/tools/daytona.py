@@ -8,9 +8,9 @@ from agno.utils.log import logger
 
 try:
     from daytona_sdk import (
-        Daytona,
         CodeLanguage,
         CreateSandboxParams,
+        Daytona,
         DaytonaConfig,
         Sandbox,
         SandboxTargetRegion,
