@@ -4864,10 +4864,10 @@ class Team:
                 and references.references is not None
                 and len(references.references) > 0
             ):
-                user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-                user_msg_content += "<references>\n"
-                user_msg_content += self._convert_documents_to_string(references.references) + "\n"
-                user_msg_content += "</references>"
+                user_message_content += "\n\nUse the following references from the knowledge base if it helps:\n"
+                user_message_content += "<references>\n"
+                user_message_content += self._convert_documents_to_string(references.references) + "\n"
+                user_message_content += "</references>"
             # Add context to user message
             if self.add_context and self.context is not None:
                 user_message_content += "\n\n<context>\n"
