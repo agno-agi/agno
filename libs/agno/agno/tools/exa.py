@@ -66,7 +66,7 @@ class ExaTools(Toolkit):
         show_results: bool = False,
         model: Optional[str] = None,
         timeout: int = 30,
-        research_model: Optional[Literal["exa-research", "exa-research-pro"]] = "exa-research",
+        research_model: Literal["exa-research", "exa-research-pro"] = "exa-research",
         **kwargs,
     ):
         self.api_key = api_key or getenv("EXA_API_KEY")
@@ -93,7 +93,7 @@ class ExaTools(Toolkit):
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
-        self.research_model: Optional[Literal["exa-research", "exa-research-pro"]] = research_model
+        self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
         tools: List[Any] = []
         if search:
@@ -341,7 +341,6 @@ class ExaTools(Toolkit):
         """
         try:
             log_debug(f"Creating research task with instructions: {instructions}")
-            log_debug(f"Research model: {self.research_model}")
             log_debug(f"Output schema: {output_schema}")
 
             task_kwargs: Dict[str, Any] = {
