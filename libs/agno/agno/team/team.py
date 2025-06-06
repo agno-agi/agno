@@ -148,12 +148,15 @@ class Team:
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
+
+    # If True, add references to the user prompt
+    add_references: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
     # def retriever(team: Team, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
-    retriever: Optional[Callable[..., Optional[List[Dict]]]] = None
+    retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Tools ---
@@ -269,8 +272,9 @@ class Team:
         add_context: bool = False,
         knowledge: Optional[AgentKnowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_references: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
-        retriever: Optional[Callable[..., Optional[List[Dict]]]] = None,
+        retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
@@ -338,6 +342,7 @@ class Team:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
+        self.add_references = add_references
         self.retriever = retriever
         self.references_format = references_format
 
@@ -735,7 +740,9 @@ class Team:
                         )
 
             if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
+                user_message = self._get_user_message(
+                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     session_id=session_id,
@@ -806,6 +813,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     )
                 else:
@@ -817,6 +825,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     )
                 self.run_messages = run_messages
@@ -1198,7 +1207,9 @@ class Team:
                         )
 
             if self.mode == "route":
-                user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files)
+                user_message = self._get_user_message(
+                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
                     session_id=session_id,
@@ -1267,6 +1278,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     )
                 else:
@@ -1278,6 +1290,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        knowledge_filters=effective_filters,
                         **kwargs,
                     )
 
@@ -4717,6 +4730,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4767,7 +4781,15 @@ class Team:
                 run_messages.messages += history_copy
 
         # 3. Add user message to run_messages
-        user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, **kwargs)
+        user_message = self._get_user_message(
+            message,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            **kwargs,
+        )
 
         # Add user message to run_messages
         if user_message is not None:
@@ -4783,8 +4805,42 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
+        # Get references from the knowledge base to use in the user message
+        references = None
+        self.run_response = cast(TeamRunResponse, self.run_response)
+        if self.add_references and message:
+            message_str: str
+            if isinstance(message, str):
+                message_str = message
+            elif callable(message):
+                message_str = message(agent=self)
+            else:
+                raise Exception("message must be a string or a callable when add_references is True")
+
+            try:
+                retrieval_timer = Timer()
+                retrieval_timer.start()
+                docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                    query=message_str, filters=knowledge_filters, **kwargs
+                )
+                if docs_from_knowledge is not None:
+                    references = MessageReferences(
+                        query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
+                    )
+                    # Add the references to the run_response
+                    if self.run_response.extra_data is None:
+                        self.run_response.extra_data = RunResponseExtraData()
+                    if self.run_response.extra_data.references is None:
+                        self.run_response.extra_data.references = []
+                    self.run_response.extra_data.references.append(references)
+                retrieval_timer.stop()
+                log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+            except Exception as e:
+                log_warning(f"Failed to get references: {e}")
+
         # Build user message if message is None, str or list
         user_message_content: str = ""
         if isinstance(message, str) or isinstance(message, list):
@@ -4801,6 +4857,17 @@ class Team:
                 else:
                     user_message_content = "\n".join(message)
 
+            # Add references to user message
+            if (
+                self.add_references
+                and references is not None
+                and references.references is not None
+                and len(references.references) > 0
+            ):
+                user_message_content += "\n\nUse the following references from the knowledge base if it helps:\n"
+                user_message_content += "<references>\n"
+                user_message_content += self._convert_documents_to_string(references.references) + "\n"
+                user_message_content += "</references>"
             # Add context to user message
             if self.add_context and self.context is not None:
                 user_message_content += "\n\n<context>\n"
@@ -4817,7 +4884,7 @@ class Team:
                 **kwargs,
             )
 
-        # 3. Build the default user message for the Agent
+        # Build the default user message for the Agent
         elif message is None:
             # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:
@@ -4834,10 +4901,10 @@ class Team:
                 # If the message is None, return None
                 return None
 
-        # 3.2 If message is provided as a Message, use it directly
+        # If message is provided as a Message, use it directly
         elif isinstance(message, Message):
             return message
-        # 3.3 If message is provided as a dict, try to validate it as a Message
+        # If message is provided as a dict, try to validate it as a Message
         elif isinstance(message, dict):
             try:
                 return Message.model_validate(message)
@@ -6660,7 +6727,7 @@ class Team:
 
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
         from agno.document import Document
 
@@ -6693,7 +6760,7 @@ class Team:
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
-                return None
+                raise e
         try:
             if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
@@ -6713,11 +6780,11 @@ class Team:
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
             log_warning(f"Error searching knowledge base: {e}")
-            return None
+            raise e
 
     async def aget_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
 
@@ -6751,7 +6818,7 @@ class Team:
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
                 log_warning(f"Retriever failed: {e}")
-                return None
+                raise e
 
         try:
             if self.knowledge is None or self.knowledge.vector_db is None:
@@ -6772,9 +6839,9 @@ class Team:
             return [doc.to_dict() for doc in relevant_docs]
         except Exception as e:
             log_warning(f"Error searching knowledge base: {e}")
-            return None
+            raise e
 
-    def convert_documents_to_string(self, docs: List[Dict[str, Any]]) -> str:
+    def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
         if docs is None or len(docs) == 0:
             return ""
 
@@ -6846,7 +6913,7 @@ class Team:
 
             if docs_from_knowledge is None:
                 return "No documents found"
-            return self.convert_documents_to_string(docs_from_knowledge)
+            return self._convert_documents_to_string(docs_from_knowledge)
 
         async def asearch_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
@@ -6875,7 +6942,7 @@ class Team:
 
             if docs_from_knowledge is None:
                 return "No documents found"
-            return self.convert_documents_to_string(docs_from_knowledge)
+            return self._convert_documents_to_string(docs_from_knowledge)
 
         if async_mode:
             return asearch_knowledge_base
@@ -6919,7 +6986,7 @@ class Team:
 
             if docs_from_knowledge is None:
                 return "No documents found"
-            return self.convert_documents_to_string(docs_from_knowledge)
+            return self._convert_documents_to_string(docs_from_knowledge)
 
         async def asearch_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
             """Use this function to search the knowledge base for information about a query asynchronously.
@@ -6951,7 +7018,7 @@ class Team:
 
             if docs_from_knowledge is None:
                 return "No documents found"
-            return self.convert_documents_to_string(docs_from_knowledge)
+            return self._convert_documents_to_string(docs_from_knowledge)
 
         if async_mode:
             return asearch_knowledge_base
