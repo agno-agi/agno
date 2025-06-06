@@ -741,7 +741,13 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(
-                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters, user_id=user_id
+                    message,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    user_id=user_id,
                 )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
@@ -1208,7 +1214,13 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(
-                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters, user_id=user_id
+                    message,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    user_id=user_id,
                 )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
@@ -4942,7 +4954,7 @@ class Team:
             return result
         except Exception as e:
             log_warning(f"Template substitution failed: {e}")
-            return msg
+            return message
 
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
