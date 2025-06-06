@@ -30,7 +30,7 @@ async def run_agent(message: str) -> None:
         )
 
         response_stream = await agent.arun(message)
-        await apprint_run_response(response_stream, markdown=True)
+        await apprint_run_response(response_stream)
 
 
 if __name__ == "__main__":

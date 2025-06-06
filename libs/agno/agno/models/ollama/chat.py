@@ -265,19 +265,6 @@ class Ollama(Model):
         # Get response message
         response_message: OllamaMessage = response.get("message")
 
-        # Parse structured outputs if enabled
-        try:
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                parsed_object = response_message.content  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
-
         if response_message.get("role") is not None:
             model_response.role = response_message.get("role")
 
