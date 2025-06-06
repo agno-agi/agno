@@ -798,8 +798,6 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -934,8 +932,6 @@ class Model(ABC):
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 

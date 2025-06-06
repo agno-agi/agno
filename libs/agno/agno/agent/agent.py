@@ -4092,7 +4092,6 @@ class Agent:
                 self.memory.clear()
         self.session_id = str(uuid4())
         self.load_session(force=True)
-    
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""

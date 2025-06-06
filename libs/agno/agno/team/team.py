@@ -4844,7 +4844,6 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
 
-    
     def _format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4875,7 +4874,7 @@ class Team:
         except Exception as e:
             log_warning(f"Template substitution failed: {e}")
             return msg
-        
+
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
