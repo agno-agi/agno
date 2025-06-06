@@ -4357,86 +4357,86 @@ class Team:
                 log_warning("Context is not a dict")
 
     def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
-        if self._tools_for_model is None:
-            self._functions_for_model = {}
-            self._tools_for_model = []
+        # We have to reset the tools every time because the tool factories produce new functions that is context aware that needs to be reset
+        self._functions_for_model = {}
+        self._tools_for_model = []
 
-            # Get Agent tools
-            if len(tools) > 0:
-                log_debug("Processing tools for model")
+        # Get Agent tools
+        if len(tools) > 0:
+            log_debug("Processing tools for model")
 
-                # Check if we need strict mode for the model
-                strict = False
-                if (
-                    self.response_model is not None
-                    and not self.use_json_mode
-                    and model.supports_native_structured_outputs
-                ):
-                    strict = True
+            # Check if we need strict mode for the model
+            strict = False
+            if (
+                self.response_model is not None
+                and not self.use_json_mode
+                and model.supports_native_structured_outputs
+            ):
+                strict = True
 
-                for tool in tools:
-                    if isinstance(tool, Dict):
-                        # If a dict is passed, it is a builtin tool
-                        # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
-                        log_debug(f"Included builtin tool {tool}")
+            for tool in tools:
+                if isinstance(tool, Dict):
+                    # If a dict is passed, it is a builtin tool
+                    # that is run by the model provider and not the Agent
+                    self._tools_for_model.append(tool)
+                    log_debug(f"Included builtin tool {tool}")
 
-                    elif isinstance(tool, Toolkit):
-                        # For each function in the toolkit and process entrypoint
-                        for name, func in tool.functions.items():
-                            # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
-                                func._agent = self
-                                func._team = self
-                                func.process_entrypoint(strict=strict)
-                                if strict:
-                                    func.strict = True
-                                if self.tool_hooks:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {name} from {tool.name}")
-
-                        # Add instructions from the toolkit
-                        if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
-                            tool._agent = self
-                            tool._team = self
-                            tool.process_entrypoint(strict=strict)
-                            if strict and tool.strict is None:
-                                tool.strict = True
-                            if self.tool_hooks:
-                                tool.tool_hooks = self.tool_hooks
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Added tool {tool.name}")
-
-                        # Add instructions from the Function
-                        if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif callable(tool):
-                        # We add the tools, which are callable functions
-                        try:
-                            func = Function.from_callable(tool, strict=strict)
+                elif isinstance(tool, Toolkit):
+                    # For each function in the toolkit and process entrypoint
+                    for name, func in tool.functions.items():
+                        # If the function does not exist in self.functions
+                        if name not in self._functions_for_model:
                             func._agent = self
                             func._team = self
+                            func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
                             if self.tool_hooks:
                                 func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[func.name] = func
+                            self._functions_for_model[name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {func.name}")
-                        except Exception as e:
-                            log_warning(f"Could not add tool {tool}: {e}")
+                            log_debug(f"Added tool {name} from {tool.name}")
+
+                    # Add instructions from the toolkit
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
+
+                elif isinstance(tool, Function):
+                    if tool.name not in self._functions_for_model:
+                        tool._agent = self
+                        tool._team = self
+                        tool.process_entrypoint(strict=strict)
+                        if strict and tool.strict is None:
+                            tool.strict = True
+                        if self.tool_hooks:
+                            tool.tool_hooks = self.tool_hooks
+                        self._functions_for_model[tool.name] = tool
+                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                        log_debug(f"Added tool {tool.name}")
+
+                    # Add instructions from the Function
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
+
+                elif callable(tool):
+                    # We add the tools, which are callable functions
+                    try:
+                        func = Function.from_callable(tool, strict=strict)
+                        func._agent = self
+                        func._team = self
+                        if strict:
+                            func.strict = True
+                        if self.tool_hooks:
+                            func.tool_hooks = self.tool_hooks
+                        self._functions_for_model[func.name] = func
+                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                        log_debug(f"Added tool {func.name}")
+                    except Exception as e:
+                        log_warning(f"Could not add tool {tool}: {e}")
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
