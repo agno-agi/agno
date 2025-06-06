@@ -13,7 +13,9 @@ def instantiate_team():
 
 
 instantiation_perf = PerformanceEval(
-    name="Instantiation Performance Team", func=instantiate_team, num_iterations=1000
+    name="Team Instantiation",
+    func=instantiate_team,
+    num_iterations=1000,
 )
 
 if __name__ == "__main__":
