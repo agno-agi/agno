@@ -204,9 +204,23 @@ class RunResponse:
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
+
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
-        return cls(messages=messages, tools=tools, **data)
+
+        images = data.pop("images", None)
+        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+
+        videos = data.pop("videos", None)
+        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+
+        audio = data.pop("audio", None)
+        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+
+        response_audio = data.pop("response_audio", None)
+        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+
+        return cls(messages=messages, tools=tools, images=images, videos=videos, response_audio=response_audio, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json
