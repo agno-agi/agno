@@ -5000,7 +5000,7 @@ class Agent:
                 retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
                 return self.retriever(**retriever_kwargs)
             except Exception as e:
-                log_warning(f"Retriever failed: {e}")
+                log_error(f"Retriever failed: {e}")
                 return None
 
         # Use knowledge base search
@@ -5066,7 +5066,7 @@ class Agent:
 
                 return result
             except Exception as e:
-                log_warning(f"Retriever failed: {e}")
+                log_error(f"Retriever failed: {e}")
                 return None
 
         # Use knowledge base search
