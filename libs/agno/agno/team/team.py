@@ -127,6 +127,8 @@ class Team:
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
     add_datetime_to_instructions: bool = False
+    # If True, add the current location to the instructions to give the team a sense of location
+    add_location_to_instructions: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -209,8 +211,10 @@ class Team:
     add_session_summary_references: Optional[bool] = None
 
     # --- Team History ---
-    # If True, enable the team history
+    # If True, enable the team history (Deprecated in favor of add_history_to_messages)
     enable_team_history: bool = False
+    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_messages: bool = False
     # Deprecated in favor of num_history_runs: Number of interactions from history
     num_of_interactions_from_history: Optional[int] = None
     # Number of historical runs to include in the messages
@@ -259,6 +263,7 @@ class Team:
         success_criteria: Optional[str] = None,
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
+        add_location_to_instructions: bool = False,
         add_member_tools_to_system_message: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
@@ -287,6 +292,7 @@ class Team:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         enable_team_history: bool = False,
+        add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
         num_history_runs: int = 3,
         storage: Optional[Storage] = None,
@@ -322,6 +328,7 @@ class Team:
         self.additional_context = additional_context
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
+        self.add_location_to_instructions = add_location_to_instructions
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.success_criteria = success_criteria
 
@@ -358,6 +365,7 @@ class Team:
         self.add_session_summary_references = add_session_summary_references
 
         self.enable_team_history = enable_team_history
+        self.add_history_to_messages = add_history_to_messages
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
 
@@ -4488,6 +4496,17 @@ class Team:
 
             additional_information.append(f"The current time is {datetime.now()}")
 
+        # 1.3.3 Add the current location
+        if self.add_location_to_instructions:
+            from agno.utils.location import get_location
+            location = get_location()
+            if location:
+                location_str = ", ".join(
+                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                )
+                if location_str:
+                    additional_information.append(f"Your approximate location is: {location_str}.")
+
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             if valid_filters:
@@ -4590,16 +4609,16 @@ class Team:
 
         # Then add memories to the system prompt
         if self.memory:
-            if isinstance(self.memory, Memory) and (self.add_memory_references):
+            if isinstance(self.memory, Memory) and self.add_memory_references:
                 if not user_id:
                     user_id = "default"
-                user_memories = self.memory.memories.get(user_id, {})  # type: ignore
+                user_memories = self.memory.get_user_memories(user_id=user_id) # type: ignore
                 if user_memories and len(user_memories) > 0:
                     system_message_content += (
                         "You have access to memories from previous interactions with the user that you can use:\n\n"
                     )
                     system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in user_memories.values():  # type: ignore
+                    for _memory in user_memories:  # type: ignore
                         system_message_content += f"\n- {_memory.memory}"
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (
@@ -4722,7 +4741,7 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.enable_team_history:
+        if self.enable_team_history or self.add_history_to_messages:
             from copy import deepcopy
 
             history = []
