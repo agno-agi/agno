@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
 from agno.api.schemas.evals import EvalType
-from agno.eval.utils import log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
@@ -497,7 +497,7 @@ class PerformanceEval:
 
         # 7. Log results to the Agno platform if requested
         if self.monitoring:
-            log_eval_run(
+            await async_log_eval_run(
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
