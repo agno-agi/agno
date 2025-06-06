@@ -55,6 +55,7 @@ def chat_response_streamer(
     images: Optional[List[Image]] = None,
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
 ) -> Generator:
     try:
         run_response = agent.run(
@@ -64,6 +65,7 @@ def chat_response_streamer(
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -243,6 +245,7 @@ def get_sync_playground_router(
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
+        input_files: List[FileMedia] = []
 
         if files:
             for file in files:
@@ -280,55 +283,82 @@ def get_sync_playground_router(
                         logger.error(f"Error processing video {file.filename}: {e}")
                         continue
                 else:
-                    # Check for knowledge base before processing documents
-                    if agent.knowledge is None:
-                        raise HTTPException(status_code=404, detail="KnowledgeBase not found")
+                    #  Process document files
 
                     if file.content_type == "application/pdf":
                         from agno.document.reader.pdf_reader import PDFReader
 
                         contents = file.file.read()
-                        pdf_file = BytesIO(contents)
-                        pdf_file.name = file.filename
-                        file_content = PDFReader().read(pdf_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            pdf_file = BytesIO(contents)
+                            pdf_file.name = file.filename
+                            file_content = PDFReader().read(pdf_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input (similar to cookbook examples)
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
                         contents = file.file.read()
-                        csv_file = BytesIO(contents)
-                        csv_file.name = file.filename
-                        file_content = CSVReader().read(csv_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            csv_file = BytesIO(contents)
+                            csv_file.name = file.filename
+                            file_content = CSVReader().read(csv_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
                         contents = file.file.read()
-                        docx_file = BytesIO(contents)
-                        docx_file.name = file.filename
-                        file_content = DocxReader().read(docx_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            docx_file = BytesIO(contents)
+                            docx_file.name = file.filename
+                            file_content = DocxReader().read(docx_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
                         contents = file.file.read()
-                        text_file = BytesIO(contents)
-                        text_file.name = file.filename
-                        file_content = TextReader().read(text_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            text_file = BytesIO(contents)
+                            text_file.name = file.filename
+                            file_content = TextReader().read(text_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
 
                         contents = file.file.read()
-                        json_file = BytesIO(contents)
-                        json_file.name = file.filename
-                        file_content = JSONReader().read(json_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            json_file = BytesIO(contents)
+                            json_file.name = file.filename
+                            file_content = JSONReader().read(json_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -342,6 +372,7 @@ def get_sync_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                 ),
                 media_type="text/event-stream",
             )
@@ -355,6 +386,7 @@ def get_sync_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                     stream=False,
                 ),
             )
