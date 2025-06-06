@@ -661,6 +661,17 @@ class OpenAIChat(Model):
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
 
+        try:
+            if (
+                response_format is not None
+                and isinstance(response_format, type)
+                and issubclass(response_format, BaseModel)
+            ):
+                if hasattr(response_message, "parsed") and response_message.parsed is not None:
+                    model_response.parsed = response_message.parsed
+        except Exception as e:
+            log_warning(f"Error retrieving structured outputs: {e}")
+
         if response.usage is not None:
             model_response.response_usage = response.usage
 
