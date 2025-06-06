@@ -4367,11 +4367,7 @@ class Team:
 
             # Check if we need strict mode for the model
             strict = False
-            if (
-                self.response_model is not None
-                and not self.use_json_mode
-                and model.supports_native_structured_outputs
-            ):
+            if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
                 strict = True
 
             for tool in tools:
