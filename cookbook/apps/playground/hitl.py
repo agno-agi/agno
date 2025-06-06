@@ -106,7 +106,7 @@ user_input_required_agent = Agent(
     tools=[send_email],
     markdown=True,
     storage=PostgresStorage(
-        table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
+        table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
 )
 agentic_user_input_agent = Agent(
@@ -115,7 +115,7 @@ agentic_user_input_agent = Agent(
     tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
     storage=PostgresStorage(
-        table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
+        table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
 )
 
@@ -125,14 +125,26 @@ confirmation_required_agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
     storage=PostgresStorage(
-        table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
+        table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
 )
+combined_agent = Agent(
+    model=OpenAIChat(id="gpt-4o-mini"),
+    agent_id="combined-agent",
+    tools=[EmailTools(), UserControlFlowTools(),send_email, get_top_hackernews_stories],
+    markdown=True,
+        storage=PostgresStorage(
+        table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
+
+)
+
 playground = Playground(
     agents=[
         agentic_user_input_agent,
         confirmation_required_agent,
         user_input_required_agent,
+        combined_agent,
     ],
     app_id="hitl-playground-app",
     name="HITL Playground",
