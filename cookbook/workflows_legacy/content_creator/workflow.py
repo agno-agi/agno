@@ -10,12 +10,12 @@ from agno.workflow import Workflow
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from cookbook.workflows.content_creator_workflow.config import PostType
-from cookbook.workflows.content_creator_workflow.prompts import (
+from cookbook.workflows_legacy.content_creator_workflow.config import PostType
+from cookbook.workflows_legacy.content_creator_workflow.prompts import (
     agents_config,
     tasks_config,
 )
-from cookbook.workflows.content_creator_workflow.scheduler import schedule
+from cookbook.workflows_legacy.content_creator_workflow.scheduler import schedule
 
 # Load environment variables
 load_dotenv()

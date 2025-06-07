@@ -92,6 +92,9 @@ class Team:
     parent_team_id: Optional[str] = None
     # The workflow this team belongs to
     workflow_id: Optional[str] = None
+    # Set when this team is part of a workflow.
+    workflow_session_id: Optional[str] = None
+
     role: Optional[str] = None
 
     # --- User settings ---
@@ -7144,6 +7147,7 @@ class Team:
             team_id=self.team_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
+            workflow_session_id=self.workflow_session_id,
             memory=memory_dict,
             team_data=self._get_team_data(),
             session_data=self._get_session_data(),
@@ -7168,6 +7172,7 @@ class Team:
                     run_id=self.run_id,  # type: ignore
                     run_data=run_data,
                     team_session_id=team_session.team_session_id,
+                    workflow_session_id=self.workflow_session_id,
                     session_id=team_session.session_id,
                     team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
                 ),

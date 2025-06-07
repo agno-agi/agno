@@ -6,7 +6,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.storage.session.workflow import WorkflowSession, WorkflowSessionV2
 from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
@@ -32,7 +32,7 @@ class SqliteStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using a sqlite database.
@@ -84,12 +84,12 @@ class SqliteStorage(Storage):
         self.table: Table = self.get_table()
 
     @property
-    def mode(self) -> Optional[Literal["agent", "team", "workflow"]]:
+    def mode(self) -> Optional[Literal["agent", "team", "workflow", "workflow_v2"]]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow", "workflow_v2"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(SqliteStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -130,6 +130,14 @@ class SqliteStorage(Storage):
             specific_columns = [
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", sqlite.JSON),
+            ]
+        elif self.mode == "workflow_v2":
+            specific_columns = [
+                Column("workflow_id", String, index=True),
+                Column("workflow_name", String, index=True),
+                Column("workflow_data", sqlite.JSON),
+                # Store WorkflowRunResponse objects
+                Column("runs", sqlite.JSON),
             ]
 
         # Create table with all columns
@@ -236,11 +244,17 @@ class SqliteStorage(Storage):
                     stmt = stmt.where(self.table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if self.mode == "agent":
-                    return AgentSession.from_dict(result._mapping) if result is not None else None  # type: ignore
+                    # type: ignore
+                    return AgentSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "team":
-                    return TeamSession.from_dict(result._mapping) if result is not None else None  # type: ignore
+                    # type: ignore
+                    return TeamSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "workflow":
-                    return WorkflowSession.from_dict(result._mapping) if result is not None else None  # type: ignore
+                    # type: ignore
+                    return WorkflowSession.from_dict(result._mapping) if result is not None else None
+                elif self.mode == "workflow_v2":
+                    # type: ignore
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None
         except Exception as e:
             if "no such table" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -308,7 +322,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
-                    elif self.mode == "workflow":
+                    elif self.mode in ["workflow", "workflow_v2"]:
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -316,11 +330,17 @@ class SqliteStorage(Storage):
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
                     if self.mode == "agent":
-                        return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [AgentSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "team":
-                        return [TeamSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [TeamSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "workflow":
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                    elif self.mode == "workflow_v2":
+                        # type: ignore
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]
                 else:
                     return []
         except Exception as e:
@@ -341,7 +361,7 @@ class SqliteStorage(Storage):
         Get the last N sessions, ordered by created_at descending.
 
         Args:
-            num_history_sessions: Number of most recent sessions to return
+            limit: Number of most recent sessions to return
             user_id: Filter by user ID
             entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
 
@@ -359,7 +379,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
-                    elif self.mode == "workflow":
+                    elif self.mode in ["workflow", "workflow_v2"]:
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
 
                 # Order by created_at desc and limit to num_history_sessions
@@ -371,11 +391,17 @@ class SqliteStorage(Storage):
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
                     if self.mode == "agent":
-                        return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [AgentSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "team":
-                        return [TeamSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [TeamSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "workflow":
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                        # type: ignore
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                    elif self.mode == "workflow_v2":
+                        # type: ignore
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]
                 return []
         except Exception as e:
             if "no such table" in str(e):
@@ -444,7 +470,6 @@ class SqliteStorage(Storage):
                     )
 
                     # Define the upsert if the session_id already exists
-                    # See: https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#insert-on-conflict-upsert
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=dict(
@@ -456,7 +481,7 @@ class SqliteStorage(Storage):
                             session_data=session.session_data,
                             extra_data=session.extra_data,
                             updated_at=int(time.time()),
-                        ),  # The updated value for each column
+                        ),
                     )
                 elif self.mode == "team":
                     # Create an insert statement
@@ -484,7 +509,7 @@ class SqliteStorage(Storage):
                             session_data=session.session_data,
                             extra_data=session.extra_data,
                             updated_at=int(time.time()),
-                        ),  # The updated value for each column
+                        ),
                     )
                 elif self.mode == "workflow":
                     # Create an insert statement
@@ -510,7 +535,34 @@ class SqliteStorage(Storage):
                             session_data=session.session_data,
                             extra_data=session.extra_data,
                             updated_at=int(time.time()),
-                        ),  # The updated value for each column
+                        ),
+                    )
+                elif self.mode == "workflow_v2":
+                    # Create an insert statement for WorkflowSessionV2
+                    stmt = sqlite.insert(self.table).values(
+                        session_id=session.session_id,
+                        workflow_id=session.workflow_id,  # type: ignore
+                        workflow_name=session.workflow_name,  # type: ignore
+                        user_id=session.user_id,
+                        runs=session.runs,  # type: ignore
+                        workflow_data=session.workflow_data,  # type: ignore
+                        session_data=session.session_data,
+                        extra_data=session.extra_data,
+                    )
+
+                    # Define the upsert if the session_id already exists
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            workflow_id=session.workflow_id,  # type: ignore
+                            workflow_name=session.workflow_name,  # type: ignore
+                            user_id=session.user_id,
+                            runs=session.runs,  # type: ignore
+                            workflow_data=session.workflow_data,  # type: ignore
+                            session_data=session.session_data,
+                            extra_data=session.extra_data,
+                            updated_at=int(time.time()),
+                        ),
                     )
 
                 sess.execute(stmt)
