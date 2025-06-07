@@ -741,7 +741,13 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(
-                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                    message,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    user_id=user_id,
                 )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
@@ -1208,7 +1214,13 @@ class Team:
 
             if self.mode == "route":
                 user_message = self._get_user_message(
-                    message, audio=audio, images=images, videos=videos, files=files, knowledge_filters=effective_filters
+                    message,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    user_id=user_id,
                 )
                 forward_task_func: Function = self.get_forward_task_function(
                     message=user_message,
@@ -4357,86 +4369,82 @@ class Team:
                 log_warning("Context is not a dict")
 
     def determine_tools_for_model(self, model: Model, tools: List[Union[Function, Callable, Toolkit, Dict]]) -> None:
-        if self._tools_for_model is None:
-            self._functions_for_model = {}
-            self._tools_for_model = []
+        # We have to reset the tools every time because the tool factories produce new functions that is context aware that needs to be reset
+        self._functions_for_model = {}
+        self._tools_for_model = []
 
-            # Get Agent tools
-            if len(tools) > 0:
-                log_debug("Processing tools for model")
+        # Get Agent tools
+        if len(tools) > 0:
+            log_debug("Processing tools for model")
 
-                # Check if we need strict mode for the model
-                strict = False
-                if (
-                    self.response_model is not None
-                    and not self.use_json_mode
-                    and model.supports_native_structured_outputs
-                ):
-                    strict = True
+            # Check if we need strict mode for the model
+            strict = False
+            if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
+                strict = True
 
-                for tool in tools:
-                    if isinstance(tool, Dict):
-                        # If a dict is passed, it is a builtin tool
-                        # that is run by the model provider and not the Agent
-                        self._tools_for_model.append(tool)
-                        log_debug(f"Included builtin tool {tool}")
+            for tool in tools:
+                if isinstance(tool, Dict):
+                    # If a dict is passed, it is a builtin tool
+                    # that is run by the model provider and not the Agent
+                    self._tools_for_model.append(tool)
+                    log_debug(f"Included builtin tool {tool}")
 
-                    elif isinstance(tool, Toolkit):
-                        # For each function in the toolkit and process entrypoint
-                        for name, func in tool.functions.items():
-                            # If the function does not exist in self.functions
-                            if name not in self._functions_for_model:
-                                func._agent = self
-                                func._team = self
-                                func.process_entrypoint(strict=strict)
-                                if strict:
-                                    func.strict = True
-                                if self.tool_hooks:
-                                    func.tool_hooks = self.tool_hooks
-                                self._functions_for_model[name] = func
-                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                                log_debug(f"Added tool {name} from {tool.name}")
-
-                        # Add instructions from the toolkit
-                        if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif isinstance(tool, Function):
-                        if tool.name not in self._functions_for_model:
-                            tool._agent = self
-                            tool._team = self
-                            tool.process_entrypoint(strict=strict)
-                            if strict and tool.strict is None:
-                                tool.strict = True
-                            if self.tool_hooks:
-                                tool.tool_hooks = self.tool_hooks
-                            self._functions_for_model[tool.name] = tool
-                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                            log_debug(f"Added tool {tool.name}")
-
-                        # Add instructions from the Function
-                        if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
-                            self._tool_instructions.append(tool.instructions)
-
-                    elif callable(tool):
-                        # We add the tools, which are callable functions
-                        try:
-                            func = Function.from_callable(tool, strict=strict)
+                elif isinstance(tool, Toolkit):
+                    # For each function in the toolkit and process entrypoint
+                    for name, func in tool.functions.items():
+                        # If the function does not exist in self.functions
+                        if name not in self._functions_for_model:
                             func._agent = self
                             func._team = self
+                            func.process_entrypoint(strict=strict)
                             if strict:
                                 func.strict = True
                             if self.tool_hooks:
                                 func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[func.name] = func
+                            self._functions_for_model[name] = func
                             self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {func.name}")
-                        except Exception as e:
-                            log_warning(f"Could not add tool {tool}: {e}")
+                            log_debug(f"Added tool {name} from {tool.name}")
+
+                    # Add instructions from the toolkit
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
+
+                elif isinstance(tool, Function):
+                    if tool.name not in self._functions_for_model:
+                        tool._agent = self
+                        tool._team = self
+                        tool.process_entrypoint(strict=strict)
+                        if strict and tool.strict is None:
+                            tool.strict = True
+                        if self.tool_hooks:
+                            tool.tool_hooks = self.tool_hooks
+                        self._functions_for_model[tool.name] = tool
+                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                        log_debug(f"Added tool {tool.name}")
+
+                    # Add instructions from the Function
+                    if tool.add_instructions and tool.instructions is not None:
+                        if self._tool_instructions is None:
+                            self._tool_instructions = []
+                        self._tool_instructions.append(tool.instructions)
+
+                elif callable(tool):
+                    # We add the tools, which are callable functions
+                    try:
+                        func = Function.from_callable(tool, strict=strict)
+                        func._agent = self
+                        func._team = self
+                        if strict:
+                            func.strict = True
+                        if self.tool_hooks:
+                            func.tool_hooks = self.tool_hooks
+                        self._functions_for_model[func.name] = func
+                        self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                        log_debug(f"Added tool {func.name}")
+                    except Exception as e:
+                        log_warning(f"Could not add tool {tool}: {e}")
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -4783,6 +4791,7 @@ class Team:
         # 3. Add user message to run_messages
         user_message = self._get_user_message(
             message,
+            user_id=user_id,
             audio=audio,
             images=images,
             videos=videos,
@@ -4801,6 +4810,7 @@ class Team:
     def _get_user_message(
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
+        user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4846,10 +4856,10 @@ class Team:
         if isinstance(message, str) or isinstance(message, list):
             if self.add_state_in_messages:
                 if isinstance(message, str):
-                    user_message_content = self._format_message_with_state_variables(message)
+                    user_message_content = self._format_message_with_state_variables(message, user_id=user_id)
                 elif isinstance(message, list):
                     user_message_content = "\n".join(
-                        [self._format_message_with_state_variables(msg) for msg in message]
+                        [self._format_message_with_state_variables(msg, user_id=user_id) for msg in message]
                     )
             else:
                 if isinstance(message, str):
@@ -4911,8 +4921,14 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
 
-    def _format_message_with_state_variables(self, message: str, user_id: Optional[str] = None) -> Any:
+    def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
+        import re
+        import string
+
+        if not isinstance(message, str):
+            return message
+
         format_variables = ChainMap(
             self.session_state or {},
             self.team_session_state or {},
@@ -4920,7 +4936,21 @@ class Team:
             self.extra_data or {},
             {"user_id": user_id} if user_id is not None else {},
         )
-        return self._formatter.format(message, **format_variables)  # type: ignore
+        converted_msg = message
+        for var_name in format_variables.keys():
+            # Only convert standalone {var_name} patterns, not nested ones
+            pattern = r"\{" + re.escape(var_name) + r"\}"
+            replacement = "${" + var_name + "}"
+            converted_msg = re.sub(pattern, replacement, converted_msg)
+
+        # Use Template to safely substitute variables
+        template = string.Template(converted_msg)
+        try:
+            result = template.safe_substitute(format_variables)
+            return result
+        except Exception as e:
+            log_warning(f"Template substitution failed: {e}")
+            return message
 
     def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
