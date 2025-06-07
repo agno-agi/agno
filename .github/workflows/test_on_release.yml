@@ -528,6 +528,7 @@ jobs:
 
   # Run tests for AI/ML API
   test-aimlapi:
+    if: false # We need more credits
     runs-on: ubuntu-latest
     strategy:
       matrix:
