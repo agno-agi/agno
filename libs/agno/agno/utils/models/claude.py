@@ -214,7 +214,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
     """
     chat_messages: List[Dict[str, str]] = []
     system_messages: List[str] = []
-    
+
     for message in messages:
         content = message.content or ""
         if message.role == "system":

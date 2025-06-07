@@ -5,15 +5,13 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.hackernews import HackerNewsTools
 
 
 def test_coordinator_team_basic():
     """Test basic functionality of a coordinator team."""
-    
+
     def get_climate_change_info() -> str:
-        return f"Climate change is a global issue that requires urgent action."
+        return "Climate change is a global issue that requires urgent action."
 
     researcher = Agent(
         name="Researcher",
@@ -45,13 +43,13 @@ def test_coordinator_team_basic():
 
 def test_coordinator_team_with_context_sharing():
     """Test coordinator team with context sharing between members."""
-    
+
     def get_hackernews_info() -> str:
-        return f"The top story on hackernews is about climate change."
-    
+        return "The top story on hackernews is about climate change."
+
     def get_web_info() -> str:
-        return f"The web is full of information about climate change."
-    
+        return "The web is full of information about climate change."
+
     hn_researcher = Agent(
         name="HackerNews Researcher",
         model=OpenAIChat("gpt-4o"),
@@ -94,12 +92,12 @@ def test_coordinator_team_with_structured_output():
         title: str
         summary: str
         reference_links: List[str]
-    
+
     def get_hackernews_info() -> str:
-        return f"The top story on hackernews is about climate change."
-    
+        return "The top story on hackernews is about climate change."
+
     def get_web_info() -> str:
-        return f"The web is full of information about climate change."
+        return "The web is full of information about climate change."
 
     hn_researcher = Agent(
         name="HackerNews Researcher",
@@ -136,4 +134,3 @@ def test_coordinator_team_with_structured_output():
     assert response.content.summary is not None
     assert response.content.reference_links is not None
     assert len(response.content.reference_links) > 0
-
