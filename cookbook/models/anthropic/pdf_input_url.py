@@ -3,7 +3,7 @@ from agno.media import File
 from agno.models.anthropic import Claude
 
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     markdown=True,
 )
 

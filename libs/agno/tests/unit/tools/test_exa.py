@@ -281,3 +281,116 @@ def test_exa_answer_with_model_selection(exa_tools, mock_exa_client):
     exa_tools.model = "invalid-model"
     with pytest.raises(ValueError, match="Model must be either 'exa' or 'exa-pro'"):
         exa_tools.exa_answer("test question")
+
+
+def test_init_with_research_tool():
+    """Test initialization with research tool enabled."""
+    with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+        tools = ExaTools(research=True)
+
+        assert "research" in [func.name for func in tools.functions.values()]
+
+
+def test_research_success(exa_tools, mock_exa_client):
+    """Test successful research workflow."""
+    # Mock task creation
+    mock_task_id = Mock()
+    mock_task_id.id = "task-123"
+
+    # Mock completed task
+    mock_citation = Mock()
+    mock_citation.url = "https://source.com"
+    mock_citation.title = "Source Article"
+    mock_citation.id = "citation-1"
+
+    mock_task = Mock()
+    mock_task.id = "task-123"
+    mock_task.status = "completed"
+    mock_task.data = {"trends": ["AI advancement", "Machine learning"]}
+    mock_task.citations = {"trends": [mock_citation]}
+
+    # Setup mock research client
+    mock_research_client = Mock()
+    mock_research_client.create_task.return_value = mock_task_id
+    mock_research_client.poll_task.return_value = mock_task
+    mock_exa_client.research = mock_research_client
+
+    # Execute research with custom schema
+    result = exa_tools.research(
+        instructions="Research AI trends in 2024",
+        output_schema={"type": "object", "properties": {"trends": {"type": "array"}}},
+    )
+    result_data = json.loads(result)
+
+    # Verify results
+    assert result_data["data"]["trends"] == ["AI advancement", "Machine learning"]
+    assert len(result_data["citations"]["trends"]) == 1
+    assert result_data["citations"]["trends"][0]["url"] == "https://source.com"
+
+    # Verify method calls
+    mock_research_client.create_task.assert_called_with(
+        instructions="Research AI trends in 2024",
+        model="exa-research",
+        output_schema={"type": "object", "properties": {"trends": {"type": "array"}}},
+    )
+    mock_research_client.poll_task.assert_called_with("task-123")
+
+
+def test_research_with_string_query(exa_tools, mock_exa_client):
+    """Test research with simple string query."""
+    # Mock task creation and completion
+    mock_task_id = Mock()
+    mock_task_id.id = "task-456"
+
+    mock_task = Mock()
+    mock_task.id = "task-456"
+    mock_task.status = "completed"
+    mock_task.data = {"result": "Research findings"}
+    mock_task.citations = {}
+
+    mock_research_client = Mock()
+    mock_research_client.create_task.return_value = mock_task_id
+    mock_research_client.poll_task.return_value = mock_task
+    mock_exa_client.research = mock_research_client
+
+    # Execute research with simple string
+    result = exa_tools.research("What are the latest AI trends?")
+    result_data = json.loads(result)
+
+    # Verify results
+    assert result_data["data"]["result"] == "Research findings"
+
+    # Verify the call was made with output_infer_schema when no schema provided
+    mock_research_client.create_task.assert_called_with(
+        instructions="What are the latest AI trends?", model="exa-research", output_infer_schema=True
+    )
+
+
+def test_research_timeout(exa_tools, mock_exa_client):
+    """Test research timeout handling."""
+    mock_task_id = Mock()
+    mock_task_id.id = "task-123"
+
+    mock_research_client = Mock()
+    mock_research_client.create_task.return_value = mock_task_id
+    mock_research_client.poll_task.side_effect = TimeoutError("Task timed out")
+    mock_exa_client.research = mock_research_client
+
+    result = exa_tools.research("test instructions")
+    result_data = json.loads(result)
+
+    assert "error" in result_data
+    assert "timed out" in result_data["error"]
+
+
+def test_research_error_handling(exa_tools, mock_exa_client):
+    """Test research error handling."""
+    mock_research_client = Mock()
+    mock_research_client.create_task.side_effect = Exception("API Error")
+    mock_exa_client.research = mock_research_client
+
+    result = exa_tools.research("test instructions")
+    result_data = json.loads(result)
+
+    assert "error" in result_data
+    assert "Research failed: API Error" in result_data["error"]

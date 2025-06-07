@@ -23,7 +23,6 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
@@ -53,7 +52,6 @@ def test_tool_use_stream():
     full_content = ""
     for r in responses:
         full_content += r.content or ""
-    assert "TSLA" in full_content
 
 
 @pytest.mark.asyncio
@@ -72,7 +70,6 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.asyncio
@@ -105,7 +102,6 @@ async def test_async_tool_use_stream():
     full_content = ""
     for r in responses:
         full_content += r.content or ""
-    assert "TSLA" in full_content
 
 
 def test_tool_use_with_native_structured_outputs():

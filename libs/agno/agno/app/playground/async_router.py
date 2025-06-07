@@ -55,6 +55,7 @@ async def chat_response_streamer(
     images: Optional[List[Image]] = None,
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
 ) -> AsyncGenerator:
     try:
         run_response = await agent.arun(
@@ -64,6 +65,7 @@ async def chat_response_streamer(
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -244,6 +246,7 @@ def get_async_playground_router(
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
+        input_files: List[FileMedia] = []
 
         if files:
             for file in files:
@@ -282,56 +285,81 @@ def get_async_playground_router(
                         logger.error(f"Error processing video {file.filename}: {e}")
                         continue
                 else:
-                    # Check for knowledge base before processing documents
-                    if agent.knowledge is None:
-                        raise HTTPException(status_code=404, detail="KnowledgeBase not found")
-
+                    # Process document files
                     if file.content_type == "application/pdf":
                         from agno.document.reader.pdf_reader import PDFReader
 
                         contents = await file.read()
-                        pdf_file = BytesIO(contents)
-                        pdf_file.name = file.filename
-                        file_content = PDFReader().read(pdf_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            pdf_file = BytesIO(contents)
+                            pdf_file.name = file.filename
+                            file_content = PDFReader().read(pdf_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input (similar to cookbook examples)
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
                         contents = await file.read()
-                        csv_file = BytesIO(contents)
-                        csv_file.name = file.filename
-                        file_content = CSVReader().read(csv_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            csv_file = BytesIO(contents)
+                            csv_file.name = file.filename
+                            file_content = CSVReader().read(csv_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
                         contents = await file.read()
-                        docx_file = BytesIO(contents)
-                        docx_file.name = file.filename
-                        file_content = DocxReader().read(docx_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            docx_file = BytesIO(contents)
+                            docx_file.name = file.filename
+                            file_content = DocxReader().read(docx_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
                         contents = await file.read()
-                        text_file = BytesIO(contents)
-                        text_file.name = file.filename
-                        file_content = TextReader().read(text_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            text_file = BytesIO(contents)
+                            text_file.name = file.filename
+                            file_content = TextReader().read(text_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
 
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
 
                         contents = await file.read()
-                        json_file = BytesIO(contents)
-                        json_file.name = file.filename
-                        file_content = JSONReader().read(json_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            json_file = BytesIO(contents)
+                            json_file.name = file.filename
+                            file_content = JSONReader().read(json_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
@@ -345,6 +373,7 @@ def get_async_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                 ),
                 media_type="text/event-stream",
             )
@@ -358,6 +387,7 @@ def get_async_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                     stream=False,
                 ),
             )
@@ -392,7 +422,7 @@ def get_async_playground_router(
         logger.debug(f"AgentSessionsRequest: {agent_id} {user_id} {session_id}")
         agent = get_agent_by_id(agent_id, agents)
         if agent is None:
-            return JSONResponse(status_code=404, content="Agent not found.")
+            raise HTTPException(status_code=404, detail="Agent not found")
 
         if agent.storage is None:
             return JSONResponse(status_code=404, content="Agent does not have storage enabled.")
@@ -538,7 +568,7 @@ def get_async_playground_router(
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
-    @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
+    @playground_router.get("/workflows/{workflow_id}/sessions")
     async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
@@ -558,17 +588,20 @@ def get_async_playground_router(
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
-        return [
-            WorkflowSessionResponse(
-                title=get_session_title_from_workflow_session(session),
-                session_id=session.session_id,
-                session_name=session.session_data.get("session_name") if session.session_data else None,
-                created_at=session.created_at,
+        workflow_sessions: List[WorkflowSessionResponse] = []
+        for session in all_workflow_sessions:
+            title = get_session_title_from_workflow_session(session)
+            workflow_sessions.append(
+                {
+                    "title": title,
+                    "session_id": session.session_id,
+                    "session_name": session.session_data.get("session_name") if session.session_data else None,
+                    "created_at": session.created_at,
+                }  # type: ignore
             )
-            for session in all_workflow_sessions
-        ]
+        return workflow_sessions
 
-    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
+    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
     ):

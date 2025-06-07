@@ -15,7 +15,12 @@ def run_agent():
     return response
 
 
-simple_response_perf = PerformanceEval(name="Simple Performance Evaluation", func=run_agent, num_iterations=1, warmup_runs=0)
+simple_response_perf = PerformanceEval(
+    name="Simple Performance Evaluation",
+    func=run_agent,
+    num_iterations=1,
+    warmup_runs=0,
+)
 
 if __name__ == "__main__":
     simple_response_perf.run(print_results=True, print_summary=True)
