@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.models.base import MessageData, Model
+from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_error, log_warning
@@ -16,8 +16,7 @@ try:
     from boto3.session import Session
     from botocore.exceptions import ClientError
 except ImportError:
-    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
-    raise
+    raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
 @dataclass
@@ -33,12 +32,20 @@ class AwsBedrock(Model):
     2. Or provide a boto3 Session object
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
+
+    Args:
+        aws_region (Optional[str]): The AWS region to use.
+        aws_access_key_id (Optional[str]): The AWS access key ID to use.
+        aws_secret_access_key (Optional[str]): The AWS secret access key to use.
+        aws_sso_auth (Optional[str]): Removes the need for an access and secret access key by leveraging the current profile's authentication
+        session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
     id: str = "mistral.mistral-small-2402-v1:0"
     name: str = "AwsBedrock"
     provider: str = "AwsBedrock"
 
+    aws_sso_auth: Optional[bool] = False
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
@@ -71,18 +78,21 @@ class AwsBedrock(Model):
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        if not self.aws_access_key_id or not self.aws_secret_access_key:
-            raise AgnoError(
-                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                status_code=400,
-            )
+        if self.aws_sso_auth:
+            self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
+        else:
+            if not self.aws_access_key_id or not self.aws_secret_access_key:
+                raise AgnoError(
+                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
+                    status_code=400,
+                )
 
-        self.client = AwsClient(
-            service_name="bedrock-runtime",
-            region_name=self.aws_region,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-        )
+            self.client = AwsClient(
+                service_name="bedrock-runtime",
+                region_name=self.aws_region,
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+            )
         return self.client
 
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -474,7 +484,7 @@ class AwsBedrock(Model):
                 should_yield = True
 
             if model_response.response_usage is not None:
-                self._add_usage_metrics_to_assistant_message(
+                _add_usage_metrics_to_assistant_message(
                     assistant_message=assistant_message, response_usage=model_response.response_usage
                 )
 

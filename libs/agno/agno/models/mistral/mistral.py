@@ -14,6 +14,7 @@ from agno.utils.models.mistral import format_messages
 try:
     from mistralai import CompletionEvent
     from mistralai import Mistral as MistralClient
+    from mistralai.extra import response_format_from_pydantic_model
     from mistralai.extra.struct_chat import ParsedChatCompletionResponse
     from mistralai.models import (
         AssistantMessage,
@@ -176,10 +177,10 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                response = self.get_client().chat.parse(
+                response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=response_format,  # type: ignore
+                    response_format=response_format_from_pydantic_model(response_format),
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
@@ -240,10 +241,10 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                response = await self.get_client().chat.parse_async(
+                response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
-                    response_format=response_format,  # type: ignore
+                    response_format=response_format_from_pydantic_model(response_format),
                     **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
                 )
             else:
