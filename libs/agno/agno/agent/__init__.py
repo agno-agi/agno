@@ -10,6 +10,7 @@ from agno.agent.agent import (
     Toolkit,
 )
 from agno.run.response import (
+    RunResponseEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -38,6 +39,7 @@ __all__ = [
     "Memory",
     "RunEvent",
     "RunResponse",
+    "RunResponseEvent",
     "Storage",
     "Toolkit",
     "RunResponseContentEvent",

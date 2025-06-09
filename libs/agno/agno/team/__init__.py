@@ -11,6 +11,7 @@ from agno.run.team import (
     RunResponseStartedEvent,
     TeamRunEvent,
     TeamRunResponse,
+    TeamRunResponseEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "Team",
     "RunResponse",
     "TeamRunResponse",
+    "TeamRunResponseEvent",
     "TeamRunEvent",
     "RunResponseContentEvent",
     "RunResponseCancelledEvent",
