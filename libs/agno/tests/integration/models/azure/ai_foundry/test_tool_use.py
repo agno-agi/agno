@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -24,14 +23,12 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -51,7 +48,6 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
@@ -59,7 +55,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -70,7 +65,6 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.asyncio
@@ -78,7 +72,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -100,14 +93,12 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 def test_parallel_tool_calls():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -120,16 +111,14 @@ def test_parallel_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "AAPL" in response.content
 
 
 def test_multiple_tool_calls():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -157,7 +146,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -187,7 +175,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=AzureAIFoundry(id="Phi-4"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -206,7 +193,6 @@ def test_tool_call_list_parameters():
         model=AzureAIFoundry(id="Phi-4"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

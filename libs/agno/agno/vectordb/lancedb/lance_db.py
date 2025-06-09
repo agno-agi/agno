@@ -216,7 +216,7 @@ class LanceDb(VectorDb):
             log_info("No documents to insert")
             return
 
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         for document in documents:
@@ -274,7 +274,7 @@ class LanceDb(VectorDb):
             log_debug("No documents to insert")
             return
 
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         # Prepare documents for insertion

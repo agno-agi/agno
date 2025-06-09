@@ -56,18 +56,20 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
 
     # Standard token metrics
     if isinstance(response_usage, dict):
-        if "input_tokens" in response_usage:
+        if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
             assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-        if "output_tokens" in response_usage:
+        if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
             assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-        if "prompt_tokens" in response_usage:
+        if "prompt_tokens" in response_usage and response_usage.get("prompt_tokens") is not None:
             assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
-        if "completion_tokens" in response_usage:
+        if "completion_tokens" in response_usage and response_usage.get("completion_tokens") is not None:
             assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
-        if "total_tokens" in response_usage:
-            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-        if "cached_tokens" in response_usage:
+        if "cached_tokens" in response_usage and response_usage.get("cached_tokens") is not None:
             assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
+        if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
+            assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
+        if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
+            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
         else:
             assistant_message.metrics.total_tokens = (
                 assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
@@ -87,19 +89,19 @@ def _add_usage_metrics_to_assistant_message(assistant_message: Message, response
             assistant_message.metrics.total_tokens = response_usage.total_tokens
         if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
             assistant_message.metrics.cached_tokens = response_usage.cached_tokens
-        # Anthropic prompt caching specific metric
-        if (
-            hasattr(response_usage, "cache_creation_input_tokens")
-            and response_usage.cache_creation_input_tokens is not None
-        ):
-            assistant_message.metrics.cache_creation_input_tokens = response_usage.cache_creation_input_tokens
-        # Anthropic prompt caching specific metric
-        if hasattr(response_usage, "cache_read_input_tokens") and response_usage.cache_read_input_tokens is not None:
-            assistant_message.metrics.cache_read_input_tokens = response_usage.cache_read_input_tokens
-        else:
-            assistant_message.metrics.total_tokens = (
-                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-            )
+        if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
+            assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
+
+    # If you didn't capture any total tokens
+    if not assistant_message.metrics.total_tokens:
+        if assistant_message.metrics.input_tokens is None:
+            assistant_message.metrics.input_tokens = 0
+        if assistant_message.metrics.output_tokens is None:
+            assistant_message.metrics.output_tokens = 0
+
+        assistant_message.metrics.total_tokens = (
+            assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+        )
 
     # Additional metrics (e.g., from Groq, Ollama)
     if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
@@ -221,9 +223,6 @@ class Model(ABC):
     # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
     supports_json_schema_outputs: bool = False
 
-    # Function call stack.
-    _function_call_stack: Optional[List[FunctionCall]] = None
-
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a function.
@@ -315,6 +314,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = self._process_model_response(
@@ -340,7 +341,8 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     if (
                         function_call_response.event
@@ -360,6 +362,9 @@ class Model(ABC):
                     ]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -411,6 +416,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = await self._aprocess_model_response(
@@ -436,7 +443,8 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     if (
                         function_call_response.event
@@ -455,6 +463,9 @@ class Model(ABC):
                     ]:
                         if function_call_response.content:
                             model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -723,6 +734,8 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        function_call_count = 0
+
         while True:
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -772,9 +785,13 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
@@ -852,6 +869,8 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
+        function_call_count = 0
+
         while True:
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -900,9 +919,13 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
@@ -1091,6 +1114,16 @@ class Model(ABC):
             **kwargs,
         )
 
+    def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
+        return Message(
+            role=self.tool_message_role,
+            content=f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again.",
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -1170,17 +1203,22 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
     ) -> Iterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    continue
+
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1260,14 +1298,6 @@ class Model(ABC):
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
 
-            # Add function call result to function call results
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
-
         # Add any additional messages at the end
         if additional_messages:
             function_call_results.extend(additional_messages)
@@ -1315,19 +1345,28 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
-        # Yield tool_call_started events for all function calls
+        function_calls_to_run = []
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    # Skip this function call
+                    continue
+            function_calls_to_run.append(fc)
+
+        # Yield tool_call_started events for all function calls or pause them
+        for fc in function_calls_to_run:
             paused_tool_executions = []
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation and not skip_pause_check:
@@ -1422,11 +1461,11 @@ class Model(ABC):
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
         if skip_pause_check:
-            function_calls_to_run = function_calls
+            function_calls_to_run = function_calls_to_run
         else:
             function_calls_to_run = [
                 fc
-                for fc in function_calls
+                for fc in function_calls_to_run
                 if not (
                     fc.function.requires_confirmation
                     or fc.function.external_execution
@@ -1495,12 +1534,6 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
 
         # Add any additional messages at the end
         if additional_messages:
@@ -1541,11 +1574,6 @@ class Model(ABC):
     def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
         return self.instructions
 
-    def clear(self) -> None:
-        """Clears the Model's state."""
-
-        self._function_call_stack = None
-
     def __deepcopy__(self, memo):
         """Create a deep copy of the Model instance.
 
@@ -1564,7 +1592,7 @@ class Model(ABC):
 
         # Deep copy all attributes
         for k, v in self.__dict__.items():
-            if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
+            if k in {"response_format", "_tools", "_functions"}:
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
@@ -1574,6 +1602,4 @@ class Model(ABC):
                 except Exception:
                     setattr(new_model, k, v)
 
-        # Clear the new model to remove any references to the old model
-        new_model.clear()
         return new_model

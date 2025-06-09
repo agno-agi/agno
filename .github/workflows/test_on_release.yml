@@ -3,17 +3,16 @@ name: Main Validation
 on:
   push:
     branches:
-      - '*release*'  # Run on release-* format
-      - 'release/*'  # Run on release/1.2.3 branch format
+      - "*release*" # Run on release-* format
+      - "release/*" # Run on release/1.2.3 branch format
 
 jobs:
   style-check:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.9"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
 
     defaults:
       run:
@@ -25,7 +24,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          cache: "pip"
       - name: Install dependencies
         run: |
           python -m pip install --upgrade \
@@ -48,7 +47,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
@@ -73,7 +72,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
@@ -99,7 +98,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
@@ -427,6 +426,31 @@ jobs:
         run: |
           ./scripts/run_model_tests.sh xai
 
+  # Run tests for v0
+  test-v0:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      V0_API_KEY: ${{ secrets.V0_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup and Vercel V0 tests
+        working-directory: .
+        run: |
+          ./scripts/run_model_tests.sh vercel
+
   test-ibm-watsonx:
     if: false # Our account is not working
     runs-on: ubuntu-latest
@@ -460,7 +484,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
     steps:
@@ -502,15 +526,79 @@ jobs:
         run: |
           ./scripts/run_model_tests.sh deepinfra
 
+  # Run tests for AI/ML API
+  test-aimlapi:
+    if: false # We need more credits
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      AIMLAPI_API_KEY: ${{ secrets.AIMLAPI_API_KEY }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run AImlAPI tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/aimlapi
+
+  # Run tests for LangDB
+  test-langdb:
+    if: false # We do not have a company account
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      LANGDB_API_KEY: ${{ secrets.LANGDB_API_KEY }}
+      LANGDB_PROJECT_ID: ${{ secrets.LANGDB_PROJECT_ID }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run LangDB tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/langdb
+
   test-agents:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -536,7 +624,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -560,12 +648,40 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
 
+  test-embedder:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run embedder tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/embedder
+
   test-knowledge:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -595,7 +711,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
-      fail-fast: true  # Stop all matrix jobs if one fails
+      fail-fast: true # Stop all matrix jobs if one fails
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -617,4 +733,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration

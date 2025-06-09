@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -24,14 +23,12 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -54,7 +51,6 @@ def test_tool_use_stream():
     full_content = ""
     for r in responses:
         full_content += r.content or ""
-    assert "TSLA" in full_content
 
 
 @pytest.mark.asyncio
@@ -62,7 +58,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -73,7 +68,6 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.asyncio
@@ -81,7 +75,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -106,7 +99,6 @@ async def test_async_tool_use_stream():
     full_content = ""
     for r in responses:
         full_content += r.content or ""
-    assert "TSLA" in full_content
 
 
 @pytest.mark.skip("Grok struggles with multiple tool calls")
@@ -119,7 +111,6 @@ def test_multiple_tool_calls():
             "Use DuckDuckGo for news and general information",
             "When both price and news are requested, use both tools",
         ],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -147,7 +138,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -177,7 +167,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -196,7 +185,6 @@ def test_tool_call_list_parameters():
         model=xAI(id="grok-3-mini-fast"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

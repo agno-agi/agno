@@ -237,7 +237,7 @@ class MongoDb(VectorDb):
                     log_info(f"Dropping existing index '{index_name}'")
                     collection.drop_index(index_name)
 
-                embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+                embedding_dim = getattr(self.embedder, "dimensions", 1536)
                 log_info(f"Creating vector search index '{index_name}'")
 
                 # Create vector search index using Cosmos DB IVF format
@@ -284,7 +284,7 @@ class MongoDb(VectorDb):
                     log_info(f"Creating search index '{index_name}'.")
 
                     # Get embedding dimension from embedder
-                    embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+                    embedding_dim = getattr(self.embedder, "dimensions", 1536)
 
                     search_index_model = SearchIndexModel(
                         definition={
@@ -332,7 +332,7 @@ class MongoDb(VectorDb):
                 collection = await self._get_async_collection()
 
                 # Get embedding dimension from embedder
-                embedding_dim = getattr(self.embedder, "embedding_dim", 1536)
+                embedding_dim = getattr(self.embedder, "dimensions", 1536)
 
                 search_index_model = SearchIndexModel(
                     definition={
@@ -485,7 +485,7 @@ class MongoDb(VectorDb):
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the MongoDB collection."""
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
 
         prepared_docs = []
@@ -942,7 +942,7 @@ class MongoDb(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously."""
-        log_info(f"Inserting {len(documents)} documents asynchronously")
+        log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
         prepared_docs = []

@@ -1,3 +1,12 @@
+"""This example shows how to run an Agent using our MCP integration in the Agno Playground.
+
+For this example to run you need:
+- Create a GitHub personal access token following these steps:
+    - https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup
+- Set the GITHUB_TOKEN environment variable: `export GITHUB_TOKEN=<Your GitHub access token>`
+- Run: `pip install agno mcp openai` to install the dependencies
+"""
+
 import asyncio
 from os import getenv
 from textwrap import dedent
@@ -51,11 +60,16 @@ async def run_server() -> None:
             markdown=True,
         )
 
-        playground = Playground(agents=[agent])
-        app = playground.get_app()
+        playground = Playground(
+            agents=[agent],
+            name="MCP Demo",
+            description="A playground for MCP",
+            app_id="mcp-demo",
+        )
+        playground.get_app()
 
         # Serve the app while keeping the MCPTools context manager alive
-        serve_playground_app(app)
+        playground.serve(app="mcp_demo:app", reload=True)
 
 
 if __name__ == "__main__":

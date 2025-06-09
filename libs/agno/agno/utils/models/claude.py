@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.media import File, Image
@@ -12,6 +13,22 @@ try:
     )
 except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+
+
+@dataclass
+class MCPToolConfiguration:
+    enabled: bool = True
+    allowed_tools: List[str] = field(default_factory=list)
+
+
+@dataclass
+class MCPServerConfiguration:
+    type: str
+    url: str
+    name: str
+    tool_configuration: Optional[MCPToolConfiguration] = None
+    authorization_token: Optional[str] = None
+
 
 ROLE_MAP = {
     "system": "system",
@@ -245,7 +262,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
                 content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
 
-            if isinstance(message.content, str) and message.content:
+            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
@@ -260,6 +277,8 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
-
+        # Skip empty assistant responses
+        if message.role == "assistant" and not content:
+            continue
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
