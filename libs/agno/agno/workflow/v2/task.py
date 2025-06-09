@@ -156,9 +156,22 @@ class Task:
             self._executor_type = "function"
 
     def execute(
+        self,
+        task_input: TaskInput,
+        context: Dict[str, Any] = None,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[Union[WorkflowRunResponse, TaskOutput, str]]:
+        """Execute the task with TaskInput, with optional streaming support"""
+        if stream:
+            return self._execute_task_stream(task_input, context, stream_intermediate_steps)
+        else:
+            return self._execute_task(task_input, context)
+
+    def _execute_task(
         self, task_input: TaskInput, context: Dict[str, Any] = None
     ) -> Iterator[Union[WorkflowRunResponse, TaskOutput]]:
-        """Execute the task with TaskInput, yielding events and final TaskOutput"""
+        """Execute the task with TaskInput, yielding events and final TaskOutput (non-streaming)"""
         logger.info(f"Executing task: {self.name}")
 
         # Yield task started event
@@ -180,7 +193,7 @@ class Task:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._execute_task(task_input)
+                response = self._execute_task_sync(task_input)
 
                 # Create TaskOutput from response
                 task_output = self._create_task_output(response, task_input)
@@ -204,6 +217,187 @@ class Task:
                         return
                     else:
                         raise e
+
+    def _execute_task_stream(
+        self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
+    ) -> Iterator[Union[WorkflowRunResponse, TaskOutput, str]]:
+        """Execute the task with streaming support, yielding events, content chunks, and final TaskOutput"""
+        logger.info(f"Executing task with streaming: {self.name}")
+
+        # Yield task started event
+        yield WorkflowRunResponse(
+            content=f"Starting task: {self.name}",
+            event=WorkflowRunEvent.task_started,
+            workflow_name=context.get("workflow_name") if context else None,
+            sequence_name=context.get("sequence_name") if context else None,
+            task_name=self.name,
+            task_index=context.get("task_index") if context else None,
+            workflow_id=context.get("workflow_id") if context else None,
+            run_id=context.get("run_id") if context else None,
+            session_id=context.get("session_id") if context else None,
+        )
+
+        # Initialize executor with context and workflow session state
+        self._initialize_executor_context(task_input, context)
+
+        # Execute with retries and streaming
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Stream the task execution
+                accumulated_content = ""
+                final_response = None
+
+                for chunk in self._execute_task_with_streaming(task_input, stream_intermediate_steps):
+                    if isinstance(chunk, (RunResponse, TeamRunResponse, TaskOutput)):
+                        # This is the final response
+                        final_response = chunk
+                        break
+                    else:
+                        # This is streaming content
+                        accumulated_content += str(chunk)
+                        yield chunk
+
+                # If we didn't get a final response, create one from accumulated content
+                if final_response is None:
+                    final_response = RunResponse(content=accumulated_content)
+
+                # Create TaskOutput from response
+                task_output = self._create_task_output(final_response, task_input)
+
+                logger.info(f"Task {self.name} completed successfully with streaming")
+                yield task_output
+                return
+
+            except Exception as e:
+                self.retry_count = attempt + 1
+                logger.warning(f"Task {self.name} failed (attempt {attempt + 1}): {e}")
+
+                if attempt == self.max_retries:
+                    if self.skip_on_failure:
+                        logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
+                        # Create empty TaskOutput for skipped task
+                        task_output = TaskOutput(
+                            content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+                        )
+                        yield task_output
+                        return
+                    else:
+                        raise e
+
+    def _execute_task_sync(self, task_input: TaskInput) -> Union[RunResponse, TeamRunResponse, TaskOutput]:
+        """Execute the task based on executor type (non-streaming)"""
+        if self._executor_type == "function":
+            # Execute function directly with TaskInput
+            result = self._active_executor(task_input)
+
+            # If function returns TaskOutput, use it directly
+            if isinstance(result, TaskOutput):
+                return result
+
+            # Otherwise, wrap in TaskOutput
+            return TaskOutput(content=str(result))
+
+        # For agents and teams, prepare message with context
+        message = task_input.get_primary_input()
+
+        # Add context information to message if available
+        if task_input.previous_outputs:
+            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
+
+        # Execute agent or team with media
+        if self._executor_type == "agent":
+            return self._active_executor.run(
+                message=message,
+                images=task_input.images,
+                videos=task_input.videos,
+                audio=task_input.audio,
+            )
+        elif self._executor_type == "team":
+            return self._active_executor.run(
+                message=message,
+                images=task_input.images,
+                videos=task_input.videos,
+                audio=task_input.audio,
+            )
+        else:
+            raise ValueError(f"Unsupported executor type: {self._executor_type}")
+
+    def _execute_task_with_streaming(
+        self, task_input: TaskInput, stream_intermediate_steps: bool = False
+    ) -> Iterator[Union[RunResponse, TeamRunResponse, TaskOutput, str]]:
+        """Execute the task with streaming support"""
+        if self._executor_type == "function":
+            # Functions don't support streaming, execute normally
+            result = self._active_executor(task_input)
+            if isinstance(result, TaskOutput):
+                yield result
+            else:
+                yield TaskOutput(content=str(result))
+            return
+
+        # For agents and teams, prepare message with context
+        message = task_input.get_primary_input()
+
+        # Add context information to message if available
+        if task_input.previous_outputs:
+            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
+
+        # Execute agent or team with streaming
+        if self._executor_type == "agent":
+            response_stream = self._active_executor.run(
+                message=message,
+                images=task_input.images,
+                videos=task_input.videos,
+                audio=task_input.audio,
+                stream=True,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+
+            accumulated_content = ""
+            final_response = None
+
+            for chunk in response_stream:
+                if hasattr(chunk, "content") and chunk.content:
+                    accumulated_content += chunk.content
+                    yield chunk.content
+
+                # Keep track of the final response
+                final_response = chunk
+
+            # Yield the final response
+            if final_response:
+                yield final_response
+            else:
+                yield RunResponse(content=accumulated_content)
+
+        elif self._executor_type == "team":
+            response_stream = self._active_executor.run(
+                message=message,
+                images=task_input.images,
+                videos=task_input.videos,
+                audio=task_input.audio,
+                stream=True,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+
+            accumulated_content = ""
+            final_response = None
+
+            for chunk in response_stream:
+                if hasattr(chunk, "content") and chunk.content:
+                    accumulated_content += chunk.content
+                    yield chunk.content
+
+                # Keep track of the final response
+                final_response = chunk
+
+            # Yield the final response
+            if final_response:
+                yield final_response
+            else:
+                yield TeamRunResponse(content=accumulated_content)
+        else:
+            raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
     async def aexecute(
         self, task_input: TaskInput, context: Dict[str, Any] = None
@@ -272,44 +466,6 @@ class Task:
                 if executor.session_state is None:
                     executor.session_state = {}
                 executor.session_state.update(task_input.workflow_session_state)
-
-    def _execute_task(self, task_input: TaskInput) -> Union[RunResponse, TeamRunResponse, TaskOutput]:
-        """Execute the task based on executor type"""
-        if self._executor_type == "function":
-            # Execute function directly with TaskInput
-            result = self._active_executor(task_input)
-
-            # If function returns TaskOutput, use it directly
-            if isinstance(result, TaskOutput):
-                return result
-
-            # Otherwise, wrap in TaskOutput
-            return TaskOutput(content=str(result))
-
-        # For agents and teams, prepare message with context
-        message = task_input.get_primary_input()
-
-        # Add context information to message if available
-        if task_input.previous_outputs:
-            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-        # Execute agent or team with media
-        if self._executor_type == "agent":
-            return self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
-        elif self._executor_type == "team":
-            return self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
-        else:
-            raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
     async def _aexecute_task(self, task_input: TaskInput) -> Union[RunResponse, TeamRunResponse, TaskOutput]:
         """Execute the task based on executor type asynchronously"""

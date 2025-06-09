@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from typing import Sequence as TypingSequence
 from uuid import uuid4
 
@@ -106,7 +106,7 @@ class Workflow:
 
         try:
             # Execute the sequence synchronously
-            for response in sequence.execute(inputs, context):
+            for response in sequence.execute(inputs, context, stream=False):
                 # Collect all responses
                 workflow_run_responses.append(response)
                 yield response
@@ -115,6 +115,76 @@ class Workflow:
             if self.workflow_session and workflow_run_responses:
                 # Store only the final completed workflow response
                 # The workflow_completed event
+                final_response = workflow_run_responses[-1]
+                if final_response.event == WorkflowRunEvent.workflow_completed:
+                    self.workflow_session.add_run(final_response)
+
+            # Save to storage after complete execution
+            self.write_to_storage()
+
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+
+            error_response = WorkflowRunResponse(
+                content=f"Workflow execution failed: {e}",
+                event=WorkflowRunEvent.workflow_error,
+                workflow_id=self.workflow_id,
+                workflow_name=self.name,
+                sequence_name=sequence_name,
+                session_id=self.session_id,
+                run_id=self.run_id,
+            )
+
+            # Store error response
+            if self.workflow_session:
+                self.workflow_session.add_run(error_response)
+            self.write_to_storage()
+
+            yield error_response
+
+    def execute_sequence_stream(
+        self, sequence_name: str, inputs: Dict[str, Any], stream_intermediate_steps: bool = False
+    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+        """Execute a specific sequence by name synchronously with streaming support"""
+        sequence = self.get_sequence(sequence_name)
+        if not sequence:
+            raise ValueError(f"Sequence '{sequence_name}' not found")
+
+        # Initialize execution
+        self.run_id = str(uuid4())
+        execution_start = datetime.now()
+
+        log_debug(f"Starting workflow execution with streaming: {self.run_id}")
+
+        # Create execution context
+        context = {
+            "workflow_id": self.workflow_id,
+            "workflow_name": self.name,
+            "run_id": self.run_id,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "execution_start": execution_start,
+        }
+
+        # Update agents and teams with workflow session info
+        self.update_agents_and_teams_session_info()
+
+        # Collect complete workflow run instead of individual events
+        workflow_run_responses = []
+
+        try:
+            # Execute the sequence with streaming
+            for response in sequence.execute(
+                inputs, context, stream=True, stream_intermediate_steps=stream_intermediate_steps
+            ):
+                # Collect all responses
+                if isinstance(response, WorkflowRunResponse):
+                    workflow_run_responses.append(response)
+                yield response
+
+            # Store only the complete workflow run (not individual events)
+            if self.workflow_session and workflow_run_responses:
+                # Store only the final completed workflow response
                 final_response = workflow_run_responses[-1]
                 if final_response.event == WorkflowRunEvent.workflow_completed:
                     self.workflow_session.add_run(final_response)
@@ -237,8 +307,43 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+        """Execute the workflow synchronously with optional streaming"""
+        if stream:
+            return self._run_stream(
+                query=query,
+                sequence_name=sequence_name,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+        else:
+            return self._run(
+                query=query,
+                sequence_name=sequence_name,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+            )
+
+    def _run(
+        self,
+        query: str = None,
+        sequence_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
     ) -> Iterator[WorkflowRunResponse]:
-        """Execute the workflow synchronously"""
+        """Execute the workflow synchronously (non-streaming)"""
         # Set user_id and session_id if provided
         if user_id is not None:
             self.user_id = user_id
@@ -288,6 +393,69 @@ class Workflow:
 
         # Execute the selected sequence synchronously
         for response in self.execute_sequence(selected_sequence_name, inputs):
+            yield response
+
+    def _run_stream(
+        self,
+        query: str = None,
+        sequence_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+        """Execute the workflow synchronously with streaming support"""
+        # Set user_id and session_id if provided
+        if user_id is not None:
+            self.user_id = user_id
+        if session_id is not None:
+            self.session_id = session_id
+
+        # Load or create session
+        self.load_session()
+
+        # Determine sequence based on trigger type and parameters
+        if self.trigger.trigger_type == TriggerType.MANUAL:
+            if not self.sequences:
+                raise ValueError("No sequences available in this workflow")
+
+            # If sequence_name is provided, use that specific sequence
+            if sequence_name:
+                target_sequence = self.get_sequence(sequence_name)
+                if not target_sequence:
+                    available_sequences = [seq.name for seq in self.sequences]
+                    raise ValueError(
+                        f"Sequence '{sequence_name}' not found. Available sequences: {available_sequences}"
+                    )
+                selected_sequence_name = sequence_name
+            else:
+                # Default to first sequence if no sequence_name specified
+                selected_sequence_name = self.sequences[0].name
+        else:
+            raise ValueError(
+                f"Sequence selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
+            )
+
+        # Prepare inputs with media support
+        inputs = {}
+
+        # Primary input (query)
+        primary_input = query
+        if primary_input is not None:
+            inputs["query"] = primary_input
+
+        # Add media inputs
+        if audio is not None:
+            inputs["audio"] = list(audio)
+        if images is not None:
+            inputs["images"] = list(images)
+        if videos is not None:
+            inputs["videos"] = list(videos)
+
+        # Execute the selected sequence with streaming
+        for response in self.execute_sequence_stream(selected_sequence_name, inputs, stream_intermediate_steps):
             yield response
 
     async def arun(
@@ -462,21 +630,70 @@ class Workflow:
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
         sequence_name: Optional[str] = None,
+        stream: bool = False,
         markdown: bool = True,
         show_time: bool = True,
         show_task_details: bool = True,
         console: Optional[Any] = None,
     ) -> None:
-        """Print workflow execution with rich formatting
+        """Print workflow execution with rich formatting and optional streaming
 
         Args:
             query: The main query/input for the workflow
             sequence_name: Name of the sequence to execute (defaults to first sequence)
+            stream: Whether to stream the response content
+            stream_intermediate_steps: Whether to stream intermediate steps
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_task_details: Whether to show individual task outputs
             console: Rich console instance (optional)
         """
+        if stream:
+            self._print_response_stream(
+                query=query,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                sequence_name=sequence_name,
+                stream_intermediate_steps=True,
+                markdown=markdown,
+                show_time=show_time,
+                show_task_details=show_task_details,
+                console=console,
+            )
+        else:
+            self._print_response(
+                query=query,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                sequence_name=sequence_name,
+                markdown=markdown,
+                show_time=show_time,
+                show_task_details=show_task_details,
+                console=console,
+            )
+
+    def _print_response(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        sequence_name: Optional[str] = None,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_task_details: bool = True,
+        console: Optional[Any] = None,
+    ) -> None:
+        """Print workflow execution with rich formatting (non-streaming)"""
+        from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -488,19 +705,18 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
-        # Use query or message as primary input
+        # Validate inputs and sequence
         primary_input = query
         if primary_input is None:
-            console.print("[red]Either 'query' or 'message' must be provided[/red]")
+            console.print("[red]Query must be provided[/red]")
             return
 
-        # Validate sequence configuration based on trigger type
+        # Validate sequence configuration
         if self.trigger.trigger_type == TriggerType.MANUAL:
             if not self.sequences:
                 console.print("[red]No sequences available in this workflow[/red]")
                 return
 
-            # Determine which sequence to use
             if sequence_name:
                 sequence = self.get_sequence(sequence_name)
                 if not sequence:
@@ -510,17 +726,13 @@ class Workflow:
                     )
                     return
             else:
-                # Default to first sequence
                 sequence = self.sequences[0]
                 sequence_name = sequence.name
         else:
-            # For other trigger types, we'll implement sequence selection logic later
-            console.print(
-                f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in print_response[/yellow]"
-            )
+            console.print(f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported[/yellow]")
             return
 
-        # Show workflow info once at the beginning
+        # Show workflow info
         media_info = []
         if audio:
             media_info.append(f"Audio files: {len(audio)}")
@@ -536,10 +748,10 @@ class Workflow:
             **Sequence:** {sequence.name}
             **Description:** {sequence.description or "No description"}
             **Tasks:** {len(sequence.tasks)} tasks
-            **Available Sequences:** {", ".join([seq.name for seq in self.sequences])}
             **Query:** {primary_input}{media_str}
             **User ID:** {user_id or self.user_id or "Not set"}
             **Session ID:** {session_id or self.session_id}
+            **Streaming:** Disabled
             """.strip()
 
         workflow_panel = create_panel(
@@ -549,19 +761,20 @@ class Workflow:
         )
         console.print(workflow_panel)
 
-        # Start timer before execution
+        # Start timer
         response_timer = Timer()
         response_timer.start()
 
-        # Execute and show results
+        # Batch execution
         task_responses = []
 
         with Live(console=console) as live_log:
             status = Status("Starting workflow...", spinner="dots")
-            live_log.update(status)
+            panels = [status]
+            live_log.update(Group(*panels))
 
             try:
-                for response in self.run(
+                for response in self._run(
                     query=query,
                     sequence_name=sequence_name,
                     user_id=user_id,
@@ -594,11 +807,11 @@ class Workflow:
                                 }
                             )
 
-                        # Print the task panel immediately after completion
+                        # Show task panel
                         if show_task_details and response.content:
                             task_panel = create_panel(
                                 content=Markdown(response.content) if markdown else response.content,
-                                title=f"Task {task_index + 1}: {task_name}",
+                                title=f"Task {task_index + 1}: {task_name} (Completed)",
                                 border_style="green",
                             )
                             console.print(task_panel)
@@ -627,12 +840,241 @@ class Workflow:
                         error_panel = create_panel(content=response.content, title="Error", border_style="red")
                         console.print(error_panel)
 
-                    # Update live display with just status
-                    live_log.update(status)
+                response_timer.stop()
+
+                # Final completion message
+                if show_time:
+                    completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
+                    console.print(completion_text)
+
+            except Exception as e:
+                response_timer.stop()
+                error_panel = create_panel(
+                    content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
+                )
+                console.print(error_panel)
+
+    def _print_response_stream(
+        self,
+        query: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        sequence_name: Optional[str] = None,
+        stream_intermediate_steps: bool = False,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_task_details: bool = True,
+        console: Optional[Any] = None,
+    ) -> None:
+        """Print workflow execution with streaming support"""
+        from rich.console import Group
+        from rich.live import Live
+        from rich.markdown import Markdown
+        from rich.status import Status
+        from rich.text import Text
+
+        from agno.utils.response import create_panel
+        from agno.utils.timer import Timer
+
+        if console is None:
+            from agno.cli.console import console
+
+        # Validate inputs and sequence
+        primary_input = query
+        if primary_input is None:
+            console.print("[red]Query must be provided[/red]")
+            return
+
+        # Validate sequence configuration
+        if self.trigger.trigger_type == TriggerType.MANUAL:
+            if not self.sequences:
+                console.print("[red]No sequences available in this workflow[/red]")
+                return
+
+            if sequence_name:
+                sequence = self.get_sequence(sequence_name)
+                if not sequence:
+                    available_sequences = [seq.name for seq in self.sequences]
+                    console.print(
+                        f"[red]Sequence '{sequence_name}' not found. Available sequences: {available_sequences}[/red]"
+                    )
+                    return
+            else:
+                sequence = self.sequences[0]
+                sequence_name = sequence.name
+        else:
+            console.print(
+                f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in streaming[/yellow]"
+            )
+            return
+
+        # Show workflow info
+        media_info = []
+        if audio:
+            media_info.append(f"Audio files: {len(audio)}")
+        if images:
+            media_info.append(f"Images: {len(images)}")
+        if videos:
+            media_info.append(f"Videos: {len(videos)}")
+
+        media_str = f" | {' | '.join(media_info)}" if media_info else ""
+
+        workflow_info = f"""
+            **Workflow:** {self.name}
+            **Sequence:** {sequence.name}
+            **Description:** {sequence.description or "No description"}
+            **Tasks:** {len(sequence.tasks)} tasks
+            **Query:** {primary_input}{media_str}
+            **User ID:** {user_id or self.user_id or "Not set"}
+            **Session ID:** {session_id or self.session_id}
+            **Streaming:** Enabled
+            """.strip()
+
+        workflow_panel = create_panel(
+            content=Markdown(workflow_info) if markdown else workflow_info,
+            title="Workflow Information",
+            border_style="cyan",
+        )
+        console.print(workflow_panel)
+
+        # Start timer
+        response_timer = Timer()
+        response_timer.start()
+
+        # Streaming execution
+        current_task_content = ""
+        current_task_name = ""
+        current_task_index = 0
+        task_responses = []
+        current_task_panel = None
+        task_started_streaming = False
+
+        with Live(console=console) as live_log:
+            status = Status("Starting workflow...", spinner="dots")
+            panels = [status]
+            live_log.update(Group(*panels))
+
+            try:
+                for response in self._run_stream(
+                    query=query,
+                    sequence_name=sequence_name,
+                    user_id=user_id,
+                    session_id=session_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                ):
+                    if isinstance(response, WorkflowRunResponse):
+                        if response.event == WorkflowRunEvent.workflow_started:
+                            status.update("Workflow started...")
+
+                        elif response.event == WorkflowRunEvent.task_started:
+                            current_task_name = response.task_name or "Unknown"
+                            current_task_index = response.task_index or 0
+                            current_task_content = ""
+                            task_started_streaming = False
+                            status.update(f"Starting task {current_task_index + 1}: {current_task_name}...")
+
+                            # Create initial task panel with placeholder
+                            if show_task_details:
+                                current_task_panel = create_panel(
+                                    content="...",
+                                    title=f"Task {current_task_index + 1}: {current_task_name}",
+                                    border_style="green",
+                                )
+                                panels = [status, current_task_panel]
+                                live_log.update(Group(*panels))
+
+                        elif response.event == WorkflowRunEvent.task_completed:
+                            task_name = response.task_name or "Unknown"
+                            task_index = response.task_index or 0
+
+                            status.update(f"Completed task {task_index + 1}: {task_name}")
+
+                            if response.content:
+                                task_responses.append(
+                                    {
+                                        "task_name": task_name,
+                                        "task_index": task_index,
+                                        "content": response.content,
+                                        "event": response.event,
+                                    }
+                                )
+
+                            # Only print final task panel if we have content, then clear live display
+                            if show_task_details and current_task_content:
+                                # Clear the live display first to avoid overlap
+                                live_log.update(Group(status))
+
+                                # Print the final completed panel
+                                final_task_panel = create_panel(
+                                    content=Markdown(current_task_content) if markdown else current_task_content,
+                                    title=f"Task {task_index + 1}: {task_name} (Completed)",
+                                    border_style="green",
+                                )
+                                console.print(final_task_panel)
+
+                                # Reset for next task
+                                current_task_panel = None
+                                panels = [status]
+                                live_log.update(Group(*panels))
+
+                        elif response.event == WorkflowRunEvent.workflow_completed:
+                            status.update("Workflow completed!")
+
+                            # Show final summary
+                            if response.extra_data:
+                                final_output = response.extra_data
+                                summary_content = f"""
+                                    **Sequence:** {sequence_name}
+                                    **Status:** {final_output.get("status", "Unknown")}
+                                    **Tasks Completed:** {len(task_responses)}
+                                """.strip()
+
+                                summary_panel = create_panel(
+                                    content=Markdown(summary_content) if markdown else summary_content,
+                                    title="Execution Summary",
+                                    border_style="blue",
+                                )
+                                console.print(summary_panel)
+
+                        elif response.event == WorkflowRunEvent.workflow_error:
+                            status.update("Workflow failed!")
+                            error_panel = create_panel(content=response.content, title="Error", border_style="red")
+                            console.print(error_panel)
+
+                    else:
+                        # This is streaming content from a task
+                        response_str = str(response)
+
+                        # Filter out "Run started" and similar initialization messages
+                        if response_str.strip().lower() in ["run started", "starting...", ""]:
+                            continue
+
+                        # Mark that actual streaming has started
+                        if not task_started_streaming:
+                            task_started_streaming = True
+                            current_task_content = ""  # Clear any placeholder content
+
+                        current_task_content += response_str
+
+                        # Update live display with streaming content in the same green panel
+                        if show_task_details and current_task_panel is not None:
+                            updated_task_panel = create_panel(
+                                content=Markdown(current_task_content) if markdown else current_task_content,
+                                title=f"Task {current_task_index + 1}: {current_task_name}",
+                                border_style="green",
+                            )
+                            panels = [status, updated_task_panel]
+                            live_log.update(Group(*panels))
 
                 response_timer.stop()
 
-                # Final completion message with time
+                # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
                     console.print(completion_text)

@@ -25,8 +25,21 @@ class Sequence:
         if self.sequence_id is None:
             self.sequence_id = str(uuid4())
 
-    def execute(self, inputs: Dict[str, Any], context: Dict[str, Any] = None) -> Iterator[WorkflowRunResponse]:
-        """Execute all tasks in the sequence sequentially using TaskInput/TaskOutput"""
+    def execute(
+        self,
+        inputs: Dict[str, Any],
+        context: Dict[str, Any] = None,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+        """Execute all tasks in the sequence sequentially with optional streaming"""
+        if stream:
+            return self._execute_stream(inputs, context, stream_intermediate_steps)
+        else:
+            return self._execute(inputs, context)
+
+    def _execute(self, inputs: Dict[str, Any], context: Dict[str, Any] = None) -> Iterator[WorkflowRunResponse]:
+        """Execute all tasks in the sequence sequentially using TaskInput/TaskOutput (non-streaming)"""
         logger.info(f"Starting sequence: {self.name}")
 
         # Initialize sequence context
@@ -129,6 +142,93 @@ class Sequence:
             # Include all collected task responses
             task_responses=collected_task_responses,
             extra_data=final_output,
+        )
+
+    def _execute_stream(
+        self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
+    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+        """Execute the sequence with streaming support"""
+        logger.info(f"Executing sequence with streaming: {self.name}")
+
+        # Yield sequence started event
+        yield WorkflowRunResponse(
+            content=f"Starting sequence: {self.name}",
+            event=WorkflowRunEvent.workflow_started,
+            workflow_name=context.get("workflow_name") if context else None,
+            sequence_name=self.name,
+            workflow_id=context.get("workflow_id") if context else None,
+            run_id=context.get("run_id") if context else None,
+            session_id=context.get("session_id") if context else None,
+        )
+
+        # Track outputs for chaining
+        task_outputs = {}
+
+        # Execute tasks in sequence with streaming
+        for task_index, task in enumerate(self.tasks):
+            # Create task input
+            task_input = TaskInput(
+                query=inputs.get("query"),
+                message=inputs.get("message"),
+                workflow_session_state=inputs.get("workflow_session_state"),
+                previous_outputs=task_outputs.copy(),
+                images=inputs.get("images"),
+                videos=inputs.get("videos"),
+                audio=inputs.get("audio"),
+            )
+
+            # Update context with task info
+            task_context = context.copy() if context else {}
+            task_context.update(
+                {
+                    "sequence_name": self.name,
+                    "task_index": task_index,
+                }
+            )
+
+            # Execute task with streaming
+            task_output = None
+            for response in task.execute(
+                task_input, task_context, stream=True, stream_intermediate_steps=stream_intermediate_steps
+            ):
+                if isinstance(response, TaskOutput):
+                    # This is the final task output
+                    task_output = response
+
+                    # Yield task completed event
+                    yield WorkflowRunResponse(
+                        content=task_output.content,
+                        event=WorkflowRunEvent.task_completed,
+                        workflow_name=context.get("workflow_name") if context else None,
+                        sequence_name=self.name,
+                        task_name=task.name,
+                        task_index=task_index,
+                        workflow_id=context.get("workflow_id") if context else None,
+                        run_id=context.get("run_id") if context else None,
+                        session_id=context.get("session_id") if context else None,
+                    )
+                else:
+                    # This is either an event or streaming content
+                    yield response
+
+            # Store task output for next task
+            if task_output:
+                task_outputs[task.name] = task_output.content
+
+        # Yield sequence completed event
+        yield WorkflowRunResponse(
+            content="Sequence completed successfully",
+            event=WorkflowRunEvent.workflow_completed,
+            workflow_name=context.get("workflow_name") if context else None,
+            sequence_name=self.name,
+            workflow_id=context.get("workflow_id") if context else None,
+            run_id=context.get("run_id") if context else None,
+            session_id=context.get("session_id") if context else None,
+            extra_data={
+                "status": "completed",
+                "task_outputs": task_outputs,
+                "tasks_executed": len(self.tasks),
+            },
         )
 
     async def aexecute(
