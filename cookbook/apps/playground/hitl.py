@@ -16,6 +16,7 @@ from agno.tools import tool
 from agno.tools.function import UserInputField
 from agno.tools.toolkit import Toolkit
 from agno.tools.user_control_flow import UserControlFlowTools
+from agno.tools.wikipedia import WikipediaTools
 from agno.utils import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -100,6 +101,18 @@ class EmailTools(Toolkit):
         ]
 
 
+double_confirmation_agent = Agent(
+    agent_id="double-confirmation-agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[
+        get_top_hackernews_stories,
+        WikipediaTools(requires_confirmation_tools=["search_wikipedia"]),
+    ],
+    markdown=True,
+    storage=PostgresStorage(
+        table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
+    ),
+)
 user_input_required_agent = Agent(
     agent_id="user-input-required-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -131,12 +144,16 @@ confirmation_required_agent = Agent(
 combined_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     agent_id="combined-agent",
-    tools=[EmailTools(), UserControlFlowTools(),send_email, get_top_hackernews_stories],
+    tools=[
+        EmailTools(),
+        UserControlFlowTools(),
+        send_email,
+        get_top_hackernews_stories,
+    ],
     markdown=True,
-        storage=PostgresStorage(
+    storage=PostgresStorage(
         table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
-
 )
 
 playground = Playground(
@@ -145,6 +162,7 @@ playground = Playground(
         confirmation_required_agent,
         user_input_required_agent,
         combined_agent,
+        double_confirmation_agent,
     ],
     app_id="hitl-playground-app",
     name="HITL Playground",
