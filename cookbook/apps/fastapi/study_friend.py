@@ -84,7 +84,7 @@ StudyBuddy = Agent(
 )
 
 fastapi_app = FastAPIApp(
-    agent=StudyBuddy,
+    agents=[StudyBuddy],
     name="StudyBuddy",
     app_id="study_buddy",
     description="A study buddy that helps users achieve their educational goals through personalized guidance, interactive learning, and comprehensive resource curation.",

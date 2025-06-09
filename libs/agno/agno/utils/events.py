@@ -39,7 +39,7 @@ from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 def create_team_run_response_started_event(from_run_response: TeamRunResponse) -> TeamRunResponseStartedEvent:
     return TeamRunResponseStartedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id or "",
+        team_id=from_run_response.team_id,
         run_id=from_run_response.run_id,
         model=from_run_response.model,  # type: ignore
         model_provider=from_run_response.model_provider,  # type: ignore

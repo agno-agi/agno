@@ -10,7 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
+from agno.utils.whatsapp import get_media_async, send_image_message_async, typing_indicator_async, upload_media_async
 
 from .security import validate_webhook_signature
 
@@ -87,6 +87,9 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             message_video = None
             message_audio = None
             message_doc = None
+
+            message_id = message.get("id")
+            await typing_indicator_async(message_id)
 
             if message.get("type") == "text":
                 message_text = message["text"]["body"]
