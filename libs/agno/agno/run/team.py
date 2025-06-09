@@ -34,12 +34,20 @@ class RunEvent(str, Enum):
 
 @dataclass
 class BaseTeamRunResponseEvent(BaseRunResponseEvent):
+    created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
     team_id: str = ""
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+    # For backwards compatibility
+    content: Optional[Any] = None
 
 
 @dataclass
 class RunResponseStartedEvent(BaseTeamRunResponseEvent):
     """Event sent when the run starts"""
+
     event: str = RunEvent.run_started.value
     model: str = ""
     model_provider: str = ""
@@ -48,6 +56,7 @@ class RunResponseStartedEvent(BaseTeamRunResponseEvent):
 @dataclass
 class RunResponseContentEvent(BaseTeamRunResponseEvent):
     """Main event for each delta of the RunResponse"""
+
     event: str = RunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"
@@ -106,7 +115,7 @@ class ReasoningStepEvent(BaseTeamRunResponseEvent):
     event: str = RunEvent.reasoning_step.value
     content: Optional[Any] = None
     content_type: str = "str"
-    reasoning_content: str  = ""
+    reasoning_content: str = ""
 
 
 @dataclass
@@ -197,7 +206,18 @@ class TeamRunResponse:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "status", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k
+            not in [
+                "messages",
+                "status",
+                "tools",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+                "citations",
+            ]
         }
 
         if self.status is not None:

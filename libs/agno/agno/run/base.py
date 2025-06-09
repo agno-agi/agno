@@ -1,6 +1,5 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
-from time import time
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -14,11 +13,6 @@ from agno.utils.log import log_error
 
 @dataclass
 class BaseRunResponseEvent:
-    created_at: int = field(default_factory=lambda: int(time()))
-    event: str = ""
-    run_id: Optional[str] = None
-    session_id: Optional[str] = None
-
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -38,12 +32,12 @@ class BaseRunResponseEvent:
                 "member_responses",
             ]
         }
-        
+
         if hasattr(self, "extra_data") and self.extra_data is not None:
             _dict["extra_data"] = (
                 self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
             )
-            
+
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
 
@@ -114,9 +108,8 @@ class BaseRunResponseEvent:
         try:
             _dict = self.to_dict()
         except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+            log_error("Failed to convert response event to json", exc_info=True)
             raise
-        
 
         return json.dumps(_dict, indent=2)
 

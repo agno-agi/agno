@@ -720,7 +720,7 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = self._get_response_format()
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -2659,11 +2659,7 @@ class Team:
             response_timer.stop()
 
             # Add citations
-            if (
-                hasattr(resp, "citations")
-                and resp.citations is not None
-                and resp.citations.urls is not None
-            ):
+            if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -2868,11 +2864,7 @@ class Team:
                 final_panels.append(response_panel)
 
             # Add team citations
-            if (
-                hasattr(resp, "citations")
-                and resp.citations is not None
-                and resp.citations.urls is not None
-            ):
+            if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -3458,11 +3450,7 @@ class Team:
             response_timer.stop()
 
             # Add citations
-            if (
-                hasattr(resp, "citations")
-                and resp.citations is not None
-                and resp.citations.urls is not None
-            ):
+            if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -3672,11 +3660,7 @@ class Team:
                 final_panels.append(response_panel)
 
             # Add team citations
-            if (
-                hasattr(resp, "citations")
-                and resp.citations is not None
-                and resp.citations.urls is not None
-            ):
+            if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
                 md_content = "\n".join(
                     f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
                     for i, citation in enumerate(resp.citations.urls)
@@ -6017,6 +6001,10 @@ class Team:
 
             member_agent_index, member_agent = result
             self._initialize_member(member_agent, session_id=session_id)
+
+            # Since we return the response directly from the member agent, we need to set the response model from the team down.
+            if not member_agent.response_model and self.response_model:
+                member_agent.response_model = self.response_model
 
             # If the member will produce structured output, we need to parse the response
             if member_agent.response_model is not None:

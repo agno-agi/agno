@@ -53,8 +53,14 @@ def pprint_run_response(
             response_timer = Timer()
             response_timer.start()
             for resp in run_response:
-                if (isinstance(resp, tuple(get_args(RunResponseEvent))) or isinstance(resp, tuple(get_args(TeamRunResponseEvent))) or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))) and hasattr(resp, "content") and isinstance(
-                    resp.content, str
+                if (
+                    (
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                    )
+                    and hasattr(resp, "content")
+                    and isinstance(resp.content, str)
                 ):
                     streaming_response_content += resp.content
 
@@ -112,8 +118,14 @@ async def apprint_run_response(
             response_timer.start()
 
             async for resp in run_response:
-                if (isinstance(resp, tuple(get_args(RunResponseEvent))) or isinstance(resp, tuple(get_args(TeamRunResponseEvent))) or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))) and hasattr(resp, "content") and isinstance(
-                    resp.content, str
+                if (
+                    (
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                    )
+                    and hasattr(resp, "content")
+                    and isinstance(resp.content, str)
                 ):
                     streaming_response_content += resp.content
 

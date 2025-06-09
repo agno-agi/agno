@@ -14,8 +14,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.memory import Memory
 from agno.memory.workflow import WorkflowMemory, WorkflowRun
-from agno.run.response import RunResponse
-from agno.run.response import RunResponseEvent
+from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.workflow import WorkflowRunResponseEvent
 from agno.storage.base import Storage
@@ -204,7 +203,11 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
+                    if (
+                        isinstance(item, tuple(get_args(RunResponseEvent)))
+                        or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                    ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id
@@ -311,7 +314,11 @@ class Workflow:
                     self.memory = cast(Memory, self.memory)
 
                 async for item in result:
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(item, tuple(get_args(TeamRunResponseEvent))) or isinstance(item, tuple(get_args(WorkflowRunResponseEvent))):
+                    if (
+                        isinstance(item, tuple(get_args(RunResponseEvent)))
+                        or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                    ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
                         item.session_id = self.session_id

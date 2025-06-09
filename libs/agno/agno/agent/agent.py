@@ -77,9 +77,8 @@ from agno.utils.log import (
     set_log_level_to_info,
 )
 from agno.utils.message import get_text_from_message
-from agno.utils.response import create_panel, create_paused_run_response_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
-from agno.utils.response import create_panel, escape_markdown_tags, format_tool_calls
+from agno.utils.response import create_panel, create_paused_run_response_panel, escape_markdown_tags, format_tool_calls
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
@@ -1079,7 +1078,6 @@ class Agent:
                 else:
                     return self.run_response
 
-
         # If we get here, all retries failed
         if last_exception is not None:
             log_error(
@@ -1489,8 +1487,8 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 self.run_response = self.create_run_response(
-                        run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
-                    )
+                    run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
+                )
                 if stream and self.is_streamable:
                     return self._async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
@@ -4826,7 +4824,7 @@ class Agent:
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}" # type: ignore
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),

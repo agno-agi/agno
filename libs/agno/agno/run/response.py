@@ -40,12 +40,20 @@ class RunEvent(str, Enum):
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
+    created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
     agent_id: str = ""
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+    # For backwards compatibility
+    content: Optional[Any] = None
 
 
 @dataclass
 class RunResponseStartedEvent(BaseAgentRunResponseEvent):
     """Event sent when the run starts"""
+
     event: str = RunEvent.run_started.value
     model: str = ""
     model_provider: str = ""
@@ -54,6 +62,7 @@ class RunResponseStartedEvent(BaseAgentRunResponseEvent):
 @dataclass
 class RunResponseContentEvent(BaseAgentRunResponseEvent):
     """Main event for each delta of the RunResponse"""
+
     event: str = RunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"

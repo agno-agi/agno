@@ -1,5 +1,5 @@
 import io
-from typing import AsyncIterator, Iterator, List, Union, IO
+from typing import IO, AsyncIterator, Iterator, List, Union
 
 from pydantic import Field
 
