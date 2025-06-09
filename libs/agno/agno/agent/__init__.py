@@ -10,7 +10,6 @@ from agno.agent.agent import (
     Toolkit,
 )
 from agno.run.response import (
-    RunResponseEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -23,6 +22,7 @@ from agno.run.response import (
     RunResponseContentEvent,
     RunResponseContinuedEvent,
     RunResponseErrorEvent,
+    RunResponseEvent,
     RunResponsePausedEvent,
     RunResponseStartedEvent,
     ToolCallCompletedEvent,
