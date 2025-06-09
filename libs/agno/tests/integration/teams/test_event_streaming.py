@@ -3,7 +3,7 @@ from textwrap import dedent
 import pytest
 
 from agno.models.openai.chat import OpenAIChat
-from agno.team import RunEvent, Team
+from agno.team import TeamRunEvent, Team
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
@@ -23,9 +23,9 @@ def test_basic_events():
     for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response_content}
+    assert event_counts.keys() == {TeamRunEvent.run_response_content}
 
-    assert event_counts[RunEvent.run_response_content] > 1
+    assert event_counts[TeamRunEvent.run_response_content] > 1
 
 
 @pytest.mark.asyncio
@@ -42,9 +42,9 @@ async def test_async_basic_events():
     async for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response_content}
+    assert event_counts.keys() == {TeamRunEvent.run_response_content}
 
-    assert event_counts[RunEvent.run_response_content] > 1
+    assert event_counts[TeamRunEvent.run_response_content] > 1
 
 
 def test_basic_intermediate_steps_events():
@@ -63,17 +63,17 @@ def test_basic_intermediate_steps_events():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
+    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_response_content, TeamRunEvent.run_completed}
 
-    assert len(events[RunEvent.run_started]) == 1
-    assert events[RunEvent.run_started][0].model == "gpt-4o-mini"
-    assert events[RunEvent.run_started][0].model_provider == "OpenAI"
-    assert events[RunEvent.run_started][0].session_id is not None
-    assert events[RunEvent.run_started][0].team_id is not None
-    assert events[RunEvent.run_started][0].run_id is not None
-    assert events[RunEvent.run_started][0].created_at is not None
-    assert len(events[RunEvent.run_response_content]) > 1
-    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert events[TeamRunEvent.run_started][0].model == "gpt-4o-mini"
+    assert events[TeamRunEvent.run_started][0].model_provider == "OpenAI"
+    assert events[TeamRunEvent.run_started][0].session_id is not None
+    assert events[TeamRunEvent.run_started][0].team_id is not None
+    assert events[TeamRunEvent.run_started][0].run_id is not None
+    assert events[TeamRunEvent.run_started][0].created_at is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
 
 
 def test_intermediate_steps_with_tools():
@@ -94,21 +94,21 @@ def test_intermediate_steps_with_tools():
         events[run_response_delta.event].append(run_response_delta)
 
     assert events.keys() == {
-        RunEvent.run_started,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
-        RunEvent.run_completed,
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
     }
 
-    assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
-    assert len(events[RunEvent.run_completed]) == 1
-    assert len(events[RunEvent.tool_call_started]) == 1
-    assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
-    assert len(events[RunEvent.tool_call_completed]) == 1
-    assert events[RunEvent.tool_call_completed][0].content is not None
-    assert events[RunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    assert events[TeamRunEvent.tool_call_completed][0].content is not None
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
 
 
 def test_intermediate_steps_with_reasoning():
@@ -138,29 +138,29 @@ def test_intermediate_steps_with_reasoning():
         events[run_response_delta.event].append(run_response_delta)
 
     assert events.keys() == {
-        RunEvent.run_started,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
-        RunEvent.reasoning_started,
-        RunEvent.reasoning_completed,
-        RunEvent.reasoning_step,
-        RunEvent.run_response_content,
-        RunEvent.run_completed,
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.reasoning_started,
+        TeamRunEvent.reasoning_completed,
+        TeamRunEvent.reasoning_step,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
     }
 
-    assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
-    assert len(events[RunEvent.run_completed]) == 1
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
-    assert len(events[RunEvent.reasoning_started]) == 1
-    assert len(events[RunEvent.reasoning_completed]) == 1
-    assert events[RunEvent.reasoning_completed][0].content is not None
-    assert events[RunEvent.reasoning_completed][0].content_type == "ReasoningSteps"
-    assert len(events[RunEvent.reasoning_step]) > 1
-    assert events[RunEvent.reasoning_step][0].content is not None
-    assert events[RunEvent.reasoning_step][0].content_type == "ReasoningStep"
-    assert events[RunEvent.reasoning_step][0].reasoning_content is not None
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.tool_call_started]) > 1
+    assert len(events[TeamRunEvent.tool_call_completed]) > 1
+    assert len(events[TeamRunEvent.reasoning_started]) == 1
+    assert len(events[TeamRunEvent.reasoning_completed]) == 1
+    assert events[TeamRunEvent.reasoning_completed][0].content is not None
+    assert events[TeamRunEvent.reasoning_completed][0].content_type == "ReasoningSteps"
+    assert len(events[TeamRunEvent.reasoning_step]) > 1
+    assert events[TeamRunEvent.reasoning_step][0].content is not None
+    assert events[TeamRunEvent.reasoning_step][0].content_type == "ReasoningStep"
+    assert events[TeamRunEvent.reasoning_step][0].reasoning_content is not None
 
 
 @pytest.mark.skip(reason="Not yet implemented")
@@ -186,11 +186,11 @@ def test_intermediate_steps_with_user_confirmation():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {RunEvent.run_started, RunEvent.run_paused}
+    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_paused}
 
-    assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_paused]) == 1
-    assert events[RunEvent.run_paused][0].tools[0].requires_confirmation is True
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_paused]) == 1
+    assert events[TeamRunEvent.run_paused][0].tools[0].requires_confirmation is True
 
     assert team.is_paused
 
@@ -215,21 +215,21 @@ def test_intermediate_steps_with_user_confirmation():
     assert team.run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
     assert events.keys() == {
-        RunEvent.run_continued,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
-        RunEvent.run_completed,
+        TeamRunEvent.run_continued,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
     }
 
-    assert len(events[RunEvent.run_continued]) == 1
-    assert len(events[RunEvent.tool_call_started]) == 1
-    assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_the_weather"
-    assert len(events[RunEvent.tool_call_completed]) == 1
-    assert events[RunEvent.tool_call_completed][0].content is not None
-    assert events[RunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[RunEvent.run_response_content]) > 1
-    assert len(events[RunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.run_continued]) == 1
+    assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_the_weather"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    assert events[TeamRunEvent.tool_call_completed][0].content is not None
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
 
     assert team.run_response.is_paused is False
 
@@ -254,15 +254,15 @@ def test_intermediate_steps_with_memory(team_storage, memory):
         events[run_response_delta.event].append(run_response_delta)
 
     assert events.keys() == {
-        RunEvent.run_started,
-        RunEvent.run_response_content,
-        RunEvent.run_completed,
-        RunEvent.memory_update_started,
-        RunEvent.memory_update_completed,
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+        TeamRunEvent.memory_update_started,
+        TeamRunEvent.memory_update_completed,
     }
 
-    assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
-    assert len(events[RunEvent.run_completed]) == 1
-    assert len(events[RunEvent.memory_update_started]) == 1
-    assert len(events[RunEvent.memory_update_completed]) == 1
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    assert len(events[TeamRunEvent.memory_update_started]) == 1
+    assert len(events[TeamRunEvent.memory_update_completed]) == 1

@@ -105,7 +105,7 @@ def create_run_response_paused_event(
 def create_run_response_continued_event(from_run_response: RunResponse) -> RunResponseContinuedEvent:
     return RunResponseContinuedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -122,7 +122,7 @@ def create_team_run_response_error_event(from_run_response: TeamRunResponse, err
 def create_run_response_error_event(from_run_response: RunResponse, error: str) -> RunResponseErrorEvent:
     return RunResponseErrorEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
     )
@@ -133,7 +133,7 @@ def create_team_run_response_cancelled_event(
 ) -> TeamRunResponseCancelledEvent:
     return TeamRunResponseCancelledEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
     )
@@ -151,7 +151,7 @@ def create_run_response_cancelled_event(from_run_response: RunResponse, reason: 
 def create_memory_update_started_event(from_run_response: RunResponse) -> MemoryUpdateStartedEvent:
     return MemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -167,7 +167,7 @@ def create_team_memory_update_started_event(from_run_response: TeamRunResponse) 
 def create_memory_update_completed_event(from_run_response: RunResponse) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -175,7 +175,7 @@ def create_memory_update_completed_event(from_run_response: RunResponse) -> Memo
 def create_team_memory_update_completed_event(from_run_response: TeamRunResponse) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -271,7 +271,7 @@ def create_tool_call_completed_event(
 ) -> ToolCallCompletedEvent:
     return ToolCallCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
@@ -286,7 +286,7 @@ def create_team_tool_call_completed_event(
 ) -> TeamToolCallCompletedEvent:
     return TeamToolCallCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,

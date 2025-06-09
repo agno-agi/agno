@@ -42,7 +42,7 @@ from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
-from agno.run.team import RunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
+from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
 from agno.storage.base import Storage
 from agno.storage.session.team import TeamSession
 from agno.tools.function import Function
@@ -2485,7 +2485,7 @@ class Team:
                         team_markdown = False
 
                 if isinstance(resp, tuple(get_args(TeamRunResponseEvent))):
-                    if resp.event == RunEvent.run_response_content:
+                    if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
                         if resp.thinking is not None:
@@ -3341,7 +3341,7 @@ class Team:
                         team_markdown = False
 
                 if isinstance(resp, tuple(get_args(TeamRunResponseEvent))):
-                    if resp.event == RunEvent.run_response_content:
+                    if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
                         if resp.thinking is not None:

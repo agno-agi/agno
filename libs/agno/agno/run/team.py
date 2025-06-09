@@ -12,7 +12,7 @@ from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
 from agno.run.response import RunResponse
 
 
-class RunEvent(str, Enum):
+class TeamRunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
 
     run_started = "TeamRunStarted"
@@ -48,7 +48,7 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
 class RunResponseStartedEvent(BaseTeamRunResponseEvent):
     """Event sent when the run starts"""
 
-    event: str = RunEvent.run_started.value
+    event: str = TeamRunEvent.run_started.value
     model: str = ""
     model_provider: str = ""
 
@@ -57,7 +57,7 @@ class RunResponseStartedEvent(BaseTeamRunResponseEvent):
 class RunResponseContentEvent(BaseTeamRunResponseEvent):
     """Main event for each delta of the RunResponse"""
 
-    event: str = RunEvent.run_response_content.value
+    event: str = TeamRunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
@@ -69,7 +69,7 @@ class RunResponseContentEvent(BaseTeamRunResponseEvent):
 
 @dataclass
 class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.run_completed.value
+    event: str = TeamRunEvent.run_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
@@ -85,34 +85,34 @@ class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
 
 @dataclass
 class RunResponseErrorEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.run_error.value
+    event: str = TeamRunEvent.run_error.value
     content: Optional[str] = None
 
 
 @dataclass
 class RunResponseCancelledEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.run_cancelled.value
+    event: str = TeamRunEvent.run_cancelled.value
     reason: Optional[str] = None
 
 
 @dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.memory_update_started.value
+    event: str = TeamRunEvent.memory_update_started.value
 
 
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.memory_update_completed.value
+    event: str = TeamRunEvent.memory_update_completed.value
 
 
 @dataclass
 class ReasoningStartedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.reasoning_started.value
+    event: str = TeamRunEvent.reasoning_started.value
 
 
 @dataclass
 class ReasoningStepEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.reasoning_step.value
+    event: str = TeamRunEvent.reasoning_step.value
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: str = ""
@@ -120,20 +120,20 @@ class ReasoningStepEvent(BaseTeamRunResponseEvent):
 
 @dataclass
 class ReasoningCompletedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.reasoning_completed.value
+    event: str = TeamRunEvent.reasoning_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
 
 
 @dataclass
 class ToolCallStartedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.tool_call_started.value
+    event: str = TeamRunEvent.tool_call_started.value
     tool: Optional[ToolExecution] = None
 
 
 @dataclass
 class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
-    event: str = RunEvent.tool_call_completed.value
+    event: str = TeamRunEvent.tool_call_completed.value
     tool: Optional[ToolExecution] = None
     content: Optional[Any] = None
     images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
