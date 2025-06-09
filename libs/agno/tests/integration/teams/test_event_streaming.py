@@ -3,7 +3,7 @@ from textwrap import dedent
 import pytest
 
 from agno.models.openai.chat import OpenAIChat
-from agno.team import TeamRunEvent, Team
+from agno.team import Team, TeamRunEvent
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
