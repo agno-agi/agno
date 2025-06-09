@@ -25,7 +25,7 @@ def pprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, tuple) or isinstance(run_response, TeamRunResponse):
+    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (

@@ -4446,7 +4446,9 @@ class Team:
                     )
 
         if self.mode == "route":
-            user_message = self._get_user_message(message, audio=audio, images=images, videos=videos, files=files, user_id=user_id)
+            user_message = self._get_user_message(
+                message, audio=audio, images=images, videos=videos, files=files, user_id=user_id
+            )
             forward_task_func: Function = self.get_forward_task_function(
                 message=user_message,
                 session_id=session_id,

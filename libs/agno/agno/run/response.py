@@ -317,7 +317,7 @@ class RunResponse:
 
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
-            
+
         images = data.pop("images", None)
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
@@ -333,7 +333,7 @@ class RunResponse:
         # To make it backwards compatible
         if "event" in data:
             data.pop("event")
-            
+
         return cls(messages=messages, tools=tools, images=images, videos=videos, response_audio=response_audio, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
