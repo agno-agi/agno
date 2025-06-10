@@ -165,8 +165,8 @@ async def body() -> None:
                     )
                     async for resp_chunk in run_response:
                         # Display tool calls if available
-                        if resp_chunk.tools and len(resp_chunk.tools) > 0:
-                            display_tool_calls(tool_calls_container, resp_chunk.tools)
+                        if resp_chunk.tool:
+                            display_tool_calls(tool_calls_container, [resp_chunk.tool])
 
                         # Display response if available and event is RunResponse
                         if (

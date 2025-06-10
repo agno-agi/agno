@@ -261,7 +261,7 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
 
 
 def stream_agno_response_as_agui_events(
-    response_stream: Union[Iterator[RunResponseEvent], Iterator[TeamRunResponseEvent]], thread_id: str, run_id: str
+    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]], thread_id: str, run_id: str
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
@@ -290,7 +290,7 @@ def stream_agno_response_as_agui_events(
 
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
-    response_stream: Union[AsyncIterator[RunResponseEvent], AsyncIterator[TeamRunResponseEvent]],
+    response_stream: AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]],
     thread_id: str,
     run_id: str,
 ) -> AsyncIterator[BaseEvent]:
