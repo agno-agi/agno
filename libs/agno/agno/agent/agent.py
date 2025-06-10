@@ -3478,7 +3478,7 @@ class Agent:
         if self.tools is None:
             return
 
-        from inspect import iscoroutinefunction, iscoroutine
+        from inspect import iscoroutinefunction
 
         for tool in self.tools:
             if isinstance(tool, Toolkit):
