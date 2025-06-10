@@ -2,9 +2,13 @@ from textwrap import dedent
 
 import pytest
 
+from agno.agent import RunEvent
+from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
+from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -266,3 +270,128 @@ def test_intermediate_steps_with_memory(team_storage, memory):
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
+
+
+def test_intermediate_steps_with_member_agents():
+    agent_1 = Agent(
+        name="Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert problem-solving assistant with strong analytical skills! 🧠",
+        tools=[ReasoningTools(add_instructions=True)],
+    )
+    agent_2 = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, agent_2],
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run(
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.reasoning_started,
+        RunEvent.reasoning_step,
+        RunEvent.reasoning_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    # Transfer twice, from team to member agents
+    assert len(events[TeamRunEvent.tool_call_started]) == 2
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "analyst"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_args["member_id"] == "math-agent"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 2
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 2
+    assert len(events[RunEvent.run_completed]) == 2
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.reasoning_started]) == 1
+    assert len(events[RunEvent.reasoning_completed]) == 1
+    assert len(events[RunEvent.reasoning_step]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
+
+
+def test_intermediate_steps_with_member_agents_complex():
+    agent_1 = Agent(
+        name="Finance Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert finance analyst with strong analytical skills! 🧠",
+        tools=[YFinanceTools(cache_results=True)],
+    )
+    agent_2 = Agent(
+        name="News Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert news analyst with strong analytical skills! 🧠",
+        tools=[DuckDuckGoTools(cache_results=True)],
+    )
+    sub_team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        name="News Team",
+        members=[agent_2],
+        telemetry=False,
+        monitoring=False,
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, sub_team],
+        tools=[ReasoningTools(add_instructions=True)],
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("Do a stock market analysis for Apple.", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert set(events.keys()) == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.reasoning_started,
+        TeamRunEvent.reasoning_step,
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+        TeamRunEvent.reasoning_completed,
+    }
