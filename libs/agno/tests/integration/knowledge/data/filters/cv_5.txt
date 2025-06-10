@@ -1,0 +1,19 @@
+Alex Rivera
+Principal Software Engineer
+
+Summary:
+Visionary software architect with 12+ years of experience delivering innovative enterprise solutions and leading large-scale projects.
+
+Experience:
+Principal Software Engineer at TechFrontier Inc., New York, NY (2018 – Present)
+- Directed technical roadmap for major cloud-native products.
+- Drove company-wide adoption of DevOps best practices.
+Lead Developer at DevSphere Corp., New York, NY (2012 – 2018)
+- Led team of 10+ developers across cross-functional projects.
+- Spearheaded transition to containerized deployment model.
+
+Education:
+MSc in Computer Science, Columbia University (2010 – 2012)
+BSc in Computer Science, New York University (2006 – 2010)
+
+Skills: C#, .NET, Azure, CI/CD, Agile, Kubernetes

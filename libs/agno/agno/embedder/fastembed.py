@@ -21,10 +21,10 @@ class FastEmbedEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         model = TextEmbedding(model_name=self.id)
         embeddings = model.embed(text)
-        embedding_list = list(embeddings)
+        embedding_list = list(embeddings)[0]
 
         try:
-            return embedding_list
+            return list(embedding_list)
         except Exception as e:
             logger.warning(e)
             return []

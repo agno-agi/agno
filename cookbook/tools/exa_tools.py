@@ -6,9 +6,25 @@ agent = Agent(
         ExaTools(
             include_domains=["cnbc.com", "reuters.com", "bloomberg.com"],
             show_results=True,
+            text=False,
+            highlights=False,
         )
     ],
     show_tool_calls=True,
+    markdown=True,
+)
+
+agent.print_response("Search for AAPL news", markdown=True)
+
+
+agent = Agent(
+    tools=[
+        ExaTools(
+            show_results=True,
+        )
+    ],
+    show_tool_calls=True,
+    markdown=True,
 )
 
 agent.print_response("Search for AAPL news", markdown=True)

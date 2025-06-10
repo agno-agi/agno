@@ -1,3 +1,5 @@
+"""Unit tests for ZoomTools class."""
+
 import json
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch

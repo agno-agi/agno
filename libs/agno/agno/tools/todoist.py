@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -24,6 +24,7 @@ class TodoistTools(Toolkit):
         delete_task: bool = True,
         get_active_tasks: bool = True,
         get_projects: bool = True,
+        **kwargs,
     ):
         """Initialize the Todoist toolkit.
 
@@ -37,29 +38,57 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        super().__init__(name="todoist")
-
         self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
         if not self.api_token:
             raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
 
         self.api = TodoistAPI(self.api_token)
 
-        # Register enabled functions
+        tools: List[Any] = []
         if create_task:
-            self.register(self.create_task)
+            tools.append(self.create_task)
         if get_task:
-            self.register(self.get_task)
+            tools.append(self.get_task)
         if update_task:
-            self.register(self.update_task)
+            tools.append(self.update_task)
         if close_task:
-            self.register(self.close_task)
+            tools.append(self.close_task)
         if delete_task:
-            self.register(self.delete_task)
+            tools.append(self.delete_task)
         if get_active_tasks:
-            self.register(self.get_active_tasks)
+            tools.append(self.get_active_tasks)
         if get_projects:
-            self.register(self.get_projects)
+            tools.append(self.get_projects)
+
+        super().__init__(name="todoist", tools=tools, **kwargs)
+
+    def _task_to_dict(self, task: Any) -> Dict[str, Any]:
+        """Convert a Todoist task to a dictionary with proper typing."""
+        task_dict: Dict[str, Any] = {
+            "id": task.id,
+            "content": task.content,
+            "description": task.description,
+            "project_id": task.project_id,
+            "section_id": task.section_id,
+            "parent_id": task.parent_id,
+            "order": task.order,
+            "priority": task.priority,
+            "url": task.url,
+            "creator_id": task.creator_id,
+            "created_at": task.created_at,
+            "labels": task.labels,
+        }
+        if hasattr(task, "comment_count"):
+            task_dict["comment_count"] = task.comment_count
+        if task.due:
+            task_dict["due"] = {
+                "date": task.due.date,
+                "string": task.due.string,
+                "lang": task.due.lang,
+                "is_recurring": task.due.is_recurring,
+                "timezone": task.due.timezone,
+            }
+        return task_dict
 
     def create_task(
         self,
@@ -87,29 +116,8 @@ class TodoistTools(Toolkit):
                 content=content, project_id=project_id, due_string=due_string, priority=priority, labels=labels or []
             )
             # Convert task to a dictionary and handle the Due object
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
-            return json.dumps(task_dict)
+            task_dict = self._task_to_dict(task)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to create task: {str(e)}")
             return json.dumps({"error": str(e)})
@@ -118,77 +126,80 @@ class TodoistTools(Toolkit):
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
-            return json.dumps(task_dict)
+            task_dict = self._task_to_dict(task)
+            return json.dumps(task_dict, default=str)
         except Exception as e:
             logger.error(f"Failed to get task: {str(e)}")
             return json.dumps({"error": str(e)})
 
-    def update_task(self, task_id: str, **kwargs) -> str:
+    def update_task(
+        self,
+        task_id: str,
+        content: Optional[str] = None,
+        description: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+        priority: Optional[int] = None,
+        due_string: Optional[str] = None,
+        due_date: Optional[str] = None,
+        due_datetime: Optional[str] = None,
+        due_lang: Optional[str] = None,
+        assignee_id: Optional[str] = None,
+        section_id: Optional[str] = None,
+    ) -> str:
         """
-        Update an existing task.
+        Update an existing task with the specified parameters.
 
         Args:
             task_id: The ID of the task to update
-            **kwargs: Any task properties to update (content, due_string, priority, etc.)
+            content: The task content/name
+            description: The task description
+            labels: Array of label names
+            priority: Task priority from 1 (normal) to 4 (urgent)
+            due_string: Human readable date ("next Monday", "tomorrow", etc)
+            due_date: Specific date in YYYY-MM-DD format
+            due_datetime: Specific date and time in RFC3339 format
+            due_lang: 2-letter code specifying language of due_string ("en", "fr", etc)
+            assignee_id: The responsible user ID
+            section_id: ID of the section to move task to
 
         Returns:
-            str: JSON string containing the updated task
+            str: JSON string containing success status or error message
         """
         try:
-            task = self.api.update_task(task_id=task_id, **kwargs)
-            task_dict = {
-                "id": task.id,
-                "content": task.content,
-                "description": task.description,
-                "project_id": task.project_id,
-                "section_id": task.section_id,
-                "parent_id": task.parent_id,
-                "order": task.order,
-                "priority": task.priority,
-                "url": task.url,
-                "comment_count": task.comment_count,
-                "creator_id": task.creator_id,
-                "created_at": task.created_at,
-                "labels": task.labels,
-            }
-            if task.due:
-                task_dict["due"] = {
-                    "date": task.due.date,
-                    "string": task.due.string,
-                    "datetime": task.due.datetime,
-                    "timezone": task.due.timezone,
-                }
-            return json.dumps(task_dict)
+            # Build updates dictionary with only provided parameters
+            updates: Dict[str, Any] = {}
+            if content is not None:
+                updates["content"] = content
+            if description is not None:
+                updates["description"] = description
+            if labels is not None:
+                updates["labels"] = labels
+            if priority is not None:
+                updates["priority"] = priority
+            if due_string is not None:
+                updates["due_string"] = due_string
+            if due_date is not None:
+                updates["due_date"] = due_date
+            if due_datetime is not None:
+                updates["due_datetime"] = due_datetime
+            if due_lang is not None:
+                updates["due_lang"] = due_lang
+            if assignee_id is not None:
+                updates["assignee_id"] = assignee_id
+            if section_id is not None:
+                updates["section_id"] = section_id
+
+            success = self.api.update_task(task_id=task_id, **updates)
+            return json.dumps({"success": success})
         except Exception as e:
-            logger.error(f"Failed to update task: {str(e)}")
-            return json.dumps({"error": str(e)})
+            error_msg = str(e)
+            logger.error(f"Failed to update task: {error_msg}")
+            return json.dumps({"error": error_msg})
 
     def close_task(self, task_id: str) -> str:
         """Mark a task as completed."""
         try:
-            success = self.api.close_task(task_id)
+            success = self.api.complete_task(task_id)
             return json.dumps({"success": success})
         except Exception as e:
             logger.error(f"Failed to close task: {str(e)}")
@@ -206,33 +217,13 @@ class TodoistTools(Toolkit):
     def get_active_tasks(self) -> str:
         """Get all active (not completed) tasks."""
         try:
-            tasks = self.api.get_tasks()
+            tasks_response = self.api.get_tasks()
+            tasks = list(tasks_response)[0]
             tasks_list = []
             for task in tasks:
-                task_dict = {
-                    "id": task.id,
-                    "content": task.content,
-                    "description": task.description,
-                    "project_id": task.project_id,
-                    "section_id": task.section_id,
-                    "parent_id": task.parent_id,
-                    "order": task.order,
-                    "priority": task.priority,
-                    "url": task.url,
-                    "comment_count": task.comment_count,
-                    "creator_id": task.creator_id,
-                    "created_at": task.created_at,
-                    "labels": task.labels,
-                }
-                if task.due:
-                    task_dict["due"] = {
-                        "date": task.due.date,
-                        "string": task.due.string,
-                        "datetime": task.due.datetime,
-                        "timezone": task.due.timezone,
-                    }
+                task_dict = self._task_to_dict(task)
                 tasks_list.append(task_dict)
-            return json.dumps(tasks_list)
+            return json.dumps(tasks_list, default=str)
         except Exception as e:
             logger.error(f"Failed to get active tasks: {str(e)}")
             return json.dumps({"error": str(e)})

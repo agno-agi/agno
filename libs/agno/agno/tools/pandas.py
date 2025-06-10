@@ -1,7 +1,7 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import pandas as pd
@@ -10,12 +10,14 @@ except ImportError:
 
 
 class PandasTools(Toolkit):
-    def __init__(self):
-        super().__init__(name="pandas_tools")
-
+    def __init__(self, **kwargs):
         self.dataframes: Dict[str, pd.DataFrame] = {}
-        self.register(self.create_pandas_dataframe)
-        self.register(self.run_dataframe_operation)
+
+        tools: List[Any] = []
+        tools.append(self.create_pandas_dataframe)
+        tools.append(self.run_dataframe_operation)
+
+        super().__init__(name="pandas_tools", tools=tools, **kwargs)
 
     def create_pandas_dataframe(
         self, dataframe_name: str, create_using_function: str, function_parameters: Dict[str, Any]
@@ -33,9 +35,9 @@ class PandasTools(Toolkit):
         :return: The name of the created dataframe if successful, otherwise an error message.
         """
         try:
-            logger.debug(f"Creating dataframe: {dataframe_name}")
-            logger.debug(f"Using function: {create_using_function}")
-            logger.debug(f"With parameters: {function_parameters}")
+            log_debug(f"Creating dataframe: {dataframe_name}")
+            log_debug(f"Using function: {create_using_function}")
+            log_debug(f"With parameters: {function_parameters}")
 
             if dataframe_name in self.dataframes:
                 return f"Dataframe already exists: {dataframe_name}"
@@ -49,7 +51,7 @@ class PandasTools(Toolkit):
             if dataframe.empty:
                 return f"Dataframe is empty: {dataframe_name}"
             self.dataframes[dataframe_name] = dataframe
-            logger.debug(f"Created dataframe: {dataframe_name}")
+            log_debug(f"Created dataframe: {dataframe_name}")
             return dataframe_name
         except Exception as e:
             logger.error(f"Error creating dataframe: {e}")
@@ -69,9 +71,9 @@ class PandasTools(Toolkit):
         :return: The result of the operation if successful, otherwise an error message.
         """
         try:
-            logger.debug(f"Running operation: {operation}")
-            logger.debug(f"On dataframe: {dataframe_name}")
-            logger.debug(f"With parameters: {operation_parameters}")
+            log_debug(f"Running operation: {operation}")
+            log_debug(f"On dataframe: {dataframe_name}")
+            log_debug(f"With parameters: {operation_parameters}")
 
             # Get the dataframe
             dataframe = self.dataframes.get(dataframe_name)
@@ -79,7 +81,7 @@ class PandasTools(Toolkit):
             # Run the operation
             result = getattr(dataframe, operation)(**operation_parameters)
 
-            logger.debug(f"Ran operation: {operation}")
+            log_debug(f"Ran operation: {operation}")
             try:
                 try:
                     return result.to_string()

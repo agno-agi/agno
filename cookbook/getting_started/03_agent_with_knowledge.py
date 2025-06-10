@@ -1,16 +1,8 @@
-"""🧠 Recipe Expert with Knowledge - Your AI Thai Cooking Assistant!
+"""🧠 Agent with Knowledge - Your AI Cooking Assistant!
 
 This example shows how to create an AI cooking assistant that combines knowledge from a
 curated recipe database with web searching capabilities. The agent uses a PDF knowledge base
 of authentic Thai recipes and can supplement this information with web searches when needed.
-
-Example prompts to try:
-- "How do I make authentic Pad Thai?"
-- "What's the difference between red and green curry?"
-- "Can you explain what galangal is and possible substitutes?"
-- "Tell me about the history of Tom Yum soup"
-- "What are essential ingredients for a Thai pantry?"
-- "How do I make Thai basil chicken (Pad Kra Pao)?"
 
 Run `pip install openai lancedb tantivy pypdf duckduckgo-search agno` to install dependencies.
 """
@@ -33,7 +25,7 @@ agent = Agent(
         a Thai food historian, and a cultural ambassador.
 
         Follow these steps when answering questions:
-        1. First, search the knowledge base for authentic Thai recipes and cooking information
+        1. If the user asks a about Thai cuisine, ALWAYS search your knowledge base for authentic Thai recipes and cooking information
         2. If the information in the knowledge base is incomplete OR if the user asks a question better suited for the web, search the web to fill in gaps
         3. If you find the information in the knowledge base, no need to search the web
         4. Always prioritize knowledge base information over web results for authenticity
@@ -83,7 +75,6 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     show_tool_calls=True,
     markdown=True,
-    add_references=True,
 )
 
 # Comment out after the knowledge base is loaded

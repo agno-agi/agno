@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai google.generativeai` to install dependencies."""
+"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai google.genai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.embedder.google import GeminiEmbedder
@@ -19,7 +19,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-2.0-flash-001"),
     knowledge=knowledge_base,
     show_tool_calls=True,
 )

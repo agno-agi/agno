@@ -1,6 +1,49 @@
 import hashlib
 import json
-from typing import Any, Dict, Optional
+import re
+from typing import Optional, Type
+
+from pydantic import BaseModel, ValidationError
+
+from agno.utils.log import logger
+
+
+def is_valid_uuid(uuid_str: str) -> bool:
+    """
+    Check if a string is a valid UUID
+
+    Args:
+        uuid_str: String to check
+
+    Returns:
+        bool: True if string is a valid UUID, False otherwise
+    """
+    from uuid import UUID
+
+    try:
+        UUID(str(uuid_str))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def url_safe_string(input_string):
+    # Replace spaces with dashes
+    safe_string = input_string.replace(" ", "-")
+
+    # Convert camelCase to kebab-case
+    safe_string = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", safe_string).lower()
+
+    # Convert snake_case to kebab-case
+    safe_string = safe_string.replace("_", "-")
+
+    # Remove special characters, keeping alphanumeric, dashes, and dots
+    safe_string = re.sub(r"[^\w\-.]", "", safe_string)
+
+    # Ensure no consecutive dashes
+    safe_string = re.sub(r"-+", "-", safe_string)
+
+    return safe_string
 
 
 def hash_string_sha256(input_string):
@@ -19,60 +62,54 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
-def extract_valid_json(content: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract the first valid JSON object from a string and return the JSON object
-    along with the rest of the string without the JSON.
+def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    structured_output = None
+    try:
+        # First attempt: direct JSON validation
+        structured_output = response_model.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError):
+        # Second attempt: Extract JSON from markdown code blocks and clean
+        content = content
 
-    Args:
-        content (str): The input string containing potential JSON data.
+        # Handle code blocks
+        if "```json" in content:
+            content = content.split("```json")[-1].strip()
+            parts = content.split("```")
+            parts.pop(-1)
+            content = "".join(parts)
+        elif "```" in content:
+            content = content.split("```")[1].strip()
 
-    Returns:
-        Tuple[Optional[Dict[str, Any]], str]:
-            - Extracted JSON dictionary if valid, else None.
-            - The rest of the string without the extracted JSON.
-    """
-    search_start = 0
-    while True:
-        # Find the next opening brace
-        start_idx = content.find("{", search_start)
-        if start_idx == -1:
-            # No more '{' found; stop searching
-            return None
+        # Clean the JSON string
+        # Remove markdown formatting
+        content = re.sub(r"[*`#]", "", content)
 
-        # Track brace depth
-        brace_depth = 0
-        # This will store the end of the matching closing brace once found
-        end_idx = None
+        # Handle newlines and control characters
+        content = content.replace("\n", " ").replace("\r", "")
+        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
 
-        for i in range(start_idx, len(content)):
-            char = content[i]
-            if char == "{":
-                brace_depth += 1
-            elif char == "}":
-                brace_depth -= 1
+        # Escape quotes only in values, not keys
+        def escape_quotes_in_values(match):
+            key = match.group(1)
+            value = match.group(2)
+            # Escape quotes in the value portion only
+            escaped_value = value.replace('"', '\\"')
+            return f'"{key.lower()}": "{escaped_value}'
 
-            # If brace_depth returns to 0, we’ve found a potential JSON substring
-            if brace_depth == 0:
-                end_idx = i
-                break
+        # Find and escape quotes in field values
+        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
 
-        # If we never returned to depth 0, it means we couldn't find a matching '}'
-        if end_idx is None:
-            return None
-
-        # Extract the candidate substring
-        candidate = content[start_idx : end_idx + 1]
-
-        # Try to parse it
         try:
-            parsed = json.loads(candidate)
-            # If parsed successfully, check if it's a dict
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            # Not valid JSON, keep going
-            pass
+            # Try parsing the cleaned JSON
+            structured_output = response_model.model_validate_json(content)
+        except (ValidationError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-        # Move just past the current opening brace to look for another candidate
-        search_start = start_idx + 1
+            try:
+                # Final attempt: Try parsing as Python dict
+                data = json.loads(content)
+                structured_output = response_model.model_validate(data)
+            except (ValidationError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to parse as Python dict: {e}")
+
+    return structured_output

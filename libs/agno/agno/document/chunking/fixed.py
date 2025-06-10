@@ -22,9 +22,8 @@ class FixedSizeChunking(ChunkingStrategy):
         chunked_documents: List[Document] = []
         chunk_number = 1
         chunk_meta_data = document.meta_data
-
         start = 0
-        while start < content_length:
+        while start + self.overlap < content_length:
             end = min(start + self.chunk_size, content_length)
 
             # Ensure we're not splitting a word in half
@@ -55,5 +54,4 @@ class FixedSizeChunking(ChunkingStrategy):
             )
             chunk_number += 1
             start = end - self.overlap
-
         return chunked_documents

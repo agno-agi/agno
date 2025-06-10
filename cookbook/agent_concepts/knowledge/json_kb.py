@@ -6,9 +6,8 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Initialize the JSONKnowledgeBase
 knowledge_base = JSONKnowledgeBase(
-    path=Path("data/json"),  # Table name: ai.json_documents
+    path=Path("tmp/docs"),
     vector_db=PgVector(
         table_name="json_documents",
         db_url=db_url,

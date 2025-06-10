@@ -19,10 +19,21 @@ export AWS_SECRET_ACCESS_KEY=***
 export AWS_REGION=***
 ```
 
+Alternatively, you can use an AWS profile:
+
+```python
+import boto3
+session = boto3.Session(profile_name='MY-PROFILE')
+agent = Agent(
+    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0", session=session),
+    markdown=True
+)
+```
+
 ### 3. Install libraries
 
 ```shell
-pip install -U boto3 duckduckgo-search agno
+pip install -U anthropic duckduckgo-search agno
 ```
 
 ### 4. Run basic agent

@@ -1,17 +1,17 @@
 from typing import List
 
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 
 
 def run_shell_command(args: List[str], tail: int = 100) -> str:
-    logger.info(f"Running shell command: {args}")
+    log_info(f"Running shell command: {args}")
 
     import subprocess
 
     try:
         result = subprocess.run(args, capture_output=True, text=True)
-        logger.debug(f"Result: {result}")
-        logger.debug(f"Return code: {result.returncode}")
+        log_debug(f"Result: {result}")
+        log_debug(f"Return code: {result.returncode}")
         if result.returncode != 0:
             return f"Error: {result.stderr}"
 
