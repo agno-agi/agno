@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
-from agno.run.workflow import WorkflowRunResponse
 from agno.utils.log import logger
 
 
@@ -56,68 +55,6 @@ class WorkflowSession:
             memory=data.get("memory"),
             workflow_data=data.get("workflow_data"),
             session_data=data.get("session_data"),
-            extra_data=data.get("extra_data"),
-            created_at=data.get("created_at"),
-            updated_at=data.get("updated_at"),
-        )
-
-
-@dataclass
-class WorkflowSessionV2:
-    """Workflow Session V2 for sequence-based workflows"""
-
-    # Session UUID - this is the workflow_session_id that gets set on agents/teams
-    session_id: str
-    # ID of the user interacting with this workflow
-    user_id: Optional[str] = None
-
-    # ID of the workflow that this session is associated with
-    workflow_id: Optional[str] = None
-    # Workflow name
-    workflow_name: Optional[str] = None
-
-    # Workflow runs - stores all WorkflowRunResponse objects
-    runs: Optional[List[Dict[str, Any]]] = None
-
-    # Session Data: session_name, session_state, images, videos, audio
-    session_data: Optional[Dict[str, Any]] = None
-    # Workflow configuration and metadata
-    workflow_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this workflow session
-    extra_data: Optional[Dict[str, Any]] = None
-
-    # The unix timestamp when this session was created
-    created_at: Optional[int] = None
-    # The unix timestamp when this session was last updated
-    updated_at: Optional[int] = None
-
-    def __post_init__(self):
-        if self.runs is None:
-            self.runs = []
-
-    def add_run(self, run_response: WorkflowRunResponse) -> None:
-        """Add a workflow run response to this session"""
-        if self.runs is None:
-            self.runs = []
-        self.runs.append(run_response.to_dict())
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Optional[WorkflowSessionV2]:
-        if data is None or data.get("session_id") is None:
-            logger.warning("WorkflowSessionV2 is missing session_id")
-            return None
-
-        return cls(
-            session_id=data.get("session_id"),  # type: ignore
-            user_id=data.get("user_id"),
-            workflow_id=data.get("workflow_id"),
-            workflow_name=data.get("workflow_name"),
-            runs=data.get("runs"),
-            session_data=data.get("session_data"),
-            workflow_data=data.get("workflow_data"),
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),

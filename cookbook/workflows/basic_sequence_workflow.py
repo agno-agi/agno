@@ -5,7 +5,6 @@ from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.task import Task
-from agno.workflow.v2.trigger import ManualTrigger
 from agno.workflow.v2.workflow import Workflow
 
 # Define agents
@@ -68,7 +67,6 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        trigger=ManualTrigger(),
         storage=SqliteStorage(
             table_name="workflow_v2",
             db_file="tmp/workflow_v2.db",

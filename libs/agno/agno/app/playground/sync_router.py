@@ -37,8 +37,9 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponseErrorEvent, RunResponseEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
@@ -70,15 +71,14 @@ def chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -107,15 +107,14 @@ def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -566,11 +565,11 @@ def get_sync_playground_router(
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
-            return JSONResponse(status_code=404, content="Workflow not found.")
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
         # Ensure storage is enabled for the workflow
         if not workflow.storage:
-            return JSONResponse(status_code=404, content="Workflow does not have storage enabled.")
+            raise HTTPException(status_code=404, detail="Workflow does not have storage enabled")
 
         # Retrieve all sessions for the given workflow and user
         try:
@@ -578,7 +577,7 @@ def get_sync_playground_router(
                 user_id=user_id, entity_id=workflow_id
             )  # type: ignore
         except Exception as e:
-            return JSONResponse(status_code=500, content=f"Error retrieving sessions: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []

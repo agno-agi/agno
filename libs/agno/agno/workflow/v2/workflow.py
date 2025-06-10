@@ -5,12 +5,19 @@ from typing import Sequence as TypingSequence
 from uuid import uuid4
 
 from agno.media import Audio, Image, Video
-from agno.run.workflow import WorkflowRunEvent, WorkflowRunResponse
+from agno.run.v2.workflow import WorkflowRunEvent, WorkflowRunResponse
 from agno.storage.base import Storage
-from agno.storage.session.workflow import WorkflowSessionV2
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.trigger import ManualTrigger, Trigger, TriggerType
+from agno.run.v2.workflow import (
+    WorkflowRunEvent,
+    WorkflowRunResponse,
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+)
+
 
 
 @dataclass
@@ -114,10 +121,22 @@ class Workflow:
             # Store only the complete workflow run (not individual events)
             if self.workflow_session and workflow_run_responses:
                 # Store only the final completed workflow response
-                # The workflow_completed event
                 final_response = workflow_run_responses[-1]
-                if final_response.event == WorkflowRunEvent.workflow_completed:
-                    self.workflow_session.add_run(final_response)
+                if isinstance(final_response, WorkflowCompletedEvent):
+                    # Convert to WorkflowRunResponse for storage compatibility
+                    storage_response = WorkflowRunResponse(
+                        event=final_response.event,
+                        content=final_response.content,
+                        workflow_id=final_response.workflow_id,
+                        workflow_name=final_response.workflow_name,
+                        sequence_name=final_response.sequence_name,
+                        run_id=final_response.run_id,
+                        session_id=final_response.session_id,
+                        task_responses=final_response.task_responses,
+                        extra_data=final_response.extra_data,
+                        created_at=final_response.created_at,
+                    )
+                    self.workflow_session.add_run(storage_response)
 
             # Save to storage after complete execution
             self.write_to_storage()
@@ -125,19 +144,29 @@ class Workflow:
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
 
-            error_response = WorkflowRunResponse(
+            error_response = WorkflowErrorEvent(
+                run_id=self.run_id or "",
                 content=f"Workflow execution failed: {e}",
-                event=WorkflowRunEvent.workflow_error,
+                error=str(e),
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
                 sequence_name=sequence_name,
                 session_id=self.session_id,
-                run_id=self.run_id,
             )
 
-            # Store error response
+            # Store error response (convert to WorkflowRunResponse for storage)
             if self.workflow_session:
-                self.workflow_session.add_run(error_response)
+                storage_response = WorkflowRunResponse(
+                    event=error_response.event,
+                    content=error_response.content,
+                    workflow_id=error_response.workflow_id,
+                    workflow_name=error_response.workflow_name,
+                    sequence_name=error_response.sequence_name,
+                    run_id=error_response.run_id,
+                    session_id=error_response.session_id,
+                    created_at=error_response.created_at,
+                )
+                self.workflow_session.add_run(storage_response)
             self.write_to_storage()
 
             yield error_response
