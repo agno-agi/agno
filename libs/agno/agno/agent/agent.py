@@ -773,7 +773,7 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-        
+
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
             yield create_run_response_started_event(run_response)
@@ -2518,16 +2518,17 @@ class Agent:
             function_call=function_call,
             function_call_results=function_call_results,
         ):
-            if call_result.event == ModelResponseEvent.tool_call_started.value:
-                yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
 
-            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
-                tool_execution = call_result.tool_executions[0]
-                tool.result = tool_execution.result
-                tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(
-                    from_run_response=self.run_response, tool=tool, content=call_result.content
-                )
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    yield create_tool_call_completed_event(
+                        from_run_response=self.run_response, tool=tool, content=call_result.content
+                    )
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -2559,15 +2560,16 @@ class Agent:
             function_call_results=function_call_results,
             skip_pause_check=True,
         ):
-            if call_result.event == ModelResponseEvent.tool_call_started.value:
-                yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
-            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
-                tool_execution = call_result.tool_executions[0]
-                tool.result = tool_execution.result
-                tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(
-                    from_run_response=self.run_response, tool=tool, content=call_result.content
-                )
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    yield create_tool_call_completed_event(
+                        from_run_response=self.run_response, tool=tool, content=call_result.content
+                    )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -3091,10 +3093,13 @@ class Agent:
         reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
-        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(model_response_event, tuple(get_args(TeamRunResponseEvent))):
+        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
+            model_response_event, tuple(get_args(TeamRunResponseEvent))
+        ):
             # We just bubble the event up
-            yield model_response_event
+            yield model_response_event  # type: ignore
         else:
+            model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 # Process content and thinking
@@ -3239,9 +3244,9 @@ class Agent:
 
                             metrics = tool_call.metrics
                             if metrics is not None and metrics.time is not None:
-                                reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
-                                    metrics.time
-                                )
+                                reasoning_state["reasoning_time_taken"] = reasoning_state[
+                                    "reasoning_time_taken"
+                                ] + float(metrics.time)
                         yield create_tool_call_completed_event(
                             from_run_response=run_response, tool=tool_call, content=model_response_event.content
                         )

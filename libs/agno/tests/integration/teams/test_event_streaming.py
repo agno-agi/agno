@@ -2,11 +2,11 @@ from textwrap import dedent
 
 import pytest
 
+from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
-from agno.agent import RunEvent
-from agno.tools.calculator import CalculatorTools
 from agno.team import Team, TeamRunEvent
+from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
@@ -292,7 +292,9 @@ def test_intermediate_steps_with_member_agents():
         monitoring=False,
     )
 
-    response_generator = team.run("Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True)
+    response_generator = team.run(
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+    )
 
     events = {}
     for run_response_delta in response_generator:
@@ -340,8 +342,6 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.reasoning_completed]) == 1
     assert len(events[RunEvent.reasoning_step]) > 1
     assert len(events[RunEvent.run_response_content]) > 1
-
-
 
 
 def test_intermediate_steps_with_member_agents_complex():

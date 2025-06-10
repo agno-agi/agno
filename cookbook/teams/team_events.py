@@ -1,12 +1,13 @@
 import asyncio
 from uuid import uuid4
 
+from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
-from agno.team import Team, RunEvent as TeamRunEvent
-from agno.agent import RunEvent
+from agno.team import RunEvent as TeamRunEvent
+from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.wikipedia import WikipediaTools
 
@@ -55,39 +56,43 @@ company_info_team = Team(
     show_members_responses=True,
 )
 
+
 async def run_team_with_events(prompt: str):
     content_started = False
     async for run_response_event in await company_info_team.arun(
-            prompt,
-            stream=True,
-            stream_intermediate_steps=True,
-        ):
-        if run_response_event.event in [TeamRunEvent.run_started, TeamRunEvent.run_completed]:
+        prompt,
+        stream=True,
+        stream_intermediate_steps=True,
+    ):
+        if run_response_event.event in [
+            TeamRunEvent.run_started,
+            TeamRunEvent.run_completed,
+        ]:
             print(f"\nTEAM EVENT: {run_response_event.event}")
-        
+
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
             print(f"\nTEAM EVENT: {run_response_event.event}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
-        
+
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             print(f"\nTEAM EVENT: {run_response_event.event}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL RESULT: {run_response_event.tool.result}")
-            
+
         # Member events
         if run_response_event.event in [RunEvent.tool_call_started]:
             print(f"\nMEMBER EVENT: {run_response_event.event}")
             print(f"AGENT ID: {run_response_event.agent_id}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
-        
+
         if run_response_event.event in [RunEvent.tool_call_completed]:
             print(f"\nMEMBER EVENT: {run_response_event.event}")
             print(f"AGENT ID: {run_response_event.agent_id}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL RESULT: {run_response_event.tool.result}")
-        
+
         if run_response_event.event in [TeamRunEvent.run_response_content]:
             if not content_started:
                 print("CONTENT")

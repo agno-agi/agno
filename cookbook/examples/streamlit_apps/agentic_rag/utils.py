@@ -52,9 +52,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
     with tool_calls_container.container():
         for tool_call in tools:
             # Handle different tool call formats
-            _tool_name = (
-                tool_call.tool_name or "Unknown Tool"
-            )
+            _tool_name = tool_call.tool_name or "Unknown Tool"
             _tool_args = tool_call.tool_args or {}
             _content = tool_call.result or ""
             _metrics = tool_call.metrics or {}
@@ -95,7 +93,9 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
 
                 if _metrics:
                     st.markdown("**Metrics:**")
-                    st.json(_metrics if isinstance(_metrics, dict) else _metrics.to_dict())
+                    st.json(
+                        _metrics if isinstance(_metrics, dict) else _metrics.to_dict()
+                    )
 
 
 def rename_session_widget(agent: Agent) -> None:

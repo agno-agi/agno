@@ -631,7 +631,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> Iterator[TeamRunResponseEvent]: ...
+    ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
 
     def run(
         self,
@@ -648,7 +648,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> Union[TeamRunResponse, Iterator[TeamRunResponseEvent]]:
+    ) -> Union[TeamRunResponse, Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team and return the response."""
 
         self._reset_run_state()
@@ -949,7 +949,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[TeamRunResponseEvent]:
+    ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response iterator.
 
         Steps:
@@ -1044,7 +1044,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> AsyncIterator[TeamRunResponseEvent]: ...
+    ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
 
     async def arun(
         self,
@@ -1061,7 +1061,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
-    ) -> Union[TeamRunResponse, AsyncIterator[TeamRunResponseEvent]]:
+    ) -> Union[TeamRunResponse, AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team asynchronously and return the response."""
 
         self._reset_run_state()
@@ -1345,7 +1345,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> AsyncIterator[TeamRunResponseEvent]:
+    ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response.
 
         Steps:
@@ -1594,7 +1594,7 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[TeamRunResponseEvent]:
+    ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -1664,7 +1664,7 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> AsyncIterator[TeamRunResponseEvent]:
+    ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -1734,15 +1734,17 @@ class Team:
         self,
         run_response: TeamRunResponse,
         full_model_response: ModelResponse,
-        model_response_event: Union[ModelResponseEvent, TeamRunResponseEvent, RunResponseEvent],
+        model_response_event: Union[ModelResponse, TeamRunResponseEvent, RunResponseEvent],
         reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[TeamRunResponseEvent]:
-        
-        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(model_response_event, tuple(get_args(TeamRunResponseEvent))):
+    ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
+        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
+            model_response_event, tuple(get_args(TeamRunResponseEvent))
+        ):
             # We just bubble the event up
-            yield model_response_event
+            yield model_response_event  # type: ignore
         else:
+            model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 should_yield = False
@@ -1858,9 +1860,9 @@ class Team:
 
                             metrics = tool_call.metrics
                             if metrics is not None and metrics.time is not None:
-                                reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
-                                    metrics.time
-                                )
+                                reasoning_state["reasoning_time_taken"] = reasoning_state[
+                                    "reasoning_time_taken"
+                                ] + float(metrics.time)
 
                         yield create_team_tool_call_completed_event(
                             from_run_response=run_response,
@@ -4458,7 +4460,7 @@ class Team:
                 message=user_message,
                 session_id=session_id,
                 stream=self.stream or False,
-                    stream_intermediate_steps=self.stream_intermediate_steps,
+                stream_intermediate_steps=self.stream_intermediate_steps,
                 async_mode=False,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
@@ -5377,9 +5379,8 @@ class Team:
             audio = []
         if not files:
             files = []
-        
-        
-        def _determine_team_context(self, session_id: str) -> str:
+
+        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
             if isinstance(self.memory, TeamMemory):
                 self.memory = cast(TeamMemory, self.memory)
                 team_context_str = None
@@ -5412,9 +5413,9 @@ class Team:
                         audio.extend([Audio.from_artifact(aud) for aud in context_audio])
             return team_context_str, team_member_interactions_str
 
-       
-
-        def run_member_agents(task_description: str, expected_output: Optional[str] = None) -> Iterator[str]:
+        def run_member_agents(
+            task_description: str, expected_output: Optional[str] = None
+        ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """
             Send the same task to all the member agents and return the responses.
 
@@ -5433,14 +5434,22 @@ class Team:
             team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
+            member_agent_task = self._formate_member_agent_task(
+                task_description, expected_output, team_context_str, team_member_interactions_str
+            )
 
             for member_agent_index, member_agent in enumerate(self.members):
                 self._initialize_member(member_agent, session_id=session_id)
-                
+
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=True, stream_intermediate_steps=stream_intermediate_steps
+                        member_agent_task,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
                     )
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -5460,7 +5469,9 @@ class Team:
                         elif isinstance(member_agent_run_response.content, str):
                             if len(member_agent_run_response.content.strip()) > 0:
                                 yield f"Agent {member_agent.name}: {member_agent_run_response.content}"
-                            elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                            elif (
+                                member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0
+                            ):
                                 yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
                             yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -5523,7 +5534,9 @@ class Team:
             team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
+            member_agent_task = self._formate_member_agent_task(
+                task_description, expected_output, team_context_str, team_member_interactions_str
+            )
 
             # Create tasks for all member agents
             tasks = []
@@ -5572,7 +5585,9 @@ class Team:
                             if len(response.content.strip()) > 0:
                                 return f"Agent {member_name}: {response.content}"
                             elif response.tools is not None and len(response.tools) > 0:
-                                return f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
+                                return (
+                                    f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
+                                )
                         elif issubclass(type(response.content), BaseModel):
                             return f"Agent {member_name}: {response.content.model_dump_json(indent=2)}"  # type: ignore
                         else:
@@ -5623,8 +5638,8 @@ class Team:
             audio = []
         if not files:
             files = []
-            
-        def _determine_team_context(self, session_id: str) -> str:
+
+        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
             if isinstance(self.memory, TeamMemory):
                 self.memory = cast(TeamMemory, self.memory)
                 team_context_str = None
@@ -5657,8 +5672,6 @@ class Team:
                         audio.extend([Audio.from_artifact(aud) for aud in context_audio])
             return team_context_str, team_member_interactions_str
 
-       
-
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
@@ -5685,7 +5698,9 @@ class Team:
             team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(task_description, expected_output, team_context_str, team_member_interactions_str)
+            member_agent_task = self._formate_member_agent_task(
+                task_description, expected_output, team_context_str, team_member_interactions_str
+            )
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -5709,7 +5724,7 @@ class Team:
                 )
                 for member_agent_run_response_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_event)
-                    
+
                     # Yield the member event directly
                     yield member_agent_run_response_event
             else:
@@ -5788,7 +5803,7 @@ class Team:
 
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
-        ) -> AsyncIterator[str]:
+        ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """Use this function to transfer a task to the selected team member.
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
@@ -5813,7 +5828,9 @@ class Team:
             team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(self, task_description, expected_output, team_context_str, team_member_interactions_str)
+            member_agent_task = self._formate_member_agent_task(
+                task_description, expected_output, team_context_str, team_member_interactions_str
+            )
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -5912,20 +5929,27 @@ class Team:
         transfer_func = Function.from_callable(transfer_function, strict=True)
 
         return transfer_func
-    
-    def _formate_member_agent_task(self, task_description: str, expected_output: Optional[str] = None, team_context_str: Optional[str] = None, team_member_interactions_str: Optional[str] = None) -> str:
-            member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
-            member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
-            if expected_output is not None:
-                member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
+    def _formate_member_agent_task(
+        self,
+        task_description: str,
+        expected_output: Optional[str] = None,
+        team_context_str: Optional[str] = None,
+        team_member_interactions_str: Optional[str] = None,
+    ) -> str:
+        member_agent_task = "You are a member of a team of agents. Your goal is to complete the following task:"
+        member_agent_task += f"\n\n<task>\n{task_description}\n</task>"
 
-            if team_context_str:
-                member_agent_task += f"\n\n{team_context_str}"
-            if team_member_interactions_str:
-                member_agent_task += f"\n\n{team_member_interactions_str}"
-            
-            return member_agent_task
+        if expected_output is not None:
+            member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
+
+        if team_context_str:
+            member_agent_task += f"\n\n{team_context_str}"
+        if team_member_interactions_str:
+            member_agent_task += f"\n\n{team_member_interactions_str}"
+
+        return member_agent_task
+
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
@@ -5990,7 +6014,9 @@ class Team:
         if not files:
             files = []
 
-        def forward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> Iterator[str]:
+        def forward_task_to_member(
+            member_id: str, expected_output: Optional[str] = None
+        ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """Use this function to forward the request to the selected team member.
             Args:
                 member_id (str): The ID of the member to transfer the task to.
@@ -6040,7 +6066,9 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                    knowledge_filters=knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
                 )
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
@@ -6053,10 +6081,11 @@ class Team:
                     audio=audio,
                     files=files,
                     stream=False,
-                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                    knowledge_filters=knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
                 )
                 check_if_run_cancelled(member_agent_run_response)
-
 
                 try:
                     if member_agent_run_response.content is None and (
@@ -6115,7 +6144,9 @@ class Team:
             # Update the team media
             self._update_team_media(member_agent.run_response)  # type: ignore
 
-        async def aforward_task_to_member(member_id: str, expected_output: Optional[str] = None) -> AsyncIterator[str]:
+        async def aforward_task_to_member(
+            member_id: str, expected_output: Optional[str] = None
+        ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """Use this function to forward a message to the selected team member.
 
             Args:
@@ -6162,7 +6193,9 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters if not member_agent.knowledge_filters and member_agent.knowledge else None,
+                    knowledge_filters=knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
                 )
                 async for member_agent_run_response_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_event)
