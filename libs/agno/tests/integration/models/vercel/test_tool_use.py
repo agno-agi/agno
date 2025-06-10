@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.vercel import v0
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

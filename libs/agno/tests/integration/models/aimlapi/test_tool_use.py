@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.aimlapi import AIMLApi
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

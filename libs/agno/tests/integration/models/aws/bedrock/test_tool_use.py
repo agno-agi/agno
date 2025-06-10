@@ -1,6 +1,6 @@
 from typing import Optional
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent  # noqa
 from agno.models.aws import AwsBedrock
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

@@ -1,6 +1,6 @@
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.huggingface import HuggingFace
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
