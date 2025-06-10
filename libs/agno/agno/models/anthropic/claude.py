@@ -554,7 +554,6 @@ class Claude(Model):
             ModelResponse: Iterator of parsed response data
         """
         model_response = ModelResponse()
-
         if isinstance(response, ContentBlockStartEvent):
             if response.content_block.type == "redacted_thinking":
                 model_response.redacted_thinking = response.content_block.data
