@@ -9,7 +9,6 @@ def test_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -26,7 +25,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -40,7 +38,7 @@ def test_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -53,7 +51,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -71,7 +68,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -85,7 +81,7 @@ async def test_async_tool_use_stream():
         assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -97,7 +93,6 @@ def test_tool_use_with_content():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )

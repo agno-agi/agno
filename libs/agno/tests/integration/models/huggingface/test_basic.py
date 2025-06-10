@@ -189,7 +189,6 @@ def test_persistent_memory():
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[

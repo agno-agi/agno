@@ -15,7 +15,7 @@ from teams.reasoning_finance_team import get_reasoning_finance_team
 sql_agent = get_sql_agent(name="SQL Agent", model_id="openai:o4-mini")
 reasoning_sql_agent = get_sql_agent(
     name="Reasoning SQL Agent",
-    model_id="anthropic:claude-3-7-sonnet-latest",
+    model_id="anthropic:claude-sonnet-4-20250514",
     reasoning=True,
 )
 memory_agent = get_memory_agent()
@@ -35,6 +35,8 @@ app = Playground(
         image_agent,
     ],
     teams=[reasoning_finance_team],
+    app_id="agent-app-8000",
+    name="Agent App 8000",
 ).get_app()
 
 if __name__ == "__main__":
