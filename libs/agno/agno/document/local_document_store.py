@@ -35,23 +35,27 @@ class LocalDocumentStore(DocumentStore):
 
     def add_document(self, document: Document) -> str:
         """Add a document to the store. Returns the document ID."""
-        if document.id is None:
-            document.id = self._generate_document_hash(document)
+
+        print(f"Adding document: {document}")
+        # document.id = f"{document.name}.{document.extension}"
+        # if document.id is None:
+        #     document.id = self._generate_document_hash(document)
         
-        # Check if document already exists
+        # # Check if document already exists
       
-        file_path = self._get_document_file_path(document.id)
-        if file_path.exists():
-            log_debug(f"Document already exists: {document.id}")
-            return document.id
-        # Convert document to dict and save as JSON
-        document_dict = document.to_dict()
-        document_dict["id"] = document.id  # Ensure ID is included
+        # file_path = self._get_document_file_path(document.id)
+        # if file_path.exists():
+        #     log_debug(f"Document already exists: {document.id}")
+        #     return document.id
+        # # Convert document to dict and save as JSON
+        # document_dict = document.to_dict()
+        # document_dict["id"] = document.id  # Ensure ID is included
         
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(document_dict, f, indent=2, ensure_ascii=False)
+        # with open(file_path, 'w', encoding='utf-8') as f:
+        #     json.dump(document_dict, f, indent=2, ensure_ascii=False)
         
-        return document.id
+        # return document.id
+        return "123456"
 
     def delete_document(self, document_id: str) -> bool:
         """Delete a document by ID. Returns True if successful."""

@@ -11,30 +11,31 @@ document_store = LocalDocumentStore(
 )
 
 vector_store=PgVector(
-        table_name="pdf_documents",
-        # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
+        table_name="vectors",
         db_url=db_url,
     )
 
 # Create knowledge base
 kb = KnowledgeBase(
     name="My Knowledge Base", 
-    description="A simple knowledge base",
-    document_store=document_store
+    description="Agno 2.0 Knowledge Base Implementation",
+    document_store=document_store,
+    vector_store=vector_store
 )
 
 # Add a document
 doc = Document(content="Hello worlds", name="greetings")
 doc_id = kb.add_document(doc)
+dc = kb.add_document_by_path("tmp/cv_1.pdf")
 
 # Retrieve documents
-all_docs = kb.get_all_documents()
-specific_doc = kb.get_document_by_id(doc_id)
+# all_docs = kb.get_all_documents()
+# specific_doc = kb.get_document_by_id(doc_id)
 
-print(specific_doc.content)
+# print(specific_doc.content)
 
-deleted = kb.delete_document(document_id=doc_id)
-print(deleted)
+# deleted = kb.delete_document(document_id=doc_id)
+# print(deleted)
 
-specific_doc = kb.get_document_by_id(doc_id)
-print(specific_doc)
+# specific_doc = kb.get_document_by_id(doc_id)
+# print(specific_doc)
