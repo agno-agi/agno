@@ -92,9 +92,14 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
         def escape_quotes_in_values(match):
             key = match.group(1)
             value = match.group(2)
-            # Escape ONLY unescaped quotes
-            escaped_value = re.sub(r'(?<!\\)"', r'\\"', value)
-            return f'"{key.lower()}": "{escaped_value}"'
+            
+            if '\\"' in value:
+                unescaped_value = value.replace('\\"', '"')
+                escaped_value = unescaped_value.replace('"', '\\"')
+            else:
+                escaped_value = value.replace('"', '\\"')
+            
+            return f'"{key.lower()}": "{escaped_value}'
 
         # Find and escape quotes in field values
         content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
