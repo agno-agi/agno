@@ -33,6 +33,7 @@ multi_language_team = Team(
 
 # Evaluate the accuracy of the Team's responses
 evaluation = AccuracyEval(
+    name="Multi Language Team",
     model=OpenAIChat(id="o4-mini"),
     team=multi_language_team,
     input="Comment allez-vous?",
