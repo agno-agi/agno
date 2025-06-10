@@ -23,6 +23,9 @@ reasoning_finance_agent = Agent(
 
 slack_api_app = SlackAPI(
     agent=reasoning_finance_agent,
+    name="Reasoning Finance Agent",
+    app_id="reasoning_finance_agent",
+    description="A agent that can reason about finance and stock prices.",
 )
 app = slack_api_app.get_app()
 

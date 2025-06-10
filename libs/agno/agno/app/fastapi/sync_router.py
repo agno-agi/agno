@@ -1,18 +1,23 @@
+import json
+from dataclasses import asdict
 from io import BytesIO
-from typing import Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.utils import process_audio, process_document, process_image, process_video
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.base import RunStatus
+from agno.run.response import RunResponseEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.team.team import Team
 from agno.utils.log import logger
+from agno.workflow.workflow import Workflow
 
 
 def agent_chat_response_streamer(
@@ -36,13 +41,10 @@ def agent_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = RunResponse(
-            content=str(e),
-            event=RunEvent.run_error,
-        )
+        error_response = RunResponse(content=str(e), status=RunStatus.error)
         yield error_response.to_json()
         return
 
@@ -70,22 +72,23 @@ def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
 
 
-def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def get_sync_router(
+    agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None, workflows: Optional[List[Workflow]] = None
+) -> APIRouter:
     router = APIRouter()
 
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+    if agents is None and teams is None and workflows is None:
+        raise ValueError("Either agents, teams or workflows must be provided.")
 
     @router.get("/status")
     def status():
@@ -246,10 +249,14 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
         return base64_images, base64_audios, base64_videos, document_files
 
     @router.post("/runs")
-    def run_agent_or_team(
-        message: str = Form(...),
+    def run_agent_or_team_or_workflow(
+        message: str = Form(None),
         stream: bool = Form(True),
         monitor: bool = Form(False),
+        agent_id: Optional[str] = Query(None),
+        team_id: Optional[str] = Query(None),
+        workflow_id: Optional[str] = Query(None),
+        workflow_input: Optional[Dict[str, Any]] = Form(None),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -260,16 +267,42 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
+        # Only one of agent_id, team_id or workflow_id can be provided
+        if agent_id and team_id or agent_id and workflow_id or team_id and workflow_id:
+            raise HTTPException(status_code=400, detail="Only one of agent_id, team_id or workflow_id can be provided")
+
+        if not agent_id and not team_id and not workflow_id:
+            raise HTTPException(status_code=400, detail="One of agent_id, team_id or workflow_id must be provided")
+
+        agent = None
+        team = None
+        workflow = None
+
+        if agent_id and agents:
+            agent = next((agent for agent in agents if agent.agent_id == agent_id), None)
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if team_id and teams:
+            team = next((team for team in teams if team.team_id == team_id), None)
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if not message:
+                raise HTTPException(status_code=400, detail="Message is required")
+        if workflow_id and workflows:
+            workflow = next((workflow for workflow in workflows if workflow.workflow_id == workflow_id), None)
+            if workflow is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
+            if not workflow_input:
+                raise HTTPException(status_code=400, detail="Workflow input is required")
+
         if agent:
-            if monitor:
-                agent.monitoring = True
-            else:
-                agent.monitoring = False
+            agent.monitoring = bool(monitor)
         elif team:
-            if monitor:
-                team.monitoring = True
-            else:
-                team.monitoring = False
+            team.monitoring = bool(monitor)
+        elif workflow:
+            workflow.monitoring = bool(monitor)
 
         if files:
             if agent:
@@ -305,6 +338,14 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     ),
                     media_type="text/event-stream",
                 )
+            elif workflow:
+                workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
+                workflow_instance.user_id = user_id
+                workflow_instance.session_name = None
+                return StreamingResponse(
+                    (json.dumps(asdict(result)) for result in workflow_instance.run(**(workflow_input or {}))),
+                    media_type="text/event-stream",
+                )
         else:
             if agent:
                 run_response = cast(
@@ -332,5 +373,10 @@ def get_sync_router(agent: Optional[Agent] = None, team: Optional[Team] = None) 
                     stream=False,
                 )
                 return team_run_response.to_dict()
+            elif workflow:
+                workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
+                workflow_instance.user_id = user_id
+                workflow_instance.session_name = None
+                return workflow_instance.run(**(workflow_input or {})).to_dict()
 
     return router

@@ -16,7 +16,7 @@ class MessageReferences(BaseModel):
     # The query used to retrieve the references.
     query: str
     # References (from the vector database or function calls)
-    references: Optional[List[Dict[str, Any]]] = None
+    references: Optional[List[Union[Dict[str, Any], str]]] = None
     # Time taken to retrieve the references.
     time: Optional[float] = None
 

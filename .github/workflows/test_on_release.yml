@@ -528,6 +528,7 @@ jobs:
 
   # Run tests for AI/ML API
   test-aimlapi:
+    if: false # We need more credits
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -556,6 +557,38 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/models/aimlapi
 
+  # Run tests for LangDB
+  test-langdb:
+    if: false # We do not have a company account
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      LANGDB_API_KEY: ${{ secrets.LANGDB_API_KEY }}
+      LANGDB_PROJECT_ID: ${{ secrets.LANGDB_PROJECT_ID }}
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run LangDB tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/models/langdb
+
   test-agents:
     runs-on: ubuntu-latest
     strategy:
@@ -565,6 +598,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}

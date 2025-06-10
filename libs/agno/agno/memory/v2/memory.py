@@ -270,7 +270,6 @@ class Memory:
 
     def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
         """Get the session summary for a given user id"""
-
         if user_id is None:
             user_id = "default"
         if self.summaries is None:
@@ -442,7 +441,6 @@ class Memory:
             summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
         )
         self.summaries.setdefault(user_id, {})[session_id] = session_summary  # type: ignore
-
         return session_summary
 
     def create_user_memories(

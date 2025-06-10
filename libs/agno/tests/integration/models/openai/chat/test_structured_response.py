@@ -61,7 +61,7 @@ def test_structured_response_with_enum_fields():
         model=OpenAIChat(id="gpt-4o"),
         description="You help generate recipe names and ratings.",
         response_model=Recipe,
-    )   
+    )
     response = structured_output_agent.run("Generate a recipe name and rating.")
     assert response.content is not None
     assert isinstance(response.content.rating, Grade)
