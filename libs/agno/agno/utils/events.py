@@ -39,7 +39,7 @@ from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 def create_team_run_response_started_event(from_run_response: TeamRunResponse) -> TeamRunResponseStartedEvent:
     return TeamRunResponseStartedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         model=from_run_response.model,  # type: ignore
         model_provider=from_run_response.model_provider,  # type: ignore
@@ -49,7 +49,7 @@ def create_team_run_response_started_event(from_run_response: TeamRunResponse) -
 def create_run_response_started_event(from_run_response: RunResponse) -> RunResponseStartedEvent:
     return RunResponseStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         model=from_run_response.model,  # type: ignore
         model_provider=from_run_response.model_provider,  # type: ignore
@@ -59,7 +59,7 @@ def create_run_response_started_event(from_run_response: RunResponse) -> RunResp
 def create_team_run_response_completed_event(from_run_response: TeamRunResponse) -> TeamRunResponseCompletedEvent:
     return TeamRunResponseCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
@@ -77,7 +77,7 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
 def create_run_response_completed_event(from_run_response: RunResponse) -> RunResponseCompletedEvent:
     return RunResponseCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
@@ -96,7 +96,7 @@ def create_run_response_paused_event(
 ) -> RunResponsePausedEvent:
     return RunResponsePausedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
     )
@@ -105,7 +105,7 @@ def create_run_response_paused_event(
 def create_run_response_continued_event(from_run_response: RunResponse) -> RunResponseContinuedEvent:
     return RunResponseContinuedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -113,7 +113,7 @@ def create_run_response_continued_event(from_run_response: RunResponse) -> RunRe
 def create_team_run_response_error_event(from_run_response: TeamRunResponse, error: str) -> TeamRunResponseErrorEvent:
     return TeamRunResponseErrorEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
     )
@@ -122,7 +122,7 @@ def create_team_run_response_error_event(from_run_response: TeamRunResponse, err
 def create_run_response_error_event(from_run_response: RunResponse, error: str) -> RunResponseErrorEvent:
     return RunResponseErrorEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
     )
@@ -133,7 +133,7 @@ def create_team_run_response_cancelled_event(
 ) -> TeamRunResponseCancelledEvent:
     return TeamRunResponseCancelledEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
     )
@@ -142,7 +142,7 @@ def create_team_run_response_cancelled_event(
 def create_run_response_cancelled_event(from_run_response: RunResponse, reason: str) -> RunResponseCancelledEvent:
     return RunResponseCancelledEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
     )
@@ -151,7 +151,7 @@ def create_run_response_cancelled_event(from_run_response: RunResponse, reason: 
 def create_memory_update_started_event(from_run_response: RunResponse) -> MemoryUpdateStartedEvent:
     return MemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -159,7 +159,7 @@ def create_memory_update_started_event(from_run_response: RunResponse) -> Memory
 def create_team_memory_update_started_event(from_run_response: TeamRunResponse) -> TeamMemoryUpdateStartedEvent:
     return TeamMemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -167,7 +167,7 @@ def create_team_memory_update_started_event(from_run_response: TeamRunResponse) 
 def create_memory_update_completed_event(from_run_response: RunResponse) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -175,7 +175,7 @@ def create_memory_update_completed_event(from_run_response: RunResponse) -> Memo
 def create_team_memory_update_completed_event(from_run_response: TeamRunResponse) -> TeamMemoryUpdateCompletedEvent:
     return TeamMemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -183,7 +183,7 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunResponse
 def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningStartedEvent:
     return ReasoningStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -191,7 +191,7 @@ def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningS
 def create_team_reasoning_started_event(from_run_response: TeamRunResponse) -> TeamReasoningStartedEvent:
     return TeamReasoningStartedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -201,7 +201,7 @@ def create_reasoning_step_event(
 ) -> ReasoningStepEvent:
     return ReasoningStepEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
@@ -214,7 +214,7 @@ def create_team_reasoning_step_event(
 ) -> TeamReasoningStepEvent:
     return TeamReasoningStepEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
@@ -227,7 +227,7 @@ def create_reasoning_completed_event(
 ) -> ReasoningCompletedEvent:
     return ReasoningCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -239,7 +239,7 @@ def create_team_reasoning_completed_event(
 ) -> TeamReasoningCompletedEvent:
     return TeamReasoningCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -249,7 +249,7 @@ def create_team_reasoning_completed_event(
 def create_tool_call_started_event(from_run_response: RunResponse, tool: ToolExecution) -> ToolCallStartedEvent:
     return ToolCallStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
     )
@@ -260,7 +260,7 @@ def create_team_tool_call_started_event(
 ) -> TeamToolCallStartedEvent:
     return TeamToolCallStartedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
     )
@@ -271,7 +271,7 @@ def create_tool_call_completed_event(
 ) -> ToolCallCompletedEvent:
     return ToolCallCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
@@ -286,7 +286,7 @@ def create_team_tool_call_completed_event(
 ) -> TeamToolCallCompletedEvent:
     return TeamToolCallCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
@@ -308,7 +308,7 @@ def create_run_response_content_event(
     thinking_combined = (thinking or "") + (redacted_thinking or "")
     return RunResponseContentEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         thinking=thinking_combined,
@@ -331,7 +331,7 @@ def create_team_run_response_content_event(
     thinking_combined = (thinking or "") + (redacted_thinking or "")
     return TeamRunResponseContentEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,
+        team_id=from_run_response.team_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         thinking=thinking_combined,

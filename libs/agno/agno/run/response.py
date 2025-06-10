@@ -34,18 +34,23 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
-    workflow_started = "WorkflowStarted"
-    workflow_completed = "WorkflowCompleted"
-
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
+    created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
     agent_id: str = ""
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+    # For backwards compatibility
+    content: Optional[Any] = None
 
 
 @dataclass
 class RunResponseStartedEvent(BaseAgentRunResponseEvent):
     """Event sent when the run starts"""
+
     event: str = RunEvent.run_started.value
     model: str = ""
     model_provider: str = ""
@@ -54,6 +59,7 @@ class RunResponseStartedEvent(BaseAgentRunResponseEvent):
 @dataclass
 class RunResponseContentEvent(BaseAgentRunResponseEvent):
     """Main event for each delta of the RunResponse"""
+
     event: str = RunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"
@@ -305,13 +311,27 @@ class RunResponse:
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
+
         tools = data.pop("tools", None)
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
+
+        images = data.pop("images", None)
+        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+
+        videos = data.pop("videos", None)
+        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+
+        audio = data.pop("audio", None)
+        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+
+        response_audio = data.pop("response_audio", None)
+        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
         # To make it backwards compatible
         if "event" in data:
             data.pop("event")
-        return cls(messages=messages, tools=tools, **data)
+
+        return cls(messages=messages, tools=tools, images=images, videos=videos, response_audio=response_audio, **data)
 
     def get_content_as_string(self, **kwargs) -> str:
         import json

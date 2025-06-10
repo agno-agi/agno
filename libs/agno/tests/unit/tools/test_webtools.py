@@ -1,7 +1,8 @@
 """Unit tests for WebTools class."""
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import patch, Mock
 
 from agno.tools.webtools import WebTools
 
@@ -25,7 +26,6 @@ def test_expand_url_success(web_tools):
 
     assert result == final_url
     mock_head.assert_called_once_with(mock_url, follow_redirects=True, timeout=5)
-
 
 
 def test_toolkit_registration(web_tools):

@@ -528,6 +528,7 @@ jobs:
 
   # Run tests for AI/ML API
   test-aimlapi:
+    if: false # We need more credits
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -597,6 +598,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}

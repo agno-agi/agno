@@ -160,7 +160,7 @@ async def test_stream_basic():
 
     async def mock_stream():
         text_response = RunResponse()
-        text_response.event = RunEvent.run_response
+        text_response.event = RunEvent.run_response_content
         text_response.content = "Hello world"
         text_response.messages = []
         yield text_response
@@ -190,7 +190,7 @@ async def test_stream_with_tool_call_blocking():
     async def mock_stream_with_tool_calls():
         # Start with a text response
         text_response = RunResponse()
-        text_response.event = RunEvent.run_response
+        text_response.event = RunEvent.run_response_content
         text_response.content = "I'll help you"
         text_response.messages = []
         yield text_response
@@ -208,7 +208,7 @@ async def test_stream_with_tool_call_blocking():
         yield tool_start_response
 
         buffered_text_response = RunResponse()
-        buffered_text_response.event = RunEvent.run_response
+        buffered_text_response.event = RunEvent.run_response_content
         buffered_text_response.content = "Searching..."
         buffered_text_response.messages = []
         yield buffered_text_response

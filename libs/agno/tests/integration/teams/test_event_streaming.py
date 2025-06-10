@@ -4,9 +4,9 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
-from agno.team import Team, RunEvent as TeamRunEvent
 from agno.agent import RunEvent
 from agno.tools.calculator import CalculatorTools
+from agno.team import Team, TeamRunEvent
 from agno.tools.decorator import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools

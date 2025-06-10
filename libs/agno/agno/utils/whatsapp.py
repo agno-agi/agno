@@ -254,3 +254,52 @@ def send_image_message(
     except Exception as e:
         log_error(f"Unexpected error sending WhatsApp image message: {str(e)}")
         raise
+
+
+def typing_indicator(message_id: Optional[str] = None):
+    if not message_id:
+        return
+
+    phone_number_id = get_phone_number_id()
+
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+
+    access_token = get_access_token()
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    data = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": f"{message_id}",
+        "typing_indicator": {"type": "text"},
+    }
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
+
+
+async def typing_indicator_async(message_id: Optional[str] = None):
+    if not message_id:
+        return
+
+    phone_number_id = get_phone_number_id()
+
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+
+    access_token = get_access_token()
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    data = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": f"{message_id}",
+        "typing_indicator": {"type": "text"},
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, data=data)
+            response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
+    except httpx.HTTPStatusError as e:
+        return {"error": str(e)}
