@@ -72,7 +72,6 @@ def test_tool_call_requires_external_execution_stream():
 
 @pytest.mark.asyncio
 async def test_tool_call_requires_external_execution_async():
-    
     @tool(external_execution=True)
     async def send_email(to: str, subject: str, body: str):
         pass

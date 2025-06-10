@@ -3509,7 +3509,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-        
+
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
