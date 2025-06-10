@@ -174,7 +174,7 @@ class Playground:
 
         logger.info(f"Starting playground on {scheme}://{host}:{port}")
         # Encode the full endpoint (host:port)
-        encoded_endpoint = quote(f"{host}:{port}")
+        encoded_endpoint = quote(f"{host}:{port}{prefix}")
         self.endpoints_created = PlaygroundEndpointCreate(
             endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix}
         )
