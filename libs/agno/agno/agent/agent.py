@@ -2460,7 +2460,6 @@ class Agent:
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
 
-
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
@@ -2660,7 +2659,7 @@ class Agent:
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                     yield from self._run_tool(run_messages, _t)
                 else:
-                    self._reject_tool_call(run_messages, _t, session_id)
+                    self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
                     _t.result = "Tool call was rejected"
                     _t.tool_call_error = True

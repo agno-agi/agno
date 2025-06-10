@@ -5,9 +5,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.params import Body
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
 
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.operator import (
@@ -108,9 +106,8 @@ async def agent_acontinue_run_streamer(
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
