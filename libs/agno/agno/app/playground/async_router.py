@@ -37,8 +37,9 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponseErrorEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
@@ -70,15 +71,13 @@ async def chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -107,15 +106,14 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
-        traceback.print_exc(limit=3)
-        error_response = TeamRunResponse(
+        traceback.print_exc()
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
