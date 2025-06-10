@@ -1399,7 +1399,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
@@ -3472,7 +3472,7 @@ class Agent:
         if self.tools is None:
             return
 
-        from inspect import iscoroutinefunction
+        from inspect import iscoroutinefunction, iscoroutine
 
         for tool in self.tools:
             if isinstance(tool, Toolkit):
@@ -3503,7 +3503,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
         agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
-
+        
         # Add provided tools
         if self.tools is not None:
             # If not running in async mode, raise if any tool is async
@@ -3556,7 +3556,7 @@ class Agent:
                         self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
                     )
                 self._rebuild_tools = True
-                
+
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -3576,10 +3576,9 @@ class Agent:
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-
         if self._rebuild_tools:
             self._rebuild_tools = False
-            
+
             agent_tools = self.get_tools(
                 session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
             )

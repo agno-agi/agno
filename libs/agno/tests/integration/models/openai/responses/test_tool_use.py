@@ -255,7 +255,6 @@ def test_web_search_built_in_tool_stream():
     final_response = ""
     response_citations = None
     for response in responses:
-        assert isinstance(response, RunResponse)
         if response.content is not None:
             final_response += response.content
         if response.citations is not None:

@@ -1321,6 +1321,7 @@ class Team:
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
+            user_id=user_id,
         ):
             pass
 
@@ -1389,6 +1390,7 @@ class Team:
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
+            user_id=user_id,
         ):
             yield event
 

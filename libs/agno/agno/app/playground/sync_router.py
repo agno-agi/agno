@@ -565,11 +565,11 @@ def get_sync_playground_router(
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
         if not workflow:
-             raise HTTPException(status_code=404, detail="Workflow not found")
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
         # Ensure storage is enabled for the workflow
         if not workflow.storage:
-             raise HTTPException(status_code=404, detail="Workflow does not have storage enabled")
+            raise HTTPException(status_code=404, detail="Workflow does not have storage enabled")
 
         # Retrieve all sessions for the given workflow and user
         try:
@@ -577,7 +577,7 @@ def get_sync_playground_router(
                 user_id=user_id, entity_id=workflow_id
             )  # type: ignore
         except Exception as e:
-             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []

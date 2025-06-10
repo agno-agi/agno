@@ -64,7 +64,7 @@ def test_tool_call_requires_external_execution_stream():
     assert found_external_execution, "No tools were found to require external execution"
 
     found_external_execution = False
-    for response in agent.continue_run(response, stream=True):
+    for response in agent.continue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
         if response.is_paused:
             found_external_execution = True
     assert found_external_execution is False, "Some tools still require external execution"
@@ -72,6 +72,7 @@ def test_tool_call_requires_external_execution_stream():
 
 @pytest.mark.asyncio
 async def test_tool_call_requires_external_execution_async():
+    
     @tool(external_execution=True)
     async def send_email(to: str, subject: str, body: str):
         pass
@@ -96,7 +97,7 @@ async def test_tool_call_requires_external_execution_async():
     # Mark the tool as confirmed
     response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
 
-    response = await agent.acontinue_run(response)
+    response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools)
     assert response.is_paused is False
 
 
@@ -153,7 +154,7 @@ async def test_tool_call_requires_external_execution_stream_async():
     assert found_external_execution, "No tools were found to require external execution"
 
     found_external_execution = False
-    async for response in await agent.acontinue_run(response, stream=True):
+    async for response in await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
         if response.is_paused:
             found_external_execution = True
     assert found_external_execution is False, "Some tools still require external execution"
