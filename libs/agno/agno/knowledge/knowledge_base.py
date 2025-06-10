@@ -112,6 +112,7 @@ class KnowledgeBase:
         path = Path(path)
         if path.is_file():
             if path.suffix == ".pdf":
+                
                 print("PDF file detected")
                 document = self.pdf_reader.read(path)
                 print(document)
