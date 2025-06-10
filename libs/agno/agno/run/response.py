@@ -34,9 +34,6 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
-    workflow_started = "WorkflowStarted"
-    workflow_completed = "WorkflowCompleted"
-
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
