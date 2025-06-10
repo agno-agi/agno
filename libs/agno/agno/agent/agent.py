@@ -3180,9 +3180,7 @@ class Agent:
                     )
 
             # Handle tool interruption events
-            elif model_response_event.event in [
-                ModelResponseEvent.tool_call_paused.value,
-            ]:
+            elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
                 # Add tool calls to the run_response
                 tool_executions_list = model_response_event.tool_executions
                 if tool_executions_list is not None:

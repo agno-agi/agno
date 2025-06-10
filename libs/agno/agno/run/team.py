@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, TypeAlias, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -141,7 +141,7 @@ class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
-TeamRunResponseEvent: TypeAlias = Union[
+TeamRunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
     RunResponseCompletedEvent,
