@@ -6,14 +6,13 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.run.v2.workflow import WorkflowRunEvent, WorkflowRunResponse
-from agno.team import Team
-from agno.utils.log import logger
 from agno.run.v2.workflow import (
+    TaskStartedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
-    TaskStartedEvent,
 )
+from agno.team import Team
+from agno.utils.log import logger
 
 
 @dataclass
@@ -205,30 +204,16 @@ class Task:
         context: Dict[str, Any] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[Union[WorkflowRunResponse, TaskOutput, str]]:
+    ) -> Union[TaskOutput, Iterator[Union[WorkflowRunResponse, TaskOutput, str]]]:
         """Execute the task with TaskInput, with optional streaming support"""
         if stream:
             return self._execute_task_stream(task_input, context, stream_intermediate_steps)
         else:
             return self._execute_task(task_input, context)
 
-    def _execute_task(
-        self, task_input: TaskInput, context: Dict[str, Any] = None
-    ) -> Iterator[Union[WorkflowRunResponse, TaskOutput]]:
-        """Execute the task with TaskInput, yielding events and final TaskOutput (non-streaming)"""
+    def _execute_task(self, task_input: TaskInput, context: Dict[str, Any] = None) -> TaskOutput:
+        """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
         logger.info(f"Executing task: {self.name}")
-
-        # Yield task started event
-        yield TaskStartedEvent(
-            run_id=context.get("run_id", ""),
-            content=f"Starting task: {self.name}",
-            workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=context.get("sequence_name") if context else None,
-            task_name=self.name,
-            task_index=context.get("task_index") if context else None,
-            workflow_id=context.get("workflow_id") if context else None,
-            session_id=context.get("session_id") if context else None,
-        )
 
         # Initialize executor with context and workflow session state
         self._initialize_executor_context(task_input, context)
@@ -242,8 +227,7 @@ class Task:
                 task_output = self._create_task_output(response, task_input)
 
                 logger.info(f"Task {self.name} completed successfully")
-                yield task_output
-                return
+                return task_output
 
             except Exception as e:
                 self.retry_count = attempt + 1
@@ -253,11 +237,9 @@ class Task:
                     if self.skip_on_failure:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
-                        task_output = TaskOutput(
+                        return TaskOutput(
                             content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
                         )
-                        yield task_output
-                        return
                     else:
                         raise e
 

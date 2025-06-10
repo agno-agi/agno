@@ -1,19 +1,19 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import (
+    TaskCompletedEvent,
+    TaskErrorEvent,
+    TaskStartedEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+    WorkflowStartedEvent,
+)
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
-from agno.run.v2.workflow import (
-    WorkflowStartedEvent,
-    WorkflowCompletedEvent,
-    WorkflowErrorEvent,
-    TaskStartedEvent,
-    TaskCompletedEvent,
-    TaskErrorEvent,
-)
 
 # Define agents
 blog_analyzer = Agent(
@@ -121,7 +121,8 @@ def print_workflow_events(workflow: Workflow, query: str, sequence_name: str = N
                 # Show additional task completion details
                 if event.task_responses:
                     print(
-                        f"   └─ Task Responses: {len(event.task_responses)} response(s)")
+                        f"   └─ Task Responses: {len(event.task_responses)} response(s)"
+                    )
                 if event.images:
                     print(f"   └─ Images: {len(event.images)} image(s)")
                 if event.videos:
@@ -140,8 +141,7 @@ def print_workflow_events(workflow: Workflow, query: str, sequence_name: str = N
                     preview = truncate_content(str(event.content))
                     print(f"   └─ Content: {preview}")
                 if event.task_responses:
-                    print(
-                        f"   └─ Total Task Responses: {len(event.task_responses)}")
+                    print(f"   └─ Total Task Responses: {len(event.task_responses)}")
 
             elif isinstance(event, TaskErrorEvent):
                 task_name = event.task_name or "Unknown"
@@ -164,7 +164,9 @@ def print_workflow_events(workflow: Workflow, query: str, sequence_name: str = N
         print("=" * 60)
 
 
-def print_workflow_events_detailed(workflow: Workflow, query: str, sequence_name: str = None):
+def print_workflow_events_detailed(
+    workflow: Workflow, query: str, sequence_name: str = None
+):
     """Print workflow events with more detailed information"""
 
     print(f"\n🚀 Starting Detailed Workflow: {workflow.name}")
@@ -186,10 +188,11 @@ def print_workflow_events_detailed(workflow: Workflow, query: str, sequence_name
             print(f"  ├─ Workflow: {event.workflow_name}")
             print(f"  ├─ Sequence: {event.sequence_name}")
 
-            if isinstance(event, (TaskStartedEvent, TaskCompletedEvent, TaskErrorEvent)):
+            if isinstance(
+                event, (TaskStartedEvent, TaskCompletedEvent, TaskErrorEvent)
+            ):
                 task_count += 1
-                print(
-                    f"  ├─ Task: {event.task_name} (Index: {event.task_index})")
+                print(f"  ├─ Task: {event.task_name} (Index: {event.task_index})")
 
             if event.content:
                 preview = truncate_content(str(event.content), max_length=100)
@@ -205,11 +208,9 @@ def print_workflow_events_detailed(workflow: Workflow, query: str, sequence_name
 
             if isinstance(event, WorkflowCompletedEvent):
                 if event.extra_data:
-                    print(
-                        f"  ├─ Extra Data Keys: {list(event.extra_data.keys())}")
+                    print(f"  ├─ Extra Data Keys: {list(event.extra_data.keys())}")
                 if event.task_responses:
-                    print(
-                        f"  ├─ Total Task Responses: {len(event.task_responses)}")
+                    print(f"  ├─ Total Task Responses: {len(event.task_responses)}")
 
             if isinstance(event, (TaskErrorEvent, WorkflowErrorEvent)):
                 print(f"  ├─ Error: {event.error}")

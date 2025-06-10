@@ -5,19 +5,18 @@ from typing import Sequence as TypingSequence
 from uuid import uuid4
 
 from agno.media import Audio, Image, Video
-from agno.run.v2.workflow import WorkflowRunEvent, WorkflowRunResponse
+from agno.run.v2.workflow import (
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+    WorkflowRunEvent,
+    WorkflowRunResponse,
+    WorkflowStartedEvent,
+)
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.trigger import ManualTrigger, Trigger, TriggerType
-from agno.run.v2.workflow import (
-    WorkflowRunEvent,
-    WorkflowRunResponse,
-    WorkflowCompletedEvent,
-    WorkflowErrorEvent,
-)
-
 
 
 @dataclass
@@ -83,8 +82,8 @@ class Workflow:
         if self.storage is not None:
             self.storage.mode = "workflow_v2"
 
-    def execute_sequence(self, sequence_name: str, inputs: Dict[str, Any]) -> Iterator[WorkflowRunResponse]:
-        """Execute a specific sequence by name synchronously"""
+    def execute_sequence(self, sequence_name: str, inputs: Dict[str, Any]) -> WorkflowRunResponse:
+        """Execute a specific sequence by name synchronously (non-streaming) - returns WorkflowRunResponse directly"""
         sequence = self.get_sequence(sequence_name)
         if not sequence:
             raise ValueError(f"Sequence '{sequence_name}' not found")
@@ -108,68 +107,38 @@ class Workflow:
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
-        # Collect complete workflow run instead of individual events
-        workflow_run_responses = []
-
         try:
-            # Execute the sequence synchronously
-            for response in sequence.execute(inputs, context, stream=False):
-                # Collect all responses
-                workflow_run_responses.append(response)
-                yield response
+            # Execute the sequence synchronously - return WorkflowRunResponse directly!
+            workflow_response = sequence.execute(inputs, context, stream=False)
 
-            # Store only the complete workflow run (not individual events)
-            if self.workflow_session and workflow_run_responses:
-                # Store only the final completed workflow response
-                final_response = workflow_run_responses[-1]
-                if isinstance(final_response, WorkflowCompletedEvent):
-                    # Convert to WorkflowRunResponse for storage compatibility
-                    storage_response = WorkflowRunResponse(
-                        event=final_response.event,
-                        content=final_response.content,
-                        workflow_id=final_response.workflow_id,
-                        workflow_name=final_response.workflow_name,
-                        sequence_name=final_response.sequence_name,
-                        run_id=final_response.run_id,
-                        session_id=final_response.session_id,
-                        task_responses=final_response.task_responses,
-                        extra_data=final_response.extra_data,
-                        created_at=final_response.created_at,
-                    )
-                    self.workflow_session.add_run(storage_response)
+            # Store the completed workflow response
+            if self.workflow_session:
+                self.workflow_session.add_run(workflow_response)
 
             # Save to storage after complete execution
             self.write_to_storage()
 
+            return workflow_response
+
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
 
-            error_response = WorkflowErrorEvent(
-                run_id=self.run_id or "",
+            error_response = WorkflowRunResponse(
+                event=WorkflowRunEvent.workflow_error,
                 content=f"Workflow execution failed: {e}",
-                error=str(e),
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
                 sequence_name=sequence_name,
+                run_id=self.run_id or "",
                 session_id=self.session_id,
             )
 
-            # Store error response (convert to WorkflowRunResponse for storage)
+            # Store error response
             if self.workflow_session:
-                storage_response = WorkflowRunResponse(
-                    event=error_response.event,
-                    content=error_response.content,
-                    workflow_id=error_response.workflow_id,
-                    workflow_name=error_response.workflow_name,
-                    sequence_name=error_response.sequence_name,
-                    run_id=error_response.run_id,
-                    session_id=error_response.session_id,
-                    created_at=error_response.created_at,
-                )
-                self.workflow_session.add_run(storage_response)
+                self.workflow_session.add_run(error_response)
             self.write_to_storage()
 
-            yield error_response
+            return error_response
 
     def execute_sequence_stream(
         self, sequence_name: str, inputs: Dict[str, Any], stream_intermediate_steps: bool = False
@@ -371,8 +340,8 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-    ) -> Iterator[WorkflowRunResponse]:
-        """Execute the workflow synchronously (non-streaming)"""
+    ) -> WorkflowRunResponse:
+        """Execute the workflow synchronously (non-streaming) - returns WorkflowRunResponse directly"""
         # Set user_id and session_id if provided
         if user_id is not None:
             self.user_id = user_id
@@ -420,9 +389,8 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected sequence synchronously
-        for response in self.execute_sequence(selected_sequence_name, inputs):
-            yield response
+        # Execute the sequence synchronously (non-streaming) - now returns WorkflowRunResponse directly
+        return self.execute_sequence(selected_sequence_name, inputs)
 
     def _run_stream(
         self,
@@ -794,16 +762,13 @@ class Workflow:
         response_timer = Timer()
         response_timer.start()
 
-        # Batch execution
-        task_responses = []
-
         with Live(console=console) as live_log:
             status = Status("Starting workflow...", spinner="dots")
-            panels = [status]
-            live_log.update(Group(*panels))
+            live_log.update(status)
 
             try:
-                for response in self._run(
+                # Execute workflow and get the response directly
+                workflow_response: WorkflowRunResponse = self._run(
                     query=query,
                     sequence_name=sequence_name,
                     user_id=user_id,
@@ -811,65 +776,36 @@ class Workflow:
                     audio=audio,
                     images=images,
                     videos=videos,
-                ):
-                    if response.event == WorkflowRunEvent.workflow_started:
-                        status.update("Workflow started...")
+                )
 
-                    elif response.event == WorkflowRunEvent.task_started:
-                        task_name = response.task_name or "Unknown"
-                        task_index = response.task_index or 0
-                        status.update(f"Starting task {task_index + 1}: {task_name}...")
+                response_timer.stop()
 
-                    elif response.event == WorkflowRunEvent.task_completed:
-                        task_name = response.task_name or "Unknown"
-                        task_index = response.task_index or 0
-
-                        status.update(f"Completed task {task_index + 1}: {task_name}")
-
-                        if response.content:
-                            task_responses.append(
-                                {
-                                    "task_name": task_name,
-                                    "task_index": task_index,
-                                    "content": response.content,
-                                    "event": response.event,
-                                }
-                            )
-
-                        # Show task panel
-                        if show_task_details and response.content:
+                # Show individual task responses if available
+                if show_task_details and workflow_response.task_responses:
+                    for i, task_output in enumerate(workflow_response.task_responses):
+                        if task_output.content:
                             task_panel = create_panel(
-                                content=Markdown(response.content) if markdown else response.content,
-                                title=f"Task {task_index + 1}: {task_name} (Completed)",
+                                content=Markdown(task_output.content) if markdown else task_output.content,
+                                title=f"Task {i + 1}: {getattr(task_output, 'metadata', {}).get('task_name', 'Unknown')} (Completed)",
                                 border_style="green",
                             )
                             console.print(task_panel)
 
-                    elif response.event == WorkflowRunEvent.workflow_completed:
-                        status.update("Workflow completed!")
+                # Show final summary
+                if workflow_response.extra_data:
+                    final_output = workflow_response.extra_data
+                    summary_content = f"""
+                        **Sequence:** {sequence_name}
+                        **Status:** {final_output.get("status", "Completed")}
+                        **Tasks Completed:** {len(workflow_response.task_responses) if workflow_response.task_responses else 0}
+                    """.strip()
 
-                        # Show final summary
-                        if response.extra_data:
-                            final_output = response.extra_data
-                            summary_content = f"""
-                                **Sequence:** {sequence_name}
-                                **Status:** {final_output.get("status", "Unknown")}
-                                **Tasks Completed:** {len(task_responses)}
-                            """.strip()
-
-                            summary_panel = create_panel(
-                                content=Markdown(summary_content) if markdown else summary_content,
-                                title="Execution Summary",
-                                border_style="blue",
-                            )
-                            console.print(summary_panel)
-
-                    elif response.event == WorkflowRunEvent.workflow_error:
-                        status.update("Workflow failed!")
-                        error_panel = create_panel(content=response.content, title="Error", border_style="red")
-                        console.print(error_panel)
-
-                response_timer.stop()
+                    summary_panel = create_panel(
+                        content=Markdown(summary_content) if markdown else summary_content,
+                        title="Execution Summary",
+                        border_style="blue",
+                    )
+                    console.print(summary_panel)
 
                 # Final completion message
                 if show_time:
