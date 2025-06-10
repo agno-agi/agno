@@ -1321,6 +1321,7 @@ class Team:
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
+            user_id=user_id,
         ):
             pass
 
@@ -1389,6 +1390,7 @@ class Team:
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
+            user_id=user_id,
         ):
             yield event
 
@@ -1975,6 +1977,7 @@ class Team:
     async def _amake_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> AsyncIterator[TeamRunResponseEvent]:
+        
         self.memory = cast(Memory, self.memory)
         self.run_response = cast(TeamRunResponse, self.run_response)
         tasks = []
@@ -1984,7 +1987,7 @@ class Team:
         )
         if self.enable_user_memories and user_message_str is not None and user_message_str:
             tasks.append(self.memory.acreate_user_memories(message=user_message_str, user_id=user_id))
-
+        
         # Update the session summary if needed
         if self.enable_session_summaries:
             tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
