@@ -6,7 +6,7 @@ from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
 from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
-from agno.team import RunEvent as TeamRunEvent
+from agno.team import TeamRunEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.wikipedia import WikipediaTools
