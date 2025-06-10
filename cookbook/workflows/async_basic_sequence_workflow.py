@@ -82,6 +82,7 @@ async def main():
     try:
         await content_creation_workflow.aprint_response(
             query="AI trends in 2024",
+            # Sequence that should be run
             sequence_name="research_sequence",
             markdown=True,
             show_time=True,
