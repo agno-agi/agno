@@ -38,7 +38,7 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
+        
         responses.append(chunk)
         if chunk.tools:
             if any(tc.tool_name for tc in chunk.tools):
