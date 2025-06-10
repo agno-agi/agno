@@ -785,7 +785,6 @@ class Agent:
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
 
-
         # 2. Process model response
         for event in self._handle_model_response_stream(
             run_response=run_response,
