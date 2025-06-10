@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Optional
+from typing import Optional
 
-from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 
 
@@ -27,8 +26,3 @@ class OpenRouter(OpenAILike):
     api_key: Optional[str] = getenv("OPENROUTER_API_KEY")
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
-
-    def _add_usage_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
-        super()._add_usage_metrics_to_assistant_message(assistant_message, response_usage)
-        if hasattr(response_usage, "cost") and response_usage.cost is not None:
-            assistant_message.metrics.cost = response_usage.cost

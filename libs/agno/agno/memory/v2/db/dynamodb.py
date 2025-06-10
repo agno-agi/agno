@@ -34,7 +34,7 @@ class DynamoDBMemoryDb(MemoryDb):
         """
         self.table_name = table_name
         self.region_name = region_name
-        
+
         # Initialize DynamoDB client
         session_kwargs = {"region_name": region_name}
         if aws_access_key_id and aws_secret_access_key:
@@ -42,16 +42,17 @@ class DynamoDBMemoryDb(MemoryDb):
                 "aws_access_key_id": aws_access_key_id,
                 "aws_secret_access_key": aws_secret_access_key,
             })
-        
+
         self.session = boto3.Session(**session_kwargs)
-        
+
         client_kwargs = {}
         if endpoint_url:
             client_kwargs["endpoint_url"] = endpoint_url
-            
+
         self.dynamodb = self.session.resource("dynamodb", **client_kwargs)
         self.table = self.dynamodb.Table(table_name)
-        
+        self.create()
+
         log_debug(f"Created DynamoDBMemoryDb with table: '{self.table_name}'")
 
     def __dict__(self) -> Dict[str, Any]:
@@ -68,7 +69,7 @@ class DynamoDBMemoryDb(MemoryDb):
             if self.table_exists():
                 log_debug(f"Table {self.table_name} already exists")
                 return
-                
+
             # Create table
             self.dynamodb.create_table(
                 TableName=self.table_name,
@@ -86,16 +87,15 @@ class DynamoDBMemoryDb(MemoryDb):
                             {"AttributeName": "user_id", "KeyType": "HASH"}
                         ],
                         "Projection": {"ProjectionType": "ALL"},
-                        "BillingMode": "PAY_PER_REQUEST",
                     }
                 ],
                 BillingMode="PAY_PER_REQUEST",
             )
-            
+
             # Wait for table to be created
             self.table.wait_until_exists()
             log_info(f"Created DynamoDB table: {self.table_name}")
-            
+
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceInUseException":
                 log_debug(f"Table {self.table_name} already exists")
@@ -127,7 +127,7 @@ class DynamoDBMemoryDb(MemoryDb):
                 }
                 if limit:
                     query_kwargs["Limit"] = limit
-                    
+
                 response = self.table.query(**query_kwargs)
                 items = response.get("Items", [])
             else:
@@ -135,7 +135,7 @@ class DynamoDBMemoryDb(MemoryDb):
                 scan_kwargs = {}
                 if limit:
                     scan_kwargs["Limit"] = limit
-                    
+
                 response = self.table.scan(**scan_kwargs)
                 items = response.get("Items", [])
 
@@ -148,13 +148,13 @@ class DynamoDBMemoryDb(MemoryDb):
                     "memory": json.loads(item["memory"]) if isinstance(item["memory"], str) else item["memory"],
                     "user_id": item.get("user_id"),
                 }
-                
+
                 # Handle timestamps
                 if "created_at" in item:
                     memory_dict["created_at"] = item["created_at"]
                 if "updated_at" in item:
                     memory_dict["updated_at"] = item["updated_at"]
-                    
+
                 memory_data.append(memory_dict)
 
             # Sort by created_at timestamp
@@ -180,17 +180,17 @@ class DynamoDBMemoryDb(MemoryDb):
         """Upsert a memory in DynamoDB"""
         try:
             timestamp = int(time.time())
-            
+
             # Prepare item for DynamoDB
             item = {
                 "id": memory.id,
                 "memory": json.dumps(memory.memory),
                 "updated_at": timestamp,
             }
-            
+
             if memory.user_id:
                 item["user_id"] = memory.user_id
-                
+
             # Add created_at if this is a new item
             try:
                 existing = self.table.get_item(Key={"id": memory.id})
@@ -244,7 +244,7 @@ class DynamoDBMemoryDb(MemoryDb):
             # Scan all items to get their keys
             response = self.table.scan(ProjectionExpression="id")
             items = response.get("Items", [])
-            
+
             # Handle pagination
             while "LastEvaluatedKey" in response:
                 response = self.table.scan(
@@ -262,7 +262,7 @@ class DynamoDBMemoryDb(MemoryDb):
 
             log_info(f"Cleared {deleted_count} memories from table: {self.table_name}")
             return True
-            
+
         except ClientError as e:
             logger.error(f"Error clearing memories: {e}")
             return False
