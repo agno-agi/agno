@@ -151,7 +151,6 @@ def test_citations_stream():
 
     responses = []
     for chunk in response_stream:
-        
         responses.append(chunk)
         assert chunk.citations is not None
         assert len(chunk.citations.urls) > 0
