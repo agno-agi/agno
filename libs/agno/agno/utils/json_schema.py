@@ -1,5 +1,5 @@
-from typing import Any, Dict, Optional, Union, get_args, get_origin
 from enum import Enum
+from typing import Any, Dict, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
