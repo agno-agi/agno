@@ -259,7 +259,7 @@ def test_web_search_built_in_tool_stream():
     for response in responses:
         if response.content is not None:
             final_response += response.content
-        if response.citations is not None:
+        if hasattr(response, "citations") and response.citations is not None:
             response_citations = response.citations
 
     assert response_citations is not None

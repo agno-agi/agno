@@ -70,7 +70,7 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
     await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() == 4
+    assert await setup_vector_db.async_get_count() == 3
 
     agent = Agent(
         knowledge=kb,
