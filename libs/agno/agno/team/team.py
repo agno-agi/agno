@@ -753,7 +753,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1157,7 +1157,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -4354,6 +4354,7 @@ class Team:
             run_id=self.run_id,
             session_id=session_id,
             team_id=self.team_id,
+            team_name=self.name,
             content=content,
             thinking=thinking,
             tools=tools,
@@ -4460,6 +4461,7 @@ class Team:
             )
             forward_task_func: Function = self.get_forward_task_function(
                 message=user_message,
+                user_id=user_id,
                 session_id=session_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
@@ -4478,6 +4480,7 @@ class Team:
             _tools.append(
                 self.get_transfer_task_function(
                     session_id=session_id,
+                    user_id=user_id,
                     stream=self.stream or False,
                     stream_intermediate_steps=self.stream_intermediate_steps,
                     async_mode=False,
@@ -4494,6 +4497,7 @@ class Team:
         elif self.mode == "collaborate":
             run_member_agents_func = self.get_run_member_agents_function(
                 session_id=session_id,
+                user_id=user_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
                 async_mode=False,
@@ -5365,6 +5369,7 @@ class Team:
     def get_run_member_agents_function(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -5446,6 +5451,7 @@ class Team:
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task,
+                        user_id=user_id,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -5458,7 +5464,13 @@ class Team:
                         yield member_agent_run_response_chunk
                 else:
                     member_agent_run_response = member_agent.run(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                        member_agent_task,
+                        user_id=user_id,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)
@@ -5550,7 +5562,13 @@ class Team:
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                        member_agent_task,
+                        user_id=user_id,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
                     )
                     check_if_run_cancelled(response)
 
@@ -5623,6 +5641,7 @@ class Team:
     def get_transfer_task_function(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -5714,6 +5733,7 @@ class Team:
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5732,6 +5752,7 @@ class Team:
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5844,6 +5865,7 @@ class Team:
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5860,6 +5882,7 @@ class Team:
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5998,6 +6021,7 @@ class Team:
         self,
         message: Message,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -6062,6 +6086,7 @@ class Team:
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
                     images=images,
                     videos=videos,
                     audio=audio,
