@@ -2473,7 +2473,7 @@ class Agent:
         self.save_run_response_to_file(message=message, session_id=session_id)
 
         # We return and await confirmation/completion for the tools that require it
-        print(f"Tools: {run_response}")
+
         yield create_run_response_paused_event(
             from_run_response=run_response,
             tools=run_response.tools,
@@ -6469,7 +6469,7 @@ class Agent:
                 for f_name, func in self._functions_for_model.items()
                 if isinstance(func, Function)
             }
-        print(f"RUN RESPONSE: {self.run_response.metrics}")
+
         run_data: Dict[str, Any] = {
             "functions": functions,
             "metrics": self.run_response.metrics,
