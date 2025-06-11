@@ -2429,6 +2429,7 @@ class Agent:
         # Set the run response to paused
 
         run_response.event = RunEvent.run_paused
+        run_response.status = RunStatus.paused
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
 
@@ -2456,6 +2457,7 @@ class Agent:
         # Set the run response to paused
 
         run_response.event = RunEvent.run_paused
+        run_response.status = RunStatus.paused
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
 
@@ -2470,6 +2472,7 @@ class Agent:
         self.save_run_response_to_file(message=message, session_id=session_id)
 
         # We return and await confirmation/completion for the tools that require it
+        print(f"Tools: {run_response}")
         yield create_run_response_paused_event(
             from_run_response=run_response,
             tools=run_response.tools,
