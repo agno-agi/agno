@@ -141,7 +141,7 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                number_of_images=len(response.images)
+                number_of_images = len(response.images)
                 log_info(f"images generated: f{number_of_images}")
                 for i in range(number_of_images):
                     image_content = response.images[i].content
@@ -164,7 +164,9 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                         )
                         await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
                     else:
-                        log_warning(f"Could not process image content for user {phone_number}. Type: {type(image_content)}")
+                        log_warning(
+                            f"Could not process image content for user {phone_number}. Type: {type(image_content)}"
+                        )
                         await _send_whatsapp_message(phone_number, response.content)  # Send text part if image fails
             else:
                 await _send_whatsapp_message(phone_number, response.content)
