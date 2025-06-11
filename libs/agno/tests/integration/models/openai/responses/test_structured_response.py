@@ -37,6 +37,7 @@ def test_structured_response_with_integer_field():
     assert response.content is not None
     assert isinstance(response.content.rating, Dict)
 
+
 def test_structured_response_with_enum_fields():
     class Grade(enum.Enum):
         A_PLUS = "a+"
@@ -54,7 +55,7 @@ def test_structured_response_with_enum_fields():
         model=OpenAIResponses(id="gpt-4o"),
         description="You help generate recipe names and ratings.",
         response_model=Recipe,
-    )   
+    )
     response = structured_output_agent.run("Generate a recipe name and rating.")
     assert response.content is not None
     assert isinstance(response.content.rating, Grade)

@@ -25,7 +25,6 @@ try:
         ChoiceDelta,
         ChoiceDeltaToolCall,
     )
-    from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -314,7 +313,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -375,7 +374,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[ChatCompletion, ParsedChatCompletion]:
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
@@ -600,7 +599,7 @@ class OpenAIChat(Model):
 
     def parse_provider_response(
         self,
-        response: Union[ChatCompletion, ParsedChatCompletion],
+        response: ChatCompletion,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
@@ -617,19 +616,6 @@ class OpenAIChat(Model):
 
         # Get response message
         response_message = response.choices[0].message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                response_format is not None
-                and isinstance(response_format, type)
-                and issubclass(response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:

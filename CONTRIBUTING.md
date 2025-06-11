@@ -79,7 +79,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
 4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs/<your_db>`.
-   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pg_vector.py) for an example.
+   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 

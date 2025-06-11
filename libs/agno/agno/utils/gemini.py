@@ -78,11 +78,11 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
     Returns:
         types.Schema: The converted schema.
     """
-    
+
     # If this is the initial call, set root_schema to self
     if root_schema is None:
         root_schema = schema_dict
-    
+
     # Handle $ref references
     if "$ref" in schema_dict:
         ref_path = schema_dict["$ref"]
@@ -103,12 +103,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
-        return Schema(
-            type=Type.STRING,
-            enum=enum_values,
-            description=description,
-            default=default
-        )
+        return Schema(type=Type.STRING, enum=enum_values, description=description, default=default)
 
     if schema_type == "object":
         # Handle regular objects with properties
@@ -216,6 +211,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
             # If we get here with an empty type and no other handlers matched,
             # something is wrong with the schema
             return None
+
 
 def format_function_definitions(tools_list: List[Dict[str, Any]]) -> Optional[Tool]:
     function_declarations = []
