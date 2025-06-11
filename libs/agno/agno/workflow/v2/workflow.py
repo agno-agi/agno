@@ -7,7 +7,8 @@ from uuid import uuid4
 from agno.media import Audio, Image, Video
 from agno.run.v2.workflow import (
     WorkflowCompletedEvent,
-    WorkflowErrorEvent,
+    TaskStartedEvent,
+    TaskCompletedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
     WorkflowStartedEvent,
@@ -167,25 +168,23 @@ class Workflow:
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
-        # Collect complete workflow run instead of individual events
-        workflow_run_responses = []
+        # Only collect WorkflowCompletedEvent for storage
+        workflow_completed_response = None
 
         try:
             # Execute the sequence with streaming
             for response in sequence.execute(
                 inputs, context, stream=True, stream_intermediate_steps=stream_intermediate_steps
             ):
-                # Collect all responses
-                if isinstance(response, WorkflowRunResponse):
-                    workflow_run_responses.append(response)
+                # Check if this is the workflow completed event
+                if isinstance(response, WorkflowRunResponse) and response.event == WorkflowRunEvent.workflow_completed:
+                    workflow_completed_response = response
+
                 yield response
 
-            # Store only the complete workflow run (not individual events)
-            if self.workflow_session and workflow_run_responses:
-                # Store only the final completed workflow response
-                final_response = workflow_run_responses[-1]
-                if final_response.event == WorkflowRunEvent.workflow_completed:
-                    self.workflow_session.add_run(final_response)
+            # Store only the final completed workflow response
+            if self.workflow_session and workflow_completed_response:
+                self.workflow_session.add_run(workflow_completed_response)
 
             # Save to storage after complete execution
             self.write_to_storage()
@@ -834,26 +833,24 @@ class Workflow:
         show_task_details: bool = True,
         console: Optional[Any] = None,
     ) -> None:
-        """Print workflow execution with clean streaming - yellow while streaming, green when complete"""
+        """Print workflow execution with clean streaming - green task blocks displayed once"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
-
         from agno.utils.response import create_panel
         from agno.utils.timer import Timer
 
         if console is None:
             from agno.cli.console import console
 
-        # Validate inputs and sequence (same as _print_response)
+        # Validate inputs and sequence (same as before)
         primary_input = query
         if primary_input is None:
             console.print("[red]Query must be provided[/red]")
             return
 
-        # Validate sequence configuration (same as _print_response)
         if self.trigger.trigger_type == TriggerType.MANUAL:
             if not self.sequences:
                 console.print("[red]No sequences available in this workflow[/red]")
@@ -876,7 +873,7 @@ class Workflow:
             )
             return
 
-        # Show workflow info (same as _print_response)
+        # Show workflow info (same as before)
         media_info = []
         if audio:
             media_info.append(f"Audio files: {len(audio)}")
@@ -914,11 +911,12 @@ class Workflow:
         current_task_name = ""
         current_task_index = 0
         task_responses = []
+        task_started_printed = False
+        current_task_panel = None
 
-        with Live(console=console) as live_log:
+        with Live(console=console, refresh_per_second=10) as live_log:
             status = Status("Starting workflow...", spinner="dots")
-            panels = [status]
-            live_log.update(Group(*panels))
+            live_log.update(status)
 
             try:
                 for response in self._run_stream(
@@ -931,92 +929,95 @@ class Workflow:
                     videos=videos,
                     stream_intermediate_steps=stream_intermediate_steps,
                 ):
-                    if isinstance(response, WorkflowRunResponse):
-                        if response.event == WorkflowRunEvent.workflow_started:
-                            status.update("Workflow started...")
+                    # Handle the new event types
+                    if isinstance(response, WorkflowStartedEvent):
+                        status.update("Workflow started...")
+                        live_log.update(status)
 
-                        elif response.event == WorkflowRunEvent.task_started:
-                            current_task_name = response.task_name or "Unknown"
-                            current_task_index = response.task_index or 0
-                            current_task_content = ""
+                    elif isinstance(response, TaskStartedEvent):
+                        current_task_name = response.task_name or "Unknown"
+                        current_task_index = response.task_index or 0
+                        current_task_content = ""
+                        task_started_printed = False
+                        status.update(f"Starting task {current_task_index + 1}: {current_task_name}...")
+                        live_log.update(status)
 
-                            status.update(f"Starting task {current_task_index + 1}: {current_task_name}...")
+                    elif isinstance(response, TaskCompletedEvent):
+                        task_name = response.task_name or "Unknown"
+                        task_index = response.task_index or 0
 
-                        elif response.event == WorkflowRunEvent.task_completed:
-                            task_name = response.task_name or "Unknown"
-                            task_index = response.task_index or 0
+                        status.update(f"Completed task {task_index + 1}: {task_name}")
 
-                            status.update(f"Completed task {task_index + 1}: {task_name}")
+                        if response.content:
+                            task_responses.append(
+                                {
+                                    "task_name": task_name,
+                                    "task_index": task_index,
+                                    "content": response.content,
+                                    "event": response.event,
+                                }
+                            )
 
-                            if response.content:
-                                task_responses.append(
-                                    {
-                                        "task_name": task_name,
-                                        "task_index": task_index,
-                                        "content": response.content,
-                                        "event": response.event,
-                                    }
-                                )
-
-                            # CLEAN TRANSITION: Remove yellow block completely, create fresh green block
-                            if show_task_details and current_task_content:
-                                live_log.update(status, refresh=True)
-
-                                # Print fresh green completed panel with final content
-                                final_task_panel = create_panel(
-                                    content=Markdown(current_task_content) if markdown else current_task_content,
-                                    title=f"Task {task_index + 1}: {task_name} (Completed)",
-                                    border_style="green",
-                                )
-                                console.print(final_task_panel)
-
-                        elif response.event == WorkflowRunEvent.workflow_completed:
-                            status.update("Workflow completed!")
+                        # Print the final task result in green (only once)
+                        if show_task_details and current_task_content and not task_started_printed:
                             live_log.update(status, refresh=True)
 
-                            # Show final summary
-                            if response.extra_data:
-                                final_output = response.extra_data
-                                summary_content = f"""
-                                    **Sequence:** {sequence_name}
-                                    **Status:** {final_output.get("status", "Unknown")}
-                                    **Tasks Completed:** {len(task_responses)}
-                                """.strip()
+                            final_task_panel = create_panel(
+                                content=Markdown(current_task_content) if markdown else current_task_content,
+                                title=f"Task {task_index + 1}: {task_name} (Completed)",
+                                border_style="green",
+                            )
+                            console.print(final_task_panel)
+                            task_started_printed = True
 
-                                summary_panel = create_panel(
-                                    content=Markdown(summary_content) if markdown else summary_content,
-                                    title="Execution Summary",
-                                    border_style="blue",
-                                )
-                                console.print(summary_panel)
+                    elif isinstance(response, WorkflowCompletedEvent):
+                        status.update("Workflow completed!")
+                        live_log.update(status, refresh=True)
 
-                        elif response.event == WorkflowRunEvent.workflow_error:
-                            status.update("Workflow failed!")
-                            error_panel = create_panel(content=response.content, title="Error", border_style="red")
-                            console.print(error_panel)
-                            break
+                        # Show final summary
+                        if response.extra_data:
+                            final_output = response.extra_data
+                            summary_content = f"""
+                                **Sequence:** {sequence_name}
+                                **Status:** {final_output.get("status", "Unknown")}
+                                **Tasks Completed:** {len(task_responses)}
+                            """.strip()
+
+                            summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title="Execution Summary",
+                                border_style="blue",
+                            )
+                            console.print(summary_panel)
 
                     else:
                         # This is streaming content from a task
-                        response_str = str(response)
-
-                        # Filter out "Run started" and similar initialization messages
-                        if response_str.strip().lower() in ["run started", "starting...", ""]:
+                        if isinstance(response, str):
+                            # This is a direct string chunk (delta content)
+                            response_str = response
+                        elif hasattr(response, "content") and response.content:
+                            # This might be a complete response - don't add it to streaming
+                            continue
+                        else:
+                            # Skip any other objects (like raw events, RunResponseCompletedEvent, etc.)
                             continue
 
-                        current_task_content += response_str
+                        # Filter out empty responses
+                        if response_str and response_str.strip():
+                            current_task_content += response_str
 
-                        # Show YELLOW streaming panel in live display
-                        if show_task_details and current_task_content.strip():
-                            streaming_panel = create_panel(
-                                content=Markdown(current_task_content) if markdown else current_task_content,
-                                title=f"Task {current_task_index + 1}: {current_task_name} (Streaming...)",
-                                border_style="yellow",
-                            )
+                            # Live update the task panel with streaming content
+                            if show_task_details and not task_started_printed:
+                                # Show the streaming content live in green panel
+                                live_task_panel = create_panel(
+                                    content=Markdown(current_task_content) if markdown else current_task_content,
+                                    title=f"Task {current_task_index + 1}: {current_task_name} (Streaming...)",
+                                    border_style="green",
+                                )
 
-                            # Show status + yellow streaming panel
-                            panels = [status, streaming_panel]
-                            live_log.update(Group(*panels), refresh=True)
+                                # Create group with status and current task content
+                                group = Group(status, live_task_panel)
+                                live_log.update(group)
 
                 response_timer.stop()
 

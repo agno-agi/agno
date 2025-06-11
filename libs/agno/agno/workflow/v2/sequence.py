@@ -111,43 +111,37 @@ class Sequence:
         self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponse, str]]:
         """Execute the sequence with streaming support"""
+        from agno.run.v2.workflow import TaskCompletedEvent, WorkflowCompletedEvent, WorkflowStartedEvent
+
         logger.info(f"Executing sequence with streaming: {self.name}")
 
-        # Yield sequence started event
-        yield WorkflowRunResponse(
-            content=f"Starting sequence: {self.name}",
-            event=WorkflowRunEvent.workflow_started,
+        # Yield workflow started event
+        yield WorkflowStartedEvent(
+            run_id=context.get("run_id", ""),
+            content=f"Sequence {self.name} started",
             workflow_name=context.get("workflow_name") if context else None,
             sequence_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
-            run_id=context.get("run_id") if context else None,
             session_id=context.get("session_id") if context else None,
         )
 
-        # Track outputs for chaining
-        task_outputs = {}
+        # Initialize sequence context
+        sequence_context = context or {}
+        sequence_context["sequence_name"] = self.name
+        sequence_context["sequence_id"] = self.sequence_id
+
+        # Track outputs from each task for chaining
+        previous_outputs = {}
+        collected_task_outputs: List[TaskOutput] = []
 
         # Execute tasks in sequence with streaming
         for task_index, task in enumerate(self.tasks):
-            # Create task input
-            task_input = TaskInput(
-                query=inputs.get("query"),
-                message=inputs.get("message"),
-                workflow_session_state=inputs.get("workflow_session_state"),
-                previous_outputs=task_outputs.copy(),
-                images=inputs.get("images"),
-                videos=inputs.get("videos"),
-                audio=inputs.get("audio"),
-            )
+            # Add task_index to context for the task
+            task_context = sequence_context.copy()
+            task_context["task_index"] = task_index
 
-            # Update context with task info
-            task_context = context.copy() if context else {}
-            task_context.update(
-                {
-                    "sequence_name": self.name,
-                    "task_index": task_index,
-                }
-            )
+            # Create TaskInput for this task
+            task_input = self._create_task_input(inputs, previous_outputs, context)
 
             # Execute task with streaming
             task_output = None
@@ -158,40 +152,61 @@ class Sequence:
                     # This is the final task output
                     task_output = response
 
+                    # Collect the task output
+                    collected_task_outputs.append(task_output)
+
+                    # Update previous_outputs for next task
+                    self._update_previous_outputs(previous_outputs, task, task_output, task_index)
+
                     # Yield task completed event
-                    yield WorkflowRunResponse(
+                    yield TaskCompletedEvent(
+                        run_id=context.get("run_id", ""),
                         content=task_output.content,
-                        event=WorkflowRunEvent.task_completed,
                         workflow_name=context.get("workflow_name") if context else None,
                         sequence_name=self.name,
                         task_name=task.name,
                         task_index=task_index,
                         workflow_id=context.get("workflow_id") if context else None,
-                        run_id=context.get("run_id") if context else None,
                         session_id=context.get("session_id") if context else None,
+                        images=task_output.images,
+                        videos=task_output.videos,
+                        audio=task_output.audio,
+                        messages=getattr(task_output.response, "messages", None) if task_output.response else None,
+                        metrics=getattr(task_output.response, "metrics", None) if task_output.response else None,
+                        task_responses=[task_output],
                     )
                 else:
                     # This is either an event or streaming content
                     yield response
 
-            # Store task output for next task
-            if task_output:
-                task_outputs[task.name] = task_output.content
+        # Create final output data
+        final_output = {
+            "sequence_name": self.name,
+            "sequence_id": self.sequence_id,
+            "status": "completed",
+            "total_tasks": len(self.tasks),
+            "task_summary": [
+                {
+                    "task_name": task.name,
+                    "task_id": task.task_id,
+                    "description": task.description,
+                    "executor_type": task.executor_type,
+                    "executor_name": task.executor_name,
+                }
+                for task in self.tasks
+            ],
+        }
 
-        # Yield sequence completed event
-        yield WorkflowRunResponse(
-            content="Sequence completed successfully",
-            event=WorkflowRunEvent.workflow_completed,
+        # Yield workflow completed event
+        yield WorkflowCompletedEvent(
+            run_id=context.get("run_id", ""),
+            content=f"Sequence {self.name} completed successfully",
             workflow_name=context.get("workflow_name") if context else None,
             sequence_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
-            run_id=context.get("run_id") if context else None,
             session_id=context.get("session_id") if context else None,
-            extra_data={
-                "status": "completed",
-                "task_outputs": task_outputs,
-                "tasks_executed": len(self.tasks),
-            },
+            task_responses=collected_task_outputs,
+            extra_data=final_output,
         )
 
     async def aexecute(

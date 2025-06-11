@@ -247,18 +247,19 @@ class Task:
         self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponse, TaskOutput, str]]:
         """Execute the task with streaming support, yielding events, content chunks, and final TaskOutput"""
+        from agno.run.v2.workflow import TaskStartedEvent
+
         logger.info(f"Executing task with streaming: {self.name}")
 
         # Yield task started event
-        yield WorkflowRunResponse(
+        yield TaskStartedEvent(
+            run_id=context.get("run_id", ""),
             content=f"Starting task: {self.name}",
-            event=WorkflowRunEvent.task_started,
             workflow_name=context.get("workflow_name") if context else None,
             sequence_name=context.get("sequence_name") if context else None,
             task_name=self.name,
             task_index=context.get("task_index") if context else None,
             workflow_id=context.get("workflow_id") if context else None,
-            run_id=context.get("run_id") if context else None,
             session_id=context.get("session_id") if context else None,
         )
 
@@ -269,7 +270,6 @@ class Task:
         for attempt in range(self.max_retries + 1):
             try:
                 # Stream the task execution
-                accumulated_content = ""
                 final_response = None
 
                 for chunk in self._execute_task_with_streaming(task_input, stream_intermediate_steps):
@@ -279,12 +279,11 @@ class Task:
                         break
                     else:
                         # This is streaming content
-                        accumulated_content += str(chunk)
                         yield chunk
 
-                # If we didn't get a final response, create one from accumulated content
+                # If we didn't get a final response, create one
                 if final_response is None:
-                    final_response = RunResponse(content=accumulated_content)
+                    final_response = RunResponse(content="")
 
                 # Create TaskOutput from response
                 task_output = self._create_task_output(final_response, task_input)
@@ -378,22 +377,34 @@ class Task:
                 stream_intermediate_steps=stream_intermediate_steps,
             )
 
-            accumulated_content = ""
+            # Track streaming content and final response separately
+            streaming_content = ""
             final_response = None
 
             for chunk in response_stream:
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated_content += chunk.content
-                    yield chunk.content
-
-                # Keep track of the final response
+                # Always keep track of the final response
                 final_response = chunk
 
-            # Yield the final response
+                # Only yield content deltas during streaming
+                if hasattr(chunk, "content") and chunk.content and streaming_content != chunk.content:
+                    # Extract only the new content delta
+                    if chunk.content.startswith(streaming_content):
+                        new_content = chunk.content[len(streaming_content) :]
+                        if new_content:
+                            streaming_content = chunk.content
+                            yield new_content
+                    else:
+                        # This is new content that doesn't build on previous
+                        streaming_content = chunk.content
+                        yield chunk.content
+
+            # Yield the final response - use accumulated streaming content
             if final_response:
+                # Set the content to our accumulated streaming content to avoid duplication
+                final_response.content = streaming_content
                 yield final_response
             else:
-                yield RunResponse(content=accumulated_content)
+                yield RunResponse(content=streaming_content)
 
         elif self._executor_type == "team":
             response_stream = self._active_executor.run(
@@ -405,22 +416,34 @@ class Task:
                 stream_intermediate_steps=stream_intermediate_steps,
             )
 
-            accumulated_content = ""
+            # Track streaming content and final response separately
+            streaming_content = ""
             final_response = None
 
             for chunk in response_stream:
-                if hasattr(chunk, "content") and chunk.content:
-                    accumulated_content += chunk.content
-                    yield chunk.content
-
-                # Keep track of the final response
+                # Always keep track of the final response
                 final_response = chunk
 
-            # Yield the final response
+                # Only yield content deltas during streaming
+                if hasattr(chunk, "content") and chunk.content and streaming_content != chunk.content:
+                    # Extract only the new content delta
+                    if chunk.content.startswith(streaming_content):
+                        new_content = chunk.content[len(streaming_content) :]
+                        if new_content:
+                            streaming_content = chunk.content
+                            yield new_content
+                    else:
+                        # This is new content that doesn't build on previous
+                        streaming_content = chunk.content
+                        yield chunk.content
+
+            # Yield the final response - use accumulated streaming content
             if final_response:
+                # Set the content to our accumulated streaming content to avoid duplication
+                final_response.content = streaming_content
                 yield final_response
             else:
-                yield TeamRunResponse(content=accumulated_content)
+                yield TeamRunResponse(content=streaming_content)
         else:
             raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
