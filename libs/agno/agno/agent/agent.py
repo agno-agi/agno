@@ -6459,7 +6459,7 @@ class Agent:
                 for f_name, func in self._functions_for_model.items()
                 if isinstance(func, Function)
             }
-
+        print(f"RUN RESPONSE: {self.run_response.metrics}")
         run_data: Dict[str, Any] = {
             "functions": functions,
             "metrics": self.run_response.metrics,
