@@ -17,6 +17,7 @@ from agno.tools.function import UserInputField
 from agno.tools.toolkit import Toolkit
 from agno.tools.user_control_flow import UserControlFlowTools
 from agno.tools.wikipedia import WikipediaTools
+from agno.tools.yfinance import YFinanceTools
 from agno.utils import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -135,7 +136,7 @@ agentic_user_input_agent = Agent(
 confirmation_required_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     agent_id="confirmation-required-agent",
-    tools=[get_top_hackernews_stories],
+    tools=[get_top_hackernews_stories,YFinanceTools(requires_confirmation_tools=["get_current_stock_price"])],
     markdown=True,
     storage=PostgresStorage(
         table_name="hitl_sessions", db_url=db_url, auto_upgrade_schema=True
