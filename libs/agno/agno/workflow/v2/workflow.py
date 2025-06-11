@@ -1,5 +1,7 @@
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 from typing import Sequence as TypingSequence
 from uuid import uuid4
@@ -16,6 +18,8 @@ from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.trigger import ManualTrigger, Trigger, TriggerType
+from agno.workflow.v2.queue.base import Queue
+from agno.workflow.v2.queue.json import JsonQueue
 
 
 @dataclass
@@ -31,6 +35,10 @@ class Workflow:
     trigger: Trigger = field(default_factory=ManualTrigger)
     sequences: List[Sequence] = field(default_factory=list)
     storage: Optional[Storage] = None
+
+    # Queue configuration
+    queue: Optional[Queue] = None
+    enable_queue: bool = False
 
     # Session management
     session_id: Optional[str] = None
@@ -68,6 +76,10 @@ class Workflow:
 
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
+
+        # Initialize queue if enabled
+        if self.enable_queue and self.queue is None:
+            self.queue = JsonQueue()
 
         if self.session_id is None:
             self.session_id = str(uuid4())
@@ -271,6 +283,21 @@ class Workflow:
         if session_id is not None:
             self.session_id = session_id
 
+        # Check queue for pending runs (if queue is enabled)
+        queued_item = None
+        if self.queue:
+            queued_item = self.queue.get_next_queued(self.workflow_id)
+            if queued_item:
+                logger.info(f"Found queued run {queued_item.run_id} for workflow {self.workflow_id}")
+                # Update status to running
+                self.queue.update_status(queued_item.run_id, "running")
+
+                # Use queued parameters
+                query = queued_item.query
+                sequence_name = queued_item.sequence_name
+                user_id = queued_item.user_id or user_id
+                session_id = queued_item.session_id or session_id
+
         # Load or create session
         self.load_session()
 
@@ -312,9 +339,20 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected sequence synchronously
-        for response in self.execute_sequence(selected_sequence_name, inputs):
-            yield response
+        try:
+            # Execute the selected sequence synchronously
+            for response in self.execute_sequence(selected_sequence_name, inputs):
+                yield response
+
+            # Mark as completed if it was from queue
+            if queued_item and self.queue:
+                self.queue.update_status(queued_item.run_id, "completed")
+
+        except Exception as e:
+            # Mark as failed if it was from queue
+            if queued_item and self.queue:
+                self.queue.update_status(queued_item.run_id, "failed")
+            raise
 
     async def arun(
         self,
@@ -492,6 +530,7 @@ class Workflow:
         show_time: bool = True,
         show_task_details: bool = True,
         console: Optional[Any] = None,
+        use_queue: bool = False,
     ) -> None:
         """Print workflow execution with rich formatting
 
@@ -502,6 +541,7 @@ class Workflow:
             show_time: Whether to show execution time
             show_task_details: Whether to show individual task outputs
             console: Rich console instance (optional)
+            use_queue: Whether to submit to queue (but still execute immediately)
         """
         from rich.live import Live
         from rich.markdown import Markdown
@@ -545,6 +585,22 @@ class Workflow:
                 f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in print_response[/yellow]"
             )
             return
+
+        # If use_queue is True, submit to queue first, then continue to execute
+        if use_queue:
+            # Initialize queue if not already done
+            if not self.queue:
+                self.queue = JsonQueue()
+
+            run_id = self.queue.submit(
+                workflow_id=self.workflow_id,
+                query=query,
+                sequence_name=sequence_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            console.print(f"[green]Workflow submitted to queue with run_id: {run_id}[/green]")
+            console.print(f"[blue]Executing immediately...[/blue]")
 
         # Show workflow info once at the beginning
         media_info = []
