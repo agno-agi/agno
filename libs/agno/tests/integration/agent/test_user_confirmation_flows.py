@@ -253,7 +253,7 @@ def test_tool_call_requires_confirmation_stream():
     assert found_confirmation, "No tools were found to require confirmation"
 
     found_confirmation = False
-    for response in agent.continue_run(response, stream=True):
+    for response in agent.continue_run(agent.run_response, stream=True):
         if response.is_paused:
             found_confirmation = True
     assert found_confirmation is False, "Some tools still require confirmation"
@@ -315,7 +315,7 @@ async def test_tool_call_requires_confirmation_stream_async():
     assert found_confirmation, "No tools were found to require confirmation"
 
     found_confirmation = False
-    async for response in await agent.acontinue_run(response, stream=True):
+    async for response in await agent.acontinue_run(agent.run_response, stream=True):
         if response.is_paused:
             found_confirmation = True
     assert found_confirmation is False, "Some tools still require confirmation"

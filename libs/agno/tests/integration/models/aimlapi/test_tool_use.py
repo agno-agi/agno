@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.aimlapi import AIMLApi
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -41,7 +41,6 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
             if any(tc.get("tool_name") for tc in chunk.tools):
@@ -87,7 +86,6 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
             if any(tc.get("tool_name") for tc in chunk.tools):

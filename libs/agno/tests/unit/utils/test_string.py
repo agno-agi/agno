@@ -63,6 +63,15 @@ def test_parse_direct_json():
     assert result.value == "123"
 
 
+def test_parse_already_escaped_string():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "Already escaped "quote""}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == 'Already escaped "quote"'
+
+
 def test_parse_json_with_markdown_block():
     """Test parsing JSON from a markdown code block"""
     content = """Some text before

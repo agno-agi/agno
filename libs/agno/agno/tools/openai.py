@@ -70,7 +70,7 @@ class OpenAITools(Toolkit):
         try:
             audio_file = open(audio_path, "rb")
 
-            transcript = OpenAIClient().audio.transcriptions.create(
+            transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
                 model=self.transcription_model,
                 file=audio_file,
                 response_format="text",
@@ -102,13 +102,13 @@ class OpenAITools(Toolkit):
             # gpt-image-1 by default outputs a base64 encoded image but other models do not
             # so we add a response_format parameter to have consistent output.
             if self.image_model and self.image_model.startswith("gpt-image"):
-                response = OpenAIClient().images.generate(
+                response = OpenAIClient(api_key=self.api_key).images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     **extra_params,  # type: ignore
                 )
             else:
-                response = OpenAIClient().images.generate(
+                response = OpenAIClient(api_key=self.api_key).images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
@@ -149,7 +149,7 @@ class OpenAITools(Toolkit):
         try:
             import base64
 
-            response = OpenAIClient().audio.speech.create(
+            response = OpenAIClient(api_key=self.api_key).audio.speech.create(
                 model=self.tts_model,
                 voice=self.tts_voice,
                 input=text_input,
