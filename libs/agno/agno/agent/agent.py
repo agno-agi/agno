@@ -25,12 +25,19 @@ from typing import (
 )
 from uuid import uuid4
 
-from pydantic import BaseModel
-
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import (
+    Audio,
+    AudioArtifact,
+    AudioResponse,
+    File,
+    Image,
+    ImageArtifact,
+    Video,
+    VideoArtifact,
+)
 from agno.memory.agent import AgentMemory, AgentRun
 from agno.memory.v2.memory import Memory, SessionSummary
 from agno.memory.v2.schema import UserMemory
@@ -82,6 +89,7 @@ from agno.utils.response import create_panel, create_paused_run_response_panel, 
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
+from pydantic import BaseModel
 
 
 @dataclass(init=False)
@@ -5713,7 +5721,10 @@ class Agent:
 
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.helpers import (
+                get_next_action,
+                update_messages_with_reasoning,
+            )
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
@@ -5923,7 +5934,10 @@ class Agent:
 
         if use_default_reasoning:
             from agno.reasoning.default import get_default_reasoning_agent
-            from agno.reasoning.helpers import get_next_action, update_messages_with_reasoning
+            from agno.reasoning.helpers import (
+                get_next_action,
+                update_messages_with_reasoning,
+            )
 
             # Get default reasoning agent
             reasoning_agent: Optional[Agent] = self.reasoning_agent  # type: ignore
