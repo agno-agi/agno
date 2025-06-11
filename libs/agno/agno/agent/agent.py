@@ -529,6 +529,7 @@ class Agent:
         self._tool_instructions: Optional[List[str]] = None
         self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._rebuild_tools: bool = True
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -1397,7 +1398,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
@@ -3575,19 +3576,23 @@ class Agent:
         # Add tools for accessing memory
         if self.read_chat_history:
             agent_tools.append(self.get_chat_history_function(session_id=session_id))
+            self._rebuild_tools = True
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
+            self._rebuild_tools = True
         if self.search_previous_sessions_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(
                     num_history_sessions=self.num_history_sessions, user_id=user_id
                 )
             )
+            self._rebuild_tools = True
 
         if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
         elif isinstance(self.memory, Memory) and self.enable_agentic_memory:
             agent_tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            self._rebuild_tools = True
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
@@ -3612,6 +3617,8 @@ class Agent:
                     agent_tools.append(
                         self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
                     )
+                self._rebuild_tools = True
+
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -3619,6 +3626,7 @@ class Agent:
         if self.has_team and self.team is not None:
             for agent_index, agent in enumerate(self.team):
                 agent_tools.append(self.get_transfer_function(agent, agent_index, session_id))
+            self._rebuild_tools = True
 
         return agent_tools
 
@@ -3630,88 +3638,90 @@ class Agent:
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(
-            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
-        )
+        if self._rebuild_tools:
+            self._rebuild_tools = False
 
-        # We have to reset the tools every time because the tool factories produce new functions that is context aware that needs to be reset
-        self._tools_for_model = []
-        self._functions_for_model = {}
+            agent_tools = self.get_tools(
+                session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+            )
 
-        # Get Agent tools
-        if agent_tools is not None and len(agent_tools) > 0:
-            log_debug("Processing tools for model")
+            self._tools_for_model = []
+            self._functions_for_model = {}
 
-            # Check if we need strict mode for the functions for the model
-            strict = False
-            if (
-                self.response_model is not None
-                and (self.structured_outputs or (not self.use_json_mode))
-                and model.supports_native_structured_outputs
-            ):
-                strict = True
+            # Get Agent tools
+            if agent_tools is not None and len(agent_tools) > 0:
+                log_debug("Processing tools for model")
 
-            for tool in agent_tools:
-                if isinstance(tool, Dict):
-                    # If a dict is passed, it is a builtin tool
-                    # that is run by the model provider and not the Agent
-                    self._tools_for_model.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
+                # Check if we need strict mode for the functions for the model
+                strict = False
+                if (
+                    self.response_model is not None
+                    and (self.structured_outputs or (not self.use_json_mode))
+                    and model.supports_native_structured_outputs
+                ):
+                    strict = True
 
-                elif isinstance(tool, Toolkit):
-                    # For each function in the toolkit and process entrypoint
-                    for name, func in tool.functions.items():
-                        # If the function does not exist in self.functions
-                        if name not in self._functions_for_model:
-                            func._agent = self
-                            func.process_entrypoint(strict=strict)
-                            if strict and func.strict is None:
-                                func.strict = True
+                for tool in agent_tools:
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        log_debug(f"Included builtin tool {tool}")
+
+                    elif isinstance(tool, Toolkit):
+                        # For each function in the toolkit and process entrypoint
+                        for name, func in tool.functions.items():
+                            # If the function does not exist in self.functions
+                            if name not in self._functions_for_model:
+                                func._agent = self
+                                func.process_entrypoint(strict=strict)
+                                if strict and func.strict is None:
+                                    func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                log_debug(f"Added tool {name} from {tool.name}")
+
+                        # Add instructions from the toolkit
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
+
+                    elif isinstance(tool, Function):
+                        if tool.name not in self._functions_for_model:
+                            tool._agent = self
+                            tool.process_entrypoint(strict=strict)
+                            if strict and tool.strict is None:
+                                tool.strict = True
                             if self.tool_hooks is not None:
-                                func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {name} from {tool.name}")
+                                tool.tool_hooks = self.tool_hooks
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            log_debug(f"Added tool {tool.name}")
 
-                    # Add instructions from the toolkit
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
-                elif isinstance(tool, Function):
-                    if tool.name not in self._functions_for_model:
-                        tool._agent = self
-                        tool.process_entrypoint(strict=strict)
-                        if strict and tool.strict is None:
-                            tool.strict = True
-                        if self.tool_hooks is not None:
-                            tool.tool_hooks = self.tool_hooks
-                        self._functions_for_model[tool.name] = tool
-                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Added tool {tool.name}")
-
-                    # Add instructions from the Function
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
-
-                elif callable(tool):
-                    try:
-                        function_name = tool.__name__
-                        if function_name not in self._functions_for_model:
-                            func = Function.from_callable(tool, strict=strict)
-                            func._agent = self
-                            if strict:
-                                func.strict = True
-                            if self.tool_hooks is not None:
-                                func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[func.name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {func.name}")
-                    except Exception as e:
-                        log_warning(f"Could not add tool {tool}: {e}")
+                    elif callable(tool):
+                        try:
+                            function_name = tool.__name__
+                            if function_name not in self._functions_for_model:
+                                func = Function.from_callable(tool, strict=strict)
+                                func._agent = self
+                                if strict:
+                                    func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                self._functions_for_model[func.name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                log_debug(f"Added tool {func.name}")
+                        except Exception as e:
+                            log_warning(f"Could not add tool {tool}: {e}")
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)

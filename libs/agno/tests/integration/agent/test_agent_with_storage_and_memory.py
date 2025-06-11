@@ -40,7 +40,7 @@ def test_agent_session_state(chat_agent, agent_storage):
     assert chat_agent.session_id == session_id
     assert chat_agent.session_name == "my_test_session"
     assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
-    assert chat_agent.team_session_state == {"team_test_key": "team_test_value"}
+    assert chat_agent.team_session_state == {"current_session_id": session_id, "team_test_key": "team_test_value"}
     session_from_storage = agent_storage.read(session_id=session_id)
     assert session_from_storage is not None
     assert session_from_storage.session_id == session_id
