@@ -99,6 +99,7 @@ def create_run_response_paused_event(
         agent_id=from_run_response.agent_id,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
+        content=from_run_response.content,
     )
 
 
