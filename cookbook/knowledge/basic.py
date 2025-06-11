@@ -26,8 +26,8 @@ kb = KnowledgeBase(
 # Add a document
 doc = Document(content="Hello worlds", name="greetings")
 doc_id = kb.add_document(doc)
-dc = kb.add_document_by_path("tmp/cv_1.pdf")
-
+dc = kb.add_document_by_path("tmp/cv_2.pdf")
+dc = kb.add_document_by_path("https://docs.agno.com/llms-full.txt")
 # Retrieve documents
 # all_docs = kb.get_all_documents()
 # specific_doc = kb.get_document_by_id(doc_id)

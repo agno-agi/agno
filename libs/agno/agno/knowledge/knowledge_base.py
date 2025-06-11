@@ -9,17 +9,28 @@ from pathlib import Path
 from agno.vectordb import VectorDb
 from functools import cached_property
 from agno.document.reader.pdf_reader import PDFReader
-
+from agno.document.reader.url_reader import URLReader
 
 @dataclass
 class KnowledgeBase:
     
     """Knowledge base class"""
 
-    name: str
-    description: Optional[str] = None
-    document_store: Optional[DocumentStore] = None
-    vector_store: Optional[VectorDb] = None
+    def __init__(
+            self,
+            name: str,
+            description: Optional[str] = None,
+            document_store: Optional[DocumentStore] = None,
+            vector_store: Optional[VectorDb] = None,
+            paths: Optional[List[str]] = None,
+        ):
+        self.name = name
+        self.description = description
+        self.document_store = document_store
+        self.vector_store = vector_store
+
+        if not self.vector_store.exists():
+            self.vector_store.create()
 
     def search(self):
         pass
@@ -57,7 +68,7 @@ class KnowledgeBase:
             self._add_from_url(path)
         elif os.path.isfile(path):
             # Handle filepath
-            self._add_from_path(path)
+            self._add_from_file(path)
         else:
             raise ValueError(f"Invalid path: {path}")
         
@@ -108,20 +119,30 @@ class KnowledgeBase:
         """PDF reader - lazy loaded and cached."""
         return PDFReader(chunk=True, chunk_size=100)
     
-    def _add_from_path(self, path: str):
-        path = Path(path)
+    
+    @cached_property
+    def url_reader(self) -> URLReader:
+        """URL reader - lazy loaded and cached."""
+        return URLReader()
+    
+    def _add_from_file(self, file_path: str):
+        path = Path(file_path)
         if path.is_file():
             if path.suffix == ".pdf":
-                
+
                 print("PDF file detected")
                 document = self.pdf_reader.read(path)
                 print(document)
-                self.document_store.add_document(document)
+                # self.document_store.add_document(document)
+                self.vector_store.insert(document)
         elif path.is_dir():
             pass
         else:
             raise ValueError(f"Invalid path: {path}")
        
         
-    def add_from_url(self, url: str):
-        pass
+    def _add_from_url(self, url: str):
+        document = self.url_reader.read(url)
+        print(document)
+        # self.document_store.add_document(document)
+        self.vector_store.insert(document)
