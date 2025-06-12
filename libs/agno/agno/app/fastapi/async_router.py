@@ -352,7 +352,7 @@ def get_async_router(
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(**(workflow_input or {}))),
+                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(**(workflow_input or {}))),  # type: ignore
                     media_type="text/event-stream",
                 )
         else:
@@ -386,6 +386,6 @@ def get_async_router(
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return (await workflow_instance.arun(**(workflow_input or {}))).to_dict()
+                return (await workflow_instance.arun(**(workflow_input or {}))).to_dict()  # type: ignore
 
     return router
