@@ -1,29 +1,28 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
+from pydantic import BaseModel, Field
 
 
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
+
     focus_areas: List[str] = Field(description="Specific areas to focus on")
     target_audience: str = Field(description="Who this research is for")
-    sources_required: int = Field(
-        description="Number of sources needed", default=5)
+    sources_required: int = Field(description="Number of sources needed", default=5)
 
 
 # Define agents
 blog_analyzer = Agent(
     name="Blog Analyzer",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     instructions="Extract key insights and content from blog posts",
 )
 
@@ -75,8 +74,12 @@ if __name__ == "__main__":
 
     print("=== Example 1: Research with Structured Topic ===")
     research_topic = ResearchTopic(
-        focus_areas=["Machine Learning", "Natural Language Processing",
-                     "Computer Vision", "AI Ethics"],
+        focus_areas=[
+            "Machine Learning",
+            "Natural Language Processing",
+            "Computer Vision",
+            "AI Ethics",
+        ],
         target_audience="Tech professionals and business leaders",
         sources_required=8,
     )

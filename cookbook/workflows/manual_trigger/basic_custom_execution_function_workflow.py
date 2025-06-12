@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task, TaskInput, TaskOutput
 from agno.workflow.v2.workflow import Workflow
 
@@ -10,7 +10,7 @@ from agno.workflow.v2.workflow import Workflow
 blog_analyzer = Agent(
     name="Blog Analyzer",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     instructions="Extract key insights and content from blog posts",
 )
 
@@ -88,8 +88,7 @@ def custom_blog_analysis_function(task_input: TaskInput) -> TaskOutput:
     except Exception as e:
         return TaskOutput(
             content=f"Custom blog analysis failed: {str(e)}",
-            metadata={"error": True,
-                      "function_name": "custom_blog_analysis_function"},
+            metadata={"error": True, "function_name": "custom_blog_analysis_function"},
         )
 
 
@@ -165,8 +164,7 @@ def custom_team_research_function(task_input: TaskInput) -> TaskOutput:
     except Exception as e:
         return TaskOutput(
             content=f"Custom team research failed: {str(e)}",
-            metadata={"error": True,
-                      "function_name": "custom_team_research_function"},
+            metadata={"error": True, "function_name": "custom_team_research_function"},
         )
 
 

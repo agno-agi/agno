@@ -2,17 +2,15 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.googlesearch import GoogleSearchTools
-from agno.workflow.v2.sequence import Sequence
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task
-from agno.workflow.v2.trigger import ManualTrigger
 from agno.workflow.v2.workflow import Workflow
 
 # Define agents
 blog_analyzer = Agent(
     name="Blog Analyzer",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     instructions="Extract key insights and content from blog posts",
 )
 
@@ -49,41 +47,23 @@ research_task = Task(
     description="Deep research and analysis of content",
 )
 
-# Define sequences
-content_creation_sequence = Sequence(
-    name="content_creation",
-    description="End-to-end content creation from blog to social media",
-    tasks=[analyze_blog_task],
-)
-
-research_sequence = Sequence(
-    name="research_sequence",
-    description="Deep research workflow using teams",
-    tasks=[research_task, plan_content_task],
-)
-
-
 # Create and use workflow
 if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        trigger=ManualTrigger(),
         storage=SqliteStorage(
             table_name="workflow_v2",
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        sequences=[research_sequence, content_creation_sequence],
+        tasks=[research_task, plan_content_task],
     )
     print("=== Research Sequence (Rich Display) ===")
     try:
         content_creation_workflow.print_response(
             query="AI trends in 2024",
-            sequence_name="research_sequence",
             markdown=True,
-            show_time=True,
-            show_task_details=True,
             stream=True,
         )
     except Exception as e:

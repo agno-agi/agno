@@ -7,6 +7,7 @@ from agno.run.v2.workflow import (
     WorkflowCompletedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
+    WorkflowRunResponseEvent,
     WorkflowStartedEvent,
 )
 from agno.utils.log import logger
@@ -77,7 +78,7 @@ class Pipeline:
 
             # Update previous_outputs for next task
             self._update_previous_outputs(previous_outputs, task, task_output, i)
-            
+
         # Create final output data
         final_output = {
             "pipeline_name": self.name,
@@ -110,9 +111,8 @@ class Pipeline:
 
     def _execute_stream(
         self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
-    ) -> Iterator[Union[WorkflowRunResponse, str]]:
-        """Execute the pipeline with streaming support"""
-
+    ) -> Iterator[WorkflowRunResponseEvent]:
+        """Execute the pipeline with event-driven streaming support"""
         logger.info(f"Executing pipeline with streaming: {self.name}")
 
         # Yield workflow started event
@@ -143,14 +143,14 @@ class Pipeline:
             # Create TaskInput for this task
             task_input = self._create_task_input(inputs, previous_outputs, context)
 
-            # Execute task with streaming
+            # Execute task with streaming and yield all events
             task_output = None
-            for response in task.execute(
+            for event in task.execute(
                 task_input, task_context, stream=True, stream_intermediate_steps=stream_intermediate_steps
             ):
-                if isinstance(response, TaskOutput):
+                if isinstance(event, TaskOutput):
                     # This is the final task output
-                    task_output = response
+                    task_output = event
 
                     # Collect the task output
                     collected_task_outputs.append(task_output)
@@ -176,8 +176,8 @@ class Pipeline:
                         task_responses=[task_output],
                     )
                 else:
-                    # This is either an event or streaming content
-                    yield response
+                    # This is either an event or streaming content - yield it
+                    yield event
 
         # Create final output data
         final_output = {

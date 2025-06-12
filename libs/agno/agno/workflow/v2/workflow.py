@@ -8,14 +8,13 @@ from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
 from agno.run.v2.workflow import (
-    WorkflowStartedEvent,
-    WorkflowCompletedEvent,
-    TaskStartedEvent,
     TaskCompletedEvent,
+    TaskStartedEvent,
+    WorkflowCompletedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
-    WorkflowRunEvent,
-    WorkflowRunResponse,
+    WorkflowRunResponseEvent,
+    WorkflowStartedEvent,
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
@@ -171,16 +170,16 @@ class Workflow:
             return error_response
 
     def execute_pipeline_stream(
-        self, pipeline_name: str, inputs: Dict[str, Any], stream_intermediate_steps: bool = False
-    ) -> Iterator[Union[WorkflowRunResponse, str]]:
-        """Execute a specific pipeline by name synchronously with streaming support"""
+        self,
+        pipeline_name: str,
+        inputs: Dict[str, Any],
+        stream_intermediate_steps: bool = False,
+        workflow_run_response: WorkflowRunResponse = None,
+    ) -> Iterator[WorkflowRunResponseEvent]:
+        """Execute a specific pipeline by name with event streaming"""
         pipeline = self.get_pipeline(pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found")
-
-        # Initialize execution
-        self.run_id = str(uuid4())
-        execution_start = datetime.now()
 
         log_debug(f"Starting workflow execution with streaming: {self.run_id}")
 
@@ -191,53 +190,73 @@ class Workflow:
             "run_id": self.run_id,
             "session_id": self.session_id,
             "user_id": self.user_id,
-            "execution_start": execution_start,
+            "execution_start": datetime.now(),
         }
 
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
-        # Only collect WorkflowCompletedEvent for storage
-        workflow_completed_response = None
-
         try:
-            # Execute the pipeline with streaming
-            for response in pipeline.execute(
-                inputs, context, stream=True, stream_intermediate_steps=stream_intermediate_steps
-            ):
-                # Check if this is the workflow completed event
-                if isinstance(response, WorkflowRunResponse) and response.event == WorkflowRunEvent.workflow_completed:
-                    workflow_completed_response = response
+            # Execute the pipeline with streaming and yield all events
+            for event in pipeline._execute_stream(inputs, context, stream_intermediate_steps):
+                # Store completed workflow response when we get the final event
+                if isinstance(event, WorkflowCompletedEvent):
+                    # Create workflow run response for storage
+                    workflow_run_response = WorkflowRunResponse(
+                        run_id=self.run_id,
+                        session_id=self.session_id,
+                        workflow_id=self.workflow_id,
+                        workflow_name=self.name,
+                        pipeline_name=pipeline_name,
+                        content=event.content,
+                        task_responses=event.task_responses,
+                        extra_data=event.extra_data,
+                        event=WorkflowRunEvent.workflow_completed,
+                        created_at=int(datetime.now().timestamp()),
+                    )
 
-                yield response
+                    # Store the completed workflow response
+                    if self.workflow_session:
+                        self.workflow_session.add_run(workflow_run_response)
 
-            # Store only the final completed workflow response
-            if self.workflow_session and workflow_completed_response:
-                self.workflow_session.add_run(workflow_completed_response)
+                    # Save to storage after complete execution
+                    self.write_to_storage()
 
-            # Save to storage after complete execution
-            self.write_to_storage()
+                yield event
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
 
-            error_response = WorkflowRunResponse(
+            from agno.run.v2.workflow import WorkflowErrorEvent
+
+            error_event = WorkflowErrorEvent(
+                run_id=self.run_id or "",
                 content=f"Workflow execution failed: {e}",
-                event=WorkflowRunEvent.workflow_error,
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
                 pipeline_name=pipeline_name,
                 session_id=self.session_id,
-                run_id=self.run_id,
+                error=str(e),
+            )
+
+            # Create error workflow run response for storage
+            error_workflow_response = WorkflowRunResponse(
+                run_id=self.run_id or "",
+                session_id=self.session_id,
+                workflow_id=self.workflow_id,
+                workflow_name=self.name,
+                pipeline_name=pipeline_name,
+                content=error_event.content,
+                event=WorkflowRunEvent.workflow_error,
+                created_at=int(datetime.now().timestamp()),
             )
 
             # Store error response
             if self.workflow_session:
-                self.workflow_session.add_run(error_response)
-                
+                self.workflow_session.add_run(error_workflow_response)
             self.write_to_storage()
 
-            yield error_response
+            yield error_event
 
     async def aexecute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> AsyncIterator[WorkflowRunResponse]:
         """Execute a specific pipeline by name asynchronously"""
@@ -336,7 +355,7 @@ class Workflow:
         videos: Optional[TypingSequence[Video]] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[Union[WorkflowRunResponse, str]]:
+    ) -> Iterator[Union[WorkflowRunResponse, WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         if stream:
             return self._run_stream(
@@ -431,8 +450,8 @@ class Workflow:
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[Union[WorkflowRunResponse, str]]:
-        """Execute the workflow synchronously with streaming support"""
+    ) -> Iterator[WorkflowRunResponseEvent]:
+        """Execute the workflow synchronously with event-driven streaming"""
         # Set user_id and session_id if provided
         if user_id is not None:
             self.user_id = user_id
@@ -441,6 +460,19 @@ class Workflow:
 
         # Load or create session
         self.load_session()
+
+        # Initialize execution
+        self.run_id = str(uuid4())
+        execution_start = datetime.now()
+
+        # Create workflow run response that will be updated by reference
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            created_at=int(execution_start.timestamp()),
+        )
 
         # Determine pipeline based on trigger type and parameters
         if self.trigger.trigger_type == TriggerType.MANUAL:
@@ -480,9 +512,13 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected pipeline with streaming
-        for response in self.execute_pipeline_stream(selected_pipeline_name, inputs, stream_intermediate_steps):
-            yield response
+        # Execute the selected pipeline with event streaming
+        yield from self.execute_pipeline_stream(
+            pipeline_name=selected_pipeline_name,
+            inputs=inputs,
+            workflow_run_response=workflow_run_response,
+            stream_intermediate_steps=stream_intermediate_steps,
+        )
 
     async def arun(
         self,
@@ -733,7 +769,6 @@ class Workflow:
 
         # Process message_data and combine with query
         primary_input = self._prepare_primary_input(query, message_data)
-        print('--> primary_input:', primary_input)
 
         if primary_input is None:
             console.print("[red]Query must be provided[/red]")
@@ -744,7 +779,7 @@ class Workflow:
             if not self.pipelines:
                 console.print("[red]No pipelines available in this workflow[/red]")
                 return
-            
+
             # Determine which pipeline to use
             if pipeline_name:
                 pipeline = self.get_pipeline(pipeline_name)
@@ -877,12 +912,13 @@ class Workflow:
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
+
         from agno.utils.response import create_panel
         from agno.utils.timer import Timer
 
         if console is None:
             from agno.cli.console import console
-        
+
         pipeline_name = self._auto_create_pipeline_from_tasks()
 
         # Process message_data and combine with query
@@ -894,8 +930,7 @@ class Workflow:
 
         if self.trigger.trigger_type == TriggerType.MANUAL:
             if not self.pipelines:
-                console.print(
-                    "[red]No pipelines available in this workflow[/red]")
+                console.print("[red]No pipelines available in this workflow[/red]")
                 return
 
             if pipeline_name:
@@ -1022,7 +1057,7 @@ class Workflow:
                             summary_content = f"""
                                 **Pipeline:** {pipeline_name}
                                 **Status:** {final_output.get("status", "Unknown")}
-                                **Tasks Completed:** {len(task_responses)}
+                                **Tasks Completed:** {len(response.task_responses) if response.task_responses else 0}
                             """.strip()
 
                             summary_panel = create_panel(
@@ -1033,18 +1068,23 @@ class Workflow:
                             console.print(summary_panel)
 
                     else:
-                        # This is streaming content from a task
-                        if isinstance(response, str):
-                            # This is a direct string chunk (delta content)
-                            response_str = response
-                        elif hasattr(response, "content") and response.content:
-                            # This might be a complete response - don't add it to streaming
-                            continue
-                        else:
-                            # Skip any other objects (like raw events, RunResponseCompletedEvent, etc.)
-                            continue
+                        response_str = None
 
-                        # Filter out empty responses
+                        if isinstance(response, str):
+                            response_str = response
+                        else:
+                            from agno.run.response import RunResponseContentEvent
+                            # Check if this is a streaming content event from agent or team
+                            if isinstance(
+                                response,
+                                (RunResponseContentEvent, WorkflowRunResponseEvent),
+                            ):
+                                # Extract the content from the streaming event
+                                response_str = response.content
+                            else:
+                                continue
+
+                        # Filter out empty responses and add to current task content
                         if response_str and response_str.strip():
                             current_task_content += response_str
 
@@ -1124,7 +1164,7 @@ class Workflow:
 
         # Process message_data and combine with query
         primary_input = self._prepare_primary_input(query, message_data)
-        
+
         if primary_input is None:
             console.print("[red]Either 'query' or 'message' must be provided[/red]")
             return

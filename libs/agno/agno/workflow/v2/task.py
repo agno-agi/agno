@@ -7,9 +7,9 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
-    TaskStartedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
+    WorkflowRunResponseEvent,
 )
 from agno.team import Team
 from agno.utils.log import logger
@@ -204,7 +204,7 @@ class Task:
         context: Dict[str, Any] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
-    ) -> Union[TaskOutput, Iterator[Union[WorkflowRunResponse, TaskOutput, str]]]:
+    ) -> Union[TaskOutput, Iterator[WorkflowRunResponseEvent]]:
         """Execute the task with TaskInput, with optional streaming support"""
         if stream:
             return self._execute_task_stream(task_input, context, stream_intermediate_steps)
@@ -245,11 +245,10 @@ class Task:
 
     def _execute_task_stream(
         self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
-    ) -> Iterator[Union[WorkflowRunResponse, TaskOutput, str]]:
-        """Execute the task with streaming support, yielding events, content chunks, and final TaskOutput"""
-        from agno.run.v2.workflow import TaskStartedEvent
-
+    ) -> Iterator[WorkflowRunResponseEvent]:
+        """Execute the task with event-driven streaming support"""
         logger.info(f"Executing task with streaming: {self.name}")
+        from agno.workflow.v2.workflow import TaskStartedEvent
 
         # Yield task started event
         yield TaskStartedEvent(
@@ -269,27 +268,62 @@ class Task:
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
-                # Stream the task execution
                 final_response = None
 
-                for chunk in self._execute_task_with_streaming(task_input, stream_intermediate_steps):
-                    if isinstance(chunk, (RunResponse, TeamRunResponse, TaskOutput)):
-                        # This is the final response
-                        final_response = chunk
-                        break
+                if self._executor_type == "function":
+                    # TODO: Handle for this case seperately
+                    result = self._active_executor(task_input)
+                    if isinstance(result, TaskOutput):
+                        final_response = result
                     else:
-                        # This is streaming content
-                        yield chunk
+                        final_response = TaskOutput(content=str(result))
+                else:
+                    message = task_input.get_primary_input()
+
+                    if task_input.previous_outputs:
+                        message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
+
+                    if self._executor_type == "agent":
+                        response_stream = self._active_executor.run(
+                            message=message,
+                            images=task_input.images,
+                            videos=task_input.videos,
+                            audio=task_input.audio,
+                            stream=True,
+                            stream_intermediate_steps=stream_intermediate_steps,
+                        )
+
+                        for event in response_stream:
+                            if isinstance(event, RunResponse):
+                                final_response = self._create_task_output(event, task_input)
+                            else:
+                                yield event
+
+                    elif self._executor_type == "team":
+                        response_stream = self._active_executor.run(
+                            message=message,
+                            images=task_input.images,
+                            videos=task_input.videos,
+                            audio=task_input.audio,
+                            stream=True,
+                            stream_intermediate_steps=stream_intermediate_steps,
+                        )
+
+                        for event in response_stream:
+                            if isinstance(event, TeamRunResponse):
+                                final_response = self._create_task_output(event, task_input)
+                            else:
+                                yield event
+
+                    else:
+                        raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # If we didn't get a final response, create one
                 if final_response is None:
-                    final_response = RunResponse(content="")
-
-                # Create TaskOutput from response
-                task_output = self._create_task_output(final_response, task_input)
+                    final_response = TaskOutput(content="")
 
                 logger.info(f"Task {self.name} completed successfully with streaming")
-                yield task_output
+                yield final_response
                 return
 
             except Exception as e:
@@ -343,107 +377,6 @@ class Task:
                 videos=task_input.videos,
                 audio=task_input.audio,
             )
-        else:
-            raise ValueError(f"Unsupported executor type: {self._executor_type}")
-
-    def _execute_task_with_streaming(
-        self, task_input: TaskInput, stream_intermediate_steps: bool = False
-    ) -> Iterator[Union[RunResponse, TeamRunResponse, TaskOutput, str]]:
-        """Execute the task with streaming support"""
-        if self._executor_type == "function":
-            # Functions don't support streaming, execute normally
-            result = self._active_executor(task_input)
-            if isinstance(result, TaskOutput):
-                yield result
-            else:
-                yield TaskOutput(content=str(result))
-            return
-
-        # For agents and teams, prepare message with context
-        message = task_input.get_primary_input()
-
-        # Add context information to message if available
-        if task_input.previous_outputs:
-            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-        # Execute agent or team with streaming
-        if self._executor_type == "agent":
-            response_stream = self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-                stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
-            )
-
-            # Track streaming content and final response separately
-            streaming_content = ""
-            final_response = None
-
-            for chunk in response_stream:
-                # Always keep track of the final response
-                final_response = chunk
-
-                # Only yield content deltas during streaming
-                if hasattr(chunk, "content") and chunk.content and streaming_content != chunk.content:
-                    # Extract only the new content delta
-                    if chunk.content.startswith(streaming_content):
-                        new_content = chunk.content[len(streaming_content) :]
-                        if new_content:
-                            streaming_content = chunk.content
-                            yield new_content
-                    else:
-                        # This is new content that doesn't build on previous
-                        streaming_content = chunk.content
-                        yield chunk.content
-
-            # Yield the final response - use accumulated streaming content
-            if final_response:
-                # Set the content to our accumulated streaming content to avoid duplication
-                final_response.content = streaming_content
-                yield final_response
-            else:
-                yield RunResponse(content=streaming_content)
-
-        elif self._executor_type == "team":
-            response_stream = self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-                stream=True,
-                stream_intermediate_steps=stream_intermediate_steps,
-            )
-
-            # Track streaming content and final response separately
-            streaming_content = ""
-            final_response = None
-
-            for chunk in response_stream:
-                # Always keep track of the final response
-                final_response = chunk
-
-                # Only yield content deltas during streaming
-                if hasattr(chunk, "content") and chunk.content and streaming_content != chunk.content:
-                    # Extract only the new content delta
-                    if chunk.content.startswith(streaming_content):
-                        new_content = chunk.content[len(streaming_content) :]
-                        if new_content:
-                            streaming_content = chunk.content
-                            yield new_content
-                    else:
-                        # This is new content that doesn't build on previous
-                        streaming_content = chunk.content
-                        yield chunk.content
-
-            # Yield the final response - use accumulated streaming content
-            if final_response:
-                # Set the content to our accumulated streaming content to avoid duplication
-                final_response.content = streaming_content
-                yield final_response
-            else:
-                yield TeamRunResponse(content=streaming_content)
         else:
             raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -575,13 +508,15 @@ class Task:
             # Even if it's already a TaskOutput, ensure task metadata is present
             if response.metadata is None:
                 response.metadata = {}
-            
-            response.metadata.update({
-                "task_name": self.name,
-                "task_id": self.task_id,
-                "executor_type": self._executor_type,
-                "executor_name": self.executor_name,
-            })
+
+            response.metadata.update(
+                {
+                    "task_name": self.name,
+                    "task_id": self.task_id,
+                    "executor_type": self._executor_type,
+                    "executor_name": self.executor_name,
+                }
+            )
             return response
 
         # Create metadata

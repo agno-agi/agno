@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
 
@@ -10,7 +10,7 @@ from agno.workflow.v2.workflow import Workflow
 blog_analyzer = Agent(
     name="Blog Analyzer",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleSearchTools()],
+    tools=[DuckDuckGoTools()],
     instructions="Extract key insights and content from blog posts",
 )
 
