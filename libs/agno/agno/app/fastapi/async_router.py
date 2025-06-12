@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -260,7 +260,7 @@ def get_async_router(
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
-        workflow_input: Optional[Dict[str, Any]] = Form(None),
+        workflow_input: Optional[str] = Form(None),
     ):
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -297,6 +297,10 @@ def get_async_router(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             if not workflow_input:
                 raise HTTPException(status_code=400, detail="Workflow input is required")
+            try:
+                workflow_input = json.loads(workflow_input)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Workflow input must be a valid JSON string")
 
         if agent:
             agent.monitoring = bool(monitor)
