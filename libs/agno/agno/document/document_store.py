@@ -1,17 +1,20 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from pydantic import BaseModel
+from dataclasses import dataclass
 
 from agno.document.base import Document
 
 
-class DocumentStore(BaseModel, ABC):
+@dataclass
+class DocumentStore(ABC):
     """
     Base class for document store.
     """
 
     name: str
     description: str
+    read_from_store: Optional[bool] = False
+    copy_to_store: Optional[bool] = False
 
     @abstractmethod
     def add_document(self, document: Document) -> str:

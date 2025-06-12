@@ -10,24 +10,26 @@ from agno.vectordb import VectorDb
 from functools import cached_property
 from agno.document.reader.pdf_reader import PDFReader
 from agno.document.reader.url_reader import URLReader
+from typing import Union, Dict
 
 @dataclass
-class KnowledgeBase:
+class Knowledge:
     
-    """Knowledge base class"""
+    """Knowledge class"""
 
     def __init__(
             self,
             name: str,
             description: Optional[str] = None,
-            document_store: Optional[DocumentStore] = None,
             vector_store: Optional[VectorDb] = None,
-            paths: Optional[List[str]] = None,
+            document_store: Optional[DocumentStore] = None,
+            documents: Optional[List[Union[Document, Dict]]] = None,
         ):
         self.name = name
         self.description = description
-        self.document_store = document_store
         self.vector_store = vector_store
+        self.document_store = document_store
+        self.documents = documents
 
         if not self.vector_store.exists():
             self.vector_store.create()
@@ -111,6 +113,7 @@ class KnowledgeBase:
         if self.document_store is None:
             raise ValueError("No document store provided")
         return self.document_store.delete_all_documents()
+
 
 
 

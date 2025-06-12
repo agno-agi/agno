@@ -3,7 +3,7 @@ from agno.app.agno_api.managers.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.app.agno_api import AgnoAPI
 from agno.app.agno_api.interfaces.playground import Playground
-from agno.knowledge.knowledge_base import KnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.document import Document
 from agno.document.local_document_store import LocalDocumentStore
 from agno.vectordb.pgvector import PgVector
@@ -23,7 +23,7 @@ vector_store=PgVector(
     )
 
 # Create knowledge base
-knowledge_base = KnowledgeBase(
+knowledge_base = Knowledge(
     name="My Knowledge Base", 
     description="A simple knowledge base",
     document_store=document_store
