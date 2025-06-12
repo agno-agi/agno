@@ -508,7 +508,7 @@ class Workflow:
 
     def print_response(
         self,
-        query: str,
+        query: Optional[str] = None,
         message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,

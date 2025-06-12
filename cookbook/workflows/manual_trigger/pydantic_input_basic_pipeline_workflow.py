@@ -85,8 +85,6 @@ if __name__ == "__main__":
             query="AI trends in 2024",
             message_data=research_topic,
             markdown=True,
-            show_time=True,
-            show_task_details=True,
         )
     except Exception as e:
         print(f"Research sequence failed: {e}")
