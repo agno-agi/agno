@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from typing import Sequence as TypingSequence
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from agno.media import Audio, Image, Video
 from agno.run.v2.workflow import (
@@ -86,9 +88,11 @@ class Workflow:
         """Auto-create a pipeline from tasks for manual triggers"""
         # Only auto-create for manual triggers and when tasks are provided but no pipelines
         if self.trigger.trigger_type == TriggerType.MANUAL and self.tasks and not self.pipelines:
+            # Create a default pipeline_name
+            pipeline_name = "Default Pipeline"
             # Create pipeline from tasks
             auto_pipeline = Pipeline(
-                name="Default Pipeline",
+                name=pipeline_name,
                 description=f"Auto-generated pipeline for workflow {self.name}",
                 tasks=self.tasks.copy(),
             )
@@ -97,6 +101,7 @@ class Workflow:
             self.pipelines = [auto_pipeline]
 
             log_info(f"Auto-created pipeline for workflow {self.name} with {len(self.tasks)} tasks")
+            return pipeline_name
 
     def set_storage_mode(self):
         """Set storage mode to workflow_v2"""
@@ -504,6 +509,7 @@ class Workflow:
     def print_response(
         self,
         query: str,
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[TypingSequence[Audio]] = None,
@@ -535,10 +541,11 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
-        self._auto_create_pipeline_from_tasks()
+        pipeline_name = self._auto_create_pipeline_from_tasks()
 
-        # Use query or message as primary input
-        primary_input = query
+        # Process message_data and combine with query
+        primary_input = self._prepare_primary_input(query, message_data)
+
         if primary_input is None:
             console.print("[red]Either 'query' or 'message' must be provided[/red]")
             return
@@ -611,7 +618,7 @@ class Workflow:
 
             try:
                 for response in self.run(
-                    query=query,
+                    query=primary_input,
                     pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
@@ -697,7 +704,7 @@ class Workflow:
         self,
         query: Optional[str] = None,
         message: Optional[str] = None,
-        *,
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[TypingSequence[Audio]] = None,
@@ -707,7 +714,6 @@ class Workflow:
         show_time: bool = True,
         show_task_details: bool = True,
         console: Optional[Any] = None,
-        **kwargs,
     ) -> None:
         """Print workflow execution with rich formatting asynchronously
 
@@ -739,8 +745,11 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
-        # Use query or message as primary input
-        primary_input = query or message
+        pipeline_name = self._auto_create_pipeline_from_tasks()
+
+        # Process message_data and combine with query
+        primary_input = self._prepare_primary_input(query, message_data)
+        
         if primary_input is None:
             console.print("[red]Either 'query' or 'message' must be provided[/red]")
             return
@@ -813,7 +822,7 @@ class Workflow:
 
             try:
                 async for response in self.arun(
-                    query=query,
+                    query=primary_input,
                     message=message,
                     pipeline_name=pipeline_name,
                     user_id=user_id,
@@ -943,3 +952,30 @@ class Workflow:
             ],
             "session_id": self.session_id,
         }
+
+    def _prepare_primary_input(
+        self, query: Optional[str], message_data: Optional[Union[BaseModel, Dict[str, Any]]]
+    ) -> Optional[str]:
+        """Prepare the primary input by combining query and message_data"""
+
+        # Convert message_data to string if provided
+        data_str = None
+        if message_data is not None:
+            if isinstance(message_data, BaseModel):
+                data_str = message_data.model_dump_json(indent=2, exclude_none=True)
+            elif isinstance(message_data, dict):
+                import json
+
+                data_str = json.dumps(message_data, indent=2, default=str)
+            else:
+                data_str = str(message_data)
+
+        # Combine query and data
+        if query and data_str:
+            return f"{query}\n\n--- Structured Data ---\n{data_str}"
+        elif query:
+            return query
+        elif data_str:
+            return f"Process the following data:\n{data_str}"
+        else:
+            return None
