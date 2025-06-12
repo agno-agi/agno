@@ -138,7 +138,7 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         try:
-            # Execute the sequence synchronously - return WorkflowRunResponse directly!
+            # Execute the pipeline synchronously - return WorkflowRunResponse directly!
             workflow_response = pipeline.execute(inputs, context, stream=False)
 
             # Store the completed workflow response
@@ -158,7 +158,7 @@ class Workflow:
                 content=f"Workflow execution failed: {e}",
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
-                sequence_name=pipeline_name,
+                pipeline_name=pipeline_name,
                 run_id=self.run_id or "",
                 session_id=self.session_id,
             )
@@ -173,10 +173,10 @@ class Workflow:
     def execute_pipeline_stream(
         self, pipeline_name: str, inputs: Dict[str, Any], stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponse, str]]:
-        """Execute a specific sequence by name synchronously with streaming support"""
+        """Execute a specific pipeline by name synchronously with streaming support"""
         pipeline = self.get_pipeline(pipeline_name)
         if not pipeline:
-            raise ValueError(f"Sequence '{pipeline_name}' not found")
+            raise ValueError(f"Pipeline '{pipeline_name}' not found")
 
         # Initialize execution
         self.run_id = str(uuid4())
@@ -201,7 +201,7 @@ class Workflow:
         workflow_completed_response = None
 
         try:
-            # Execute the sequence with streaming
+            # Execute the pipeline with streaming
             for response in pipeline.execute(
                 inputs, context, stream=True, stream_intermediate_steps=stream_intermediate_steps
             ):
@@ -418,7 +418,7 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the sequence synchronously (non-streaming) - now returns WorkflowRunResponse directly
+        # Execute the pipeline synchronously (non-streaming) - now returns WorkflowRunResponse directly
         return self.execute_pipeline(selected_pipeline_name, inputs)
 
     def _run_stream(
@@ -442,22 +442,22 @@ class Workflow:
         # Load or create session
         self.load_session()
 
-        # Determine sequence based on trigger type and parameters
+        # Determine pipeline based on trigger type and parameters
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                raise ValueError("No sequences available in this workflow")
+            if not self.pipelines:
+                raise ValueError("No pipelines available in this workflow")
 
-            # If sequence_name is provided, use that specific sequence
+            # If pipeline_name is provided, use that specific pipeline
             if pipeline_name:
-                target_sequence = self.get_sequence(pipeline_name)
-                if not target_sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+                target_pipeline = self.get_pipeline(pipeline_name)
+                if not target_pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     raise ValueError(
-                        f"Sequence '{pipeline_name}' not found. Available sequences: {available_sequences}"
+                        f"Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}"
                     )
                 selected_pipeline_name = pipeline_name
             else:
-                # Default to first sequence if no pipeline_name specified
+                # Default to first pipeline if no pipeline_name specified
                 selected_pipeline_name = self.pipelines[0].name
         else:
             raise ValueError(
@@ -480,7 +480,7 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected sequence with streaming
+        # Execute the selected pipeline with streaming
         for response in self.execute_pipeline_stream(selected_pipeline_name, inputs, stream_intermediate_steps):
             yield response
 
@@ -733,6 +733,7 @@ class Workflow:
 
         # Process message_data and combine with query
         primary_input = self._prepare_primary_input(query, message_data)
+        print('--> primary_input:', primary_input)
 
         if primary_input is None:
             console.print("[red]Query must be provided[/red]")
@@ -805,7 +806,7 @@ class Workflow:
             try:
                 # Execute workflow and get the response directly
                 workflow_response: WorkflowRunResponse = self._run(
-                    query=query,
+                    query=primary_input,
                     pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
@@ -831,7 +832,7 @@ class Workflow:
                 if workflow_response.extra_data:
                     final_output = workflow_response.extra_data
                     summary_content = f"""
-                        **Sequence:** {sequence_name}
+                        **Pipeline:** {pipeline_name}
                         **Status:** {final_output.get("status", "Completed")}
                         **Tasks Completed:** {len(workflow_response.task_responses) if workflow_response.task_responses else 0}
                     """.strip()
@@ -864,7 +865,6 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-        sequence_name: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         markdown: bool = True,
         show_time: bool = True,
@@ -893,21 +893,22 @@ class Workflow:
             return
 
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                console.print("[red]No sequences available in this workflow[/red]")
+            if not self.pipelines:
+                console.print(
+                    "[red]No pipelines available in this workflow[/red]")
                 return
 
-            if sequence_name:
-                sequence = self.get_sequence(sequence_name)
-                if not sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+            if pipeline_name:
+                pipeline = self.get_pipeline(pipeline_name)
+                if not pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     console.print(
-                        f"[red]Sequence '{sequence_name}' not found. Available sequences: {available_sequences}[/red]"
+                        f"[red]Pipelines '{pipeline_name}' not found. Available pipelines: {available_pipelines}[/red]"
                     )
                     return
             else:
-                sequence = self.sequences[0]
-                sequence_name = sequence.name
+                pipeline = self.pipelines[0]
+                pipeline_name = pipeline.name
         else:
             console.print(
                 f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in streaming[/yellow]"
@@ -927,9 +928,9 @@ class Workflow:
 
         workflow_info = f"""
             **Workflow:** {self.name}
-            **Sequence:** {sequence.name}
-            **Description:** {sequence.description or "No description"}
-            **Tasks:** {len(sequence.tasks)} tasks
+            **Pipeline:** {pipeline.name}
+            **Description:** {pipeline.description or "No description"}
+            **Tasks:** {len(pipeline.tasks)} tasks
             **Query:** {primary_input}{media_str}
             **User ID:** {user_id or self.user_id or "Not set"}
             **Session ID:** {session_id or self.session_id}
@@ -961,8 +962,8 @@ class Workflow:
 
             try:
                 for response in self._run_stream(
-                    query=query,
-                    sequence_name=sequence_name,
+                    query=primary_input,
+                    pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,

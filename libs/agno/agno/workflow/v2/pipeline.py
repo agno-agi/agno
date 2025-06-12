@@ -36,20 +36,20 @@ class Pipeline:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Union[WorkflowCompletedEvent, Iterator[Union[WorkflowRunResponse, str]]]:
-        """Execute all tasks in the sequence sequentially with optional streaming"""
+        """Execute all tasks in the pipeline sequentially with optional streaming"""
         if stream:
             return self._execute_stream(inputs, context, stream_intermediate_steps)
         else:
             return self._execute(inputs, context)
 
     def _execute(self, inputs: Dict[str, Any], context: Dict[str, Any] = None) -> WorkflowRunResponse:
-        """Execute all tasks in the sequence using TaskInput/TaskOutput (non-streaming)"""
-        logger.info(f"Starting sequence: {self.name}")
+        """Execute all tasks in the pipeline using TaskInput/TaskOutput (non-streaming)"""
+        logger.info(f"Starting pipeline: {self.name}")
 
         # Initialize pipeline context
-        sequence_context = context or {}
-        sequence_context["pipeline_name"] = self.name
-        sequence_context["pipeline_id"] = self.pipeline_id
+        pipeline_context = context or {}
+        pipeline_context["pipeline_name"] = self.name
+        pipeline_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -59,7 +59,7 @@ class Pipeline:
             logger.info(f"Executing task {i + 1}/{len(self.tasks)}: {task.name}")
 
             # Add task_index to context for the task
-            task_context = sequence_context.copy()
+            task_context = pipeline_context.copy()
             task_context["task_index"] = i
 
             # Create TaskInput for this task
@@ -98,10 +98,10 @@ class Pipeline:
 
         return WorkflowRunResponse(
             event=WorkflowRunEvent.workflow_completed,
-            content=f"Sequence {self.name} completed successfully",
+            content=f"Pipeline {self.name} completed successfully",
             workflow_id=context.get("workflow_id") if context else None,
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=self.name,
+            pipeline_name=self.name,
             run_id=context.get("run_id", ""),
             session_id=context.get("session_id") if context else None,
             task_responses=collected_task_outputs,
@@ -111,33 +111,33 @@ class Pipeline:
     def _execute_stream(
         self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponse, str]]:
-        """Execute the sequence with streaming support"""
+        """Execute the pipeline with streaming support"""
 
-        logger.info(f"Executing sequence with streaming: {self.name}")
+        logger.info(f"Executing pipeline with streaming: {self.name}")
 
         # Yield workflow started event
         yield WorkflowStartedEvent(
             run_id=context.get("run_id", ""),
-            content=f"Sequence {self.name} started",
+            content=f"Pipeline {self.name} started",
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=self.name,
+            pipeline_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
             session_id=context.get("session_id") if context else None,
         )
 
-        # Initialize sequence context
-        sequence_context = context or {}
-        sequence_context["sequence_name"] = self.name
-        sequence_context["sequence_id"] = self.sequence_id
+        # Initialize pipeline context
+        pipeline_context = context or {}
+        pipeline_context["pipeline_name"] = self.name
+        pipeline_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
         collected_task_outputs: List[TaskOutput] = []
 
-        # Execute tasks in sequence with streaming
+        # Execute tasks in pipeline with streaming
         for task_index, task in enumerate(self.tasks):
             # Add task_index to context for the task
-            task_context = sequence_context.copy()
+            task_context = pipeline_context.copy()
             task_context["task_index"] = task_index
 
             # Create TaskInput for this task
@@ -163,7 +163,7 @@ class Pipeline:
                         run_id=context.get("run_id", ""),
                         content=task_output.content,
                         workflow_name=context.get("workflow_name") if context else None,
-                        sequence_name=self.name,
+                        pipeline_name=self.name,
                         task_name=task.name,
                         task_index=task_index,
                         workflow_id=context.get("workflow_id") if context else None,
@@ -181,8 +181,8 @@ class Pipeline:
 
         # Create final output data
         final_output = {
-            "sequence_name": self.name,
-            "sequence_id": self.sequence_id,
+            "pipeline_name": self.name,
+            "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
             "task_summary": [
@@ -216,9 +216,9 @@ class Pipeline:
         logger.info(f"Starting async pipeline: {self.name}")
 
         # Initialize pipeline context
-        sequence_context = context or {}
-        sequence_context["pipeline_name"] = self.name
-        sequence_context["pipeline_id"] = self.pipeline_id
+        pipeline_context = context or {}
+        pipeline_context["pipeline_name"] = self.name
+        pipeline_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -240,7 +240,7 @@ class Pipeline:
             logger.info(f"Executing async task {i + 1}/{len(self.tasks)}: {task.name}")
 
             # Add task_index to context for the task
-            task_context = sequence_context.copy()
+            task_context = pipeline_context.copy()
             task_context["task_index"] = i
 
             # Create TaskInput for this task
