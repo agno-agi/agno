@@ -572,6 +572,16 @@ class Task:
     ) -> TaskOutput:
         """Create TaskOutput from execution response"""
         if isinstance(response, TaskOutput):
+            # Even if it's already a TaskOutput, ensure task metadata is present
+            if response.metadata is None:
+                response.metadata = {}
+            
+            response.metadata.update({
+                "task_name": self.name,
+                "task_id": self.task_id,
+                "executor_type": self._executor_type,
+                "executor_name": self.executor_name,
+            })
             return response
 
         # Create metadata
