@@ -2429,7 +2429,6 @@ class Agent:
     ) -> RunResponse:
         # Set the run response to paused
 
-        run_response.event = RunEvent.run_paused
         run_response.status = RunStatus.paused
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
@@ -2457,7 +2456,6 @@ class Agent:
     ) -> Iterator[RunResponseEvent]:
         # Set the run response to paused
 
-        run_response.event = RunEvent.run_paused
         run_response.status = RunStatus.paused
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
