@@ -205,6 +205,8 @@ class RunResponse:
     citations: Optional[Citations] = None
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
+    
+    events: Optional[List[RunResponseEvent]] = None
 
     status: RunStatus = RunStatus.running
 
@@ -233,8 +235,11 @@ class RunResponse:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations", "events"]
         }
+        
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -309,6 +314,9 @@ class RunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+        events = data.pop("events", None)
+        events = [RunResponseEvent.model_validate(event) for event in events] if events else None
+
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 

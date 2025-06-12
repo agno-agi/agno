@@ -9,7 +9,7 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseEvent
 
 
 class TeamRunEvent(str, Enum):
@@ -190,6 +190,8 @@ class TeamRunResponse:
 
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
+    
+    events: Optional[List[Union[RunResponseEvent, TeamRunResponseEvent]]] = None
 
     status: RunStatus = RunStatus.running
 
@@ -217,8 +219,11 @@ class TeamRunResponse:
                 "audio",
                 "response_audio",
                 "citations",
+                "events",
             ]
         }
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status

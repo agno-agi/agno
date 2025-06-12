@@ -113,6 +113,56 @@ class BaseRunResponseEvent:
 
         return json.dumps(_dict, indent=2)
 
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]):
+        tool = data.pop("tool", None)
+        if tool:
+            data["tool"] = ToolExecution.from_dict(tool)
+
+        images = data.pop("images", None)
+        if images:
+            data["images"] = [ImageArtifact.model_validate(image) for image in images]
+
+        image = data.pop("image", None)
+        if image:
+            data["image"] = ImageArtifact.model_validate(image)
+
+        videos = data.pop("videos", None)
+        if videos:
+            data["videos"] = [VideoArtifact.model_validate(video) for video in videos]
+
+        audio = data.pop("audio", None)
+        if audio:
+            data["audio"] = [AudioArtifact.model_validate(audio) for audio in audio]
+
+        response_audio = data.pop("response_audio", None)
+        if response_audio:
+            data["response_audio"] = AudioResponse.model_validate(response_audio)
+        
+        member_responses = data.pop("member_responses", None)
+        member_responses_final = []
+        for response in member_responses or []:
+            if "agent_id" in response:
+                run_response_parsed = "RunResponse".from_dict(response)
+            else:
+                run_response_parsed = "TeamRunResponse".from_dict(response)
+            member_responses_final.append(run_response_parsed)
+
+        if member_responses_final:
+            data["member_responses"] = member_responses_final
+
+        extra_data = data.pop("extra_data", None)
+        if extra_data:
+            data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
+            
+        # To make it backwards compatible
+        if "event" in data:
+            data.pop("event")
+
+        return cls(**data)
+
+
     @property
     def is_paused(self):
         return False
