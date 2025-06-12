@@ -2,11 +2,11 @@ from typing import List
 
 from fastapi import APIRouter
 
-from agno.knowledge.knowledge_base import KnowledgeBase, Document
+from agno.knowledge.knowledge import Knowledge, Document
 from agno.app.agno_api.managers.knowledge.schemas import DocumentSchema
 
 
-def attach_sync_routes(router: APIRouter, knowledge: KnowledgeBase) -> APIRouter:
+def attach_sync_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.post("/documents", response_model=DocumentSchema, status_code=201)
     def add_document(document: DocumentSchema) -> DocumentSchema:

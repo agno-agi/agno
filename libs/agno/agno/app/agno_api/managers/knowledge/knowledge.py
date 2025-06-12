@@ -3,7 +3,7 @@ import logging
 from fastapi.routing import APIRouter
 
 from agno.app.agno_api.base import BaseInterface
-from agno.knowledge.knowledge_base import KnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.app.agno_api.managers.knowledge.async_router import attach_async_routes
 from agno.app.agno_api.managers.knowledge.sync_router import attach_sync_routes
 
@@ -16,7 +16,7 @@ class Knowledge(BaseInterface):
 
     router: APIRouter
 
-    def __init__(self, knowledge: KnowledgeBase):
+    def __init__(self, knowledge: Knowledge):
         self.knowledge = knowledge
         
     def get_router(self, use_async: bool = True) -> APIRouter:
