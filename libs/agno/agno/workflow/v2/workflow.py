@@ -1074,6 +1074,7 @@ class Workflow:
                             response_str = response
                         else:
                             from agno.run.response import RunResponseContentEvent
+
                             # Check if this is a streaming content event from agent or team
                             if isinstance(
                                 response,

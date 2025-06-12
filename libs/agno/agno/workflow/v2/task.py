@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
     WorkflowRunEvent,
@@ -245,9 +245,10 @@ class Task:
 
     def _execute_task_stream(
         self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
-    ) -> Iterator[WorkflowRunResponseEvent]:
+    ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
         """Execute the task with event-driven streaming support"""
         logger.info(f"Executing task with streaming: {self.name}")
+        from agno.run.response import RunResponseEvent
         from agno.workflow.v2.workflow import TaskStartedEvent
 
         # Yield task started event
@@ -294,10 +295,9 @@ class Task:
                         )
 
                         for event in response_stream:
-                            if isinstance(event, RunResponse):
+                            yield event
+                            if isinstance(event, RunResponseEvent):
                                 final_response = self._create_task_output(event, task_input)
-                            else:
-                                yield event
 
                     elif self._executor_type == "team":
                         response_stream = self._active_executor.run(
@@ -310,10 +310,9 @@ class Task:
                         )
 
                         for event in response_stream:
-                            if isinstance(event, TeamRunResponse):
+                            yield event
+                            if isinstance(event, RunResponseEvent):
                                 final_response = self._create_task_output(event, task_input)
-                            else:
-                                yield event
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -500,9 +499,7 @@ class Task:
 
         return "\n".join(context_parts)
 
-    def _create_task_output(
-        self, response: Union[RunResponse, TeamRunResponse, TaskOutput], task_input: TaskInput
-    ) -> TaskOutput:
+    def _create_task_output(self, response: Union[RunResponseEvent, TaskOutput], task_input: TaskInput) -> TaskOutput:
         """Create TaskOutput from execution response"""
         if isinstance(response, TaskOutput):
             # Even if it's already a TaskOutput, ensure task metadata is present
