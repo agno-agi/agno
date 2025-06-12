@@ -9,7 +9,7 @@ from agno.utils.log import logger
 
 @dataclass
 class WorkflowSession:
-    """Workflow Session V2 for sequence-based workflows"""
+    """Workflow Session V2 for pipeline-based workflows"""
 
     # Session UUID - this is the workflow_session_id that gets set on agents/teams
     session_id: str

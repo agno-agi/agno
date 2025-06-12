@@ -49,7 +49,6 @@ def test_thinking_stream():
     responses = list(response_stream)
     assert len(responses) > 0
     for response in responses:
-        assert isinstance(response, RunResponse)
         assert response.content is not None or response.thinking is not None
 
 
@@ -98,7 +97,6 @@ async def test_async_thinking_stream():
     responses = [response async for response in response_stream]
     assert len(responses) > 0
     for response in responses:
-        assert isinstance(response, RunResponse)
         assert response.content is not None or response.thinking is not None
 
 

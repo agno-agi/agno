@@ -46,7 +46,7 @@ from agno.run.response import (
     RunResponseEvent,
     RunResponsePausedEvent,
 )
-from agno.run.team import TeamRunResponse
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
 from agno.tools.function import Function
@@ -531,6 +531,7 @@ class Agent:
         self._tool_instructions: Optional[List[str]] = None
         self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
+        self._rebuild_tools: bool = True
 
         self._formatter: Optional[SafeFormatter] = None
 
@@ -776,16 +777,16 @@ class Agent:
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield create_run_response_started_event(run_response)
+
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages)
 
         # Get the index of the last "user" message in messages_for_run
         # We track this, so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield create_run_response_started_event(run_response)
 
         # 2. Process model response
         for event in self._handle_model_response_stream(
@@ -1231,6 +1232,9 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield create_run_response_started_event(run_response)
 
         # 1. Reason about the task if reasoning is enabled
         async for item in self._ahandle_reasoning_stream(run_messages=run_messages):
@@ -1239,10 +1243,6 @@ class Agent:
         # Get the index of the last "user" message in messages_for_run
         # We track this so we can add messages after this index to the RunResponse and Memory
         index_of_last_user_message = len(run_messages.messages)
-
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield create_run_response_started_event(run_response)
 
         # 2. Generate a response from the Model
         async for event in self._ahandle_model_response_stream(
@@ -1400,7 +1400,7 @@ class Agent:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
         )
 
@@ -2521,16 +2521,17 @@ class Agent:
             function_call=function_call,
             function_call_results=function_call_results,
         ):
-            if call_result.event == ModelResponseEvent.tool_call_started.value:
-                yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
 
-            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
-                tool_execution = call_result.tool_executions[0]
-                tool.result = tool_execution.result
-                tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(
-                    from_run_response=self.run_response, tool=tool, content=call_result.content
-                )
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    yield create_tool_call_completed_event(
+                        from_run_response=self.run_response, tool=tool, content=call_result.content
+                    )
 
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
@@ -2562,15 +2563,16 @@ class Agent:
             function_call_results=function_call_results,
             skip_pause_check=True,
         ):
-            if call_result.event == ModelResponseEvent.tool_call_started.value:
-                yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
-            if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
-                tool_execution = call_result.tool_executions[0]
-                tool.result = tool_execution.result
-                tool.tool_call_error = tool_execution.tool_call_error
-                yield create_tool_call_completed_event(
-                    from_run_response=self.run_response, tool=tool, content=call_result.content
-                )
+            if isinstance(call_result, ModelResponse):
+                if call_result.event == ModelResponseEvent.tool_call_started.value:
+                    yield create_tool_call_started_event(from_run_response=self.run_response, tool=tool)
+                if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
+                    tool_execution = call_result.tool_executions[0]
+                    tool.result = tool_execution.result
+                    tool.tool_call_error = tool_execution.tool_call_error
+                    yield create_tool_call_completed_event(
+                        from_run_response=self.run_response, tool=tool, content=call_result.content
+                    )
         if len(function_call_results) > 0:
             run_messages.messages.extend(function_call_results)
 
@@ -2985,7 +2987,7 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
-        for model_response_chunk in self.model.response_stream(
+        for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
             tools=self._tools_for_model,
@@ -2996,7 +2998,7 @@ class Agent:
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
                 model_response=model_response,
-                model_response_chunk=model_response_chunk,
+                model_response_event=model_response_event,
                 stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
             )
@@ -3051,11 +3053,11 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
         )  # type: ignore
 
-        async for model_response_chunk in model_response_stream:  # type: ignore
+        async for model_response_event in model_response_stream:  # type: ignore
             for event in self._handle_model_response_chunk(
                 run_response=run_response,
                 model_response=model_response,
-                model_response_chunk=model_response_chunk,
+                model_response_event=model_response_event,
                 stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
             ):
@@ -3090,172 +3092,177 @@ class Agent:
         self,
         run_response: RunResponse,
         model_response: ModelResponse,
-        model_response_chunk: ModelResponse,
+        model_response_event: Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent],
         reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
-        # If the model response is an assistant_response, yield a RunResponse
-        if model_response_chunk.event == ModelResponseEvent.assistant_response.value:
-            # Process content and thinking
-            if model_response_chunk.content is not None:
-                model_response.content = (model_response.content or "") + model_response_chunk.content
-                run_response.content = model_response.content
+        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
+            model_response_event, tuple(get_args(TeamRunResponseEvent))
+        ):
+            # We just bubble the event up
+            yield model_response_event  # type: ignore
+        else:
+            model_response_event = cast(ModelResponse, model_response_event)
+            # If the model response is an assistant_response, yield a RunResponse
+            if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                # Process content and thinking
+                if model_response_event.content is not None:
+                    model_response.content = (model_response.content or "") + model_response_event.content
+                    run_response.content = model_response.content
 
-            if model_response_chunk.thinking is not None:
-                model_response.thinking = (model_response.thinking or "") + model_response_chunk.thinking
-                run_response.thinking = model_response.thinking
+                if model_response_event.thinking is not None:
+                    model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
+                    run_response.thinking = model_response.thinking
 
-            if model_response_chunk.redacted_thinking is not None:
-                model_response.redacted_thinking = (
-                    model_response.redacted_thinking or ""
-                ) + model_response_chunk.redacted_thinking
+                if model_response_event.redacted_thinking is not None:
+                    model_response.redacted_thinking = (
+                        model_response.redacted_thinking or ""
+                    ) + model_response_event.redacted_thinking
 
-                # We only have thinking on response
-                run_response.thinking = model_response.redacted_thinking
+                    # We only have thinking on response
+                    run_response.thinking = model_response.redacted_thinking
 
-            if model_response_chunk.citations is not None:
-                # We get citations in one chunk
-                run_response.citations = model_response_chunk.citations
+                if model_response_event.citations is not None:
+                    # We get citations in one chunk
+                    run_response.citations = model_response_event.citations
 
-            # Only yield if we have content or thinking to show
-            if (
-                model_response_chunk.content is not None
-                or model_response_chunk.thinking is not None
-                or model_response_chunk.redacted_thinking is not None
-                or model_response_chunk.citations is not None
-            ):
-                yield create_run_response_content_event(
-                    from_run_response=run_response,
-                    content=model_response_chunk.content,
-                    thinking=model_response_chunk.thinking,
-                    redacted_thinking=model_response_chunk.redacted_thinking,
-                    citations=model_response_chunk.citations,
-                )
-
-            # Process audio
-            if model_response_chunk.audio is not None:
-                if model_response.audio is None:
-                    model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
-
-                if model_response_chunk.audio.id is not None:
-                    model_response.audio.id = model_response_chunk.audio.id  # type: ignore
-                if model_response_chunk.audio.content is not None:
-                    model_response.audio.content += model_response_chunk.audio.content  # type: ignore
-                if model_response_chunk.audio.transcript is not None:
-                    model_response.audio.transcript += model_response_chunk.audio.transcript  # type: ignore
-                if model_response_chunk.audio.expires_at is not None:
-                    model_response.audio.expires_at = model_response_chunk.audio.expires_at  # type: ignore
-                if model_response_chunk.audio.mime_type is not None:
-                    model_response.audio.mime_type = model_response_chunk.audio.mime_type  # type: ignore
-                model_response.audio.sample_rate = model_response_chunk.audio.sample_rate
-                model_response.audio.channels = model_response_chunk.audio.channels
-
-                # Yield the audio and transcript bit by bit
-                run_response.response_audio = AudioResponse(
-                    id=model_response_chunk.audio.id,
-                    content=model_response_chunk.audio.content,
-                    transcript=model_response_chunk.audio.transcript,
-                    sample_rate=model_response_chunk.audio.sample_rate,
-                    channels=model_response_chunk.audio.channels,
-                )
-                run_response.created_at = model_response_chunk.created_at
-
-                yield create_run_response_content_event(
-                    from_run_response=run_response,
-                    response_audio=run_response.response_audio,
-                )
-
-            if model_response_chunk.image is not None:
-                self.add_image(model_response_chunk.image)
-
-                yield create_run_response_content_event(
-                    from_run_response=run_response,
-                    image=model_response_chunk.image,
-                )
-
-        # Handle tool interruption events
-        elif model_response_chunk.event in [
-            ModelResponseEvent.tool_call_paused.value,
-        ]:
-            # Add tool calls to the run_response
-            tool_executions_list = model_response_chunk.tool_executions
-            if tool_executions_list is not None:
-                # Add tool calls to the agent.run_response
-                if run_response.tools is None:
-                    run_response.tools = tool_executions_list
-                else:
-                    run_response.tools.extend(tool_executions_list)
-
-                # Format tool calls whenever new ones are added during streaming
-                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
-        # If the model response is a tool_call_started, add the tool call to the run_response
-        elif (
-            model_response_chunk.event == ModelResponseEvent.tool_call_started.value
-        ):  # Add tool calls to the run_response
-            tool_executions_list = model_response_chunk.tool_executions
-            if tool_executions_list is not None:
-                # Add tool calls to the agent.run_response
-                if run_response.tools is None:
-                    run_response.tools = tool_executions_list
-                else:
-                    run_response.tools.extend(tool_executions_list)
-
-                # Format tool calls whenever new ones are added during streaming
-                run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
-
-                # Yield each tool call started event
-                for tool in tool_executions_list:
-                    yield create_tool_call_started_event(from_run_response=run_response, tool=tool)
-
-        # If the model response is a tool_call_completed, update the existing tool call in the run_response
-        elif model_response_chunk.event == ModelResponseEvent.tool_call_completed.value:
-            reasoning_step: Optional[ReasoningStep] = None
-
-            tool_executions_list = model_response_chunk.tool_executions
-            if tool_executions_list is not None:
-                # Update the existing tool call in the run_response
-                if run_response.tools:
-                    # Create a mapping of tool_call_id to index
-                    tool_call_index_map = {
-                        tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
-                    }
-                    # Process tool calls
-                    for tool_call_dict in tool_executions_list:
-                        tool_call_id = tool_call_dict.tool_call_id or ""
-                        index = tool_call_index_map.get(tool_call_id)
-                        if index is not None:
-                            run_response.tools[index] = tool_call_dict
-                else:
-                    run_response.tools = tool_executions_list
-
-                # Only iterate through new tool calls
-                for tool_call in tool_executions_list:
-                    tool_name = tool_call.tool_name or ""
-                    if tool_name.lower() in ["think", "analyze"]:
-                        tool_args = tool_call.tool_args or {}
-
-                        reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
-
-                        metrics = tool_call.metrics
-                        if metrics is not None and metrics.time is not None:
-                            reasoning_state["reasoning_time_taken"] = reasoning_state["reasoning_time_taken"] + float(
-                                metrics.time
-                            )
-                    yield create_tool_call_completed_event(
-                        from_run_response=run_response, tool=tool_call, content=model_response_chunk.content
-                    )
-
-            if stream_intermediate_steps:
-                if reasoning_step is not None:
-                    if not reasoning_state["reasoning_started"]:
-                        yield create_reasoning_started_event(from_run_response=run_response)
-                        reasoning_state["reasoning_started"] = True
-
-                    yield create_reasoning_step_event(
+                # Only yield if we have content or thinking to show
+                if (
+                    model_response_event.content is not None
+                    or model_response_event.thinking is not None
+                    or model_response_event.redacted_thinking is not None
+                    or model_response_event.citations is not None
+                ):
+                    yield create_run_response_content_event(
                         from_run_response=run_response,
-                        reasoning_step=reasoning_step,
-                        reasoning_content=run_response.reasoning_content or "",
+                        content=model_response_event.content,
+                        thinking=model_response_event.thinking,
+                        redacted_thinking=model_response_event.redacted_thinking,
+                        citations=model_response_event.citations,
                     )
+
+                # Process audio
+                if model_response_event.audio is not None:
+                    if model_response.audio is None:
+                        model_response.audio = AudioResponse(id=str(uuid4()), content="", transcript="")
+
+                    if model_response_event.audio.id is not None:
+                        model_response.audio.id = model_response_event.audio.id  # type: ignore
+                    if model_response_event.audio.content is not None:
+                        model_response.audio.content += model_response_event.audio.content  # type: ignore
+                    if model_response_event.audio.transcript is not None:
+                        model_response.audio.transcript += model_response_event.audio.transcript  # type: ignore
+                    if model_response_event.audio.expires_at is not None:
+                        model_response.audio.expires_at = model_response_event.audio.expires_at  # type: ignore
+                    if model_response_event.audio.mime_type is not None:
+                        model_response.audio.mime_type = model_response_event.audio.mime_type  # type: ignore
+                    model_response.audio.sample_rate = model_response_event.audio.sample_rate
+                    model_response.audio.channels = model_response_event.audio.channels
+
+                    # Yield the audio and transcript bit by bit
+                    run_response.response_audio = AudioResponse(
+                        id=model_response_event.audio.id,
+                        content=model_response_event.audio.content,
+                        transcript=model_response_event.audio.transcript,
+                        sample_rate=model_response_event.audio.sample_rate,
+                        channels=model_response_event.audio.channels,
+                    )
+                    run_response.created_at = model_response_event.created_at
+
+                    yield create_run_response_content_event(
+                        from_run_response=run_response,
+                        response_audio=run_response.response_audio,
+                    )
+
+                if model_response_event.image is not None:
+                    self.add_image(model_response_event.image)
+
+                    yield create_run_response_content_event(
+                        from_run_response=run_response,
+                        image=model_response_event.image,
+                    )
+
+            # Handle tool interruption events
+            elif model_response_event.event == ModelResponseEvent.tool_call_paused.value:
+                # Add tool calls to the run_response
+                tool_executions_list = model_response_event.tool_executions
+                if tool_executions_list is not None:
+                    # Add tool calls to the agent.run_response
+                    if run_response.tools is None:
+                        run_response.tools = tool_executions_list
+                    else:
+                        run_response.tools.extend(tool_executions_list)
+
+                    # Format tool calls whenever new ones are added during streaming
+                    run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+            # If the model response is a tool_call_started, add the tool call to the run_response
+            elif (
+                model_response_event.event == ModelResponseEvent.tool_call_started.value
+            ):  # Add tool calls to the run_response
+                tool_executions_list = model_response_event.tool_executions
+                if tool_executions_list is not None:
+                    # Add tool calls to the agent.run_response
+                    if run_response.tools is None:
+                        run_response.tools = tool_executions_list
+                    else:
+                        run_response.tools.extend(tool_executions_list)
+
+                    # Format tool calls whenever new ones are added during streaming
+                    run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
+
+                    # Yield each tool call started event
+                    for tool in tool_executions_list:
+                        yield create_tool_call_started_event(from_run_response=run_response, tool=tool)
+
+            # If the model response is a tool_call_completed, update the existing tool call in the run_response
+            elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
+                reasoning_step: Optional[ReasoningStep] = None
+
+                tool_executions_list = model_response_event.tool_executions
+                if tool_executions_list is not None:
+                    # Update the existing tool call in the run_response
+                    if run_response.tools:
+                        # Create a mapping of tool_call_id to index
+                        tool_call_index_map = {
+                            tc.tool_call_id: i for i, tc in enumerate(run_response.tools) if tc.tool_call_id is not None
+                        }
+                        # Process tool calls
+                        for tool_call_dict in tool_executions_list:
+                            tool_call_id = tool_call_dict.tool_call_id or ""
+                            index = tool_call_index_map.get(tool_call_id)
+                            if index is not None:
+                                run_response.tools[index] = tool_call_dict
+                    else:
+                        run_response.tools = tool_executions_list
+
+                    # Only iterate through new tool calls
+                    for tool_call in tool_executions_list:
+                        tool_name = tool_call.tool_name or ""
+                        if tool_name.lower() in ["think", "analyze"]:
+                            tool_args = tool_call.tool_args or {}
+
+                            reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
+
+                            metrics = tool_call.metrics
+                            if metrics is not None and metrics.time is not None:
+                                reasoning_state["reasoning_time_taken"] = reasoning_state[
+                                    "reasoning_time_taken"
+                                ] + float(metrics.time)
+                        yield create_tool_call_completed_event(
+                            from_run_response=run_response, tool=tool_call, content=model_response_event.content
+                        )
+
+                if stream_intermediate_steps:
+                    if reasoning_step is not None:
+                        if not reasoning_state["reasoning_started"]:
+                            yield create_reasoning_started_event(from_run_response=run_response)
+                            reasoning_state["reasoning_started"] = True
+
+                        yield create_reasoning_step_event(
+                            from_run_response=run_response,
+                            reasoning_step=reasoning_step,
+                            reasoning_content=run_response.reasoning_content or "",
+                        )
 
     def _generator_wrapper(self, event: RunResponseEvent) -> Iterator[RunResponseEvent]:
         yield event
@@ -3515,19 +3522,23 @@ class Agent:
         # Add tools for accessing memory
         if self.read_chat_history:
             agent_tools.append(self.get_chat_history_function(session_id=session_id))
+            self._rebuild_tools = True
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
+            self._rebuild_tools = True
         if self.search_previous_sessions_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(
                     num_history_sessions=self.num_history_sessions, user_id=user_id
                 )
             )
+            self._rebuild_tools = True
 
         if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
             agent_tools.append(self.update_memory)
         elif isinstance(self.memory, Memory) and self.enable_agentic_memory:
             agent_tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            self._rebuild_tools = True
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.retriever is not None:
@@ -3552,6 +3563,8 @@ class Agent:
                     agent_tools.append(
                         self.search_knowledge_base_function(async_mode=async_mode, knowledge_filters=knowledge_filters)
                     )
+                self._rebuild_tools = True
+
             if self.update_knowledge:
                 agent_tools.append(self.add_to_knowledge)
 
@@ -3559,6 +3572,7 @@ class Agent:
         if self.has_team and self.team is not None:
             for agent_index, agent in enumerate(self.team):
                 agent_tools.append(self.get_transfer_function(agent, agent_index, session_id))
+            self._rebuild_tools = True
 
         return agent_tools
 
@@ -3570,88 +3584,90 @@ class Agent:
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
-        agent_tools = self.get_tools(
-            session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
-        )
+        if self._rebuild_tools:
+            self._rebuild_tools = False
 
-        # We have to reset the tools every time because the tool factories produce new functions that is context aware that needs to be reset
-        self._tools_for_model = []
-        self._functions_for_model = {}
+            agent_tools = self.get_tools(
+                session_id=session_id, async_mode=async_mode, user_id=user_id, knowledge_filters=knowledge_filters
+            )
 
-        # Get Agent tools
-        if agent_tools is not None and len(agent_tools) > 0:
-            log_debug("Processing tools for model")
+            self._tools_for_model = []
+            self._functions_for_model = {}
 
-            # Check if we need strict mode for the functions for the model
-            strict = False
-            if (
-                self.response_model is not None
-                and (self.structured_outputs or (not self.use_json_mode))
-                and model.supports_native_structured_outputs
-            ):
-                strict = True
+            # Get Agent tools
+            if agent_tools is not None and len(agent_tools) > 0:
+                log_debug("Processing tools for model")
 
-            for tool in agent_tools:
-                if isinstance(tool, Dict):
-                    # If a dict is passed, it is a builtin tool
-                    # that is run by the model provider and not the Agent
-                    self._tools_for_model.append(tool)
-                    log_debug(f"Included builtin tool {tool}")
+                # Check if we need strict mode for the functions for the model
+                strict = False
+                if (
+                    self.response_model is not None
+                    and (self.structured_outputs or (not self.use_json_mode))
+                    and model.supports_native_structured_outputs
+                ):
+                    strict = True
 
-                elif isinstance(tool, Toolkit):
-                    # For each function in the toolkit and process entrypoint
-                    for name, func in tool.functions.items():
-                        # If the function does not exist in self.functions
-                        if name not in self._functions_for_model:
-                            func._agent = self
-                            func.process_entrypoint(strict=strict)
-                            if strict and func.strict is None:
-                                func.strict = True
+                for tool in agent_tools:
+                    if isinstance(tool, Dict):
+                        # If a dict is passed, it is a builtin tool
+                        # that is run by the model provider and not the Agent
+                        self._tools_for_model.append(tool)
+                        log_debug(f"Included builtin tool {tool}")
+
+                    elif isinstance(tool, Toolkit):
+                        # For each function in the toolkit and process entrypoint
+                        for name, func in tool.functions.items():
+                            # If the function does not exist in self.functions
+                            if name not in self._functions_for_model:
+                                func._agent = self
+                                func.process_entrypoint(strict=strict)
+                                if strict and func.strict is None:
+                                    func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                self._functions_for_model[name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                log_debug(f"Added tool {name} from {tool.name}")
+
+                        # Add instructions from the toolkit
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
+
+                    elif isinstance(tool, Function):
+                        if tool.name not in self._functions_for_model:
+                            tool._agent = self
+                            tool.process_entrypoint(strict=strict)
+                            if strict and tool.strict is None:
+                                tool.strict = True
                             if self.tool_hooks is not None:
-                                func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {name} from {tool.name}")
+                                tool.tool_hooks = self.tool_hooks
+                            self._functions_for_model[tool.name] = tool
+                            self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
+                            log_debug(f"Added tool {tool.name}")
 
-                    # Add instructions from the toolkit
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
+                        # Add instructions from the Function
+                        if tool.add_instructions and tool.instructions is not None:
+                            if self._tool_instructions is None:
+                                self._tool_instructions = []
+                            self._tool_instructions.append(tool.instructions)
 
-                elif isinstance(tool, Function):
-                    if tool.name not in self._functions_for_model:
-                        tool._agent = self
-                        tool.process_entrypoint(strict=strict)
-                        if strict and tool.strict is None:
-                            tool.strict = True
-                        if self.tool_hooks is not None:
-                            tool.tool_hooks = self.tool_hooks
-                        self._functions_for_model[tool.name] = tool
-                        self._tools_for_model.append({"type": "function", "function": tool.to_dict()})
-                        log_debug(f"Added tool {tool.name}")
-
-                    # Add instructions from the Function
-                    if tool.add_instructions and tool.instructions is not None:
-                        if self._tool_instructions is None:
-                            self._tool_instructions = []
-                        self._tool_instructions.append(tool.instructions)
-
-                elif callable(tool):
-                    try:
-                        function_name = tool.__name__
-                        if function_name not in self._functions_for_model:
-                            func = Function.from_callable(tool, strict=strict)
-                            func._agent = self
-                            if strict:
-                                func.strict = True
-                            if self.tool_hooks is not None:
-                                func.tool_hooks = self.tool_hooks
-                            self._functions_for_model[func.name] = func
-                            self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                            log_debug(f"Added tool {func.name}")
-                    except Exception as e:
-                        log_warning(f"Could not add tool {tool}: {e}")
+                    elif callable(tool):
+                        try:
+                            function_name = tool.__name__
+                            if function_name not in self._functions_for_model:
+                                func = Function.from_callable(tool, strict=strict)
+                                func._agent = self
+                                if strict:
+                                    func.strict = True
+                                if self.tool_hooks is not None:
+                                    func.tool_hooks = self.tool_hooks
+                                self._functions_for_model[func.name] = func
+                                self._tools_for_model.append({"type": "function", "function": func.to_dict()})
+                                log_debug(f"Added tool {func.name}")
+                        except Exception as e:
+                            log_warning(f"Could not add tool {tool}: {e}")
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)

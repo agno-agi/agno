@@ -36,7 +36,7 @@ class BaseWorkflowRunResponseEvent:
     # Workflow-specific fields
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
-    sequence_name: Optional[str] = None
+    pipeline_name: Optional[str] = None
     task_name: Optional[str] = None
     task_index: Optional[int] = None
     session_id: Optional[str] = None
@@ -154,7 +154,7 @@ class WorkflowRunResponse:
     # Workflow-specific fields
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
-    sequence_name: Optional[str] = None
+    pipeline_name: Optional[str] = None
     task_name: Optional[str] = None
     task_index: Optional[int] = None
 

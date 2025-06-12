@@ -1,11 +1,8 @@
-import asyncio
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
-from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.task import Task, TaskInput, TaskOutput
 from agno.workflow.v2.workflow import Workflow
 
@@ -33,7 +30,7 @@ research_team = Team(
 
 
 # Updated custom execution functions that work with TaskInput
-async def custom_blog_analysis_function(task_input: TaskInput) -> TaskOutput:
+def custom_blog_analysis_function(task_input: TaskInput) -> TaskOutput:
     """
     Custom function that does preprocessing, calls an agent, and does postprocessing
     """
@@ -59,7 +56,7 @@ async def custom_blog_analysis_function(task_input: TaskInput) -> TaskOutput:
 
     # Call the agent with enhanced input
     try:
-        response = await blog_analyzer.arun(enhanced_query)
+        response = blog_analyzer.run(enhanced_query)
 
         # Custom postprocessing
         enhanced_content = f"""
@@ -91,11 +88,12 @@ async def custom_blog_analysis_function(task_input: TaskInput) -> TaskOutput:
     except Exception as e:
         return TaskOutput(
             content=f"Custom blog analysis failed: {str(e)}",
-            metadata={"error": True, "function_name": "custom_blog_analysis_function"},
+            metadata={"error": True,
+                      "function_name": "custom_blog_analysis_function"},
         )
 
 
-async def custom_team_research_function(task_input: TaskInput) -> TaskOutput:
+def custom_team_research_function(task_input: TaskInput) -> TaskOutput:
     """
     Custom function that coordinates team execution with custom logic
     """
@@ -132,7 +130,7 @@ async def custom_team_research_function(task_input: TaskInput) -> TaskOutput:
     """
 
     try:
-        response = await research_team.arun(team_prompt)
+        response = research_team.run(team_prompt)
 
         enhanced_content = f"""
             ## Custom Team Research Report
@@ -167,11 +165,12 @@ async def custom_team_research_function(task_input: TaskInput) -> TaskOutput:
     except Exception as e:
         return TaskOutput(
             content=f"Custom team research failed: {str(e)}",
-            metadata={"error": True, "function_name": "custom_team_research_function"},
+            metadata={"error": True,
+                      "function_name": "custom_team_research_function"},
         )
 
 
-async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
+def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     """
     Custom function that does intelligent content planning with context awareness
     """
@@ -209,7 +208,7 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     """
 
     try:
-        response = await content_planner.arun(planning_prompt)
+        response = content_planner.run(planning_prompt)
 
         enhanced_content = f"""
             ## Strategic Content Plan
@@ -270,17 +269,8 @@ custom_planning_task = Task(
     description="Custom content planning with context integration",
 )
 
-# Define sequences showcasing different approaches
-custom_sequence = Sequence(
-    name="custom_sequence",
-    description="Custom workflow using execution functions",
-    tasks=[custom_analysis_task, custom_research_task, custom_planning_task],
-)
-
 # Define and use examples
-
-
-async def main():
+if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation with custom execution options",
@@ -289,22 +279,15 @@ async def main():
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        sequences=[custom_sequence],
+        tasks=[custom_analysis_task, custom_research_task, custom_planning_task],
     )
     print("=== Custom Sequence (Custom Execution Functions) ===")
     try:
-        await content_creation_workflow.aprint_response(
+        content_creation_workflow.print_response(
             query="AI trends in 2024",
-            sequence_name="custom_sequence",
             markdown=True,
-            show_time=True,
-            show_task_details=True,
         )
     except Exception as e:
         print(f"Custom sequence failed: {e}")
 
     print("\n" + "=" * 60 + "\n")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

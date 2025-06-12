@@ -1,11 +1,23 @@
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
-from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
+
+
+class ResearchTopic(BaseModel):
+    """Structured research topic with specific requirements"""
+    focus_areas: List[str] = Field(description="Specific areas to focus on")
+    target_audience: str = Field(description="Who this research is for")
+    sources_required: int = Field(
+        description="Number of sources needed", default=5)
+
 
 # Define agents
 blog_analyzer = Agent(
@@ -48,20 +60,6 @@ research_task = Task(
     description="Deep research and analysis of content",
 )
 
-# Define sequences
-content_creation_sequence = Sequence(
-    name="content_creation",
-    description="End-to-end content creation from blog to social media",
-    tasks=[analyze_blog_task],
-)
-
-research_sequence = Sequence(
-    name="research_sequence",
-    description="Deep research workflow using teams",
-    tasks=[research_task, plan_content_task],
-)
-
-
 # Create and use workflow
 if __name__ == "__main__":
     content_creation_workflow = Workflow(
@@ -72,16 +70,21 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        sequences=[research_sequence, content_creation_sequence],
+        tasks=[research_task, plan_content_task],
     )
-    print("=== Research Sequence (Rich Display) ===")
+
+    print("=== Example 1: Research with Structured Topic ===")
+    research_topic = ResearchTopic(
+        focus_areas=["Machine Learning", "Natural Language Processing",
+                     "Computer Vision", "AI Ethics"],
+        target_audience="Tech professionals and business leaders",
+        sources_required=8,
+    )
     try:
         content_creation_workflow.print_response(
             query="AI trends in 2024",
-            sequence_name="research_sequence",
+            message_data=research_topic,
             markdown=True,
-            show_time=True,
-            show_task_details=True,
         )
     except Exception as e:
         print(f"Research sequence failed: {e}")

@@ -4,12 +4,9 @@ from uuid import uuid4
 
 from agno.run.v2.workflow import (
     TaskCompletedEvent,
-    TaskErrorEvent,
-    TaskStartedEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
     WorkflowRunResponse,
-    WorkflowRunResponseEvent,
     WorkflowStartedEvent,
 )
 from agno.utils.log import logger
@@ -17,20 +14,20 @@ from agno.workflow.v2.task import Task, TaskInput, TaskOutput
 
 
 @dataclass
-class Sequence:
-    """A sequence of tasks that execute in order"""
+class Pipeline:
+    """A pipeline of tasks that execute in order"""
 
-    # Sequence identification
+    # Pipeline_name identification
     name: str
-    sequence_id: Optional[str] = None
+    pipeline_id: Optional[str] = None
     description: Optional[str] = None
 
     # Tasks to execute
     tasks: List[Task] = field(default_factory=list)
 
     def __post_init__(self):
-        if self.sequence_id is None:
-            self.sequence_id = str(uuid4())
+        if self.pipeline_id is None:
+            self.pipeline_id = str(uuid4())
 
     def execute(
         self,
@@ -49,10 +46,10 @@ class Sequence:
         """Execute all tasks in the sequence using TaskInput/TaskOutput (non-streaming)"""
         logger.info(f"Starting sequence: {self.name}")
 
-        # Initialize sequence context
+        # Initialize pipeline context
         sequence_context = context or {}
-        sequence_context["sequence_name"] = self.name
-        sequence_context["sequence_id"] = self.sequence_id
+        sequence_context["pipeline_name"] = self.name
+        sequence_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -72,15 +69,19 @@ class Sequence:
             task_output = task.execute(task_input, task_context)
 
             # Collect the task output
+            if task_output is None:
+                raise RuntimeError(f"Task {task.name} did not return a TaskOutput")
+
+            # Collect the TaskOutput for storage
             collected_task_outputs.append(task_output)
 
             # Update previous_outputs for next task
             self._update_previous_outputs(previous_outputs, task, task_output, i)
-
+            
         # Create final output data
         final_output = {
-            "sequence_name": self.name,
-            "sequence_id": self.sequence_id,
+            "pipeline_name": self.name,
+            "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
             "task_summary": [
@@ -111,7 +112,6 @@ class Sequence:
         self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponse, str]]:
         """Execute the sequence with streaming support"""
-        from agno.run.v2.workflow import TaskCompletedEvent, WorkflowCompletedEvent, WorkflowStartedEvent
 
         logger.info(f"Executing sequence with streaming: {self.name}")
 
@@ -200,9 +200,9 @@ class Sequence:
         # Yield workflow completed event
         yield WorkflowCompletedEvent(
             run_id=context.get("run_id", ""),
-            content=f"Sequence {self.name} completed successfully",
+            content=f"Pipeline {self.name} completed successfully",
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=self.name,
+            pipeline_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
             session_id=context.get("session_id") if context else None,
             task_responses=collected_task_outputs,
@@ -212,13 +212,13 @@ class Sequence:
     async def aexecute(
         self, inputs: Dict[str, Any], context: Dict[str, Any] = None
     ) -> AsyncIterator[WorkflowRunResponse]:
-        """Execute all tasks in the sequence sequentially using TaskInput/TaskOutput asynchronously"""
-        logger.info(f"Starting async sequence: {self.name}")
+        """Execute all tasks in the pipeline sequentially using TaskInput/TaskOutput asynchronously"""
+        logger.info(f"Starting async pipeline: {self.name}")
 
-        # Initialize sequence context
+        # Initialize pipeline context
         sequence_context = context or {}
-        sequence_context["sequence_name"] = self.name
-        sequence_context["sequence_id"] = self.sequence_id
+        sequence_context["pipeline_name"] = self.name
+        sequence_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -227,10 +227,10 @@ class Sequence:
 
         # Workflow started event
         yield WorkflowRunResponse(
-            content=f"Sequence {self.name} started",
+            content=f"Pipeline {self.name} started",
             event=WorkflowRunEvent.workflow_started,
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=self.name,
+            pipeline_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
             run_id=context.get("run_id") if context else None,
             session_id=context.get("session_id") if context else None,
@@ -271,7 +271,7 @@ class Sequence:
                 content=task_output.content,
                 event=WorkflowRunEvent.task_completed,
                 workflow_name=context.get("workflow_name") if context else None,
-                sequence_name=self.name,
+                pipeline_name=self.name,
                 task_name=task.name,
                 task_index=i,
                 workflow_id=context.get("workflow_id") if context else None,
@@ -288,8 +288,8 @@ class Sequence:
 
         # Workflow completed event with all task outputs
         final_output = {
-            "sequence_name": self.name,
-            "sequence_id": self.sequence_id,
+            "pipeline_name": self.name,
+            "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
             "task_summary": [
@@ -305,10 +305,10 @@ class Sequence:
         }
 
         yield WorkflowRunResponse(
-            content=f"Sequence {self.name} completed successfully",
+            content=f"Pipeline {self.name} completed successfully",
             event=WorkflowRunEvent.workflow_completed,
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=self.name,
+            pipeline_name=self.name,
             workflow_id=context.get("workflow_id") if context else None,
             run_id=context.get("run_id") if context else None,
             session_id=context.get("session_id") if context else None,
@@ -369,11 +369,11 @@ class Sequence:
             previous_outputs["audio"] = task_output.audio  # Latest audio
 
     def add_task(self, task: Task) -> None:
-        """Add a task to the sequence"""
+        """Add a task to the pipeline"""
         self.tasks.append(task)
 
     def remove_task(self, task_name: str) -> bool:
-        """Remove a task from the sequence by name"""
+        """Remove a task from the pipeline by name"""
         for i, task in enumerate(self.tasks):
             if task.name == task_name:
                 del self.tasks[i]

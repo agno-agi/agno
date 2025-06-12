@@ -17,6 +17,8 @@ from utils import print_chat_history
 
 memory = Memory()
 
+memory.clear()
+
 stock_searcher = Agent(
     name="Stock Searcher",
     model=Claude(id="claude-3-5-sonnet-20241022"),
