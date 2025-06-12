@@ -297,10 +297,12 @@ def get_async_router(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             if not workflow_input:
                 raise HTTPException(status_code=400, detail="Workflow input is required")
+
+            # Parse workflow_input into a dict if it is a valid JSON
             try:
                 workflow_input = json.loads(workflow_input)
             except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Workflow input must be a valid JSON string")
+                pass
 
         if agent:
             agent.monitoring = bool(monitor)
@@ -351,10 +353,16 @@ def get_async_router(
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(**(workflow_input or {}))),  # type: ignore
-                    media_type="text/event-stream",
-                )
+                if isinstance(workflow_input, dict):
+                    return StreamingResponse(
+                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(**workflow_input)),
+                        media_type="text/event-stream",
+                    )
+                else:
+                    return StreamingResponse(
+                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(workflow_input)),
+                        media_type="text/event-stream",
+                    )
         else:
             if agent:
                 run_response = cast(
@@ -386,6 +394,9 @@ def get_async_router(
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return (await workflow_instance.arun(**(workflow_input or {}))).to_dict()  # type: ignore
+                if isinstance(workflow_input, dict):
+                    return (await workflow_instance.arun(**workflow_input)).to_dict()
+                else:
+                    return (await workflow_instance.arun(workflow_input)).to_dict()
 
     return router
