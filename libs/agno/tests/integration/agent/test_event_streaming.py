@@ -104,6 +104,7 @@ def test_basic_intermediate_steps_events_persisted(agent_storage):
     assert run_response_from_storage["events"][0]["event"] == RunEvent.run_started
     assert run_response_from_storage["events"][1]["event"] == RunEvent.run_completed
 
+
 def test_intermediate_steps_with_tools():
     """Test that the agent streams events."""
     agent = Agent(
@@ -174,6 +175,7 @@ def test_intermediate_steps_with_tools_events_persisted(agent_storage):
     assert run_response_from_storage["events"][1]["event"] == RunEvent.tool_call_started
     assert run_response_from_storage["events"][2]["event"] == RunEvent.tool_call_completed
     assert run_response_from_storage["events"][3]["event"] == RunEvent.run_completed
+
 
 def test_intermediate_steps_with_reasoning():
     """Test that the agent streams events."""

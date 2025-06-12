@@ -79,6 +79,7 @@ def test_basic_intermediate_steps_events():
     assert len(events[TeamRunEvent.run_response_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
+
 def test_basic_intermediate_steps_events_persisted(team_storage):
     """Test that the agent streams events."""
     team = Team(
@@ -106,6 +107,7 @@ def test_basic_intermediate_steps_events_persisted(team_storage):
     assert len(run_response_from_storage["events"]) == 2, "We should only have the run started and run completed events"
     assert run_response_from_storage["events"][0]["event"] == TeamRunEvent.run_started
     assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.run_completed
+
 
 def test_intermediate_steps_with_tools():
     team = Team(
@@ -177,6 +179,7 @@ def test_intermediate_steps_with_tools_events_persisted(team_storage):
     assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.tool_call_started
     assert run_response_from_storage["events"][2]["event"] == TeamRunEvent.tool_call_completed
     assert run_response_from_storage["events"][3]["event"] == TeamRunEvent.run_completed
+
 
 def test_intermediate_steps_with_reasoning():
     team = Team(

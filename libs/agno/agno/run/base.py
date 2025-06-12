@@ -113,7 +113,6 @@ class BaseRunResponseEvent:
 
         return json.dumps(_dict, indent=2)
 
-
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
         tool = data.pop("tool", None)
@@ -139,7 +138,7 @@ class BaseRunResponseEvent:
         response_audio = data.pop("response_audio", None)
         if response_audio:
             data["response_audio"] = AudioResponse.model_validate(response_audio)
-        
+
         member_responses = data.pop("member_responses", None)
         member_responses_final = []
         for response in member_responses or []:
@@ -155,13 +154,12 @@ class BaseRunResponseEvent:
         extra_data = data.pop("extra_data", None)
         if extra_data:
             data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
-            
+
         # To make it backwards compatible
         if "event" in data:
             data.pop("event")
 
         return cls(**data)
-
 
     @property
     def is_paused(self):

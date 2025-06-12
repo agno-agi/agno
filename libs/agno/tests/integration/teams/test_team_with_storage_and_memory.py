@@ -207,14 +207,13 @@ async def test_multi_user_multi_session_route_team(route_team, team_storage, mem
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
 
 
-
 @pytest.mark.asyncio
 async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     """Test multi-user multi-session route team with storage and memory."""
     # Define user and session IDs
     user_id = "user_1@example.com"
     session_id = "session_123"
-    
+
     route_team.mode = "coordinate"
     route_team.members = [
         Agent(
@@ -226,21 +225,23 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
             name="Answers big questions",
             model=OpenAIChat(id="gpt-4o-mini"),
             storage=agent_storage,
-        )
+        ),
     ]
 
     # Should create a new team session and agent session
-    await route_team.arun("Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id)
-    
+    await route_team.arun(
+        "Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id
+    )
+
     team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
     assert len(team_sessions) == 1
     assert team_sessions[0].session_id == session_id
     assert team_sessions[0].user_id == user_id
     assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
-    
+
     agent_sessions = agent_storage.get_all_sessions()
     # Single shared session for both agents
-    assert len(agent_sessions) == 1 
+    assert len(agent_sessions) == 1
     assert agent_sessions[0].session_id == session_id
     assert agent_sessions[0].user_id == user_id
     assert len(agent_sessions[0].memory["runs"]) == 2

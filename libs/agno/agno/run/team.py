@@ -192,7 +192,7 @@ class TeamRunResponse:
 
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
-    
+
     events: Optional[List[Union[RunResponseEvent, TeamRunResponseEvent]]] = None
 
     status: RunStatus = RunStatus.running
@@ -279,6 +279,16 @@ class TeamRunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
+        events = data.pop("events", None)
+        final_events = []
+        for event in events:
+            if "agent_id" in event:
+                event = RunResponseEvent.from_dict(event)
+            else:
+                event = TeamRunResponseEvent.from_dict(event)
+            final_events.append(event)
+        events = final_events
+
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
@@ -323,6 +333,7 @@ class TeamRunResponse:
             audio=audio,
             response_audio=response_audio,
             tools=tools,
+            events=events,
             **data,
         )
 
