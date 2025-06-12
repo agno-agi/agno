@@ -263,6 +263,8 @@ class Team:
     stream_intermediate_steps: bool = False
     # Store the events from the Team
     store_events: bool = False
+    # Stream the member events from the Team
+    stream_member_events: bool = True
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -342,6 +344,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
+        stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
         monitoring: bool = False,
@@ -425,6 +428,7 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
+        self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
         self.show_members_responses = show_members_responses
@@ -757,7 +761,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1147,7 +1151,7 @@ class Team:
             model=self.model,
             session_id=session_id,
             user_id=user_id,
-            async_mode=False,
+            async_mode=True,
             knowledge_filters=effective_filters,
             message=message,
             images=images,
@@ -1162,7 +1166,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1749,8 +1753,12 @@ class Team:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
         ):
-            # We just bubble the event up
-            yield model_response_event  # type: ignore
+            if self.stream_member_events:
+                # We just bubble the event up
+                yield model_response_event  # type: ignore
+            else:
+                # Don't yield anything
+                return
         else:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
@@ -4368,6 +4376,7 @@ class Team:
             run_id=self.run_id,
             session_id=session_id,
             team_id=self.team_id,
+            team_name=self.name,
             content=content,
             thinking=thinking,
             tools=tools,
@@ -4474,6 +4483,7 @@ class Team:
             )
             forward_task_func: Function = self.get_forward_task_function(
                 message=user_message,
+                user_id=user_id,
                 session_id=session_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
@@ -4492,6 +4502,7 @@ class Team:
             _tools.append(
                 self.get_transfer_task_function(
                     session_id=session_id,
+                    user_id=user_id,
                     stream=self.stream or False,
                     stream_intermediate_steps=self.stream_intermediate_steps,
                     async_mode=False,
@@ -4508,6 +4519,7 @@ class Team:
         elif self.mode == "collaborate":
             run_member_agents_func = self.get_run_member_agents_function(
                 session_id=session_id,
+                user_id=user_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
                 async_mode=False,
@@ -5379,6 +5391,7 @@ class Team:
     def get_run_member_agents_function(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -5460,6 +5473,9 @@ class Team:
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -5472,7 +5488,15 @@ class Team:
                         yield member_agent_run_response_chunk
                 else:
                     member_agent_run_response = member_agent.run(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                        member_agent_task,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)
@@ -5564,7 +5588,15 @@ class Team:
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
-                        member_agent_task, images=images, videos=videos, audio=audio, files=files, stream=False
+                        member_agent_task,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
                     )
                     check_if_run_cancelled(response)
 
@@ -5637,6 +5669,7 @@ class Team:
     def get_transfer_task_function(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -5728,6 +5761,9 @@ class Team:
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5746,6 +5782,9 @@ class Team:
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5858,6 +5897,9 @@ class Team:
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5874,6 +5916,9 @@ class Team:
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6012,6 +6057,7 @@ class Team:
         self,
         message: Message,
         session_id: str,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         async_mode: bool = False,
@@ -6076,6 +6122,9 @@ class Team:
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6092,6 +6141,9 @@ class Team:
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6203,6 +6255,9 @@ class Team:
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6219,6 +6274,9 @@ class Team:
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
