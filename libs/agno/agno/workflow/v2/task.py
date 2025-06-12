@@ -126,7 +126,7 @@ class TaskOutput:
 
 @dataclass
 class Task:
-    """A single unit of work in a workflow sequence"""
+    """A single unit of work in a workflow pipeline"""
 
     name: str
     # Executor options - only one should be provided
@@ -209,7 +209,7 @@ class Task:
             run_id=context.get("run_id", ""),
             content=f"Starting task: {self.name}",
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=context.get("sequence_name") if context else None,
+            pipeline_name=context.get("pipeline_name") if context else None,
             task_name=self.name,
             task_index=context.get("task_index") if context else None,
             workflow_id=context.get("workflow_id") if context else None,
@@ -258,7 +258,7 @@ class Task:
             content=f"Starting task: {self.name}",
             event=WorkflowRunEvent.task_started,
             workflow_name=context.get("workflow_name") if context else None,
-            sequence_name=context.get("sequence_name") if context else None,
+            pipeline_name=context.get("pipeline_name") if context else None,
             task_name=self.name,
             task_index=context.get("task_index") if context else None,
             workflow_id=context.get("workflow_id") if context else None,

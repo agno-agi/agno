@@ -5,7 +5,6 @@ from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
-from agno.workflow.v2.sequence import Sequence
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
 
@@ -50,21 +49,9 @@ research_task = Task(
     description="Deep research and analysis of content",
 )
 
-# Define sequences
-content_creation_sequence = Sequence(
-    name="content_creation",
-    description="End-to-end content creation from blog to social media",
-    tasks=[analyze_blog_task],
-)
-
-research_sequence = Sequence(
-    name="research_sequence",
-    description="Deep research workflow using teams",
-    tasks=[research_task, plan_content_task],
-)
-
-
 # Create and use workflow
+
+
 async def main():
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
@@ -74,14 +61,13 @@ async def main():
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        sequences=[research_sequence, content_creation_sequence],
+        tasks=[research_task, plan_content_task],
     )
-    print("=== Research Sequence (Rich Display) ===")
+    print("=== Research Pipeline (Rich Display) ===")
     try:
         await content_creation_workflow.aprint_response(
             query="AI trends in 2024",
-            # Sequence that should be run
-            sequence_name="research_sequence",
+            pipeline_name="Research Pipeline",
             markdown=True,
             show_time=True,
             show_task_details=True,

@@ -13,14 +13,15 @@ from agno.run.v2.workflow import (
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
-from agno.utils.log import log_debug, logger
-from agno.workflow.v2.sequence import Sequence
+from agno.utils.log import log_debug, log_info, logger
+from agno.workflow.v2.pipeline import Pipeline
+from agno.workflow.v2.task import Task
 from agno.workflow.v2.trigger import ManualTrigger, Trigger, TriggerType
 
 
 @dataclass
 class Workflow:
-    """Workflow 2.0 - Sequence-based workflow execution"""
+    """Workflow 2.0 - Pipeline-based workflow execution"""
 
     # Workflow identification - make name optional with default
     name: Optional[str] = None
@@ -29,7 +30,8 @@ class Workflow:
 
     # Workflow configuration
     trigger: Trigger = field(default_factory=ManualTrigger)
-    sequences: List[Sequence] = field(default_factory=list)
+    pipelines: List[Pipeline] = field(default_factory=list)
+    tasks: Optional[List[Task]] = field(default_factory=list)
     storage: Optional[Storage] = None
 
     # Session management
@@ -61,10 +63,15 @@ class Workflow:
         if hasattr(self.__class__, "storage") and self.storage is None:
             self.storage = getattr(self.__class__, "storage", None)
 
-        if hasattr(self.__class__, "sequences") and not self.sequences:
-            class_sequences = getattr(self.__class__, "sequences", [])
-            if class_sequences:
-                self.sequences = class_sequences.copy()
+        if hasattr(self.__class__, "pipelines") and not self.pipelines:
+            class_pipelines = getattr(self.__class__, "pipelines", [])
+            if class_pipelines:
+                self.pipelines = class_pipelines.copy()
+
+        if hasattr(self.__class__, "tasks") and not self.tasks:
+            class_tasks = getattr(self.__class__, "tasks", [])
+            if class_tasks:
+                self.tasks = class_tasks.copy()
 
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
@@ -75,16 +82,35 @@ class Workflow:
         # Set storage mode to workflow_v2
         self.set_storage_mode()
 
+    def _auto_create_pipeline_from_tasks(self, pipeline_name: str = None):
+        """Auto-create a pipeline from tasks for manual triggers"""
+        # Only auto-create for manual triggers and when tasks are provided but no pipelines
+        if self.trigger.trigger_type == TriggerType.MANUAL and self.tasks and not self.pipelines:
+            # Create a default pipeline name
+            pipeline_name = f"{pipeline_name}" if pipeline_name else "default_pipeline"
+
+            # Create pipeline from tasks
+            auto_pipeline = Pipeline(
+                name=pipeline_name,
+                description=f"Auto-generated pipeline {pipeline_name} for workflow {self.name}",
+                tasks=self.tasks.copy(),
+            )
+
+            # Add to pipelines
+            self.pipelines = [auto_pipeline]
+
+            log_info(f"Auto-created pipeline '{pipeline_name}' from {len(self.tasks)} tasks")
+
     def set_storage_mode(self):
         """Set storage mode to workflow_v2"""
         if self.storage is not None:
             self.storage.mode = "workflow_v2"
 
-    def execute_sequence(self, sequence_name: str, inputs: Dict[str, Any]) -> Iterator[WorkflowRunResponse]:
-        """Execute a specific sequence by name synchronously"""
-        sequence = self.get_sequence(sequence_name)
-        if not sequence:
-            raise ValueError(f"Sequence '{sequence_name}' not found")
+    def execute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> Iterator[WorkflowRunResponse]:
+        """Execute a specific pipeline by name synchronously"""
+        pipeline = self.get_pipeline(pipeline_name)
+        if not pipeline:
+            raise ValueError(f"Pipeline '{pipeline_name}' not found")
 
         # Initialize execution
         self.run_id = str(uuid4())
@@ -109,8 +135,8 @@ class Workflow:
         workflow_run_responses = []
 
         try:
-            # Execute the sequence synchronously
-            for response in sequence.execute(inputs, context):
+            # Execute the pipeline synchronously
+            for response in pipeline.execute(inputs, context):
                 # Collect all responses
                 workflow_run_responses.append(response)
                 yield response
@@ -126,7 +152,7 @@ class Workflow:
                         content=final_response.content,
                         workflow_id=final_response.workflow_id,
                         workflow_name=final_response.workflow_name,
-                        sequence_name=final_response.sequence_name,
+                        pipeline_name=final_response.pipeline_name,
                         run_id=final_response.run_id,
                         session_id=final_response.session_id,
                         task_responses=final_response.task_responses,
@@ -147,7 +173,7 @@ class Workflow:
                 error=str(e),
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
-                sequence_name=sequence_name,
+                pipeline_name=pipeline_name,
                 session_id=self.session_id,
             )
 
@@ -158,7 +184,7 @@ class Workflow:
                     content=error_response.content,
                     workflow_id=error_response.workflow_id,
                     workflow_name=error_response.workflow_name,
-                    sequence_name=error_response.sequence_name,
+                    pipeline_name=error_response.pipeline_name,
                     run_id=error_response.run_id,
                     session_id=error_response.session_id,
                     created_at=error_response.created_at,
@@ -168,11 +194,11 @@ class Workflow:
 
             yield error_response
 
-    async def aexecute_sequence(self, sequence_name: str, inputs: Dict[str, Any]) -> AsyncIterator[WorkflowRunResponse]:
-        """Execute a specific sequence by name asynchronously"""
-        sequence = self.get_sequence(sequence_name)
-        if not sequence:
-            raise ValueError(f"Sequence '{sequence_name}' not found")
+    async def aexecute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> AsyncIterator[WorkflowRunResponse]:
+        """Execute a specific pipeline by name asynchronously"""
+        pipeline = self.get_pipeline(pipeline_name)
+        if not pipeline:
+            raise ValueError(f"Pipeline '{pipeline_name}' not found")
 
         # Initialize execution
         self.run_id = str(uuid4())
@@ -197,8 +223,8 @@ class Workflow:
         workflow_run_responses = []
 
         try:
-            # Execute the sequence asynchronously
-            async for response in sequence.aexecute(inputs, context):
+            # Execute the pipeline asynchronously
+            async for response in pipeline.aexecute(inputs, context):
                 # Collect all responses
                 workflow_run_responses.append(response)
                 yield response
@@ -222,7 +248,7 @@ class Workflow:
                 event=WorkflowRunEvent.workflow_error,
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
-                sequence_name=sequence_name,
+                pipeline_name=pipeline_name,
                 session_id=self.session_id,
                 run_id=self.run_id,
             )
@@ -236,9 +262,9 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
-        # Update all agents in sequences
-        for sequence in self.sequences:
-            for task in sequence.tasks:
+        # Update all agents in pipelines
+        for pipeline in self.pipelines:
+            for task in pipeline.tasks:
                 active_executor = task._active_executor
 
                 if hasattr(active_executor, "workflow_session_id"):
@@ -257,7 +283,7 @@ class Workflow:
     def run(
         self,
         query: str = None,
-        sequence_name: Optional[str] = None,
+        pipeline_name: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[TypingSequence[Audio]] = None,
@@ -274,26 +300,26 @@ class Workflow:
         # Load or create session
         self.load_session()
 
-        # Determine sequence based on trigger type and parameters
+        # Determine pipeline based on trigger type and parameters
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                raise ValueError("No sequences available in this workflow")
+            if not self.pipelines:
+                raise ValueError("No pipelines available in this workflow")
 
-            # If sequence_name is provided, use that specific sequence
-            if sequence_name:
-                target_sequence = self.get_sequence(sequence_name)
-                if not target_sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+            # If pipeline_name is provided, use that specific pipeline
+            if pipeline_name:
+                target_pipeline = self.get_pipeline(pipeline_name)
+                if not target_pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     raise ValueError(
-                        f"Sequence '{sequence_name}' not found. Available sequences: {available_sequences}"
+                        f"Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}"
                     )
-                selected_sequence_name = sequence_name
+                selected_pipeline_name = pipeline_name
             else:
-                # Default to first sequence if no sequence_name specified
-                selected_sequence_name = self.sequences[0].name
+                # Default to first pipeline if no pipeline_name specified
+                selected_pipeline_name = self.pipelines[0].name
         else:
             raise ValueError(
-                f"Sequence selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
+                f"Pipeline selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
             )
 
         # Prepare inputs with media support
@@ -312,15 +338,15 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected sequence synchronously
-        for response in self.execute_sequence(selected_sequence_name, inputs):
+        # Execute the selected pipeline synchronously
+        for response in self.execute_pipeline(selected_pipeline_name, inputs):
             yield response
 
     async def arun(
         self,
         query: Optional[str] = None,
         message: Optional[str] = None,
-        sequence_name: Optional[str] = None,
+        pipeline_name: Optional[str] = None,
         *,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -338,26 +364,26 @@ class Workflow:
         # Load or create session
         self.load_session()
 
-        # Determine sequence based on trigger type and parameters
+        # Determine pipeline based on trigger type and parameters
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                raise ValueError("No sequences available in this workflow")
+            if not self.pipelines:
+                raise ValueError("No pipelines available in this workflow")
 
-            # If sequence_name is provided, use that specific sequence
-            if sequence_name:
-                target_sequence = self.get_sequence(sequence_name)
-                if not target_sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+            # If pipeline_name is provided, use that specific pipeline
+            if pipeline_name:
+                target_pipeline = self.get_pipeline(pipeline_name)
+                if not target_pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     raise ValueError(
-                        f"Sequence '{sequence_name}' not found. Available sequences: {available_sequences}"
+                        f"Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}"
                     )
-                selected_sequence_name = sequence_name
+                selected_pipeline_name = pipeline_name
             else:
-                # Default to first sequence if no sequence_name specified
-                selected_sequence_name = self.sequences[0].name
+                # Default to first pipeline if no pipeline_name specified
+                selected_pipeline_name = self.pipelines[0].name
         else:
             raise ValueError(
-                f"Sequence selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
+                f"Pipeline selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
             )
 
         # Prepare inputs with media support
@@ -377,8 +403,8 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected sequence asynchronously
-        async for response in self.aexecute_sequence(selected_sequence_name, inputs):
+        # Execute the selected pipeline asynchronously
+        async for response in self.aexecute_pipeline(selected_pipeline_name, inputs):
             yield response
 
     def get_workflow_session(self) -> WorkflowSessionV2:
@@ -393,7 +419,7 @@ class Workflow:
                 "name": self.name,
                 "description": self.description,
                 "trigger": self.trigger.trigger_type.value,
-                "sequences": [
+                "pipelines": [
                     {
                         "name": seq.name,
                         "description": seq.description,
@@ -406,7 +432,7 @@ class Workflow:
                             for task in seq.tasks
                         ],
                     }
-                    for seq in self.sequences
+                    for seq in self.pipelines
                 ],
             },
             session_data={},
@@ -486,7 +512,7 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-        sequence_name: Optional[str] = None,
+        pipeline_name: Optional[str] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_task_details: bool = True,
@@ -496,7 +522,7 @@ class Workflow:
 
         Args:
             query: The main query/input for the workflow
-            sequence_name: Name of the sequence to execute (defaults to first sequence)
+            pipeline_name: Name of the pipeline to execute (defaults to first pipeline)
             markdown: Whether to render content as markdown
             show_time: Whether to show execution time
             show_task_details: Whether to show individual task outputs
@@ -513,33 +539,35 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
+        self._auto_create_pipeline_from_tasks(pipeline_name=pipeline_name)
+
         # Use query or message as primary input
         primary_input = query
         if primary_input is None:
             console.print("[red]Either 'query' or 'message' must be provided[/red]")
             return
 
-        # Validate sequence configuration based on trigger type
+        # Validate pipeline configuration based on trigger type
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                console.print("[red]No sequences available in this workflow[/red]")
+            if not self.pipelines:
+                console.print("[red]No pipelines available in this workflow[/red]")
                 return
 
-            # Determine which sequence to use
-            if sequence_name:
-                sequence = self.get_sequence(sequence_name)
-                if not sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+            # Determine which pipeline to use
+            if pipeline_name:
+                pipeline = self.get_pipeline(pipeline_name)
+                if not pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     console.print(
-                        f"[red]Sequence '{sequence_name}' not found. Available sequences: {available_sequences}[/red]"
+                        f"[red]Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}[/red]"
                     )
                     return
             else:
-                # Default to first sequence
-                sequence = self.sequences[0]
-                sequence_name = sequence.name
+                # Default to first pipeline
+                pipeline = self.pipelines[0]
+                pipeline_name = pipeline.name
         else:
-            # For other trigger types, we'll implement sequence selection logic later
+            # For other trigger types, we'll implement pipeline selection logic later
             console.print(
                 f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in print_response[/yellow]"
             )
@@ -558,10 +586,10 @@ class Workflow:
 
         workflow_info = f"""
             **Workflow:** {self.name}
-            **Sequence:** {sequence.name}
-            **Description:** {sequence.description or "No description"}
-            **Tasks:** {len(sequence.tasks)} tasks
-            **Available Sequences:** {", ".join([seq.name for seq in self.sequences])}
+            **Pipeline:** {pipeline.name}
+            **Description:** {pipeline.description or "No description"}
+            **Tasks:** {len(pipeline.tasks)} tasks
+            **Available pipelines:** {", ".join([seq.name for seq in self.pipelines])}
             **Query:** {primary_input}{media_str}
             **User ID:** {user_id or self.user_id or "Not set"}
             **Session ID:** {session_id or self.session_id}
@@ -588,7 +616,7 @@ class Workflow:
             try:
                 for response in self.run(
                     query=query,
-                    sequence_name=sequence_name,
+                    pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -635,7 +663,7 @@ class Workflow:
                         if response.extra_data:
                             final_output = response.extra_data
                             summary_content = f"""
-                                **Sequence:** {sequence_name}
+                                **Pipeline:** {pipeline_name}
                                 **Status:** {final_output.get("status", "Unknown")}
                                 **Tasks Completed:** {len(task_responses)}
                             """.strip()
@@ -673,7 +701,7 @@ class Workflow:
         self,
         query: Optional[str] = None,
         message: Optional[str] = None,
-        sequence_name: Optional[str] = None,
+        pipeline_name: Optional[str] = None,
         *,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -691,7 +719,7 @@ class Workflow:
         Args:
             query: The main query/input for the workflow
             message: Alternative to query (same as query)
-            sequence_name: Name of the sequence to execute (defaults to first sequence)
+            pipeline_name: Name of the pipeline to execute (defaults to first pipeline)
             user_id: User ID for the workflow execution
             session_id: Session ID for the workflow execution
             audio: Audio inputs for the workflow
@@ -711,6 +739,8 @@ class Workflow:
         from agno.utils.response import create_panel
         from agno.utils.timer import Timer
 
+        self._auto_create_pipeline_from_tasks(pipeline_name=pipeline_name)
+
         if console is None:
             from agno.cli.console import console
 
@@ -720,27 +750,27 @@ class Workflow:
             console.print("[red]Either 'query' or 'message' must be provided[/red]")
             return
 
-        # Validate sequence configuration based on trigger type
+        # Validate pipeline configuration based on trigger type
         if self.trigger.trigger_type == TriggerType.MANUAL:
-            if not self.sequences:
-                console.print("[red]No sequences available in this workflow[/red]")
+            if not self.pipelines:
+                console.print("[red]No pipelines available in this workflow[/red]")
                 return
 
-            # Determine which sequence to use
-            if sequence_name:
-                sequence = self.get_sequence(sequence_name)
-                if not sequence:
-                    available_sequences = [seq.name for seq in self.sequences]
+            # Determine which pipeline to use
+            if pipeline_name:
+                pipeline = self.get_pipeline(pipeline_name)
+                if not pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
                     console.print(
-                        f"[red]Sequence '{sequence_name}' not found. Available sequences: {available_sequences}[/red]"
+                        f"[red]Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}[/red]"
                     )
                     return
             else:
-                # Default to first sequence
-                sequence = self.sequences[0]
-                sequence_name = sequence.name
+                # Default to first pipeline
+                pipeline = self.pipelines[0]
+                pipeline_name = pipeline.name
         else:
-            # For other trigger types, we'll implement sequence selection logic later
+            # For other trigger types, we'll implement pipeline selection logic later
             console.print(
                 f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in aprint_response[/yellow]"
             )
@@ -759,10 +789,10 @@ class Workflow:
 
         workflow_info = f"""
             **Workflow:** {self.name}
-            **Sequence:** {sequence.name}
-            **Description:** {sequence.description or "No description"}
-            **Tasks:** {len(sequence.tasks)} tasks
-            **Available Sequences:** {", ".join([seq.name for seq in self.sequences])}
+            **Pipeline:** {pipeline.name}
+            **Description:** {pipeline.description or "No description"}
+            **Tasks:** {len(pipeline.tasks)} tasks
+            **Available pipelines:** {", ".join([seq.name for seq in self.pipelines])}
             **Query:** {primary_input}{media_str}
             **User ID:** {user_id or self.user_id or "Not set"}
             **Session ID:** {session_id or self.session_id}
@@ -790,7 +820,7 @@ class Workflow:
                 async for response in self.arun(
                     query=query,
                     message=message,
-                    sequence_name=sequence_name,
+                    pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -837,7 +867,7 @@ class Workflow:
                         if response.extra_data:
                             final_output = response.extra_data
                             summary_content = f"""
-                                **Sequence:** {sequence_name}
+                                **Pipeline:** {pipeline_name}
                                 **Status:** {final_output.get("status", "Unknown")}
                                 **Tasks Completed:** {len(task_responses)}
                             """.strip()
@@ -871,28 +901,28 @@ class Workflow:
                 )
                 console.print(error_panel)
 
-    def add_sequence(self, sequence: Sequence) -> None:
-        """Add a sequence to the workflow"""
-        self.sequences.append(sequence)
+    def add_pipeline(self, pipeline: Pipeline) -> None:
+        """Add a pipeline to the workflow"""
+        self.pipelines.append(pipeline)
 
-    def remove_sequences(self, sequence_name: str) -> bool:
-        """Remove a sequence by name"""
-        for i, sequence in enumerate(self.sequences):
-            if sequence.name == sequence_name:
-                del self.sequences[i]
+    def remove_pipelines(self, pipeline_name: str) -> bool:
+        """Remove a pipeline by name"""
+        for i, pipeline in enumerate(self.pipelines):
+            if pipeline.name == pipeline_name:
+                del self.pipelines[i]
                 return True
         return False
 
-    def get_sequence(self, sequence_name: str) -> Optional[Sequence]:
-        """Get a sequence by name"""
-        for sequence in self.sequences:
-            if sequence.name == sequence_name:
-                return sequence
+    def get_pipeline(self, pipeline_name: str) -> Optional[Pipeline]:
+        """Get a pipeline by name"""
+        for pipeline in self.pipelines:
+            if pipeline.name == pipeline_name:
+                return pipeline
         return None
 
-    def list_sequences(self) -> List[str]:
-        """List all sequence names"""
-        return [sequence.name for sequence in self.sequences]
+    def list_pipelines(self) -> List[str]:
+        """List all pipeline names"""
+        return [pipeline.name for pipeline in self.pipelines]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
@@ -901,7 +931,7 @@ class Workflow:
             "workflow_id": self.workflow_id,
             "description": self.description,
             "trigger": {"trigger_type": self.trigger.trigger_type.value, "config": self.trigger.__dict__},
-            "sequences": [
+            "pipelines": [
                 {
                     "name": p.name,
                     "description": p.description,
@@ -914,7 +944,7 @@ class Workflow:
                         for t in p.tasks
                     ],
                 }
-                for p in self.sequences
+                for p in self.pipelines
             ],
             "session_id": self.session_id,
         }
