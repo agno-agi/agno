@@ -1744,13 +1744,16 @@ class Team:
         reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
-        if self.stream_member_events:
-            if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
-                model_response_event, tuple(get_args(TeamRunResponseEvent))
-            ):
+        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
+            model_response_event, tuple(get_args(TeamRunResponseEvent))
+        ):
+            if self.stream_member_events:
                 # We just bubble the event up
                 yield model_response_event  # type: ignore
-        elif isinstance(model_response_event, ModelResponse):
+            else:
+                # Don't yield anything
+                return
+        else:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
