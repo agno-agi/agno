@@ -82,24 +82,21 @@ class Workflow:
         # Set storage mode to workflow_v2
         self.set_storage_mode()
 
-    def _auto_create_pipeline_from_tasks(self, pipeline_name: str = None):
+    def _auto_create_pipeline_from_tasks(self):
         """Auto-create a pipeline from tasks for manual triggers"""
         # Only auto-create for manual triggers and when tasks are provided but no pipelines
         if self.trigger.trigger_type == TriggerType.MANUAL and self.tasks and not self.pipelines:
-            # Create a default pipeline name
-            pipeline_name = f"{pipeline_name}" if pipeline_name else "default_pipeline"
-
             # Create pipeline from tasks
             auto_pipeline = Pipeline(
-                name=pipeline_name,
-                description=f"Auto-generated pipeline {pipeline_name} for workflow {self.name}",
+                name="Default Pipeline",
+                description=f"Auto-generated pipeline for workflow {self.name}",
                 tasks=self.tasks.copy(),
             )
 
             # Add to pipelines
             self.pipelines = [auto_pipeline]
 
-            log_info(f"Auto-created pipeline '{pipeline_name}' from {len(self.tasks)} tasks")
+            log_info(f"Auto-created pipeline for workflow {self.name} with {len(self.tasks)} tasks")
 
     def set_storage_mode(self):
         """Set storage mode to workflow_v2"""
@@ -512,7 +509,6 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-        pipeline_name: Optional[str] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_task_details: bool = True,
@@ -539,7 +535,7 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
-        self._auto_create_pipeline_from_tasks(pipeline_name=pipeline_name)
+        self._auto_create_pipeline_from_tasks()
 
         # Use query or message as primary input
         primary_input = query
@@ -701,7 +697,6 @@ class Workflow:
         self,
         query: Optional[str] = None,
         message: Optional[str] = None,
-        pipeline_name: Optional[str] = None,
         *,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -739,7 +734,7 @@ class Workflow:
         from agno.utils.response import create_panel
         from agno.utils.timer import Timer
 
-        self._auto_create_pipeline_from_tasks(pipeline_name=pipeline_name)
+        self._auto_create_pipeline_from_tasks()
 
         if console is None:
             from agno.cli.console import console

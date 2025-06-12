@@ -67,7 +67,6 @@ async def main():
     try:
         await content_creation_workflow.aprint_response(
             query="AI trends in 2024",
-            pipeline_name="Research Pipeline",
             markdown=True,
             show_time=True,
             show_task_details=True,

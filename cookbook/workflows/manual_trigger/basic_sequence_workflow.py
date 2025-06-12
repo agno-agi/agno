@@ -63,7 +63,6 @@ if __name__ == "__main__":
     try:
         content_creation_workflow.print_response(
             query="AI trends in 2024",
-            pipeline_name="Research Pipeline",
             markdown=True,
             show_time=True,
             show_task_details=True,
