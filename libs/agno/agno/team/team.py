@@ -261,6 +261,8 @@ class Team:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Team
     stream_intermediate_steps: bool = False
+    # Stream the member events from the Team
+    stream_member_events: bool = True
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -339,6 +341,7 @@ class Team:
         reasoning_max_steps: int = 10,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
+        stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
         monitoring: bool = False,
@@ -421,6 +424,7 @@ class Team:
 
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
+        self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
         self.show_members_responses = show_members_responses
@@ -1740,12 +1744,13 @@ class Team:
         reasoning_state: Dict[str, Any],
         stream_intermediate_steps: bool = False,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
-        if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
-            model_response_event, tuple(get_args(TeamRunResponseEvent))
-        ):
-            # We just bubble the event up
-            yield model_response_event  # type: ignore
-        else:
+        if self.stream_member_events:
+            if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
+                model_response_event, tuple(get_args(TeamRunResponseEvent))
+            ):
+                # We just bubble the event up
+                yield model_response_event  # type: ignore
+        elif isinstance(model_response_event, ModelResponse):
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
@@ -5452,6 +5457,8 @@ class Team:
                     member_agent_run_response_stream = member_agent.run(
                         member_agent_task,
                         user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -5466,6 +5473,8 @@ class Team:
                     member_agent_run_response = member_agent.run(
                         member_agent_task,
                         user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -5564,6 +5573,8 @@ class Team:
                     response = await agent.arun(
                         member_agent_task,
                         user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session_id,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -5734,6 +5745,8 @@ class Team:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
                     user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5753,6 +5766,8 @@ class Team:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
                     user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5866,6 +5881,8 @@ class Team:
                 member_agent_run_response_stream = await member_agent.arun(
                     member_agent_task,
                     user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5883,6 +5900,8 @@ class Team:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
                     user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6087,6 +6106,8 @@ class Team:
                 member_agent_run_response_stream = member_agent.run(
                     member_agent_task,
                     user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6103,6 +6124,9 @@ class Team:
             else:
                 member_agent_run_response = member_agent.run(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6214,6 +6238,9 @@ class Team:
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -6230,6 +6257,9 @@ class Team:
             else:
                 member_agent_run_response = await member_agent.arun(
                     member_agent_task,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session_id,
                     images=images,
                     videos=videos,
                     audio=audio,
