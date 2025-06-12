@@ -7299,7 +7299,6 @@ class Team:
 
         except Exception as e:
             log_debug(f"Could not create team on platform: {e}")
-            print(f"Could not create team on platform: {e}")
 
     async def _aregister_team(self) -> None:
         self._set_monitoring()
@@ -7320,7 +7319,6 @@ class Team:
                 ),
             )
         except Exception as e:
-            print(f"Could not create team on platform: {e}")
             log_debug(f"Could not create team on platform: {e}")
 
     def to_platform_dict(self) -> Dict[str, Any]:

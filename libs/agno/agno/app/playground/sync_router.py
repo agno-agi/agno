@@ -84,9 +84,8 @@ def chat_response_streamer(
         return
 
 
-def agent_acontinue_run_streamer(
+def agent_continue_run_streamer(
     agent: Agent,
-    run_response: Optional[RunResponse] = None,
     run_id: Optional[str] = None,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
@@ -94,7 +93,6 @@ def agent_acontinue_run_streamer(
 ) -> Generator:
     try:
         continue_response = agent.continue_run(
-            run_response=run_response,
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -103,7 +101,7 @@ def agent_acontinue_run_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in continue_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
@@ -139,7 +137,6 @@ def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
@@ -438,7 +435,6 @@ def get_sync_playground_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        print(tools_data)
         logger.debug(
             f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
         )
@@ -465,7 +461,7 @@ def get_sync_playground_router(
 
         if stream and agent.is_streamable:
             return StreamingResponse(
-                agent_acontinue_run_streamer(
+                agent_continue_run_streamer(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,

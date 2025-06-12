@@ -37,7 +37,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunResponseErrorEvent
+from agno.run.response import RunResponseErrorEvent, RunResponseEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.storage.session.agent import AgentSession
@@ -100,7 +100,7 @@ async def agent_acontinue_run_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in continue_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
@@ -136,7 +136,6 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
@@ -436,7 +435,6 @@ def get_async_playground_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        print(tools_data)
         logger.debug(
             f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
         )
