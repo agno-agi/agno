@@ -62,7 +62,58 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
+def _extract_json_objects(text: str) -> list[str]:
+    objs: list[str] = []
+    brace_depth = 0
+    start_idx: Optional[int] = None
+    for idx, ch in enumerate(text):
+        if ch == "{" and brace_depth == 0:
+            start_idx = idx
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0 and start_idx is not None:
+                objs.append(text[start_idx : idx + 1])
+                start_idx = None
+    return objs
+
+
+def _parse_individual_json(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    candidate_jsons = _extract_json_objects(content)
+    merged_steps: list[dict] = []
+
+    for candidate in candidate_jsons:
+        try:
+            candidate_obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            # Try again after stripping newlines / carriage returns
+            cleaned = candidate.replace("\n", " ").replace("\r", "")
+            try:
+                candidate_obj = json.loads(cleaned)
+            except json.JSONDecodeError:
+                continue
+
+        if (
+            isinstance(candidate_obj, dict)
+            and "reasoning_steps" in candidate_obj
+            and isinstance(candidate_obj["reasoning_steps"], list)
+        ):
+            merged_steps.extend(candidate_obj["reasoning_steps"])
+
+    if not merged_steps:
+        return None
+
+    try:
+        aggregate_obj = {"reasoning_steps": merged_steps}
+        return response_model.model_validate(aggregate_obj)
+    except ValidationError as e:
+        logger.warning("Validation failed on merged ReasoningSteps: %s", e)
+        return None
+
+
 def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    logger.debug(f"Parsing response model: {content}")
     structured_output = None
     try:
         # First attempt: direct JSON validation
@@ -116,5 +167,21 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
                 structured_output = response_model.model_validate(data)
             except (ValidationError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to parse as Python dict: {e}")
+
+                try:
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    if start != -1 and end != -1 and end > start:
+                        trimmed = content[start:end]
+                        data = json.loads(trimmed)
+                        structured_output = response_model.model_validate(data)
+                    else:
+                        logger.warning("Unable to locate JSON object boundaries for fallback parsing.")
+                except (ValidationError, json.JSONDecodeError) as e2:
+                    logger.warning(f"Failed to parse after trimming: {e2}")
+                    # Handle concatenated JSON objects (missing commas)
+                    structured_output = _parse_individual_json(content, response_model)
+                    if structured_output is None:
+                        logger.warning("Multiple-object fallback parsing failed.")
 
     return structured_output
