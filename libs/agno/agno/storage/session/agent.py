@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Mapping, Optional
 
-from agno.utils.log import logger
+from agno.models.message import MessageMetrics
+from agno.utils.log import log_debug, log_info, log_warning
 
 
 @dataclass
@@ -16,8 +17,10 @@ class AgentSession:
     user_id: Optional[str] = None
     # ID of the team session this agent session is associated with
     team_session_id: Optional[str] = None
-    # Agent Memory
-    memory: Optional[Dict[str, Any]] = None
+    # Runs
+    runs: Optional[Dict[str, Any]] = None
+    # Session Summary
+    summary: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
     # Extra Data stored with this agent
@@ -45,17 +48,47 @@ class AgentSession:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[AgentSession]:
         if data is None or data.get("session_id") is None:
-            logger.warning("AgentSession is missing session_id")
+            log_warning("AgentSession is missing session_id")
             return None
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             agent_id=data.get("agent_id"),
             team_session_id=data.get("team_session_id"),
             user_id=data.get("user_id"),
-            memory=data.get("memory"),
             agent_data=data.get("agent_data"),
+            runs=data.get("runs"),
+            summary=data.get("summary"),
             session_data=data.get("session_data"),
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
+    
+    def add_run(self, session_id, run):
+        """Adds a RunResponse to the runs list."""
+
+        messages = run.messages
+        for m in messages:
+            if m.metrics is not None:
+                m.metrics.timer = None
+
+        if not self.runs:
+            self.runs = {}
+
+        if session_id not in self.runs:
+            self.runs[session_id] = []
+
+        # Check if run already exists with the same run_id
+        if hasattr(run, "run_id") and run.run_id:
+            run_id = run.run_id
+            # Look for existing run with same ID
+            for i, existing_run in enumerate(self.runs[session_id]):
+                if hasattr(existing_run, "run_id") and existing_run.run_id == run_id:
+                    # Replace existing run
+                    self.runs[session_id][i] = run
+                    log_debug(f"Replaced existing run with run_id {run_id} in memory")
+                    return
+
+        self.runs[session_id].append(run.to_dict())
+        
+        log_debug("Added RunResponse to Memory")

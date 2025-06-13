@@ -620,9 +620,8 @@ class Agent:
             self.memory = Memory()
 
         # Default to the agent's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
+        if self.memory.model is None and self.model is not None:
+            self.memory.set_model(self.model)
 
         if self._formatter is None:
             self._formatter = SafeFormatter()
@@ -707,8 +706,8 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # 3. Add the run to memory
-        self._add_run_to_memory(
+        # 3. Add the run to the session
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -736,7 +735,7 @@ class Agent:
         self._set_session_metrics(run_messages)
 
         # 6. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
+        self.write_to_storage(self.agent_session)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
@@ -796,7 +795,7 @@ class Agent:
             yield event
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -960,7 +959,9 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.read_session(session_id=session_id)
+
+        log_info(f"AgentSession: {self.agent_session}")
 
         # Read existing session from storage
         if self.context is not None:
@@ -1165,7 +1166,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -1252,7 +1253,7 @@ class Agent:
             yield event
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -1378,7 +1379,7 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.read_session(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1642,7 +1643,7 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.read_session(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -1839,7 +1840,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -1925,7 +1926,7 @@ class Agent:
             yield event
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -2059,7 +2060,7 @@ class Agent:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.read_session(session_id=session_id)
 
         # Run can be continued from previous run response or from passed run_response context
         if run_response is not None:
@@ -2258,7 +2259,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -2346,7 +2347,7 @@ class Agent:
             yield event
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
+        self._add_run_to_session(
             run_response=run_response,
             run_messages=run_messages,
             session_id=session_id,
@@ -2773,7 +2774,7 @@ class Agent:
         # Update the RunResponse metrics
         run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
-    def _add_run_to_memory(
+    def _add_run_to_session(
         self,
         run_response: RunResponse,
         run_messages: RunMessages,
@@ -2781,80 +2782,77 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         index_of_last_user_message: int = 0,
     ):
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
 
-        if isinstance(self.memory, AgentMemory):
-            # Add the system message to the memory
-            if run_messages.system_message is not None:
-                self.memory.add_system_message(
-                    run_messages.system_message, system_message_role=self.system_message_role
-                )
+        self.memory = cast(Memory, self.memory)
 
-            # Build a list of messages that should be added to the AgentMemory
-            messages_for_memory: List[Message] = (
-                [run_messages.user_message] if run_messages.user_message is not None else []
-            )
-            # Add messages from messages_for_run after the last user message
-            for _rm in run_messages.messages[index_of_last_user_message:]:
-                if _rm.add_to_agent_memory:
-                    messages_for_memory.append(_rm)
-            if len(messages_for_memory) > 0:
-                self.memory.add_messages(messages=messages_for_memory)
+        # if isinstance(self.memory, AgentMemory):
+        #     # Add the system message to the memory
+        #     if run_messages.system_message is not None:
+        #         self.memory.add_system_message(
+        #             run_messages.system_message, system_message_role=self.system_message_role
+        #         )
 
-            # Create an AgentRun object to add to memory
-            agent_run = AgentRun(response=run_response)
-            agent_run.message = run_messages.user_message
+        #     # Build a list of messages that should be added to the AgentMemory
+        #     messages_for_memory: List[Message] = (
+        #         [run_messages.user_message] if run_messages.user_message is not None else []
+        #     )
+        #     # Add messages from messages_for_run after the last user message
+        #     for _rm in run_messages.messages[index_of_last_user_message:]:
+        #         if _rm.add_to_agent_memory:
+        #             messages_for_memory.append(_rm)
+        #     if len(messages_for_memory) > 0:
+        #         self.memory.add_messages(messages=messages_for_memory)
 
-            if messages is not None and len(messages) > 0:
-                for _im in messages:
-                    # Parse the message and convert to a Message object if possible
-                    mp = None
-                    if isinstance(_im, Message):
-                        mp = _im
-                    elif isinstance(_im, dict):
-                        try:
-                            mp = Message(**_im)
-                        except Exception as e:
-                            log_warning(f"Failed to validate message: {e}")
-                    else:
-                        log_warning(f"Unsupported message type: {type(_im)}")
-                        continue
+        #     # Create an AgentRun object to add to memory
+        #     agent_run = AgentRun(response=run_response)
+        #     agent_run.message = run_messages.user_message
 
-                    # Add the message to the AgentRun
-                    if mp:
-                        if agent_run.messages is None:
-                            agent_run.messages = []
-                        agent_run.messages.append(mp)
-                    else:
-                        log_warning("Unable to add message to memory")
+        #     if messages is not None and len(messages) > 0:
+        #         for _im in messages:
+        #             # Parse the message and convert to a Message object if possible
+        #             mp = None
+        #             if isinstance(_im, Message):
+        #                 mp = _im
+        #             elif isinstance(_im, dict):
+        #                 try:
+        #                     mp = Message(**_im)
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to validate message: {e}")
+        #             else:
+        #                 log_warning(f"Unsupported message type: {type(_im)}")
+        #                 continue
 
-            # Add AgentRun to memory
-            self.memory.add_run(agent_run)
+        #             # Add the message to the AgentRun
+        #             if mp:
+        #                 if agent_run.messages is None:
+        #                     agent_run.messages = []
+        #                 agent_run.messages.append(mp)
+        #             else:
+        #                 log_warning("Unable to add message to memory")
 
-        elif isinstance(self.memory, Memory):
-            # Add AgentRun to memory
-            self.memory.add_run(session_id=session_id, run=run_response)
+        #     # Add AgentRun to memory
+        #     self.memory.add_run(agent_run)
+
+        # elif isinstance(self.memory, Memory):
+        # Add AgentRun to memory
+        log_info(f"AgentSession: {self.agent_session}")
+        self.agent_session.add_run(session_id=session_id, run=run_response)
 
     def _set_session_metrics(self, run_messages: RunMessages):
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
 
-        if isinstance(self.memory, AgentMemory):
-            # Calculate session metrics
-            self.session_metrics = self.calculate_metrics(self.memory.messages)
-        elif isinstance(self.memory, Memory):
-            # Calculate session metrics
-            if self.session_metrics is None:
-                self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
-            else:
-                self.session_metrics += self.calculate_metrics(
-                    run_messages.messages
-                )  # Calculate metrics for the session
+        self.memory = cast(Memory, self.memory)
+
+        # if isinstance(self.memory, AgentMemory):
+        #     # Calculate session metrics
+        #     self.session_metrics = self.calculate_metrics(self.memory.messages)
+        # elif isinstance(self.memory, Memory):
+        # Calculate session metrics
+        if self.session_metrics is None:
+            self.session_metrics = self.calculate_metrics(run_messages.messages)  # Calculate metrics for the run
+        else:
+            self.session_metrics += self.calculate_metrics(
+                run_messages.messages
+            )  # Calculate metrics for the session
 
     def _update_memory(
         self,
@@ -2865,54 +2863,51 @@ class Agent:
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         self.run_response = cast(RunResponse, self.run_response)
-        if isinstance(self.memory, AgentMemory):
-            self.memory = cast(AgentMemory, self.memory)
-        else:
-            self.memory = cast(Memory, self.memory)
 
-        if isinstance(self.memory, AgentMemory):
-            # Update the memories with the user message if needed
-            if (
-                self.memory.create_user_memories
-                and self.memory.update_user_memories_after_run
-                and run_messages.user_message is not None
-            ):
-                if stream_intermediate_steps:
-                    yield create_memory_update_started_event(from_run_response=self.run_response)
+        self.memory = cast(Memory, self.memory)
 
-                self.memory.update_memory(input=run_messages.user_message.get_content_string())
+        # if isinstance(self.memory, AgentMemory):
+        #     # Update the memories with the user message if needed
+        #     if (
+        #         self.memory.create_user_memories
+        #         and self.memory.update_user_memories_after_run
+        #         and run_messages.user_message is not None
+        #     ):
+        #         if stream_intermediate_steps:
+        #             yield create_memory_update_started_event(from_run_response=self.run_response)
 
-                if stream_intermediate_steps:
-                    yield create_memory_update_completed_event(from_run_response=self.run_response)
+        #         self.memory.update_memory(input=run_messages.user_message.get_content_string())
 
-            if messages is not None and len(messages) > 0:
-                for _im in messages:
-                    # Parse the message and convert to a Message object if possible
-                    mp = None
-                    if isinstance(_im, Message):
-                        mp = _im
-                    elif isinstance(_im, dict):
-                        try:
-                            mp = Message(**_im)
-                        except Exception as e:
-                            log_warning(f"Failed to validate message during memory update: {e}")
-                    else:
-                        log_warning(f"Unsupported message type during memory update: {type(_im)}")
-                        continue
+        #         if stream_intermediate_steps:
+        #             yield create_memory_update_completed_event(from_run_response=self.run_response)
 
-                    # Add the message to the AgentRun
-                    if mp:
-                        if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
-                            self.memory.update_memory(input=mp.get_content_string())
-                    else:
-                        log_warning("Unable to add message to memory")
+        #     if messages is not None and len(messages) > 0:
+        #         for _im in messages:
+        #             # Parse the message and convert to a Message object if possible
+        #             mp = None
+        #             if isinstance(_im, Message):
+        #                 mp = _im
+        #             elif isinstance(_im, dict):
+        #                 try:
+        #                     mp = Message(**_im)
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to validate message during memory update: {e}")
+        #             else:
+        #                 log_warning(f"Unsupported message type during memory update: {type(_im)}")
+        #                 continue
 
-            # Update the session summary if needed
-            if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
-                self.memory.update_summary()
+        #             # Add the message to the AgentRun
+        #             if mp:
+        #                 if self.memory.create_user_memories and self.memory.update_user_memories_after_run:
+        #                     self.memory.update_memory(input=mp.get_content_string())
+        #             else:
+        #                 log_warning("Unable to add message to memory")
 
-        elif isinstance(self.memory, Memory):
-            yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+        #     # Update the session summary if needed
+        #     if self.memory.create_session_summary and self.memory.update_session_summary_after_run:
+        #         self.memory.update_summary()
+
+        yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
 
     async def _aupdate_memory(
         self,
@@ -3789,38 +3784,42 @@ class Agent:
         from time import time
 
         """Get an AgentSession object, which can be saved to the database"""
-        if self.memory is not None:
-            if isinstance(self.memory, AgentMemory):
-                self.memory = cast(AgentMemory, self.memory)
-                memory_dict = self.memory.to_dict()
-                # We only persist the runs for the current session ID (not all runs in memory)
-                memory_dict["runs"] = [
-                    agent_run.to_dict()
-                    for agent_run in self.memory.runs
-                    if agent_run.response is not None and agent_run.response.session_id == session_id
-                ]
-            else:
-                self.memory = cast(Memory, self.memory)
-                # We fake the structure on storage, to maintain the interface with the legacy implementation
-                run_responses = self.memory.runs.get(session_id, [])  # type: ignore
-                memory_dict = self.memory.to_dict()
-                memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
-        else:
-            memory_dict = None
+        # if self.memory is not None:
+        #     # if isinstance(self.memory, AgentMemory):
+        #     #     self.memory = cast(AgentMemory, self.memory)
+        #     #     memory_dict = self.memory.to_dict()
+        #     #     # We only persist the runs for the current session ID (not all runs in memory)
+        #     #     memory_dict["runs"] = [
+        #     #         agent_run.to_dict()
+        #     #         for agent_run in self.memory.runs
+        #     #         if agent_run.response is not None and agent_run.response.session_id == session_id
+        #     #     ]
+        #     # else:
+        #     self.memory = cast(Memory, self.memory)
+        #     # We fake the structure on storage, to maintain the interface with the legacy implementation
+        #     run_responses = self.memory.runs.get(session_id, [])  # type: ignore
+        #     memory_dict = self.memory.to_dict()
+        #     memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
+        # else:
+        #     memory_dict = None
 
-        self.team_session_id = cast(str, self.team_session_id)
-        self.agent_id = cast(str, self.agent_id)
-        return AgentSession(
-            session_id=session_id,
-            agent_id=self.agent_id,
-            user_id=user_id,
-            team_session_id=self.team_session_id,
-            memory=memory_dict,
-            agent_data=self.get_agent_data(),
-            session_data=self.get_session_data(),
-            extra_data=self.extra_data,
-            created_at=int(time()),
-        )
+        # runs = self.agent_session.runs
+        # summary = self.agent_session.summary
+
+        # self.team_session_id = cast(str, self.team_session_id)
+        # self.agent_id = cast(str, self.agent_id)
+        # return AgentSession(
+        #     session_id=session_id,
+        #     agent_id=self.agent_id,
+        #     user_id=user_id,
+        #     team_session_id=self.team_session_id,
+        #     runs=runs,
+        #     summary=summary,
+        #     agent_data=self.get_agent_data(),
+        #     session_data=self.get_session_data(),
+        #     extra_data=self.extra_data,
+        #     created_at=int(time()),
+        # )
 
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
@@ -3864,23 +3863,6 @@ class Agent:
                         # Update the current session_state
                         self.session_state = session_state_from_db
 
-            # Get the team_session_state from the database and update the current team_session_state
-            if "team_session_state" in session.session_data:
-                team_session_state_from_db = session.session_data.get("team_session_state")
-                if (
-                    team_session_state_from_db is not None
-                    and isinstance(team_session_state_from_db, dict)
-                    and len(team_session_state_from_db) > 0
-                ):
-                    # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
-                    if self.team_session_state is not None and len(self.team_session_state) > 0:
-                        # This updates team_session_state_from_db
-                        # If there are conflicting keys, values from team_session_state_from_db will take precedence
-                        merge_dictionaries(self.team_session_state, team_session_state_from_db)
-                    else:
-                        # Update the current team_session_state
-                        self.team_session_state = team_session_state_from_db
-
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
                 session_metrics_from_db = session.session_data.get("session_metrics")
@@ -3917,114 +3899,128 @@ class Agent:
             self.extra_data = session.extra_data
 
         # If we haven't instantiated the memory yet, set it to the memory from the database
-        if self.memory is None:
-            self.memory = session.memory  # type: ignore
+        # if self.memory is None:
+        #     self.memory = session.memory  # type: ignore
 
-        if not (isinstance(self.memory, AgentMemory) or isinstance(self.memory, Memory)):
-            # Is it a dict of `AgentMemory`?
-            if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
-                # Convert dict to AgentMemory
-                self.memory = AgentMemory(**self.memory)
-                # Convert dict to Memory
-            elif isinstance(self.memory, dict):
-                memory_dict = self.memory
-                memory_dict.pop("runs")
-                self.memory = Memory(**memory_dict)
-            else:
-                raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
+        # if not (isinstance(self.memory, AgentMemory) or isinstance(self.memory, Memory)):
+        #     # Is it a dict of `AgentMemory`?
+        #     if isinstance(self.memory, dict) and "create_user_memories" in self.memory:
+        #         # Convert dict to AgentMemory
+        #         self.memory = AgentMemory(**self.memory)
+        #         # Convert dict to Memory
+        #     elif isinstance(self.memory, dict):
+        #         memory_dict = self.memory
+        #         memory_dict.pop("runs")
+        #         self.memory = Memory(**memory_dict)
+        #     else:
+        #         raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:
-            if isinstance(self.memory, AgentMemory):
-                try:
-                    if "runs" in session.memory:
-                        try:
-                            self.memory.runs = []
-                            for run in session.memory["runs"]:
-                                self.memory.runs.append(AgentRun.model_validate(run))
-                        except Exception as e:
-                            log_warning(f"Failed to load runs from memory: {e}")
-                    if "messages" in session.memory:
-                        try:
-                            self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
-                        except Exception as e:
-                            log_warning(f"Failed to load messages from memory: {e}")
-                    if "summary" in session.memory:
-                        from agno.memory.summary import SessionSummary
+        # Memories will be loaded from the memory db instead of the storage db
+        # if self.memory.memories is None:
+        #     self.memory.memories = session.memories 
 
-                        try:
-                            self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
-                        except Exception as e:
-                            log_warning(f"Failed to load session summary from memory: {e}")
-                    if "memories" in session.memory:
-                        from agno.memory.memory import Memory as AgentUserMemory
+        # if self.memory.runs is None:
+        #     self.memory.runs = session.runs
 
-                        try:
-                            self.memory.memories = [
-                                AgentUserMemory.model_validate(m) for m in session.memory["memories"]
-                            ]
-                        except Exception as e:
-                            log_warning(f"Failed to load user memories: {e}")
-                    if self.memory.create_user_memories:
-                        if self.user_id is not None and self.memory.user_id is None:
-                            self.memory.user_id = self.user_id
+        if self.memory.summaries is None and self.enable_session_summaries or self.add_session_summary_references:
+            self.memory.summaries = session.summary
 
-                        self.memory.load_user_memories()
-                        if self.user_id is not None:
-                            log_debug(f"Memories loaded for user: {self.user_id}")
-                        else:
-                            log_debug("Memories loaded")
-                except Exception as e:
-                    log_warning(f"Failed to load AgentMemory: {e}")
-            elif isinstance(self.memory, Memory):
-                if "runs" in session.memory:
-                    try:
-                        if self.memory.runs is None:
-                            self.memory.runs = {}
-                        self.memory.runs[session.session_id] = []
-                        for run in session.memory["runs"]:
-                            run_session_id = run["session_id"]
-                            if "team_id" in run:
-                                self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
-                            else:
-                                self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
-                    except Exception as e:
-                        log_warning(f"Failed to load runs from memory: {e}")
-                if "memories" in session.memory:
-                    from agno.memory.v2.memory import UserMemory as UserMemoryV2
+        if self.memory.memories is None and self.enable_user_memories or self.add_memory_references:
+            self.memory.load_user_memories()
 
-                    try:
-                        # If memories are already loaded, use them as is for the current session
-                        if self.memory.memories is not None:
-                            pass
-                        # If memories do not exist, we load them from the session memory for the current user
-                        else:
-                            self.memory.memories = {
-                                user_id: {
-                                    memory_id: UserMemoryV2.from_dict(memory)
-                                    for memory_id, memory in user_memories.items()
-                                }
-                                for user_id, user_memories in session.memory["memories"].items()
-                            }
-                    except Exception as e:
-                        log_warning(f"Failed to load user memories: {e}")
-                if "summaries" in session.memory:
-                    from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
+        # if session.memory is not None:
+        #     if isinstance(self.memory, AgentMemory):
+        #         try:
+        #             if "runs" in session.memory:
+        #                 try:
+        #                     self.memory.runs = []
+        #                     for run in session.memory["runs"]:
+        #                         self.memory.runs.append(AgentRun.model_validate(run))
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to load runs from memory: {e}")
+        #             if "messages" in session.memory:
+        #                 try:
+        #                     self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to load messages from memory: {e}")
+        #             if "summary" in session.memory:
+        #                 from agno.memory.summary import SessionSummary
 
-                    try:
-                        self.memory.summaries = {
-                            user_id: {
-                                session_id: SessionSummaryV2.from_dict(summary)
-                                for session_id, summary in user_session_summaries.items()
-                            }
-                            for user_id, user_session_summaries in session.memory["summaries"].items()
-                        }
-                    except Exception as e:
-                        log_warning(f"Failed to load session summaries: {e}")
+        #                 try:
+        #                     self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to load session summary from memory: {e}")
+        #             if "memories" in session.memory:
+        #                 from agno.memory.memory import Memory as AgentUserMemory
+
+        #                 try:
+        #                     self.memory.memories = [
+        #                         AgentUserMemory.model_validate(m) for m in session.memory["memories"]
+        #                     ]
+        #                 except Exception as e:
+        #                     log_warning(f"Failed to load user memories: {e}")
+        #             if self.memory.create_user_memories:
+        #                 if self.user_id is not None and self.memory.user_id is None:
+        #                     self.memory.user_id = self.user_id
+
+        #                 self.memory.load_user_memories()
+        #                 if self.user_id is not None:
+        #                     log_debug(f"Memories loaded for user: {self.user_id}")
+        #                 else:
+        #                     log_debug("Memories loaded")
+        #         except Exception as e:
+        #             log_warning(f"Failed to load AgentMemory: {e}")
+        #     elif isinstance(self.memory, Memory):
+        #         if "runs" in session.memory:
+        #             try:
+        #                 if self.memory.runs is None:
+        #                     self.memory.runs = {}
+        #                 self.memory.runs[session.session_id] = []
+        #                 for run in session.memory["runs"]:
+        #                     run_session_id = run["session_id"]
+        #                     if "team_id" in run:
+        #                         self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
+        #                     else:
+        #                         self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
+        #             except Exception as e:
+        #                 log_warning(f"Failed to load runs from memory: {e}")
+        #         if "memories" in session.memory:
+        #             from agno.memory.v2.memory import UserMemory as UserMemoryV2
+
+        #             try:
+        #                 # If memories are already loaded, use them as is for the current session
+        #                 if self.memory.memories is not None:
+        #                     pass
+        #                 # If memories do not exist, we load them from the session memory for the current user
+        #                 else:
+        #                     self.memory.memories = {
+        #                         user_id: {
+        #                             memory_id: UserMemoryV2.from_dict(memory)
+        #                             for memory_id, memory in user_memories.items()
+        #                         }
+        #                         for user_id, user_memories in session.memory["memories"].items()
+        #                     }
+        #             except Exception as e:
+        #                 log_warning(f"Failed to load user memories: {e}")
+        #         if "summaries" in session.memory:
+        #             from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
+
+        #             try:
+        #                 self.memory.summaries = {
+        #                     user_id: {
+        #                         session_id: SessionSummaryV2.from_dict(summary)
+        #                         for session_id, summary in user_session_summaries.items()
+        #                     }
+        #                     for user_id, user_session_summaries in session.memory["summaries"].items()
+        #                 }
+        #             except Exception as e:
+        #                 log_warning(f"Failed to load session summaries: {e}")
         log_debug(f"-*- AgentSession loaded: {session.session_id}")
 
-    def read_from_storage(
+    def read_session(
         self,
         session_id: str,
+        user_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
         """Load the AgentSession from storage
 
@@ -4034,25 +4030,42 @@ class Agent:
         Returns:
             Optional[AgentSession]: The loaded AgentSession or None if not found.
         """
-        if self.storage is not None:
+        from time import time
+
+        if self.memory is not None and self.memory.db is not None:
+            log_info(f"Reading AgentSession: {session_id}")
             # Get a single session from storage
-            self.agent_session = cast(AgentSession, self.storage.read(session_id=session_id))
+            self.agent_session = cast(AgentSession, self.memory.read_session(session_id=session_id))
             if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
-        return self.agent_session
-
+        if self.agent_session is not None:
+            return self.agent_session
+        else:
+            self.team_session_id = cast(str, self.team_session_id)
+            self.agent_id = cast(str, self.agent_id)
+            self.agent_session = AgentSession(
+                session_id=session_id,
+                agent_id=self.agent_id,
+                user_id=user_id,
+                team_session_id=self.team_session_id,
+                runs=None,
+                summary=None,
+                agent_data=self.get_agent_data(),
+                session_data=self.get_session_data(),
+                extra_data=self.extra_data,
+                created_at=int(time()),
+            )
+        
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
         """Save the AgentSession to storage
 
         Returns:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
-        if self.storage is not None:
-            self.agent_session = cast(
-                AgentSession,
-                self.storage.upsert(session=self.get_agent_session(session_id=session_id, user_id=user_id)),
-            )
+        if self.memory.db is not None:
+            self.memory.db.upsert_agent_session(session=self.agent_session)
+        log_info(f"AgentSession saved: {self.agent_session}")
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -4090,7 +4103,7 @@ class Agent:
         if self.storage is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading AgentSession: {self.session_id}")
-            self.read_from_storage(session_id=self.session_id)  # type: ignore
+            self.read_session(session_id=self.session_id)  # type: ignore
 
             # Create a new session if it does not exist
             if self.agent_session is None:
@@ -4356,29 +4369,30 @@ class Agent:
             system_message_content += "Stop running when the success_criteria is met.\n\n"
         # 3.3.10 Then add memories to the system prompt
         if self.memory:
-            if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
-                if self.memory.memories and len(self.memory.memories) > 0:
-                    system_message_content += (
-                        "You have access to memories from previous interactions with the user that you can use:\n\n"
-                    )
-                    system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in self.memory.memories:
-                        system_message_content += f"\n- {_memory.memory}"
-                    system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                    system_message_content += (
-                        "Note: this information is from previous interactions and may be updated in this conversation. "
-                        "You should always prefer information from this conversation over the past memories.\n\n"
-                    )
-                else:
-                    system_message_content += (
-                        "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the user yet.\n"
-                    )
-                system_message_content += (
-                    "You can add new memories using the `update_memory` tool.\n"
-                    "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
-                )
-            elif isinstance(self.memory, Memory) and self.add_memory_references:
+            # if isinstance(self.memory, AgentMemory) and self.memory.create_user_memories:
+            #     if self.memory.memories and len(self.memory.memories) > 0:
+            #         system_message_content += (
+            #             "You have access to memories from previous interactions with the user that you can use:\n\n"
+            #         )
+            #         system_message_content += "<memories_from_previous_interactions>"
+            #         for _memory in self.memory.memories:
+            #             system_message_content += f"\n- {_memory.memory}"
+            #         system_message_content += "\n</memories_from_previous_interactions>\n\n"
+            #         system_message_content += (
+            #             "Note: this information is from previous interactions and may be updated in this conversation. "
+            #             "You should always prefer information from this conversation over the past memories.\n\n"
+            #         )
+            #     else:
+            #         system_message_content += (
+            #             "You have the capability to retain memories from previous interactions with the user, "
+            #             "but have not had any interactions with the user yet.\n"
+            #         )
+            #     system_message_content += (
+            #         "You can add new memories using the `update_memory` tool.\n"
+            #         "If you use the `update_memory` tool, remember to pass on the response to the user.\n\n"
+            #     )
+            # elif isinstance(self.memory, Memory) and self.add_memory_references:
+            if self.add_memory_references:
                 if not user_id:
                     user_id = "default"
                 user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
@@ -4413,17 +4427,17 @@ class Agent:
                     )
 
             # 3.3.11 Then add a summary of the interaction to the system prompt
-            if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
-                if self.memory.summary is not None:
-                    system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-                    system_message_content += "<summary_of_previous_interactions>\n"
-                    system_message_content += str(self.memory.summary)
-                    system_message_content += "\n</summary_of_previous_interactions>\n\n"
-                    system_message_content += (
-                        "Note: this information is from previous interactions and may be outdated. "
-                        "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-                    )
-            elif isinstance(self.memory, Memory) and self.add_session_summary_references:
+            # if isinstance(self.memory, AgentMemory) and self.memory.create_session_summary:
+            #     if self.memory.summary is not None:
+            #         system_message_content += "Here is a brief summary of your previous interactions:\n\n"
+            #         system_message_content += "<summary_of_previous_interactions>\n"
+            #         system_message_content += str(self.memory.summary)
+            #         system_message_content += "\n</summary_of_previous_interactions>\n\n"
+            #         system_message_content += (
+            #             "Note: this information is from previous interactions and may be outdated. "
+            #             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+            #         )
+            if self.add_session_summary_references:
                 if not user_id:
                     user_id = "default"
                 session_summary: SessionSummary = self.memory.summaries.get(user_id, {}).get(session_id, None)  # type: ignore
@@ -5414,7 +5428,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id)  # type: ignore
+        self.read_session(session_id=session_id)  # type: ignore
         # -*- Rename Agent
         self.name = name
         # -*- Save to storage
@@ -5431,7 +5445,7 @@ class Agent:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id)  # type: ignore
+        self.read_session(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
@@ -5487,7 +5501,7 @@ class Agent:
             raise Exception("Session ID is not set")
 
         # -*- Read from storage
-        self.read_from_storage(session_id=self.session_id)  # type: ignore
+        self.read_session(session_id=self.session_id)  # type: ignore
         # -*- Generate name for session
         generated_session_name = self.generate_session_name(session_id=self.session_id)
         log_debug(f"Generated Session Name: {generated_session_name}")
@@ -5513,7 +5527,7 @@ class Agent:
             return []
 
         if self.memory is None:
-            self.read_from_storage(session_id=_session_id)
+            self.read_session(session_id=_session_id)
 
         if self.memory is None:
             return []

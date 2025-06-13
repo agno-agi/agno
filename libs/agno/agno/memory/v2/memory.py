@@ -8,11 +8,12 @@ from typing import Any, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.v2.db.base import MemoryDb
+from agno.db.base import BaseDb
 from agno.memory.v2.db.schema import MemoryRow
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.schema import SessionSummary, UserMemory
 from agno.memory.v2.summarizer import SessionSummarizer
+from agno.storage.session.agent import AgentSession
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
@@ -80,18 +81,10 @@ class Memory:
     # Manager to manage memories
     memory_manager: Optional[MemoryManager] = None
 
-    # Session summaries per session per user
-    summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None
-    # Summarizer to generate session summaries
-    summary_manager: Optional[SessionSummarizer] = None
+    db: Optional[BaseDb] = None
 
-    db: Optional[MemoryDb] = None
-
-    # runs per session
-    runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None
-
-    # Team context per session
-    team_context: Optional[Dict[str, TeamContext]] = None
+    # # Team context per session
+    # team_context: Optional[Dict[str, TeamContext]] = None
 
     # Whether to delete memories
     delete_memories: bool = False
@@ -106,7 +99,7 @@ class Memory:
         model: Optional[Model] = None,
         memory_manager: Optional[MemoryManager] = None,
         summarizer: Optional[SessionSummarizer] = None,
-        db: Optional[MemoryDb] = None,
+        db: Optional[BaseDb] = None,
         memories: Optional[Dict[str, Dict[str, UserMemory]]] = None,
         summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None,
         runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
@@ -625,6 +618,20 @@ class Memory:
         except Exception as e:
             logger.warning(f"Error deleting memory in db: {e}")
             return f"Error deleting memory: {e}"
+        
+    # -*- Session DB Functions
+
+    def read_session(self, session_id: str) -> Optional[AgentSession]:
+        """Get a session from the database."""
+        try:
+            if not self.db:
+                raise ValueError("Memory db not initialized")
+            session = self.db.get_session(session_id=session_id)
+            return session
+        except Exception as e:
+            logger.warning(f"Error getting session from db: {e}")
+            return None
+
 
     # -*- Utility Functions
     def get_messages_for_session(
