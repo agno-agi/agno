@@ -300,7 +300,8 @@ def get_async_router(
 
             # Parse workflow_input into a dict if it is a valid JSON
             try:
-                workflow_input = json.loads(workflow_input)
+                parsed_workflow_input = json.loads(workflow_input)
+                workflow_input = parsed_workflow_input
             except json.JSONDecodeError:
                 pass
 
@@ -360,7 +361,7 @@ def get_async_router(
                     )
                 else:
                     return StreamingResponse(
-                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(workflow_input)),
+                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(workflow_input)),  # type: ignore
                         media_type="text/event-stream",
                     )
         else:
@@ -397,6 +398,6 @@ def get_async_router(
                 if isinstance(workflow_input, dict):
                     return (await workflow_instance.arun(**workflow_input)).to_dict()
                 else:
-                    return (await workflow_instance.arun(workflow_input)).to_dict()
+                    return (await workflow_instance.arun(workflow_input)).to_dict()  # type: ignore
 
     return router

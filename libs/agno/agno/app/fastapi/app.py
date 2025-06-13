@@ -51,7 +51,7 @@ class FastAPIApp(BaseAPIApp):
         self.monitoring = monitoring
         self.description = description
         self.version = version
-        
+
         self.set_app_id()
 
         if self.agents:
