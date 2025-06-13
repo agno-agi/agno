@@ -121,6 +121,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
     # log_info(f"Type args: {type_args}")
     type_origin = get_origin(type_hint)
     # log_info(f"Type origin: {type_origin}")
+    print(type_hint, type_origin)
     if type_origin is not None:
         if type_origin in (list, tuple, set, frozenset):
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
@@ -141,11 +142,17 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                     continue
             return {"anyOf": types} if types else None
 
-    elif issubclass(type_hint, BaseModel):
+
+    if isinstance(type_hint, type) and issubclass(type_hint, Enum):
+        enum_values = [member.value for member in type_hint]
+        return {"type": "string", "enum": enum_values}
+    
+    if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
         # Get the schema and inline it
         schema = type_hint.model_json_schema()
         return inline_pydantic_schema(schema)  # type: ignore
-    elif hasattr(type_hint, "__dataclass_fields__"):
+    
+    if hasattr(type_hint, "__dataclass_fields__"):
         # Convert dataclass to JSON schema
         properties = {}
         required = []
@@ -174,10 +181,6 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         if required:
             arg_json_schema["required"] = required
         return arg_json_schema
-
-    if issubclass(type_hint, Enum):
-        enum_values = [member.value for member in type_hint]
-        return {"type": "string", "enum": enum_values}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
