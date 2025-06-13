@@ -2,7 +2,6 @@ from typing import Iterator, Union
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponseContentEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -33,9 +32,7 @@ research_team = Team(
 
 
 # Streaming-enabled custom execution functions
-def streaming_blog_analysis_function(
-    task_input: TaskInput,
-) -> Iterator[Union[RunResponseContentEvent, TaskOutput]]:
+def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutput]:
     """
     Streaming custom function that yields events during execution and returns TaskOutput
     """
@@ -109,9 +106,7 @@ def streaming_blog_analysis_function(
         )
 
 
-def streaming_team_research_function(
-    task_input: TaskInput,
-) -> Iterator[Union[RunResponseContentEvent, TaskOutput]]:
+def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutput]:
     """
     Streaming custom function that coordinates team execution with streaming updates
     """
@@ -198,9 +193,7 @@ def streaming_team_research_function(
         )
 
 
-def streaming_content_planning_function(
-    task_input: TaskInput,
-) -> Iterator[Union[RunResponseContentEvent, TaskOutput]]:
+def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskOutput]:
     """
     Streaming custom function for intelligent content planning with real-time updates
     """
@@ -262,8 +255,6 @@ def streaming_content_planning_function(
 - Execution Ready: Detailed action items included
         """.strip()
 
-        yield RunResponseContentEvent(content="**Strategic planning complete!**\n")
-
         yield TaskOutput(
             content=enhanced_content,
             response=response,
@@ -280,7 +271,6 @@ def streaming_content_planning_function(
         )
 
     except Exception as e:
-        yield RunResponseContentEvent(content=f"**Error occurred:** {str(e)}\n")
         yield TaskOutput(
             content=f"Custom content planning failed: {str(e)}",
             metadata={
@@ -320,18 +310,14 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2_streaming.db",
             mode="workflow_v2",
         ),
-        tasks=[
-            streaming_analysis_task,
-            streaming_research_task,
-            streaming_planning_task,
-        ],
+        tasks=[streaming_analysis_task,
+               streaming_research_task, streaming_planning_task],
     )
 
     print("=== Streaming Custom Functions Workflow ===")
     try:
         streaming_content_workflow.print_response(
-            query="AI trends in 2024", markdown=True, stream=True
-        )
+            query="AI trends in 2024", markdown=True, stream=True)
     except Exception as e:
         print(f"Streaming workflow failed: {e}")
 
