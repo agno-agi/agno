@@ -1,3 +1,5 @@
+from enum import Enum
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -259,3 +261,32 @@ def test_search_stream():
 
     assert len(responses) > 0
     assert citations_found
+
+
+def test_tool_use_with_enum():
+    """A simple test for enum tool use."""
+
+    class Color(str, Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    def get_color(color: Color) -> str:
+        """Returns the chosen color."""
+        return f"The color is {color.value}"
+
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        tools=[get_color],
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("I want the color red.")
+
+    assert any(msg.tool_calls for msg in response.messages)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    assert tool_calls[0]["function"]["name"] == "get_color"
+    assert '"color": "red"' in tool_calls[0]["function"]["arguments"]
+    assert "red" in response.content

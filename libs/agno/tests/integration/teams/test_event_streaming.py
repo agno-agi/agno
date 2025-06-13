@@ -395,3 +395,58 @@ def test_intermediate_steps_with_member_agents_complex():
         TeamRunEvent.run_completed,
         TeamRunEvent.reasoning_completed,
     }
+
+
+def test_intermediate_steps_with_member_agents_streaming_off():
+    agent_1 = Agent(
+        name="Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert problem-solving assistant with strong analytical skills! 🧠",
+        tools=[ReasoningTools(add_instructions=True)],
+    )
+    agent_2 = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, agent_2],
+        telemetry=False,
+        monitoring=False,
+        stream_member_events=False,
+    )
+
+    response_generator = team.run(
+        "Analyse and then solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    # Transfer twice, from team to member agents
+    assert len(events[TeamRunEvent.tool_call_started]) == 2
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "analyst"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_args["member_id"] == "math-agent"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 2
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1

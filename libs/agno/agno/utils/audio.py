@@ -1,5 +1,7 @@
 import base64
 
+from agno.utils.log import log_info
+
 
 def write_audio_to_file(audio, filename: str):
     """
@@ -11,3 +13,4 @@ def write_audio_to_file(audio, filename: str):
     wav_bytes = base64.b64decode(audio)
     with open(filename, "wb") as f:
         f.write(wav_bytes)
+    log_info(f"Audio file saved to {filename}")

@@ -37,8 +37,11 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
     team_id: str = ""
+    team_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
+    # If the team is a member of a team, this will be the session id of the parent team
+    team_session_id: Optional[str] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -173,7 +176,10 @@ class TeamRunResponse:
 
     run_id: Optional[str] = None
     team_id: Optional[str] = None
+    team_name: Optional[str] = None
     session_id: Optional[str] = None
+    # If the team is a member of a team, this will be the session id of the parent team
+    team_session_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
