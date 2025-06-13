@@ -1,10 +1,9 @@
-
 from abc import ABC, abstractmethod
+
 from fastapi import APIRouter
 
 
 class BaseInterface(ABC):
-    
     type: str
 
     router: APIRouter

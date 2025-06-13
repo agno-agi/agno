@@ -3,8 +3,8 @@ import shutil
 import pytest
 
 from agno.agent import Agent
-from agno.storage.session.agent import AgentSession
-from agno.storage.yaml import YamlStorage
+from agno.db.session.agent import AgentSession
+from agno.db.yaml import YamlStorage
 
 
 @pytest.fixture

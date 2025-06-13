@@ -2,9 +2,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
+from agno.db.sqlite import SqliteStorage
 from agno.exceptions import ModelProviderError
 from agno.models.vllm import vLLM
-from agno.storage.sqlite import SqliteStorage
 
 # Use default model id or override via env var
 VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"

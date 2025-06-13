@@ -3,8 +3,8 @@ import shutil
 import pytest
 
 from agno.agent import Agent
-from agno.storage.json import JsonStorage
-from agno.storage.session.agent import AgentSession
+from agno.db.json import JsonStorage
+from agno.db.session.agent import AgentSession
 
 
 @pytest.fixture

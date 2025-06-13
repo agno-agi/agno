@@ -2,10 +2,10 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.app.fastapi.app import FastAPIApp
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
 

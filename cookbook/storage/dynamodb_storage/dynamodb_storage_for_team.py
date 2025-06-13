@@ -6,8 +6,8 @@
 from typing import List
 
 from agno.agent import Agent
+from agno.db.dynamodb import DynamoDbStorage
 from agno.models.openai import OpenAIChat
-from agno.storage.dynamodb import DynamoDbStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools

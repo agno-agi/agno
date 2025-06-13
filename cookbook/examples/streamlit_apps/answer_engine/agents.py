@@ -34,13 +34,13 @@ from typing import Optional
 
 # Importing the Agent and model classes
 from agno.agent import Agent
+
+# Importing storage and tool classes
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-
-# Importing storage and tool classes
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools

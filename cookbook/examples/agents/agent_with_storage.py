@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.anthropic import Claude
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from rich.pretty import pprint
 

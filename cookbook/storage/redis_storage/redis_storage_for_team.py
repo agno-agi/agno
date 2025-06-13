@@ -13,8 +13,8 @@ docker ps
 from typing import List
 
 from agno.agent import Agent
+from agno.db.redis import RedisStorage
 from agno.models.openai import OpenAIChat
-from agno.storage.redis import RedisStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools

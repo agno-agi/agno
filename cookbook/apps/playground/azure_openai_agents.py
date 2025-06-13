@@ -4,9 +4,9 @@ from datetime import datetime
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.azure.openai_chat import AzureOpenAI
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
+from agno.playground import Playground
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

@@ -5,11 +5,11 @@
 """
 
 from agno.agent import Agent
+from agno.db.agent.postgres import PostgresAgentStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.postgres import PostgresAgentStorage
+from agno.playground import Playground
 from agno.vectordb.pgvector import PgVector, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

@@ -4,7 +4,7 @@ import os
 from os import getenv
 
 from agno.agent import Agent
-from agno.storage.singlestore import SingleStoreStorage
+from agno.db.singlestore import SingleStoreStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.certs import download_cert
 from sqlalchemy.engine import create_engine

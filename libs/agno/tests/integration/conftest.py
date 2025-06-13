@@ -4,9 +4,9 @@ import uuid
 
 import pytest
 
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db import SqliteMemoryDb
 from agno.memory.memory import Memory
-from agno.storage.sqlite import SqliteStorage
 
 
 @pytest.fixture

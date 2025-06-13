@@ -4,9 +4,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIResponses
-from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -192,4 +192,3 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
-

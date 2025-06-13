@@ -2,8 +2,8 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.python import PythonTools
 from agno_assist import agent_knowledge
 

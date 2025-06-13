@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Iterator
 
 from agno.agent import Agent, RunResponse
+from agno.db.workflow.sqlite import SqliteWorkflowStorage
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowCompletedEvent
-from agno.storage.workflow.sqlite import SqliteWorkflowStorage
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.utils.string import hash_string_sha256

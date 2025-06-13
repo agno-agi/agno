@@ -2,11 +2,11 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.app.whatsapp.app import WhatsappAPI
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.memory import Memory
 from agno.models.google import Gemini
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
 

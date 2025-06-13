@@ -4,9 +4,9 @@ from typing import Generator
 
 import pytest
 
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
-from agno.storage.yaml import YamlStorage
+from agno.db.session.agent import AgentSession
+from agno.db.session.workflow import WorkflowSession
+from agno.db.yaml import YamlStorage
 
 
 @pytest.fixture

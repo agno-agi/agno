@@ -15,8 +15,8 @@ from typing import Iterator
 
 import httpx
 from agno.agent import Agent
+from agno.db.redis import RedisStorage
 from agno.run.response import RunResponse
-from agno.storage.redis import RedisStorage
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response

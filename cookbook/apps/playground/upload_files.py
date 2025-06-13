@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.db.postgres import PostgresStorage
 from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.csv import CSVKnowledgeBase
 from agno.knowledge.docx import DocxKnowledgeBase
@@ -7,8 +8,7 @@ from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.knowledge.text import TextKnowledgeBase
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.postgres import PostgresStorage
+from agno.playground import Playground
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

@@ -32,13 +32,13 @@ View the README for instructions on how to run the application.
 from typing import Optional
 
 from agno.agent import Agent
+from agno.db.agent.postgres import PostgresAgentStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
 

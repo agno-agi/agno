@@ -2,8 +2,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.db.sqlite import SqliteStorage
 from agno.models.nebius import Nebius
-from agno.storage.sqlite import SqliteStorage
 
 NEBIUS_MODEL_ID = "Qwen/Qwen3-4B-fast"
 

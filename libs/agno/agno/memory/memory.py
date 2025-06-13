@@ -7,8 +7,9 @@ from typing import Any, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
+from agno.db.base import BaseDb, SessionType
+from agno.db.session.agent import AgentSession
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.db.base import MemoryDb
 from agno.memory.db.schema import MemoryRow
 from agno.memory.manager import MemoryManager
 from agno.memory.schema import SessionSummary, UserMemory
@@ -80,18 +81,10 @@ class Memory:
     # Manager to manage memories
     memory_manager: Optional[MemoryManager] = None
 
-    # Session summaries per session per user
-    summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None
-    # Summarizer to generate session summaries
-    summary_manager: Optional[SessionSummarizer] = None
-
-    db: Optional[MemoryDb] = None
+    db: Optional[BaseDb] = None
 
     # runs per session
     runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None
-
-    # Team context per session
-    team_context: Optional[Dict[str, TeamContext]] = None
 
     # Whether to delete memories
     delete_memories: bool = False
@@ -105,17 +98,14 @@ class Memory:
         self,
         model: Optional[Model] = None,
         memory_manager: Optional[MemoryManager] = None,
-        summarizer: Optional[SessionSummarizer] = None,
-        db: Optional[MemoryDb] = None,
+        db: Optional[BaseDb] = None,
         memories: Optional[Dict[str, Dict[str, UserMemory]]] = None,
-        summaries: Optional[Dict[str, Dict[str, SessionSummary]]] = None,
         runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
         debug_mode: bool = False,
         delete_memories: bool = False,
         clear_memories: bool = False,
     ):
         self.memories = memories or {}
-        self.summaries = summaries or {}
         self.runs = runs or {}
 
         self.debug_mode = debug_mode
@@ -129,8 +119,6 @@ class Memory:
             raise ValueError("Model must be a Model object, not a string")
 
         self.memory_manager = memory_manager
-
-        self.summary_manager = summarizer
 
         self.db = db
 
@@ -157,10 +145,10 @@ class Memory:
             self.memory_manager = MemoryManager(model=deepcopy(model))
         if self.memory_manager.model is None:
             self.memory_manager.model = deepcopy(model)
-        if self.summary_manager is None:
-            self.summary_manager = SessionSummarizer(model=deepcopy(model))
-        if self.summary_manager.model is None:
-            self.summary_manager.model = deepcopy(model)
+        # if self.summary_manager is None:
+        #     self.summary_manager = SessionSummarizer(model=deepcopy(model))
+        # if self.summary_manager.model is None:
+        #     self.summary_manager.model = deepcopy(model)
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -176,17 +164,18 @@ class Memory:
         return self.model
 
     def refresh_from_db(self, user_id: Optional[str] = None):
-        if self.db:
-            # If no user_id is provided, read all memories
-            if user_id is None:
-                all_memories = self.db.read_memories()
-            else:
-                all_memories = self.db.read_memories(user_id=user_id)
-            # Reset the memories
-            self.memories = {}
-            for memory in all_memories:
-                if memory.user_id is not None and memory.id is not None:
-                    self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
+        # if self.db:
+        #     # If no user_id is provided, read all memories
+        #     if user_id is None:
+        #         all_memories = self.db.read_memories()
+        #     else:
+        #         all_memories = self.db.read_memories(user_id=user_id)
+        #     # Reset the memories
+        #     self.memories = {}
+        #     for memory in all_memories:
+        #         if memory.user_id is not None and memory.id is not None:
+        #             self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
+        return None
 
     def set_log_level(self):
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -627,6 +616,28 @@ class Memory:
         except Exception as e:
             logger.warning(f"Error deleting memory in db: {e}")
             return f"Error deleting memory: {e}"
+
+    # -*- Session Db Functions
+    def read_agent_session(self, session_id: str) -> Optional[AgentSession]:
+        """Get a session from the database."""
+        try:
+            if not self.db:
+                raise ValueError("Db not initialized")
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+            return session
+        except Exception as e:
+            logger.warning(f"Error getting session from db: {e}")
+            return None
+
+    def upsert_agent_session(self, session: AgentSession) -> Optional[AgentSession]:
+        """Upsert a session into the database."""
+        try:
+            if not self.db:
+                raise ValueError("Db not initialized")
+            return self.db.upsert_agent_session(session=session)
+        except Exception as e:
+            logger.warning(f"Error upserting session into db: {e}")
+            return None
 
     # -*- Utility Functions
     def get_messages_for_session(

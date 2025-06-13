@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 from typing import List, Optional
 
-from pydantic import field_validator, Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -16,7 +17,6 @@ class AgnoAPISettings(BaseSettings):
 
     # Set to False to disable docs server at /docs and /redoc
     docs_enabled: bool = True
-
 
     # Cors origin list to allow requests from.
     # This list is set using the set_cors_origin_list validator

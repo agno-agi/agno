@@ -1,7 +1,7 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
+from agno.playground import Playground
 
 audio_and_text_agent = Agent(
     agent_id="audio-text-agent",

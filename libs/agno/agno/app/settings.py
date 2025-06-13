@@ -13,4 +13,3 @@ class APIAppSettings(BaseSettings):
 
     # Set to False to disable docs server at /docs and /redoc
     docs_enabled: bool = True
-

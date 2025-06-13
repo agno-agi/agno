@@ -6,8 +6,8 @@
 from typing import List
 
 from agno.agent import Agent
+from agno.db.mongodb import MongoDbStorage
 from agno.models.openai import OpenAIChat
-from agno.storage.mongodb import MongoDbStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools

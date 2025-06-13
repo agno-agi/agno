@@ -3,9 +3,9 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from agno.agent.agent import Agent
-from agno.run.response import RunEvent, RunResponse
+from agno.db.postgres import PostgresStorage
+from agno.run.response import RunResponse
 from agno.run.workflow import WorkflowCompletedEvent
-from agno.storage.postgres import PostgresStorage
 from agno.tools.linear import LinearTools
 from agno.tools.slack import SlackTools
 from agno.utils.log import logger

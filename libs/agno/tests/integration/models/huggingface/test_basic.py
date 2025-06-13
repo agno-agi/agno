@@ -2,9 +2,9 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.db.sqlite import SqliteStorage
 from agno.exceptions import ModelProviderError
 from agno.models.huggingface import HuggingFace
-from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):
@@ -176,4 +176,3 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
-

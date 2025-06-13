@@ -1,7 +1,7 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.eleven_labs import ElevenLabsTools
 from agno.tools.firecrawl import FirecrawlTools
 

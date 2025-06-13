@@ -2,7 +2,7 @@ import uuid
 
 import google.auth
 from agno.agent import Agent
-from agno.storage.gcs_json import GCSJsonStorage
+from agno.db.gcs_json import GCSJsonStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 DEBUG_MODE = False

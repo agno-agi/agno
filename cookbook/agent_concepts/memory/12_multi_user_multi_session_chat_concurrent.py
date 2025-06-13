@@ -11,11 +11,11 @@ User 3 has 1 session.
 import asyncio
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
-from agno.storage.sqlite import SqliteStorage
 
 agent_storage = SqliteStorage(
     table_name="agent_sessions", db_file="tmp/persistent_memory.db"

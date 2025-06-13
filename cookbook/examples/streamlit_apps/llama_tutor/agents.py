@@ -18,16 +18,16 @@ load_dotenv(override=True)
 
 # Importing the Agent and model classes
 from agno.agent import Agent
-from agno.models.groq import Groq
 
 # Importing storage and tool classes
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.db.agent.sqlite import SqliteAgentStorage
+from agno.models.groq import Groq
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
 
 # Import the Agent template
-from prompts import AGENT_DESCRIPTION, AGENT_INSTRUCTIONS, EXPECTED_OUTPUT_TEMPLATE
+from prompts import EXPECTED_OUTPUT_TEMPLATE
 
 # ************* Setup Paths *************
 # Define the current working directory and output directory for saving files

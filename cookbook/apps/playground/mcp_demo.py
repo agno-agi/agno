@@ -13,9 +13,9 @@ from textwrap import dedent
 
 import nest_asyncio
 from agno.agent import Agent
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.agent.sqlite import SqliteAgentStorage
+from agno.playground import Playground
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 

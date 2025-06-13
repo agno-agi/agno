@@ -7,10 +7,10 @@ Steps:
 """
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresStorage
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

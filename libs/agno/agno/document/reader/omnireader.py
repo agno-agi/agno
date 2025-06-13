@@ -1,7 +1,8 @@
-from agno.document.reader.base import Reader
-from typing import Union, List, Any, IO
 from pathlib import Path
+from typing import IO, Any, List, Union
+
 from agno.document import Document
+from agno.document.reader.base import Reader
 
 
 class OmniReader(Reader):

@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from boto3.dynamodb.conditions import Key
 
-from agno.storage.dynamodb import DynamoDbStorage
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.db.dynamodb import DynamoDbStorage
+from agno.db.session.agent import AgentSession
+from agno.db.session.workflow import WorkflowSession
 
 
 @pytest.fixture

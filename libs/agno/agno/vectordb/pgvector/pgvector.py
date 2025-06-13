@@ -156,7 +156,6 @@ class PgVector(VectorDb):
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
             Column("source_document_id", String),
-
             extend_existing=True,
         )
 

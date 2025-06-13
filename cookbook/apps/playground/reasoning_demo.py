@@ -4,10 +4,10 @@ import asyncio
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
+from agno.playground import Playground
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.knowledge import KnowledgeTools

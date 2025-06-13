@@ -2,8 +2,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
+from agno.db.sqlite import SqliteStorage
 from agno.models.xai import xAI
-from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):

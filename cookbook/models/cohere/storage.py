@@ -1,8 +1,8 @@
 """Run `pip install duckduckgo-search sqlalchemy cohere` to install dependencies."""
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresStorage
 from agno.models.cohere import Cohere
-from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

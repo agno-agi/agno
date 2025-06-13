@@ -29,6 +29,8 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent.metrics import SessionMetrics
+from agno.db.base import Storage
+from agno.db.session.team import TeamSession
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -41,8 +43,6 @@ from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
-from agno.storage.base import Storage
-from agno.storage.session.team import TeamSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -6285,8 +6285,7 @@ class Team:
                     try:
                         self.memory.memories = {
                             user_id: {
-                                memory_id: UserMemoryV2.from_dict(memory)
-                                for memory_id, memory in user_memories.items()
+                                memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
                             }
                             for user_id, user_memories in session.memory["memories"].items()
                         }
