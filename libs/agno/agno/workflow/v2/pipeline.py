@@ -33,24 +33,22 @@ class Pipeline:
     def execute(
         self,
         inputs: Dict[str, Any],
-        context: Dict[str, Any] = None,
+        workflow_run_response: WorkflowRunResponse,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Union[WorkflowCompletedEvent, Iterator[Union[WorkflowRunResponse, str]]]:
         """Execute all tasks in the pipeline sequentially with optional streaming"""
         if stream:
-            return self._execute_stream(inputs, context, stream_intermediate_steps)
+            return self._execute_stream(inputs, workflow_run_response, stream_intermediate_steps)
         else:
-            return self._execute(inputs, context)
+            return self._execute(inputs, workflow_run_response)
 
-    def _execute(self, inputs: Dict[str, Any], context: Dict[str, Any] = None) -> WorkflowRunResponse:
+    def _execute(self, inputs: Dict[str, Any], workflow_run_response: WorkflowRunResponse) -> WorkflowRunResponse:
         """Execute all tasks in the pipeline using TaskInput/TaskOutput (non-streaming)"""
         logger.info(f"Starting pipeline: {self.name}")
 
-        # Initialize pipeline context
-        pipeline_context = context or {}
-        pipeline_context["pipeline_name"] = self.name
-        pipeline_context["pipeline_id"] = self.pipeline_id
+        # Update pipeline info in the response
+        workflow_run_response.pipeline_name = self.name
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -59,15 +57,11 @@ class Pipeline:
         for i, task in enumerate(self.tasks):
             logger.info(f"Executing task {i + 1}/{len(self.tasks)}: {task.name}")
 
-            # Add task_index to context for the task
-            task_context = pipeline_context.copy()
-            task_context["task_index"] = i
-
             # Create TaskInput for this task
-            task_input = self._create_task_input(inputs, previous_outputs, context)
+            task_input = self._create_task_input(inputs, previous_outputs, workflow_run_response)
 
-            # Execute the task (non-streaming)
-            task_output = task.execute(task_input, task_context)
+            # Execute the task (non-streaming) - pass workflow_run_response
+            task_output = task.execute(task_input, workflow_run_response, task_index=i)
 
             # Collect the task output
             if task_output is None:
@@ -81,7 +75,6 @@ class Pipeline:
 
         # Create final output data
         final_output = {
-            "pipeline_name": self.name,
             "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
@@ -97,38 +90,35 @@ class Pipeline:
             ],
         }
 
-        return WorkflowRunResponse(
-            event=WorkflowRunEvent.workflow_completed,
-            content=f"Pipeline {self.name} completed successfully",
-            workflow_id=context.get("workflow_id") if context else None,
-            workflow_name=context.get("workflow_name") if context else None,
-            pipeline_name=self.name,
-            run_id=context.get("run_id", ""),
-            session_id=context.get("session_id") if context else None,
-            task_responses=collected_task_outputs,
-            extra_data=final_output,
-        )
+        # Update the workflow_run_response with completion data
+        workflow_run_response.event = WorkflowRunEvent.workflow_completed
+        workflow_run_response.content = f"Pipeline {self.name} completed successfully"
+        workflow_run_response.task_responses = collected_task_outputs
+        workflow_run_response.extra_data = final_output
+
+        return workflow_run_response
 
     def _execute_stream(
-        self, inputs: Dict[str, Any], context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
+        self,
+        inputs: Dict[str, Any],
+        workflow_run_response: WorkflowRunResponse,
+        stream_intermediate_steps: bool = False,
     ) -> Iterator[WorkflowRunResponseEvent]:
         """Execute the pipeline with event-driven streaming support"""
         logger.info(f"Executing pipeline with streaming: {self.name}")
 
+        # Update pipeline info in the response
+        workflow_run_response.pipeline_name = self.name
+
         # Yield workflow started event
         yield WorkflowStartedEvent(
-            run_id=context.get("run_id", ""),
+            run_id=workflow_run_response.run_id or "",
             content=f"Pipeline {self.name} started",
-            workflow_name=context.get("workflow_name") if context else None,
+            workflow_name=workflow_run_response.workflow_name,
             pipeline_name=self.name,
-            workflow_id=context.get("workflow_id") if context else None,
-            session_id=context.get("session_id") if context else None,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
         )
-
-        # Initialize pipeline context
-        pipeline_context = context or {}
-        pipeline_context["pipeline_name"] = self.name
-        pipeline_context["pipeline_id"] = self.pipeline_id
 
         # Track outputs from each task for chaining
         previous_outputs = {}
@@ -136,17 +126,17 @@ class Pipeline:
 
         # Execute tasks in pipeline with streaming
         for task_index, task in enumerate(self.tasks):
-            # Add task_index to context for the task
-            task_context = pipeline_context.copy()
-            task_context["task_index"] = task_index
-
             # Create TaskInput for this task
-            task_input = self._create_task_input(inputs, previous_outputs, context)
+            task_input = self._create_task_input(inputs, previous_outputs, workflow_run_response)
 
             # Execute task with streaming and yield all events
             task_output = None
             for event in task.execute(
-                task_input, task_context, stream=True, stream_intermediate_steps=stream_intermediate_steps
+                task_input,
+                workflow_run_response,
+                stream=True,
+                stream_intermediate_steps=stream_intermediate_steps,
+                task_index=task_index,
             ):
                 if isinstance(event, TaskOutput):
                     # This is the final task output
@@ -160,26 +150,24 @@ class Pipeline:
 
                     # Yield task completed event
                     yield TaskCompletedEvent(
-                        run_id=context.get("run_id", ""),
+                        run_id=workflow_run_response.run_id or "",
                         content=task_output.content,
-                        workflow_name=context.get("workflow_name") if context else None,
+                        workflow_name=workflow_run_response.workflow_name,
                         pipeline_name=self.name,
                         task_name=task.name,
                         task_index=task_index,
-                        workflow_id=context.get("workflow_id") if context else None,
-                        session_id=context.get("session_id") if context else None,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
                         images=task_output.images,
                         videos=task_output.videos,
                         audio=task_output.audio,
                         task_responses=[task_output],
                     )
                 else:
-                    # This is either an event or streaming content - yield it
                     yield event
 
         # Create final output data
         final_output = {
-            "pipeline_name": self.name,
             "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
@@ -197,12 +185,12 @@ class Pipeline:
 
         # Yield workflow completed event
         yield WorkflowCompletedEvent(
-            run_id=context.get("run_id", ""),
+            run_id=workflow_run_response.run_id or "",
             content=f"Pipeline {self.name} completed successfully",
-            workflow_name=context.get("workflow_name") if context else None,
+            workflow_name=workflow_run_response.workflow_name,
             pipeline_name=self.name,
-            workflow_id=context.get("workflow_id") if context else None,
-            session_id=context.get("session_id") if context else None,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
             task_responses=collected_task_outputs,
             extra_data=final_output,
         )
@@ -286,7 +274,6 @@ class Pipeline:
 
         # Workflow completed event with all task outputs
         final_output = {
-            "pipeline_name": self.name,
             "pipeline_id": self.pipeline_id,
             "status": "completed",
             "total_tasks": len(self.tasks),
@@ -315,7 +302,10 @@ class Pipeline:
         )
 
     def _create_task_input(
-        self, initial_inputs: Dict[str, Any], previous_outputs: Dict[str, Any], context: Dict[str, Any] = None
+        self,
+        initial_inputs: Dict[str, Any],
+        previous_outputs: Dict[str, Any],
+        workflow_run_response: WorkflowRunResponse,
     ) -> TaskInput:
         """Create TaskInput for a task"""
         # Get primary query/message
@@ -326,9 +316,18 @@ class Pipeline:
         videos = initial_inputs.get("videos")
         audio = initial_inputs.get("audio")
 
+        # Create workflow session state from WorkflowRunResponse
+        workflow_session_state = {
+            "workflow_id": workflow_run_response.workflow_id,
+            "workflow_name": workflow_run_response.workflow_name,
+            "run_id": workflow_run_response.run_id,
+            "session_id": workflow_run_response.session_id,
+            "pipeline_name": workflow_run_response.pipeline_name,
+        }
+
         return TaskInput(
             query=query,
-            workflow_session_state=context,
+            workflow_session_state=workflow_session_state,
             previous_outputs=previous_outputs.copy() if previous_outputs else None,
             images=images,
             videos=videos,

@@ -111,7 +111,7 @@ class Workflow:
         if self.storage is not None:
             self.storage.mode = "workflow_v2"
 
-    def execute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> Iterator[WorkflowRunResponse]:
+    def execute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
         pipeline = self.get_pipeline(pipeline_name)
         if not pipeline:
@@ -123,31 +123,32 @@ class Workflow:
 
         log_debug(f"Starting workflow execution: {self.run_id}")
 
-        # Create execution context
-        context = {
-            "workflow_id": self.workflow_id,
-            "workflow_name": self.name,
-            "run_id": self.run_id,
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "execution_start": execution_start,
-        }
+        # Create WorkflowRunResponse object to pass down (instead of context dict)
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            pipeline_name=pipeline_name,
+            event=WorkflowRunEvent.workflow_started,
+            created_at=int(execution_start.timestamp()),
+        )
 
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
         try:
-            # Execute the pipeline synchronously - return WorkflowRunResponse directly!
-            workflow_response = pipeline.execute(inputs, context, stream=False)
+            # Execute the pipeline synchronously - pass WorkflowRunResponse instead of context
+            final_response = pipeline.execute(inputs, workflow_run_response, stream=False)
 
             # Store the completed workflow response
             if self.workflow_session:
-                self.workflow_session.add_run(workflow_response)
+                self.workflow_session.add_run(final_response)
 
             # Save to storage after complete execution
             self.write_to_storage()
 
-            return workflow_response
+            return final_response
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
@@ -183,37 +184,29 @@ class Workflow:
 
         log_debug(f"Starting workflow execution with streaming: {self.run_id}")
 
-        # Create execution context
-        context = {
-            "workflow_id": self.workflow_id,
-            "workflow_name": self.name,
-            "run_id": self.run_id,
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "execution_start": datetime.now(),
-        }
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            pipeline_name=pipeline_name,
+            event=WorkflowRunEvent.workflow_started,
+            created_at=int(datetime.now().timestamp()),
+        )
 
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
         try:
             # Execute the pipeline with streaming and yield all events
-            for event in pipeline._execute_stream(inputs, context, stream_intermediate_steps):
+            for event in pipeline._execute_stream(inputs, workflow_run_response, stream_intermediate_steps):
                 # Store completed workflow response when we get the final event
                 if isinstance(event, WorkflowCompletedEvent):
-                    # Create workflow run response for storage
-                    workflow_run_response = WorkflowRunResponse(
-                        run_id=self.run_id,
-                        session_id=self.session_id,
-                        workflow_id=self.workflow_id,
-                        workflow_name=self.name,
-                        pipeline_name=pipeline_name,
-                        content=event.content,
-                        task_responses=event.task_responses,
-                        extra_data=event.extra_data,
-                        event=WorkflowRunEvent.workflow_completed,
-                        created_at=int(datetime.now().timestamp()),
-                    )
+                    # Update the workflow_run_response with final data
+                    workflow_run_response.content = event.content
+                    workflow_run_response.task_responses = event.task_responses
+                    workflow_run_response.extra_data = event.extra_data
+                    workflow_run_response.event = WorkflowRunEvent.workflow_completed
 
                     # Store the completed workflow response
                     if self.workflow_session:
@@ -239,21 +232,13 @@ class Workflow:
                 error=str(e),
             )
 
-            # Create error workflow run response for storage
-            error_workflow_response = WorkflowRunResponse(
-                run_id=self.run_id or "",
-                session_id=self.session_id,
-                workflow_id=self.workflow_id,
-                workflow_name=self.name,
-                pipeline_name=pipeline_name,
-                content=error_event.content,
-                event=WorkflowRunEvent.workflow_error,
-                created_at=int(datetime.now().timestamp()),
-            )
+            # Update workflow_run_response with error
+            workflow_run_response.content = error_event.content
+            workflow_run_response.event = WorkflowRunEvent.workflow_error
 
             # Store error response
             if self.workflow_session:
-                self.workflow_session.add_run(error_workflow_response)
+                self.workflow_session.add_run(workflow_run_response)
             self.write_to_storage()
 
             yield error_event
@@ -747,7 +732,6 @@ class Workflow:
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-        sequence_name: Optional[str] = None,
         markdown: bool = True,
         show_time: bool = True,
         show_task_details: bool = True,

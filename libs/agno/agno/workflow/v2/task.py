@@ -201,22 +201,25 @@ class Task:
     def execute(
         self,
         task_input: TaskInput,
-        context: Dict[str, Any] = None,
+        workflow_run_response: WorkflowRunResponse,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
+        task_index: int = 0,
     ) -> Union[TaskOutput, Iterator[WorkflowRunResponseEvent]]:
         """Execute the task with TaskInput, with optional streaming support"""
         if stream:
-            return self._execute_task_stream(task_input, context, stream_intermediate_steps)
+            return self._execute_task_stream(task_input, workflow_run_response, stream_intermediate_steps, task_index)
         else:
-            return self._execute_task(task_input, context)
+            return self._execute_task(task_input, workflow_run_response, task_index)
 
-    def _execute_task(self, task_input: TaskInput, context: Dict[str, Any] = None) -> TaskOutput:
+    def _execute_task(
+        self, task_input: TaskInput, workflow_run_response: WorkflowRunResponse, task_index: int = 0
+    ) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
         logger.info(f"Executing task: {self.name}")
 
-        # Initialize executor with context and workflow session state
-        self._initialize_executor_context(task_input, context)
+        # Initialize executor with workflow run response
+        self._initialize_executor_context(task_input, workflow_run_response)
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -243,122 +246,12 @@ class Task:
                     else:
                         raise e
 
-    # def _execute_task_stream(
-    #     self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
-    # ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
-    #     """Execute the task with event-driven streaming support"""
-    #     logger.info(f"Executing task with streaming: {self.name}")
-    #     from agno.run.response import RunResponseEvent
-    #     from agno.workflow.v2.workflow import TaskStartedEvent
-
-    #     # Yield task started event
-    #     yield TaskStartedEvent(
-    #         run_id=context.get("run_id", ""),
-    #         content=f"Starting task: {self.name}",
-    #         workflow_name=context.get("workflow_name") if context else None,
-    #         pipeline_name=context.get("pipeline_name") if context else None,
-    #         task_name=self.name,
-    #         task_index=context.get("task_index") if context else None,
-    #         workflow_id=context.get("workflow_id") if context else None,
-    #         session_id=context.get("session_id") if context else None,
-    #     )
-
-    #     # Initialize executor with context and workflow session state
-    #     self._initialize_executor_context(task_input, context)
-
-    #     # Execute with retries and streaming
-    #     for attempt in range(self.max_retries + 1):
-    #         try:
-    #             final_response = None
-
-    #             if self._executor_type == "function":
-    #                 # Handle custom function streaming
-    #                 result = self._active_executor(task_input)
-
-    #                 if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, TaskOutput)):
-    #                     try:
-    #                         for event in result:
-    #                             yield event
-    #                             if isinstance(event, TaskOutput):
-    #                                 # This is the final task output
-    #                                 final_response = event
-    #                     except TypeError:
-    #                         # Not actually iterable, treat as regular result
-    #                         if isinstance(result, TaskOutput):
-    #                             final_response = result
-    #                         else:
-    #                             final_response = TaskOutput(content=str(result))
-    #                 else:
-    #                     # Regular function result
-    #                     if isinstance(result, TaskOutput):
-    #                         final_response = result
-    #                     else:
-    #                         final_response = TaskOutput(content=str(result))
-    #             else:
-    #                 message = task_input.get_primary_input()
-
-    #                 if task_input.previous_outputs:
-    #                     message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-    #                 if self._executor_type == "agent":
-    #                     response_stream = self._active_executor.run(
-    #                         message=message,
-    #                         images=task_input.images,
-    #                         videos=task_input.videos,
-    #                         audio=task_input.audio,
-    #                         stream=True,
-    #                         stream_intermediate_steps=stream_intermediate_steps,
-    #                     )
-
-    #                     for event in response_stream:
-    #                         yield event
-    #                         if isinstance(event, RunResponseEvent):
-    #                             final_response = self._create_task_output(event, task_input)
-
-    #                 elif self._executor_type == "team":
-    #                     response_stream = self._active_executor.run(
-    #                         message=message,
-    #                         images=task_input.images,
-    #                         videos=task_input.videos,
-    #                         audio=task_input.audio,
-    #                         stream=True,
-    #                         stream_intermediate_steps=stream_intermediate_steps,
-    #                     )
-
-    #                     for event in response_stream:
-    #                         yield event
-    #                         if isinstance(event, RunResponseEvent):
-    #                             final_response = self._create_task_output(event, task_input)
-
-    #                 else:
-    #                     raise ValueError(f"Unsupported executor type: {self._executor_type}")
-
-    #             # If we didn't get a final response, create one
-    #             if final_response is None:
-    #                 final_response = TaskOutput(content="")
-
-    #             logger.info(f"Task {self.name} completed successfully with streaming")
-    #             yield final_response
-    #             return
-
-    #         except Exception as e:
-    #             self.retry_count = attempt + 1
-    #             logger.warning(f"Task {self.name} failed (attempt {attempt + 1}): {e}")
-
-    #             if attempt == self.max_retries:
-    #                 if self.skip_on_failure:
-    #                     logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
-    #                     # Create empty TaskOutput for skipped task
-    #                     task_output = TaskOutput(
-    #                         content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
-    #                     )
-    #                     yield task_output
-    #                     return
-    #                 else:
-    #                     raise e
-
     def _execute_task_stream(
-        self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
+        self,
+        task_input: TaskInput,
+        workflow_run_response: WorkflowRunResponse,
+        stream_intermediate_steps: bool = False,
+        task_index: int = 0,
     ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
         """Execute the task with event-driven streaming support"""
         logger.info(f"Executing task with streaming: {self.name}")
@@ -367,18 +260,18 @@ class Task:
 
         # Yield task started event
         yield TaskStartedEvent(
-            run_id=context.get("run_id", ""),
+            run_id=workflow_run_response.run_id or "",
             content=f"Starting task: {self.name}",
-            workflow_name=context.get("workflow_name") if context else None,
-            pipeline_name=context.get("pipeline_name") if context else None,
+            workflow_name=workflow_run_response.workflow_name,
+            pipeline_name=workflow_run_response.pipeline_name,
             task_name=self.name,
-            task_index=context.get("task_index") if context else None,
-            workflow_id=context.get("workflow_id") if context else None,
-            session_id=context.get("session_id") if context else None,
+            task_index=task_index,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
         )
 
-        # Initialize executor with context and workflow session state
-        self._initialize_executor_context(task_input, context)
+        # Initialize executor with workflow run response
+        self._initialize_executor_context(task_input, workflow_run_response)
 
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
@@ -560,17 +453,16 @@ class Task:
                     else:
                         raise e
 
-    def _initialize_executor_context(self, task_input: TaskInput, context: Dict[str, Any] = None):
-        """Initialize the executor with context and workflow session state"""
+    def _initialize_executor_context(self, task_input: TaskInput, workflow_run_response: WorkflowRunResponse):
+        """Initialize the executor with context from WorkflowRunResponse"""
         if self._executor_type in ["agent", "team"]:
             executor = self._active_executor
 
-            # Set workflow context
-            if context:
-                if hasattr(executor, "workflow_id"):
-                    executor.workflow_id = context.get("workflow_id")
-                if hasattr(executor, "workflow_session_id"):
-                    executor.workflow_session_id = context.get("session_id")
+            # Set workflow context from WorkflowRunResponse
+            if hasattr(executor, "workflow_id"):
+                executor.workflow_id = workflow_run_response.workflow_id
+            if hasattr(executor, "workflow_session_id"):
+                executor.workflow_session_id = workflow_run_response.session_id
 
             # Set workflow session state
             if task_input.workflow_session_state and hasattr(executor, "session_state"):
