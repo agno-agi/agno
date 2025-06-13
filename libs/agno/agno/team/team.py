@@ -4945,7 +4945,10 @@ class Team:
                 )
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role, team_id=self.team_id
+                    session_id=session_id,
+                    last_n=self.num_history_runs,
+                    skip_role=self.system_message_role,
+                    team_id=self.team_id,
                 )
 
             if len(history) > 0:

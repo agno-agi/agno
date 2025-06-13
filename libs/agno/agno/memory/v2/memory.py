@@ -714,9 +714,9 @@ class Memory:
 
         session_runs = self.runs.get(session_id, [])
         if agent_id:
-            session_runs = [run for run in session_runs if run.agent_id == agent_id]
+            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
         if team_id:
-            session_runs = [run for run in session_runs if run.team_id == team_id]
+            session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
         system_message = None
