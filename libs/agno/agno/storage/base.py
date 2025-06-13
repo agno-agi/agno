@@ -14,34 +14,34 @@ class SessionType(str, Enum):
 class Storage(ABC):
     def __init__(
         self,
-        agent_sessions_table_name: Optional[str] = None,
-        team_sessions_table_name: Optional[str] = None,
-        workflow_sessions_table_name: Optional[str] = None,
-        memory_table_name: Optional[str] = None,
-        learnings_table_name: Optional[str] = None,
-        eval_runs_table_name: Optional[str] = None,
+        agent_sessions_table: Optional[str] = None,
+        team_sessions_table: Optional[str] = None,
+        workflow_sessions_table: Optional[str] = None,
+        user_memories_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
+        evals_table: Optional[str] = None,
     ):
         if (
-            not agent_sessions_table_name
-            and not team_sessions_table_name
-            and not workflow_sessions_table_name
-            and not memory_table_name
-            and not learnings_table_name
-            and not eval_runs_table_name
+            not agent_sessions_table
+            and not team_sessions_table
+            and not workflow_sessions_table
+            and not user_memories_table
+            and not learnings_table
+            and not evals_table
         ):
             raise ValueError("At least one of the tables must be provided")
 
-        self.agent_sessions_table_name = agent_sessions_table_name
-        self.team_sessions_table_name = team_sessions_table_name
-        self.workflow_sessions_table_name = workflow_sessions_table_name
-        self.memory_table_name = memory_table_name
-        self.learnings_table_name = learnings_table_name
-        self.eval_runs_table_name = eval_runs_table_name
+        self.agent_sessions_table = agent_sessions_table
+        self.team_sessions_table = team_sessions_table
+        self.workflow_sessions_table = workflow_sessions_table
+        self.user_memories_table = user_memories_table
+        self.learnings_table = learnings_table
+        self.evals_table = evals_table
 
     # --- READ ---
 
     @abstractmethod
-    def read_session(self, session_id: str, session_type: Optional[SessionType] = None) -> Optional[Session]:
+    def get_session(self, session_id: str) -> Optional[Session]:
         raise NotImplementedError
 
     @abstractmethod
@@ -49,11 +49,7 @@ class Storage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_sessions(
-        self,
-        session_type: Optional[SessionType] = None,
-        entity_id: Optional[str] = None,
-    ) -> List[Session]:
+    def get_sessions(self, entity_id: Optional[str] = None) -> List[Session]:
         raise NotImplementedError
 
     # --- WRITE ---
