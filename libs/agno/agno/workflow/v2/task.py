@@ -243,6 +243,120 @@ class Task:
                     else:
                         raise e
 
+    # def _execute_task_stream(
+    #     self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
+    # ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
+    #     """Execute the task with event-driven streaming support"""
+    #     logger.info(f"Executing task with streaming: {self.name}")
+    #     from agno.run.response import RunResponseEvent
+    #     from agno.workflow.v2.workflow import TaskStartedEvent
+
+    #     # Yield task started event
+    #     yield TaskStartedEvent(
+    #         run_id=context.get("run_id", ""),
+    #         content=f"Starting task: {self.name}",
+    #         workflow_name=context.get("workflow_name") if context else None,
+    #         pipeline_name=context.get("pipeline_name") if context else None,
+    #         task_name=self.name,
+    #         task_index=context.get("task_index") if context else None,
+    #         workflow_id=context.get("workflow_id") if context else None,
+    #         session_id=context.get("session_id") if context else None,
+    #     )
+
+    #     # Initialize executor with context and workflow session state
+    #     self._initialize_executor_context(task_input, context)
+
+    #     # Execute with retries and streaming
+    #     for attempt in range(self.max_retries + 1):
+    #         try:
+    #             final_response = None
+
+    #             if self._executor_type == "function":
+    #                 # Handle custom function streaming
+    #                 result = self._active_executor(task_input)
+
+    #                 if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, TaskOutput)):
+    #                     try:
+    #                         for event in result:
+    #                             yield event
+    #                             if isinstance(event, TaskOutput):
+    #                                 # This is the final task output
+    #                                 final_response = event
+    #                     except TypeError:
+    #                         # Not actually iterable, treat as regular result
+    #                         if isinstance(result, TaskOutput):
+    #                             final_response = result
+    #                         else:
+    #                             final_response = TaskOutput(content=str(result))
+    #                 else:
+    #                     # Regular function result
+    #                     if isinstance(result, TaskOutput):
+    #                         final_response = result
+    #                     else:
+    #                         final_response = TaskOutput(content=str(result))
+    #             else:
+    #                 message = task_input.get_primary_input()
+
+    #                 if task_input.previous_outputs:
+    #                     message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
+
+    #                 if self._executor_type == "agent":
+    #                     response_stream = self._active_executor.run(
+    #                         message=message,
+    #                         images=task_input.images,
+    #                         videos=task_input.videos,
+    #                         audio=task_input.audio,
+    #                         stream=True,
+    #                         stream_intermediate_steps=stream_intermediate_steps,
+    #                     )
+
+    #                     for event in response_stream:
+    #                         yield event
+    #                         if isinstance(event, RunResponseEvent):
+    #                             final_response = self._create_task_output(event, task_input)
+
+    #                 elif self._executor_type == "team":
+    #                     response_stream = self._active_executor.run(
+    #                         message=message,
+    #                         images=task_input.images,
+    #                         videos=task_input.videos,
+    #                         audio=task_input.audio,
+    #                         stream=True,
+    #                         stream_intermediate_steps=stream_intermediate_steps,
+    #                     )
+
+    #                     for event in response_stream:
+    #                         yield event
+    #                         if isinstance(event, RunResponseEvent):
+    #                             final_response = self._create_task_output(event, task_input)
+
+    #                 else:
+    #                     raise ValueError(f"Unsupported executor type: {self._executor_type}")
+
+    #             # If we didn't get a final response, create one
+    #             if final_response is None:
+    #                 final_response = TaskOutput(content="")
+
+    #             logger.info(f"Task {self.name} completed successfully with streaming")
+    #             yield final_response
+    #             return
+
+    #         except Exception as e:
+    #             self.retry_count = attempt + 1
+    #             logger.warning(f"Task {self.name} failed (attempt {attempt + 1}): {e}")
+
+    #             if attempt == self.max_retries:
+    #                 if self.skip_on_failure:
+    #                     logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
+    #                     # Create empty TaskOutput for skipped task
+    #                     task_output = TaskOutput(
+    #                         content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+    #                     )
+    #                     yield task_output
+    #                     return
+    #                 else:
+    #                     raise e
+
     def _execute_task_stream(
         self, task_input: TaskInput, context: Dict[str, Any] = None, stream_intermediate_steps: bool = False
     ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
@@ -272,12 +386,29 @@ class Task:
                 final_response = None
 
                 if self._executor_type == "function":
-                    # TODO: Handle for this case seperately
+                    # Handle custom function streaming
                     result = self._active_executor(task_input)
-                    if isinstance(result, TaskOutput):
-                        final_response = result
+
+                    if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, TaskOutput)):
+                        try:
+                            for event in result:
+                                if isinstance(event, TaskOutput):
+                                    final_response = event
+                                else:
+                                    yield event
+                        except StopIteration as e:
+                            if hasattr(e, "value") and isinstance(e.value, TaskOutput):
+                                final_response = e.value
+                        except TypeError:
+                            if isinstance(result, TaskOutput):
+                                final_response = result
+                            else:
+                                final_response = TaskOutput(content=str(result))
                     else:
-                        final_response = TaskOutput(content=str(result))
+                        if isinstance(result, TaskOutput):
+                            final_response = result
+                        else:
+                            final_response = TaskOutput(content=str(result))
                 else:
                     message = task_input.get_primary_input()
 
