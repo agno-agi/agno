@@ -1,6 +1,7 @@
+from enum import Enum
+
 import pytest
 from pydantic import BaseModel, Field
-from enum import Enum
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIResponses
@@ -288,7 +289,6 @@ def test_web_search_built_in_tool_with_other_tools():
 
 
 def test_tool_use_with_enum():
-
     class Color(str, Enum):
         RED = "red"
         BLUE = "blue"
