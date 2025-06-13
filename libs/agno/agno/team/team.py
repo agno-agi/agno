@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.agent.metrics import SessionMetrics
-from agno.exceptions import ModelProviderError, RunCancelledException
+from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory
@@ -276,6 +276,11 @@ class Team:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries increases exponentially
+    exponential_backoff: bool = False
 
     def __init__(
         self,
@@ -346,6 +351,9 @@ class Team:
         show_members_responses: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
+        retries: int = 0,
+        delay_between_retries: int = 1,
+        exponential_backoff: bool = False,
     ):
         self.members = members
 
@@ -431,6 +439,9 @@ class Team:
 
         self.monitoring = monitoring
         self.telemetry = telemetry
+        self.retries = retries
+        self.delay_between_retries = delay_between_retries
+        self.exponential_backoff = exponential_backoff
 
         # --- Params not to be set by user ---
         self.session_metrics: Optional[SessionMetrics] = None
@@ -843,8 +854,14 @@ class Team:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
 
                 last_exception = e
-                if attempt < num_attempts - 1:
-                    time.sleep(2**attempt)
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    import time
+
+                    time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
                     return self._generator_wrapper(
@@ -854,6 +871,19 @@ class Team:
                     return self._create_run_response(
                         run_state=RunStatus.cancelled,
                         content="Operation cancelled by user",
+                        from_run_response=run_response,
+                        session_id=session_id,
+                    )
+            except StopAgentRun:
+                # Do not retry when the Agent explicitly stops the run.
+                if stream and self.is_streamable:
+                    return self._generator_wrapper(
+                        create_team_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self._create_run_response(
+                        run_state=RunStatus.cancelled,
+                        content="Agent run stopped",
                         from_run_response=run_response,
                         session_id=session_id,
                     )
@@ -1239,8 +1269,12 @@ class Team:
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
-                if attempt < num_attempts - 1:
-                    await asyncio.sleep(2**attempt)
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    await asyncio.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
                     return self._async_generator_wrapper(
@@ -1250,6 +1284,18 @@ class Team:
                     return self._create_run_response(
                         run_state=RunStatus.cancelled,
                         content="Operation cancelled by user",
+                        from_run_response=run_response,
+                        session_id=session_id,
+                    )
+            except StopAgentRun:
+                if stream and self.is_streamable:
+                    return self._async_generator_wrapper(
+                        create_team_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self._create_run_response(
+                        run_state=RunStatus.cancelled,
+                        content="Agent run stopped",
                         from_run_response=run_response,
                         session_id=session_id,
                     )
