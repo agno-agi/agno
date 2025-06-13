@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any, Dict, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
@@ -173,6 +174,10 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         if required:
             arg_json_schema["required"] = required
         return arg_json_schema
+
+    if issubclass(type_hint, Enum):
+        enum_values = [member.value for member in type_hint]
+        return {"type": "string", "enum": enum_values}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":

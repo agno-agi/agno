@@ -992,7 +992,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
+        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1409,7 +1409,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id)
+        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -3311,7 +3311,9 @@ class Agent:
             run_id=self.run_id,
             status=run_state,
             session_id=session_id,
+            team_session_id=self.team_session_id,
             agent_id=self.agent_id,
+            agent_name=self.name,
             content=content,
             thinking=thinking_combined if thinking_combined else None,
             reasoning_content=reasoning_content,
@@ -7054,7 +7056,12 @@ class Agent:
                                 _response_content += resp.content
                             if resp.thinking is not None:
                                 _response_thinking += resp.thinking
-                        if resp.extra_data is not None and resp.extra_data.reasoning_steps is not None:
+
+                        if (
+                            hasattr(resp, "extra_data")
+                            and resp.extra_data is not None
+                            and resp.extra_data.reasoning_steps is not None
+                        ):
                             reasoning_steps = resp.extra_data.reasoning_steps
 
                     response_content_stream: Union[str, Markdown] = _response_content
@@ -7156,6 +7163,7 @@ class Agent:
 
                     if (
                         isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        and hasattr(resp, "citations")
                         and resp.citations is not None
                         and resp.citations.urls is not None
                     ):
