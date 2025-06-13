@@ -9,7 +9,7 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, RunResponseEvent
 
 
 class TeamRunEvent(str, Enum):
@@ -159,6 +159,29 @@ TeamRunResponseEvent = Union[
     ToolCallCompletedEvent,
 ]
 
+# Map event string to dataclass for team events
+TEAM_RUN_EVENT_TYPE_REGISTRY = {
+    TeamRunEvent.run_started.value: RunResponseStartedEvent,
+    TeamRunEvent.run_response_content.value: RunResponseContentEvent,
+    TeamRunEvent.run_completed.value: RunResponseCompletedEvent,
+    TeamRunEvent.run_error.value: RunResponseErrorEvent,
+    TeamRunEvent.run_cancelled.value: RunResponseCancelledEvent,
+    TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
+    TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
+    TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
+    TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
+    TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+}
+
+def team_run_response_event_from_dict(data: dict) -> BaseTeamRunResponseEvent:
+    event_type = data.get("event")
+    cls = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not cls:
+        raise ValueError(f"Unknown team event type: {event_type}")
+    return cls.from_dict(data)
+
 
 @dataclass
 class TeamRunResponse:
@@ -197,6 +220,8 @@ class TeamRunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    events: Optional[List[Union[RunResponseEvent, TeamRunResponseEvent]]] = None
+
     status: RunStatus = RunStatus.running
 
     @property
@@ -223,8 +248,11 @@ class TeamRunResponse:
                 "audio",
                 "response_audio",
                 "citations",
+                "events",
             ]
         }
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -278,6 +306,18 @@ class TeamRunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
+        events = data.pop("events", None)
+        final_events = []
+        for event in events or []:
+            if "agent_id" in event:
+                # Use the factory from response.py for agent events
+                from agno.run.response import run_response_event_from_dict
+                event = run_response_event_from_dict(event)
+            else:
+                event = team_run_response_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
+
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
@@ -322,6 +362,7 @@ class TeamRunResponse:
             audio=audio,
             response_audio=response_audio,
             tools=tools,
+            events=events,
             **data,
         )
 
