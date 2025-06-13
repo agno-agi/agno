@@ -812,6 +812,9 @@ def get_sync_playground_router(
                 if "content" in first_run or first_run.get("is_paused", False):
                     team_session_dict["runs"] = []
                     for run in runs:
+                        # We skip runs that are not from the parent team
+                        if run.get("team_session_id") is not None:
+                            continue
                         first_user_message = None
                         for msg in run.get("messages", []):
                             if msg.get("role") == "user" and msg.get("from_history", False) is False:

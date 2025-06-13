@@ -182,6 +182,33 @@ RunResponseEvent = Union[
 ]
 
 
+# Map event string to dataclass
+RUN_EVENT_TYPE_REGISTRY = {
+    RunEvent.run_started.value: RunResponseStartedEvent,
+    RunEvent.run_response_content.value: RunResponseContentEvent,
+    RunEvent.run_completed.value: RunResponseCompletedEvent,
+    RunEvent.run_error.value: RunResponseErrorEvent,
+    RunEvent.run_cancelled.value: RunResponseCancelledEvent,
+    RunEvent.run_paused.value: RunResponsePausedEvent,
+    RunEvent.run_continued.value: RunResponseContinuedEvent,
+    RunEvent.reasoning_started.value: ReasoningStartedEvent,
+    RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
+    RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
+    RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.tool_call_started.value: ToolCallStartedEvent,
+    RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+}
+
+def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
+    event_type = data.get("event")
+    cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not cls:
+        raise ValueError(f"Unknown event type: {event_type}")
+    return cls.from_dict(data)
+
+
+
 @dataclass
 class RunResponse:
     """Response returned by Agent.run() or Workflow.run() functions"""
@@ -330,7 +357,7 @@ class RunResponse:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
         events = data.pop("events", None)
-        events = [RunResponseEvent.from_dict(event) for event in events] if events else None
+        events = [run_response_event_from_dict(event) for event in events] if events else None
 
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
