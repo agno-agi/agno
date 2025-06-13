@@ -171,8 +171,6 @@ class Pipeline:
                         images=task_output.images,
                         videos=task_output.videos,
                         audio=task_output.audio,
-                        messages=getattr(task_output.response, "messages", None) if task_output.response else None,
-                        metrics=getattr(task_output.response, "metrics", None) if task_output.response else None,
                         task_responses=[task_output],
                     )
                 else:

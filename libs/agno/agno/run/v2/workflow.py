@@ -113,10 +113,6 @@ class TaskCompletedEvent(BaseWorkflowRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None
     response_audio: Optional[AudioResponse] = None
 
-    # Messages and metrics from task execution
-    messages: Optional[List[Message]] = None
-    metrics: Optional[Dict[str, Any]] = None
-
     # Store actual task execution results as TaskOutput objects
     task_responses: List["TaskOutput"] = field(default_factory=list)
 

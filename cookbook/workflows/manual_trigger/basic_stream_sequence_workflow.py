@@ -65,6 +65,7 @@ if __name__ == "__main__":
             query="AI trends in 2024",
             markdown=True,
             stream=True,
+            stream_intermediate_steps=True,
         )
     except Exception as e:
         print(f"Research sequence failed: {e}")
