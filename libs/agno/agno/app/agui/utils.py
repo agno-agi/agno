@@ -21,8 +21,9 @@ from ag_ui.core import (
 )
 from ag_ui.core.types import Message as AGUIMessage
 
-from agno.run.response import RunEvent, RunResponse, RunResponseEvent
-from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent
+from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.run.team import TeamRunEvent, TeamRunResponseEvent
 
 
 @dataclass
@@ -72,18 +73,18 @@ def get_last_user_message(messages: Optional[List[AGUIMessage]]) -> str:
     return ""
 
 
-def extract_team_response_chunk_content(response: TeamRunResponse) -> str:
+def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
 
     # Handle Team members' responses
     members_content = []
-    if hasattr(response, "member_responses") and response.member_responses:
-        for member_resp in response.member_responses:
-            if isinstance(member_resp, RunResponse):
+    if hasattr(response, "member_responses") and response.member_responses:  # type: ignore
+        for member_resp in response.member_responses:  # type: ignore
+            if isinstance(member_resp, RunResponseContentEvent):
                 member_content = extract_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
-            elif isinstance(member_resp, TeamRunResponse):
+            elif isinstance(member_resp, TeamRunResponseContentEvent):
                 member_content = extract_team_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
@@ -92,10 +93,10 @@ def extract_team_response_chunk_content(response: TeamRunResponse) -> str:
     return str(response.content) + members_response
 
 
-def extract_response_chunk_content(response: RunResponse) -> str:
+def extract_response_chunk_content(response: RunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
-    if hasattr(response, "messages") and response.messages:
-        for msg in reversed(response.messages):
+    if hasattr(response, "messages") and response.messages:  # type: ignore
+        for msg in reversed(response.messages):  # type: ignore
             if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
                 return str(msg.content)
 
@@ -115,9 +116,9 @@ def _create_events_from_chunk(
     events_to_emit = []
 
     # Extract content
-    if isinstance(chunk, RunResponse):
+    if isinstance(chunk, RunResponseContentEvent):
         content = extract_response_chunk_content(chunk)
-    elif isinstance(chunk, TeamRunResponse):
+    elif isinstance(chunk, TeamRunResponseContentEvent):
         content = extract_team_response_chunk_content(chunk)
     else:
         content = None
