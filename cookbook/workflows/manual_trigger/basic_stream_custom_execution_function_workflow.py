@@ -7,6 +7,7 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task, TaskInput, TaskOutput
 from agno.workflow.v2.workflow import Workflow
+from agno.run.v2.workflow import TaskErrorEvent, WorkflowRunResponseEvent
 
 # Define agents
 blog_analyzer = Agent(
@@ -32,7 +33,7 @@ research_team = Team(
 
 
 # Streaming-enabled custom execution functions
-def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutput]:
+def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
     """
     Streaming custom function that yields events during execution and returns TaskOutput
     """
@@ -92,17 +93,13 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutp
         )
 
     except Exception as e:
-        yield TaskOutput(
-            content=f"Custom blog analysis failed: {str(e)}",
-            metadata={
-                "error": True,
-                "function_name": "streaming_blog_analysis_function",
-                "streaming": True,
-            },
+        yield TaskErrorEvent(
+            task_name="streaming_analysis",
+            error=f"Custom blog analysis failed: {str(e)}",
         )
 
 
-def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutput]:
+def streaming_team_research_function(task_input: TaskInput) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
     """
     Streaming custom function that coordinates team execution with streaming updates
     """
@@ -175,17 +172,13 @@ def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutp
         )
 
     except Exception as e:
-        yield TaskOutput(
-            content=f"Custom team research failed: {str(e)}",
-            metadata={
-                "error": True,
-                "function_name": "streaming_team_research_function",
-                "streaming": True,
-            },
+        yield TaskErrorEvent(
+            task_name="streaming_research",
+            error=f"Custom team research failed: {str(e)}",
         )
 
 
-def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskOutput]:
+def streaming_content_planning_function(task_input: TaskInput) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
     """
     Streaming custom function for intelligent content planning with real-time updates
     """
@@ -259,13 +252,9 @@ def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskO
         )
 
     except Exception as e:
-        yield TaskOutput(
-            content=f"Custom content planning failed: {str(e)}",
-            metadata={
-                "error": True,
-                "function_name": "streaming_content_planning_function",
-                "streaming": True,
-            },
+        yield TaskErrorEvent(
+            task_name="streaming_planning",
+            error=f"Custom content planning failed: {str(e)}",
         )
 
 
