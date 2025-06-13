@@ -45,13 +45,13 @@ def streaming_blog_analysis_function(
     enhanced_query = f"""
         BLOG ANALYSIS REQUEST:
         Topic: {query}
-        
+
         Please provide:
         1. Key themes and trends
-        2. Target audience insights  
+        2. Target audience insights
         3. Content opportunities
         4. SEO considerations
-        
+
         Additional context from previous tasks:
         {task_input.previous_outputs if task_input.previous_outputs else "No previous context"}
     """
@@ -64,10 +64,9 @@ def streaming_blog_analysis_function(
         for event in blog_analyzer.run(
             enhanced_query, stream=True, stream_intermediate_steps=True
         ):
+            yield event
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
-                # Forward the streaming content
-                yield event
 
         # Custom postprocessing
         enhanced_content = f"""
@@ -123,17 +122,17 @@ def streaming_team_research_function(
     # Create enhanced team prompt
     team_prompt = f"""
         RESEARCH COORDINATION REQUEST:
-        
+
         Primary Topic: {query}
-        
+
         Previous Analysis: {previous_analysis[:500] if previous_analysis else "No previous analysis"}
-        
+
         Team Mission:
         1. Build upon the previous analysis
         2. Conduct deeper research on the topic
         3. Validate and expand findings
         4. Provide actionable recommendations
-        
+
         Please coordinate effectively and provide a unified research report.
     """
 
@@ -144,10 +143,9 @@ def streaming_team_research_function(
         for event in research_team.run(
             team_prompt, stream=True, stream_intermediate_steps=True
         ):
+            yield event
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
-                # Forward the streaming content
-                yield event
 
         enhanced_content = f"""
 ## Custom Team Research Report
@@ -206,18 +204,18 @@ def streaming_content_planning_function(
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
-        
+
         Core Topic: {query}
-        
+
         Research Foundation: {previous_research[:500] if previous_research else "No research foundation"}
-        
+
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
         3. Identify content formats and channels
         4. Provide timeline and priority recommendations
         5. Include engagement and distribution strategies
-        
+
         Please create a detailed, actionable content plan.
     """
 
@@ -228,10 +226,9 @@ def streaming_content_planning_function(
         for event in content_planner.run(
             planning_prompt, stream=True, stream_intermediate_steps=True
         ):
+            yield event
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
-                # Forward the streaming content
-                yield event
 
         enhanced_content = f"""
 ## Strategic Content Plan
