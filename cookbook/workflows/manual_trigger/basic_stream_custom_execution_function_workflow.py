@@ -2,12 +2,12 @@ from typing import Iterator, Union
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import TaskErrorEvent, WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.task import Task, TaskInput, TaskOutput
 from agno.workflow.v2.workflow import Workflow
-from agno.run.v2.workflow import TaskErrorEvent, WorkflowRunResponseEvent
 
 # Define agents
 blog_analyzer = Agent(
@@ -59,7 +59,7 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[Union[Wo
         accumulated_content = ""
 
         # Stream the agent response
-        for event in blog_analyzer.run(enhanced_query, stream=True):
+        for event in blog_analyzer.run(enhanced_query, stream=True, stream_intermediate_steps=True):
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
                 # Forward the streaming content
@@ -135,7 +135,7 @@ def streaming_team_research_function(task_input: TaskInput) -> Iterator[Union[Wo
         accumulated_content = ""
 
         # Stream the team response
-        for event in research_team.run(team_prompt, stream=True):
+        for event in research_team.run(team_prompt, stream=True, stream_intermediate_steps=True):
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
                 # Forward the streaming content
@@ -215,7 +215,7 @@ def streaming_content_planning_function(task_input: TaskInput) -> Iterator[Union
         accumulated_content = ""
 
         # Stream the content planner response
-        for event in content_planner.run(planning_prompt, stream=True):
+        for event in content_planner.run(planning_prompt, stream=True, stream_intermediate_steps=True):
             if hasattr(event, "content") and event.content:
                 accumulated_content += event.content
                 # Forward the streaming content
@@ -294,7 +294,7 @@ if __name__ == "__main__":
     print("=== Streaming Custom Functions Workflow ===")
     try:
         streaming_content_workflow.print_response(
-            query="AI trends in 2024", markdown=True, stream=True)
+            query="AI trends in 2024", markdown=True, stream=True, stream_intermediate_steps=True)
     except Exception as e:
         print(f"Streaming workflow failed: {e}")
 
