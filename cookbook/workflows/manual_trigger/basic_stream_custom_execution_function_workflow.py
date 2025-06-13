@@ -56,7 +56,6 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutp
     # Call the agent with enhanced input
     try:
         accumulated_content = ""
-        response = None
 
         # Stream the agent response
         for event in blog_analyzer.run(enhanced_query, stream=True):
@@ -64,8 +63,6 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutp
                 accumulated_content += event.content
                 # Forward the streaming content
                 yield event
-            if hasattr(event, "response"):
-                response = event.response
 
         # Custom postprocessing
         enhanced_content = f"""
@@ -85,7 +82,6 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutp
         # Return final TaskOutput
         yield TaskOutput(
             content=enhanced_content,
-            response=response,
             data={"analysis_type": "custom", "confidence": "high"},
             metadata={
                 "function_name": "streaming_blog_analysis_function",
@@ -140,7 +136,6 @@ def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutp
 
     try:
         accumulated_content = ""
-        response = None
 
         # Stream the team response
         for event in research_team.run(team_prompt, stream=True):
@@ -148,8 +143,6 @@ def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutp
                 accumulated_content += event.content
                 # Forward the streaming content
                 yield event
-            if hasattr(event, "response"):
-                response = event.response
 
         enhanced_content = f"""
 ## Custom Team Research Report
@@ -169,7 +162,6 @@ def streaming_team_research_function(task_input: TaskInput) -> Iterator[TaskOutp
 
         yield TaskOutput(
             content=enhanced_content,
-            response=response,
             data={
                 "research_type": "team_coordination",
                 "integration": bool(previous_analysis),
@@ -228,7 +220,6 @@ def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskO
 
     try:
         accumulated_content = ""
-        response = None
 
         # Stream the content planner response
         for event in content_planner.run(planning_prompt, stream=True):
@@ -236,8 +227,6 @@ def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskO
                 accumulated_content += event.content
                 # Forward the streaming content
                 yield event
-            if hasattr(event, "response"):
-                response = event.response
 
         enhanced_content = f"""
 ## Strategic Content Plan
@@ -257,7 +246,6 @@ def streaming_content_planning_function(task_input: TaskInput) -> Iterator[TaskO
 
         yield TaskOutput(
             content=enhanced_content,
-            response=response,
             data={
                 "planning_type": "strategic",
                 "research_integration": bool(previous_research),
