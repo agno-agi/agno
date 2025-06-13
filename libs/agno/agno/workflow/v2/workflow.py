@@ -243,8 +243,8 @@ class Workflow:
 
             yield error_event
 
-    async def aexecute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> AsyncIterator[WorkflowRunResponse]:
-        """Execute a specific pipeline by name asynchronously"""
+    async def aexecute_pipeline(self, pipeline_name: str, inputs: Dict[str, Any]) -> WorkflowRunResponse:
+        """Execute a specific pipeline by name synchronously"""
         pipeline = self.get_pipeline(pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found")
@@ -253,53 +253,46 @@ class Workflow:
         self.run_id = str(uuid4())
         execution_start = datetime.now()
 
-        log_debug(f"Starting async workflow execution: {self.run_id}")
+        log_debug(f"Starting workflow execution: {self.run_id}")
 
-        # Create execution context
-        context = {
-            "workflow_id": self.workflow_id,
-            "workflow_name": self.name,
-            "run_id": self.run_id,
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "execution_start": execution_start,
-        }
+        # Create WorkflowRunResponse object to pass down (instead of context dict)
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            pipeline_name=pipeline_name,
+            event=WorkflowRunEvent.workflow_started,
+            created_at=int(execution_start.timestamp()),
+        )
 
         # Update agents and teams with workflow session info
         self.update_agents_and_teams_session_info()
 
-        # Collect complete workflow run instead of individual events
-        workflow_run_responses = []
-
         try:
-            # Execute the pipeline asynchronously
-            async for response in pipeline.aexecute(inputs, context):
-                # Collect all responses
-                workflow_run_responses.append(response)
-                yield response
+            # Execute the pipeline asynchronously - pass WorkflowRunResponse instead of context
+            final_response = await pipeline.aexecute(inputs, workflow_run_response, stream=False)
 
-            # Store only the complete workflow run (not individual events)
-            if self.workflow_session and workflow_run_responses:
-                # Store only the final completed workflow response
-                # The workflow_completed event
-                final_response = workflow_run_responses[-1]
-                if final_response.event == WorkflowRunEvent.workflow_completed:
-                    self.workflow_session.add_run(final_response)
+            # Store the completed workflow response
+            if self.workflow_session:
+                self.workflow_session.add_run(final_response)
 
             # Save to storage after complete execution
             self.write_to_storage()
 
+            return final_response
+
         except Exception as e:
-            logger.error(f"Async workflow execution failed: {e}")
+            logger.error(f"Workflow execution failed: {e}")
 
             error_response = WorkflowRunResponse(
-                content=f"Workflow execution failed: {e}",
                 event=WorkflowRunEvent.workflow_error,
+                content=f"Workflow execution failed: {e}",
                 workflow_id=self.workflow_id,
                 workflow_name=self.name,
                 pipeline_name=pipeline_name,
+                run_id=self.run_id or "",
                 session_id=self.session_id,
-                run_id=self.run_id,
             )
 
             # Store error response
@@ -307,7 +300,80 @@ class Workflow:
                 self.workflow_session.add_run(error_response)
             self.write_to_storage()
 
-            yield error_response
+            return error_response
+
+    async def aexecute_pipeline_stream(
+        self,
+        pipeline_name: str,
+        inputs: Dict[str, Any],
+        stream_intermediate_steps: bool = False,
+        workflow_run_response: WorkflowRunResponse = None,
+    ) -> AsyncIterator[WorkflowRunResponseEvent]:
+        """Execute a specific pipeline by name with event streaming"""
+        pipeline = self.get_pipeline(pipeline_name)
+        if not pipeline:
+            raise ValueError(f"Pipeline '{pipeline_name}' not found")
+
+        log_debug(f"Starting workflow execution with streaming: {self.run_id}")
+
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            pipeline_name=pipeline_name,
+            event=WorkflowRunEvent.workflow_started,
+            created_at=int(datetime.now().timestamp()),
+        )
+
+        # Update agents and teams with workflow session info
+        self.update_agents_and_teams_session_info()
+
+        try:
+            # Execute the pipeline with streaming and yield all events
+            async for event in pipeline._aexecute_stream(inputs, workflow_run_response, stream_intermediate_steps):
+                # Store completed workflow response when we get the final event
+                if isinstance(event, WorkflowCompletedEvent):
+                    # Update the workflow_run_response with final data
+                    workflow_run_response.content = event.content
+                    workflow_run_response.task_responses = event.task_responses
+                    workflow_run_response.extra_data = event.extra_data
+                    workflow_run_response.event = WorkflowRunEvent.workflow_completed
+
+                    # Store the completed workflow response
+                    if self.workflow_session:
+                        self.workflow_session.add_run(workflow_run_response)
+
+                    # Save to storage after complete execution
+                    self.write_to_storage()
+
+                yield event
+
+        except Exception as e:
+            logger.error(f"Workflow execution failed: {e}")
+
+            from agno.run.v2.workflow import WorkflowErrorEvent
+
+            error_event = WorkflowErrorEvent(
+                run_id=self.run_id or "",
+                content=f"Workflow execution failed: {e}",
+                workflow_id=self.workflow_id,
+                workflow_name=self.name,
+                pipeline_name=pipeline_name,
+                session_id=self.session_id,
+                error=str(e),
+            )
+
+            # Update workflow_run_response with error
+            workflow_run_response.content = error_event.content
+            workflow_run_response.event = WorkflowRunEvent.workflow_error
+
+            # Store error response
+            if self.workflow_session:
+                self.workflow_session.add_run(workflow_run_response)
+            self.write_to_storage()
+
+            yield error_event
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
@@ -507,17 +573,51 @@ class Workflow:
 
     async def arun(
         self,
-        query: Optional[str] = None,
-        message: Optional[str] = None,
+        query: str = None,
         pipeline_name: Optional[str] = None,
-        *,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[TypingSequence[Audio]] = None,
         images: Optional[TypingSequence[Image]] = None,
         videos: Optional[TypingSequence[Video]] = None,
-    ) -> AsyncIterator[WorkflowRunResponse]:
-        """Execute the workflow asynchronously"""
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+    ) -> AsyncIterator[Union[WorkflowRunResponse, WorkflowRunResponseEvent]]:
+        """Execute the workflow synchronously with optional streaming"""
+        if stream:
+            response_iterator = self._arun_stream(
+                query=query,
+                pipeline_name=pipeline_name,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+            return response_iterator
+        else:
+            return await self._arun(
+                query=query,
+                pipeline_name=pipeline_name,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+            )
+
+    async def _arun(
+        self,
+        query: str = None,
+        pipeline_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+    ) -> WorkflowRunResponse:
+        """Execute the workflow synchronously (non-streaming) - returns WorkflowRunResponse directly"""
         # Set user_id and session_id if provided
         if user_id is not None:
             self.user_id = user_id
@@ -552,11 +652,10 @@ class Workflow:
         # Prepare inputs with media support
         inputs = {}
 
-        # Primary input (query or message)
-        primary_input = query or message
+        # Primary input (query)
+        primary_input = query
         if primary_input is not None:
             inputs["query"] = primary_input
-            inputs["message"] = primary_input
 
         # Add media inputs
         if audio is not None:
@@ -566,9 +665,89 @@ class Workflow:
         if videos is not None:
             inputs["videos"] = list(videos)
 
-        # Execute the selected pipeline asynchronously
-        async for response in self.aexecute_pipeline(selected_pipeline_name, inputs):
-            yield response
+        # Execute the pipeline synchronously (non-streaming) - now returns WorkflowRunResponse directly
+        return await self.aexecute_pipeline(selected_pipeline_name, inputs)
+
+    async def _arun_stream(
+        self,
+        query: str = None,
+        pipeline_name: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> AsyncIterator[WorkflowRunResponseEvent]:
+        """Execute the workflow synchronously with event-driven streaming"""
+        # Set user_id and session_id if provided
+        if user_id is not None:
+            self.user_id = user_id
+        if session_id is not None:
+            self.session_id = session_id
+
+        # Load or create session
+        self.load_session()
+
+        # Initialize execution
+        self.run_id = str(uuid4())
+        execution_start = datetime.now()
+
+        # Create workflow run response that will be updated by reference
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            created_at=int(execution_start.timestamp()),
+        )
+
+        # Determine pipeline based on trigger type and parameters
+        if self.trigger.trigger_type == TriggerType.MANUAL:
+            if not self.pipelines:
+                raise ValueError("No pipelines available in this workflow")
+
+            # If pipeline_name is provided, use that specific pipeline
+            if pipeline_name:
+                target_pipeline = self.get_pipeline(pipeline_name)
+                if not target_pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
+                    raise ValueError(
+                        f"Pipeline '{pipeline_name}' not found. Available pipelines: {available_pipelines}"
+                    )
+                selected_pipeline_name = pipeline_name
+            else:
+                # Default to first pipeline if no pipeline_name specified
+                selected_pipeline_name = self.pipelines[0].name
+        else:
+            raise ValueError(
+                f"Pipeline selection for trigger type '{self.trigger.trigger_type.value}' not yet implemented"
+            )
+
+        # Prepare inputs with media support
+        inputs = {}
+
+        # Primary input (query)
+        primary_input = query
+        if primary_input is not None:
+            inputs["query"] = primary_input
+
+        # Add media inputs
+        if audio is not None:
+            inputs["audio"] = list(audio)
+        if images is not None:
+            inputs["images"] = list(images)
+        if videos is not None:
+            inputs["videos"] = list(videos)
+
+        # Execute the selected pipeline with event streaming
+        async for event in self.aexecute_pipeline_stream(
+            pipeline_name=selected_pipeline_name,
+            inputs=inputs,
+            workflow_run_response=workflow_run_response,
+            stream_intermediate_steps=stream_intermediate_steps,
+        ):
+            yield event
 
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
@@ -1104,7 +1283,62 @@ class Workflow:
     async def aprint_response(
         self,
         query: Optional[str] = None,
-        message: Optional[str] = None,
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        stream: bool = False,
+        stream_intermediate_steps: bool = False,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_task_details: bool = True,
+        console: Optional[Any] = None,
+    ) -> None:
+        """Print workflow execution with rich formatting and optional streaming
+
+        Args:
+            query: The main query/input for the workflow
+            stream: Whether to stream the response content
+            markdown: Whether to render content as markdown
+            show_time: Whether to show execution time
+            show_task_details: Whether to show individual task outputs
+            console: Rich console instance (optional)
+        """
+        if stream:
+            await self._aprint_response_stream(
+                query=query,
+                message_data=message_data,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                stream_intermediate_steps=stream_intermediate_steps,
+                markdown=markdown,
+                show_time=show_time,
+                show_task_details=show_task_details,
+                console=console,
+            )
+        else:
+            await self._aprint_response(
+                query=query,
+                message_data=message_data,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                markdown=markdown,
+                show_time=show_time,
+                show_task_details=show_task_details,
+                console=console,
+            )
+
+    async def _aprint_response(
+        self,
+        query: str,
         message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1116,23 +1350,8 @@ class Workflow:
         show_task_details: bool = True,
         console: Optional[Any] = None,
     ) -> None:
-        """Print workflow execution with rich formatting asynchronously
-
-        Args:
-            query: The main query/input for the workflow
-            message: Alternative to query (same as query)
-            pipeline_name: Name of the pipeline to execute (defaults to first pipeline)
-            user_id: User ID for the workflow execution
-            session_id: Session ID for the workflow execution
-            audio: Audio inputs for the workflow
-            images: Image inputs for the workflow
-            videos: Video inputs for the workflow
-            files: File inputs for the workflow
-            markdown: Whether to render content as markdown
-            show_time: Whether to show execution time
-            show_task_details: Whether to show individual task outputs
-            console: Rich console instance (optional)
-        """
+        """Print workflow execution with rich formatting (non-streaming)"""
+        from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -1140,8 +1359,6 @@ class Workflow:
 
         from agno.utils.response import create_panel
         from agno.utils.timer import Timer
-
-        self._auto_create_pipeline_from_tasks()
 
         if console is None:
             from agno.cli.console import console
@@ -1152,7 +1369,7 @@ class Workflow:
         primary_input = self._prepare_primary_input(query, message_data)
 
         if primary_input is None:
-            console.print("[red]Either 'query' or 'message' must be provided[/red]")
+            console.print("[red]Query must be provided[/red]")
             return
 
         # Validate pipeline configuration based on trigger type
@@ -1177,11 +1394,11 @@ class Workflow:
         else:
             # For other trigger types, we'll implement pipeline selection logic later
             console.print(
-                f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in aprint_response[/yellow]"
+                f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in print_response[/yellow]"
             )
             return
 
-        # Show workflow info once at the beginning
+        # Show workflow info
         media_info = []
         if audio:
             media_info.append(f"Audio files: {len(audio)}")
@@ -1201,6 +1418,7 @@ class Workflow:
             **Query:** {primary_input}{media_str}
             **User ID:** {user_id or self.user_id or "Not set"}
             **Session ID:** {session_id or self.session_id}
+            **Streaming:** Disabled (Async)
             """.strip()
 
         workflow_panel = create_panel(
@@ -1210,37 +1428,195 @@ class Workflow:
         )
         console.print(workflow_panel)
 
-        # Start timer before execution
+        # Start timer
         response_timer = Timer()
         response_timer.start()
 
-        # Execute and show results
-        task_responses = []
-
         with Live(console=console) as live_log:
-            status = Status("Starting workflow...", spinner="dots")
+            status = Status("Starting async workflow...", spinner="dots")
             live_log.update(status)
 
             try:
-                async for response in self.arun(
+                # Execute workflow and get the response directly
+                workflow_response: WorkflowRunResponse = await self._arun(
                     query=primary_input,
-                    message=message,
                     pipeline_name=pipeline_name,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
                     images=images,
                     videos=videos,
+                )
+
+                response_timer.stop()
+
+                # Show individual task responses if available
+                if show_task_details and workflow_response.task_responses:
+                    for i, task_output in enumerate(workflow_response.task_responses):
+                        if task_output.content:
+                            task_panel = create_panel(
+                                content=Markdown(task_output.content) if markdown else task_output.content,
+                                title=f"Task {i + 1}: {getattr(task_output, 'metadata', {}).get('task_name', 'Unknown')} (Completed)",
+                                border_style="green",
+                            )
+                            console.print(task_panel)
+
+                # Show final summary
+                if workflow_response.extra_data:
+                    final_output = workflow_response.extra_data
+                    summary_content = f"""
+                        **Pipeline:** {pipeline_name}
+                        **Status:** {final_output.get("status", "Completed")}
+                        **Tasks Completed:** {len(workflow_response.task_responses) if workflow_response.task_responses else 0}
+                    """.strip()
+
+                    summary_panel = create_panel(
+                        content=Markdown(summary_content) if markdown else summary_content,
+                        title="Execution Summary",
+                        border_style="blue",
+                    )
+                    console.print(summary_panel)
+
+                # Final completion message
+                if show_time:
+                    completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
+                    console.print(completion_text)
+
+            except Exception as e:
+                response_timer.stop()
+                error_panel = create_panel(
+                    content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
+                )
+                console.print(error_panel)
+
+    async def _aprint_response_stream(
+        self,
+        query: str,
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[TypingSequence[Audio]] = None,
+        images: Optional[TypingSequence[Image]] = None,
+        videos: Optional[TypingSequence[Video]] = None,
+        stream_intermediate_steps: bool = False,
+        markdown: bool = True,
+        show_time: bool = True,
+        show_task_details: bool = True,
+        console: Optional[Any] = None,
+    ) -> None:
+        """Print workflow execution with clean streaming - green task blocks displayed once"""
+        from rich.console import Group
+        from rich.live import Live
+        from rich.markdown import Markdown
+        from rich.status import Status
+        from rich.text import Text
+
+        from agno.utils.response import create_panel
+        from agno.utils.timer import Timer
+
+        if console is None:
+            from agno.cli.console import console
+
+        pipeline_name = self._auto_create_pipeline_from_tasks()
+
+        # Process message_data and combine with query
+        primary_input = self._prepare_primary_input(query, message_data)
+
+        if primary_input is None:
+            console.print("[red]Query must be provided[/red]")
+            return
+
+        if self.trigger.trigger_type == TriggerType.MANUAL:
+            if not self.pipelines:
+                console.print("[red]No pipelines available in this workflow[/red]")
+                return
+
+            if pipeline_name:
+                pipeline = self.get_pipeline(pipeline_name)
+                if not pipeline:
+                    available_pipelines = [seq.name for seq in self.pipelines]
+                    console.print(
+                        f"[red]Pipelines '{pipeline_name}' not found. Available pipelines: {available_pipelines}[/red]"
+                    )
+                    return
+            else:
+                pipeline = self.pipelines[0]
+                pipeline_name = pipeline.name
+        else:
+            console.print(
+                f"[yellow]Trigger type '{self.trigger.trigger_type.value}' not yet supported in streaming[/yellow]"
+            )
+            return
+
+        # Show workflow info (same as before)
+        media_info = []
+        if audio:
+            media_info.append(f"Audio files: {len(audio)}")
+        if images:
+            media_info.append(f"Images: {len(images)}")
+        if videos:
+            media_info.append(f"Videos: {len(videos)}")
+
+        media_str = f" | {' | '.join(media_info)}" if media_info else ""
+
+        workflow_info = f"""
+            **Workflow:** {self.name}
+            **Pipeline:** {pipeline.name}
+            **Description:** {pipeline.description or "No description"}
+            **Tasks:** {len(pipeline.tasks)} tasks
+            **Query:** {primary_input}{media_str}
+            **User ID:** {user_id or self.user_id or "Not set"}
+            **Session ID:** {session_id or self.session_id}
+            **Streaming:** Enabled (Async)
+            """.strip()
+
+        workflow_panel = create_panel(
+            content=Markdown(workflow_info) if markdown else workflow_info,
+            title="Workflow Information",
+            border_style="cyan",
+        )
+        console.print(workflow_panel)
+
+        # Start timer
+        response_timer = Timer()
+        response_timer.start()
+
+        # Streaming execution variables
+        current_task_content = ""
+        current_task_name = ""
+        current_task_index = 0
+        task_responses = []
+        task_started_printed = False
+
+        with Live(console=console, refresh_per_second=10) as live_log:
+            status = Status("Starting async workflow...", spinner="dots")
+            live_log.update(status)
+
+            try:
+                async for response in self._arun_stream(
+                    query=primary_input,
+                    pipeline_name=pipeline_name,
+                    user_id=user_id,
+                    session_id=session_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    stream_intermediate_steps=stream_intermediate_steps,
                 ):
-                    if response.event == WorkflowRunEvent.workflow_started:
+                    # Handle the new event types
+                    if isinstance(response, WorkflowStartedEvent):
                         status.update("Workflow started...")
+                        live_log.update(status)
 
-                    elif response.event == WorkflowRunEvent.task_started:
-                        task_name = response.task_name or "Unknown"
-                        task_index = response.task_index or 0
-                        status.update(f"Starting task {task_index + 1}: {task_name}...")
+                    elif isinstance(response, TaskStartedEvent):
+                        current_task_name = response.task_name or "Unknown"
+                        current_task_index = response.task_index or 0
+                        current_task_content = ""
+                        task_started_printed = False
+                        status.update(f"Starting task {current_task_index + 1}: {current_task_name}...")
+                        live_log.update(status)
 
-                    elif response.event == WorkflowRunEvent.task_completed:
+                    elif isinstance(response, TaskCompletedEvent):
                         task_name = response.task_name or "Unknown"
                         task_index = response.task_index or 0
 
@@ -1256,17 +1632,21 @@ class Workflow:
                                 }
                             )
 
-                        # Print the task panel immediately after completion
-                        if show_task_details and response.content:
-                            task_panel = create_panel(
-                                content=Markdown(response.content) if markdown else response.content,
-                                title=f"Task {task_index + 1}: {task_name}",
+                        # Print the final task result in green (only once)
+                        if show_task_details and current_task_content and not task_started_printed:
+                            live_log.update(status, refresh=True)
+
+                            final_task_panel = create_panel(
+                                content=Markdown(current_task_content) if markdown else current_task_content,
+                                title=f"Task {task_index + 1}: {task_name} (Completed)",
                                 border_style="green",
                             )
-                            console.print(task_panel)
+                            console.print(final_task_panel)
+                            task_started_printed = True
 
-                    elif response.event == WorkflowRunEvent.workflow_completed:
+                    elif isinstance(response, WorkflowCompletedEvent):
                         status.update("Workflow completed!")
+                        live_log.update(status, refresh=True)
 
                         # Show final summary
                         if response.extra_data:
@@ -1274,7 +1654,7 @@ class Workflow:
                             summary_content = f"""
                                 **Pipeline:** {pipeline_name}
                                 **Status:** {final_output.get("status", "Unknown")}
-                                **Tasks Completed:** {len(task_responses)}
+                                **Tasks Completed:** {len(response.task_responses) if response.task_responses else 0}
                             """.strip()
 
                             summary_panel = create_panel(
@@ -1284,17 +1664,44 @@ class Workflow:
                             )
                             console.print(summary_panel)
 
-                    elif response.event == WorkflowRunEvent.workflow_error:
-                        status.update("Workflow failed!")
-                        error_panel = create_panel(content=response.content, title="Error", border_style="red")
-                        console.print(error_panel)
+                    else:
+                        response_str = None
 
-                    # Update live display with just status
-                    live_log.update(status)
+                        if isinstance(response, str):
+                            response_str = response
+                        else:
+                            from agno.run.response import RunResponseContentEvent
+
+                            # Check if this is a streaming content event from agent or team
+                            if isinstance(
+                                response,
+                                (RunResponseContentEvent, WorkflowRunResponseEvent),
+                            ):
+                                # Extract the content from the streaming event
+                                response_str = response.content
+                            else:
+                                continue
+
+                        # Filter out empty responses and add to current task content
+                        if response_str and response_str.strip():
+                            current_task_content += response_str
+
+                            # Live update the task panel with streaming content
+                            if show_task_details and not task_started_printed:
+                                # Show the streaming content live in green panel
+                                live_task_panel = create_panel(
+                                    content=Markdown(current_task_content) if markdown else current_task_content,
+                                    title=f"Task {current_task_index + 1}: {current_task_name} (Streaming...)",
+                                    border_style="green",
+                                )
+
+                                # Create group with status and current task content
+                                group = Group(status, live_task_panel)
+                                live_log.update(group)
 
                 response_timer.stop()
 
-                # Final completion message with time
+                # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
                     console.print(completion_text)
@@ -1302,7 +1709,7 @@ class Workflow:
             except Exception as e:
                 response_timer.stop()
                 error_panel = create_panel(
-                    content=f"Async workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
+                    content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
                 console.print(error_panel)
 
