@@ -58,5 +58,16 @@ class UserControlFlowTools(Toolkit):
         - **Include only the required fields.** Include only the required fields in the `user_input_fields` parameter of the `get_user_input` tool. Don't include fields you already have the information for.
         - **Provide a clear and concise description of the field.** Clearly describe the field in the `field_description` parameter of the `user_input_fields` parameter of the `get_user_input` tool.
         - **Provide a type for the field.** Fill the `field_type` parameter of the `user_input_fields` parameter of the `get_user_input` tool with the type of the field.
+
+        ## INPUT VALIDATION AND CONVERSION
+        - **Boolean fields**: Only explicit positive responses are considered True:
+          * True values: 'true', 'yes', 'y', '1', 'on', 't', 'True', 'YES', 'Y', 'T'
+          * False values: Everything else including 'false', 'no', 'n', '0', 'off', 'f', empty strings, unanswered fields, or any other input
+          * **CRITICAL**: Empty/unanswered fields should be treated as False (not selected)
+        - **Users can leave fields unanswered.** Empty responses are valid and should be treated as False for boolean fields.
+        - **NEVER ask for the same field twice.** Once you receive ANY user input for a field (including empty strings), accept it and move on.
+        - **DO NOT validate or re-request input.** Accept whatever the user provides and convert it appropriately.
+        - **Proceed with only the fields that were explicitly answered as True.** Skip or ignore fields that are False/unanswered.
+        - **Complete the task immediately after receiving all user inputs, do not ask for confirmation or re-validation.**
         """
     )
