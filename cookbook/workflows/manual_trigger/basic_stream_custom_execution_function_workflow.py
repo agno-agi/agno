@@ -79,7 +79,7 @@ def streaming_blog_analysis_function(task_input: TaskInput) -> Iterator[TaskOutp
 - Confidence level: High
         """.strip()
 
-        # Return final TaskOutput
+        # Yield final TaskOutput
         yield TaskOutput(
             content=enhanced_content,
             data={"analysis_type": "custom", "confidence": "high"},
