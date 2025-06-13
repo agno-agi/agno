@@ -4442,6 +4442,7 @@ class Team:
             session_id=session_id,
             team_id=self.team_id,
             team_name=self.name,
+            team_session_id=self.team_session_id,
             content=content,
             thinking=thinking,
             tools=tools,
