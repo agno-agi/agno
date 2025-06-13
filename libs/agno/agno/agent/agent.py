@@ -998,7 +998,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name)
+        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name, team_session_id=self.team_session_id)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1415,7 +1415,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name)
+        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name, team_session_id=self.team_session_id)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None

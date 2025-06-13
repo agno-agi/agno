@@ -761,7 +761,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_session_id=self.team_session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1168,7 +1168,7 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_id=self.team_id, team_name=self.name)
+        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_session_id=self.team_session_id, team_id=self.team_id, team_name=self.name)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
