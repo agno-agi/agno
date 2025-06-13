@@ -813,7 +813,7 @@ def get_sync_playground_router(
                     team_session_dict["runs"] = []
                     for run in runs:
                         # We skip runs that are not from the parent team
-                        if run.get("team_session_id") is not None:
+                        if run.get("team_session_id") is not None and run.get("team_session_id") == session_id:
                             continue
                         first_user_message = None
                         for msg in run.get("messages", []):
