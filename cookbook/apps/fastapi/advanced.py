@@ -135,6 +135,7 @@ fastapi_app = FastAPIApp(
     app_id="advanced-app",
     name="Advanced FastAPI App",
     description="A FastAPI app for advanced agents",
+    version="0.0.1",
 )
 app = fastapi_app.get_app()
 

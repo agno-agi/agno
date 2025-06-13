@@ -1,4 +1,3 @@
-import json
 from typing import List, Optional
 
 from pydantic import BaseModel
@@ -63,13 +62,14 @@ def test_parse_direct_json():
     assert result.name == "test"
     assert result.value == "123"
 
+
 def test_parse_already_escaped_string():
     """Test parsing a clean JSON string directly"""
-    content = '{"name": "test", "value": "Already escaped \"quote\""}'
+    content = '{"name": "test", "value": "Already escaped "quote""}'
     result = parse_response_model_str(content, MockModel)
     assert result is not None
     assert result.name == "test"
-    assert result.value == "Already escaped \"quote\""
+    assert result.value == 'Already escaped "quote"'
 
 
 def test_parse_json_with_markdown_block():

@@ -32,6 +32,7 @@ class FastAPIApp(BaseAPIApp):
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        version: Optional[str] = None,
         monitoring: bool = True,
     ):
         if not agents and not teams and not workflows:
@@ -49,6 +50,8 @@ class FastAPIApp(BaseAPIApp):
         self.name: Optional[str] = name
         self.monitoring = monitoring
         self.description = description
+        self.version = version
+        
         self.set_app_id()
 
         if self.agents:
