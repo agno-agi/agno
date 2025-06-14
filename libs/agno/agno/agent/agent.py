@@ -3593,6 +3593,7 @@ class Agent:
 
             self._tools_for_model = []
             self._functions_for_model = {}
+            self._tool_instructions = []
 
             # Get Agent tools
             if agent_tools is not None and len(agent_tools) > 0:
