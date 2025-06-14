@@ -4522,6 +4522,7 @@ class Team:
 
         self._functions_for_model = {}
         self._tools_for_model = []
+        self._tool_instructions = []
 
         # Get Agent tools
         if len(_tools) > 0:
