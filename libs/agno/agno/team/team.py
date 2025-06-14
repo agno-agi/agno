@@ -4474,7 +4474,7 @@ class Team:
                 session_id=session_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
-                async_mode=False,
+                async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
                 audio=audio,  # type: ignore
@@ -4492,7 +4492,7 @@ class Team:
                     user_id=user_id,
                     stream=self.stream or False,
                     stream_intermediate_steps=self.stream_intermediate_steps,
-                    async_mode=False,
+                    async_mode=async_mode,
                     images=images,  # type: ignore
                     videos=videos,  # type: ignore
                     audio=audio,  # type: ignore
@@ -4509,7 +4509,7 @@ class Team:
                 user_id=user_id,
                 stream=self.stream or False,
                 stream_intermediate_steps=self.stream_intermediate_steps,
-                async_mode=False,
+                async_mode=async_mode,
                 images=images,  # type: ignore
                 videos=videos,  # type: ignore
                 audio=audio,  # type: ignore
@@ -4945,7 +4945,10 @@ class Team:
                 )
             elif isinstance(self.memory, Memory):
                 history = self.memory.get_messages_from_last_n_runs(
-                    session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role
+                    session_id=session_id,
+                    last_n=self.num_history_runs,
+                    skip_role=self.system_message_role,
+                    team_id=self.team_id,
                 )
 
             if len(history) > 0:
@@ -6621,7 +6624,6 @@ class Team:
     ) -> List[Message]:
         """Get messages for a session"""
         _session_id = session_id or self.session_id
-        _user_id = user_id or self.user_id
         if _session_id is None:
             log_warning("Session ID is not set, cannot get messages for session")
             return []
@@ -6635,7 +6637,7 @@ class Team:
         if isinstance(self.memory, AgentMemory):
             return self.memory.messages
         elif isinstance(self.memory, Memory):
-            return self.memory.get_messages_from_last_n_runs(session_id=_session_id)
+            return self.memory.get_messages_from_last_n_runs(session_id=_session_id, team_id=self.team_id)
         else:
             return []
 

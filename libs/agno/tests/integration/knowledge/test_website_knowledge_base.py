@@ -25,7 +25,7 @@ def test_website_knowledge_base_directory(setup_vector_db):
     kb.load(recreate=True)
 
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
+    assert setup_vector_db.get_count() == 3
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are agents in Agno and what levels are there?", markdown=True)
