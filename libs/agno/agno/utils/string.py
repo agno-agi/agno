@@ -170,15 +170,16 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-            # Third attempt: Extract individual JSON objects and try each one
+            # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
-            for candidate in candidate_jsons:
+
+            if len(candidate_jsons) == 1:
+                # Single JSON object - try to parse it directly
                 try:
-                    data = json.loads(candidate)
+                    data = json.loads(candidate_jsons[0])
                     structured_output = response_model.model_validate(data)
-                    break  # Success, use this one
                 except (ValidationError, json.JSONDecodeError):
-                    continue  # Try next candidate
+                    pass
 
             if structured_output is None:
                 # Final attempt: Handle concatenated JSON objects with field merging
