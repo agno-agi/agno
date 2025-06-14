@@ -79,109 +79,111 @@ def _extract_json_objects(text: str) -> list[str]:
     return objs
 
 
+def _clean_json_content(content: str) -> str:
+    """Clean and prepare JSON content for parsing."""
+    # Handle code blocks
+    if "```json" in content:
+        content = content.split("```json")[-1].strip()
+        parts = content.split("```")
+        parts.pop(-1)
+        content = "".join(parts)
+    elif "```" in content:
+        content = content.split("```")[1].strip()
+
+    # Remove markdown formatting
+    content = re.sub(r"[*`#]", "", content)
+
+    # Handle newlines and control characters
+    content = content.replace("\n", " ").replace("\r", "")
+    content = re.sub(r"[\x00-\x1F\x7F]", "", content)
+
+    # Escape quotes only in values, not keys
+    def escape_quotes_in_values(match):
+        key = match.group(1)
+        value = match.group(2)
+
+        if '\\"' in value:
+            unescaped_value = value.replace('\\"', '"')
+            escaped_value = unescaped_value.replace('"', '\\"')
+        else:
+            escaped_value = value.replace('"', '\\"')
+
+        return f'"{key.lower()}": "{escaped_value}'
+
+    # Find and escape quotes in field values
+    content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+
+    return content
+
+
 def _parse_individual_json(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    """Parse individual JSON objects from content and merge them based on response model fields."""
     candidate_jsons = _extract_json_objects(content)
-    merged_steps: list[dict] = []
+    merged_data: dict = {}
+
+    # Get the expected fields from the response model
+    model_fields = response_model.model_fields if hasattr(response_model, "model_fields") else {}
 
     for candidate in candidate_jsons:
         try:
             candidate_obj = json.loads(candidate)
         except json.JSONDecodeError:
-            # Try again after stripping newlines / carriage returns
-            cleaned = candidate.replace("\n", " ").replace("\r", "")
-            try:
-                candidate_obj = json.loads(cleaned)
-            except json.JSONDecodeError:
-                continue
+            continue
 
-        if (
-            isinstance(candidate_obj, dict)
-            and "reasoning_steps" in candidate_obj
-            and isinstance(candidate_obj["reasoning_steps"], list)
-        ):
-            merged_steps.extend(candidate_obj["reasoning_steps"])
+        if isinstance(candidate_obj, dict):
+            # Merge data based on model fields
+            for field_name, field_info in model_fields.items():
+                if field_name in candidate_obj:
+                    field_value = candidate_obj[field_name]
+                    # If field is a list, extend it; otherwise, use the latest value
+                    if isinstance(field_value, list):
+                        if field_name not in merged_data:
+                            merged_data[field_name] = []
+                        merged_data[field_name].extend(field_value)
+                    else:
+                        merged_data[field_name] = field_value
 
-    if not merged_steps:
+    if not merged_data:
         return None
 
     try:
-        aggregate_obj = {"reasoning_steps": merged_steps}
-        return response_model.model_validate(aggregate_obj)
+        return response_model.model_validate(merged_data)
     except ValidationError as e:
-        logger.warning("Validation failed on merged ReasoningSteps: %s", e)
+        logger.warning("Validation failed on merged data: %s", e)
         return None
 
 
 def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
-    logger.debug(f"Parsing response model: {content}")
     structured_output = None
+
+    # Clean content first to simplify all parsing attempts
+    cleaned_content = _clean_json_content(content)
+
     try:
-        # First attempt: direct JSON validation
-        structured_output = response_model.model_validate_json(content)
+        # First attempt: direct JSON validation on cleaned content
+        structured_output = response_model.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
-        # Second attempt: Extract JSON from markdown code blocks and clean
-        content = content
-
-        # Handle code blocks
-        if "```json" in content:
-            content = content.split("```json")[-1].strip()
-            parts = content.split("```")
-            parts.pop(-1)
-            content = "".join(parts)
-        elif "```" in content:
-            content = content.split("```")[1].strip()
-
-        # Clean the JSON string
-        # Remove markdown formatting
-        content = re.sub(r"[*`#]", "", content)
-
-        # Handle newlines and control characters
-        content = content.replace("\n", " ").replace("\r", "")
-        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
-
-        # Escape quotes only in values, not keys
-        def escape_quotes_in_values(match):
-            key = match.group(1)
-            value = match.group(2)
-
-            if '\\"' in value:
-                unescaped_value = value.replace('\\"', '"')
-                escaped_value = unescaped_value.replace('"', '\\"')
-            else:
-                escaped_value = value.replace('"', '\\"')
-
-            return f'"{key.lower()}": "{escaped_value}'
-
-        # Find and escape quotes in field values
-        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
-
         try:
-            # Try parsing the cleaned JSON
-            structured_output = response_model.model_validate_json(content)
+            # Second attempt: Parse as Python dict
+            data = json.loads(cleaned_content)
+            structured_output = response_model.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-            try:
-                # Final attempt: Try parsing as Python dict
-                data = json.loads(content)
-                structured_output = response_model.model_validate(data)
-            except (ValidationError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to parse as Python dict: {e}")
-
+            # Third attempt: Extract individual JSON objects and try each one
+            candidate_jsons = _extract_json_objects(cleaned_content)
+            for candidate in candidate_jsons:
                 try:
-                    start = content.find("{")
-                    end = content.rfind("}") + 1
-                    if start != -1 and end != -1 and end > start:
-                        trimmed = content[start:end]
-                        data = json.loads(trimmed)
-                        structured_output = response_model.model_validate(data)
-                    else:
-                        logger.warning("Unable to locate JSON object boundaries for fallback parsing.")
-                except (ValidationError, json.JSONDecodeError) as e2:
-                    logger.warning(f"Failed to parse after trimming: {e2}")
-                    # Handle concatenated JSON objects (missing commas)
-                    structured_output = _parse_individual_json(content, response_model)
-                    if structured_output is None:
-                        logger.warning("Multiple-object fallback parsing failed.")
+                    data = json.loads(candidate)
+                    structured_output = response_model.model_validate(data)
+                    break  # Success, use this one
+                except (ValidationError, json.JSONDecodeError):
+                    continue  # Try next candidate
+
+            if structured_output is None:
+                # Final attempt: Handle concatenated JSON objects with field merging
+                structured_output = _parse_individual_json(cleaned_content, response_model)
+                if structured_output is None:
+                    logger.warning("All parsing attempts failed.")
 
     return structured_output
