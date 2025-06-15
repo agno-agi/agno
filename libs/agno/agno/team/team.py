@@ -764,7 +764,13 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_session_id=self.team_session_id, team_id=self.team_id, team_name=self.name)
+        run_response = TeamRunResponse(
+            run_id=run_id,
+            session_id=session_id,
+            team_session_id=self.team_session_id,
+            team_id=self.team_id,
+            team_name=self.name,
+        )
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1169,7 +1175,13 @@ class Team:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = TeamRunResponse(run_id=run_id, session_id=session_id, team_session_id=self.team_session_id, team_id=self.team_id, team_name=self.name)
+        run_response = TeamRunResponse(
+            run_id=run_id,
+            session_id=session_id,
+            team_session_id=self.team_session_id,
+            team_id=self.team_id,
+            team_name=self.name,
+        )
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -4820,7 +4832,7 @@ class Team:
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
                 "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to forward the task to.\n"
+                "  - member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
                 "  - task_description (str): A clear description of the task.\n"
                 "  - expected_output (str): The expected output.\n"
                 "- You can transfer tasks to multiple members at once.\n"
@@ -4833,7 +4845,7 @@ class Team:
                 "- You can either respond directly or forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
-                "  - member_id (str): The ID of the member to forward the task to.\n"
+                "  - member_id (str): The ID of the member to forward the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
                 "  - expected_output (str): The expected output.\n"
                 "- You can forward tasks to multiple members at once.\n"
             )
@@ -5331,7 +5343,7 @@ class Team:
     # Built-in Tools
     ###########################################################################
 
-    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Callable:
+    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
         def update_user_memory(task: str) -> str:
             """
             Use this function to submit a task to modify the Agent's memory.
@@ -5367,7 +5379,7 @@ class Team:
         if async_mode:
             update_memory_function = aupdate_user_memory
         else:
-            update_memory_function = update_user_memory
+            update_memory_function = update_user_memory  # type: ignore
 
         return Function.from_callable(update_memory_function, name="update_user_memory")
 
@@ -5734,7 +5746,9 @@ class Team:
         else:
             run_member_agents_function = run_member_agents  # type: ignore
 
-        run_member_agents_func = Function.from_callable(run_member_agents_function, name="run_member_agents", strict=True)
+        run_member_agents_func = Function.from_callable(
+            run_member_agents_function, name="run_member_agents", strict=True
+        )
 
         return run_member_agents_func
 
@@ -5800,7 +5814,7 @@ class Team:
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to.
+                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str): The expected output from the member (optional).
             Returns:
@@ -5935,7 +5949,7 @@ class Team:
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to.
+                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str): The expected output from the member (optional).
             Returns:
@@ -6153,7 +6167,7 @@ class Team:
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """Use this function to forward the request to the selected team member.
             Args:
-                member_id (str): The ID of the member to transfer the task to.
+                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
@@ -6290,7 +6304,7 @@ class Team:
             """Use this function to forward a message to the selected team member.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to.
+                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
@@ -6622,6 +6636,7 @@ class Team:
                                 self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
                         import traceback
+
                         traceback.print_exc()
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
@@ -6634,6 +6649,7 @@ class Team:
                         }
                     except Exception as e:
                         import traceback
+
                         traceback.print_exc()
                         log_warning(f"Failed to load team context: {e}")
                 if "memories" in session.memory:
@@ -7091,7 +7107,7 @@ class Team:
 
     def search_knowledge_base_function(
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
-    ) -> Callable:
+    ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
         def search_knowledge_base(query: str) -> str:
@@ -7157,13 +7173,13 @@ class Team:
         if async_mode:
             search_knowledge_base_function = asearch_knowledge_base
         else:
-            search_knowledge_base_function = search_knowledge_base
-        
+            search_knowledge_base_function = search_knowledge_base  # type: ignore
+
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
     def search_knowledge_base_with_agentic_filters_function(
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
-    ) -> Callable:
+    ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
         def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
@@ -7235,8 +7251,8 @@ class Team:
         if async_mode:
             search_knowledge_base_function = asearch_knowledge_base
         else:
-            search_knowledge_base_function = search_knowledge_base
-        
+            search_knowledge_base_function = search_knowledge_base  # type: ignore
+
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
     ###########################################################################

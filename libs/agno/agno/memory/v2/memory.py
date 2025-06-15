@@ -46,9 +46,13 @@ class TeamMemberInteraction:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamMemberInteraction":
         if data["response"].get("agent_id"):
-            return cls(member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"]))
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"])
+            )
         else:
-            return cls(member_name=data["member_name"], task=data["task"], response=TeamRunResponse.from_dict(data["response"]))
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=TeamRunResponse.from_dict(data["response"])
+            )
 
 
 @dataclass

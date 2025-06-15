@@ -200,13 +200,13 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
 }
 
+
 def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
-    event_type = data.get("event")
+    event_type = data.get("event", "")
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not cls:
         raise ValueError(f"Unknown event type: {event_type}")
-    return cls.from_dict(data)
-
+    return cls.from_dict(data)  # type: ignore
 
 
 @dataclass

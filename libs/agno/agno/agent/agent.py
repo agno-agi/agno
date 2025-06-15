@@ -5,7 +5,6 @@ from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
-from threading import Thread
 from typing import (
     Any,
     AsyncIterator,
@@ -628,6 +627,7 @@ class Agent:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             from copy import deepcopy
+
             # We store a copy of memory to ensure different team instances reference unique memory copy
             self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
@@ -1001,7 +1001,13 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name, team_session_id=self.team_session_id)
+        run_response = RunResponse(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.agent_id,
+            agent_name=self.name,
+            team_session_id=self.team_session_id,
+        )
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1415,7 +1421,13 @@ class Agent:
         run_id = str(uuid4())
 
         # Create a new run_response for this attempt
-        run_response = RunResponse(run_id=run_id, session_id=session_id, agent_id=self.agent_id, agent_name=self.name, team_session_id=self.team_session_id)
+        run_response = RunResponse(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=self.agent_id,
+            agent_name=self.name,
+            team_session_id=self.team_session_id,
+        )
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -6130,7 +6142,7 @@ class Agent:
     # Default Tools
     ###########################################################################
 
-    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Callable:
+    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
         def update_user_memory(task: str) -> str:
             """Use this function to submit a task to modify the Agent's memory.
             Describe the task in detail and be specific.
@@ -6165,8 +6177,8 @@ class Agent:
         if async_mode:
             update_user_memory_function = aupdate_user_memory
         else:
-            update_user_memory_function = update_user_memory
-        
+            update_user_memory_function = update_user_memory  # type: ignore
+
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
     def get_chat_history_function(self, session_id: str) -> Callable:
@@ -6255,7 +6267,7 @@ class Agent:
 
     def search_knowledge_base_function(
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
-    ) -> Callable:
+    ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
         def search_knowledge_base(query: str) -> str:
@@ -6324,13 +6336,13 @@ class Agent:
         if async_mode:
             search_knowledge_base_function = asearch_knowledge_base
         else:
-            search_knowledge_base_function = search_knowledge_base
-        
+            search_knowledge_base_function = search_knowledge_base  # type: ignore
+
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
     def search_knowledge_base_with_agentic_filters_function(
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
-    ) -> Callable:
+    ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
 
         def search_knowledge_base(query: str, filters: Optional[Dict[str, Any]] = None) -> str:
@@ -6404,8 +6416,8 @@ class Agent:
         if async_mode:
             search_knowledge_base_function = asearch_knowledge_base
         else:
-            search_knowledge_base_function = search_knowledge_base
-        
+            search_knowledge_base_function = search_knowledge_base  # type: ignore
+
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base_with_agentic_filters")
 
     def _get_agentic_or_user_search_filters(
