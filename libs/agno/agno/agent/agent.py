@@ -6163,9 +6163,11 @@ class Agent:
             return response
 
         if async_mode:
-            return aupdate_user_memory
+            update_user_memory_function = aupdate_user_memory
         else:
-            return update_user_memory
+            update_user_memory_function = update_user_memory
+        
+        return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
     def get_chat_history_function(self, session_id: str) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:
@@ -6320,9 +6322,11 @@ class Agent:
             return self.convert_documents_to_string(docs_from_knowledge)
 
         if async_mode:
-            return asearch_knowledge_base
+            search_knowledge_base_function = asearch_knowledge_base
         else:
-            return search_knowledge_base
+            search_knowledge_base_function = search_knowledge_base
+        
+        return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
     def search_knowledge_base_with_agentic_filters_function(
         self, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
@@ -6398,9 +6402,11 @@ class Agent:
             return self.convert_documents_to_string(docs_from_knowledge)
 
         if async_mode:
-            return asearch_knowledge_base
+            search_knowledge_base_function = asearch_knowledge_base
         else:
-            return search_knowledge_base
+            search_knowledge_base_function = search_knowledge_base
+        
+        return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base_with_agentic_filters")
 
     def _get_agentic_or_user_search_filters(
         self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
