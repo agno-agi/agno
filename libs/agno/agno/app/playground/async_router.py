@@ -795,7 +795,7 @@ def get_async_playground_router(
         team = get_team_by_id(team_id, teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        
+
         if team.storage is None:
             raise HTTPException(status_code=404, detail="Team does not have storage enabled")
 
@@ -819,7 +819,7 @@ def get_async_playground_router(
                         # We skip runs that are not from the parent team
                         if run.get("team_session_id") is not None and run.get("team_session_id") == session_id:
                             continue
-                        
+
                         first_user_message = None
                         for msg in run.get("messages", []):
                             if msg.get("role") == "user" and msg.get("from_history", False) is False:

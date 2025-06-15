@@ -1,7 +1,7 @@
 import asyncio
 import json
-import threading
 from collections import ChainMap, defaultdict, deque
+from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from os import getenv
 from textwrap import dedent
@@ -405,6 +405,7 @@ class Team:
         self.parse_response = parse_response
 
         self.memory = memory
+
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
         self.add_memory_references = add_memory_references
@@ -463,6 +464,8 @@ class Team:
         self._member_response_model: Optional[Type[BaseModel]] = None
 
         self._formatter: Optional[SafeFormatter] = None
+
+        self._memory_deepcopy_done: bool = False
 
     def _set_team_id(self) -> str:
         if self.team_id is None:
@@ -585,6 +588,10 @@ class Team:
         # Initialize memory if not yet set
         if self.memory is None:
             self.memory = Memory()
+        elif not self._memory_deepcopy_done:
+            # We store a copy of memory to ensure different team instances reference unique memory copy
+            self.memory = deepcopy(self.memory)
+            self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -752,10 +759,6 @@ class Team:
             audio=audio,
             files=files,
         )
-
-        # Register the team on the platform
-        thread = threading.Thread(target=self.register_team)
-        thread.start()
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -1161,8 +1164,6 @@ class Team:
             audio=audio,
             files=files,
         )
-
-        asyncio.create_task(self._aregister_team())
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -5731,7 +5732,7 @@ class Team:
         else:
             run_member_agents_function = run_member_agents  # type: ignore
 
-        run_member_agents_func = Function.from_callable(run_member_agents_function, strict=True)
+        run_member_agents_func = Function.from_callable(run_member_agents_function, name="run_member_agents", strict=True)
 
         return run_member_agents_func
 
@@ -6056,7 +6057,7 @@ class Team:
         else:
             transfer_function = transfer_task_to_member  # type: ignore
 
-        transfer_func = Function.from_callable(transfer_function, strict=True)
+        transfer_func = Function.from_callable(transfer_function, name="transfer_task_to_member", strict=True)
 
         return transfer_func
 
@@ -6413,7 +6414,7 @@ class Team:
         else:
             forward_function = forward_task_to_member  # type: ignore
 
-        forward_func = Function.from_callable(forward_function, strict=True)
+        forward_func = Function.from_callable(forward_function, name="forward_task_to_member", strict=True)
 
         forward_func.stop_after_tool_call = True
         forward_func.show_result = True
@@ -6618,6 +6619,8 @@ class Team:
                             else:
                                 self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
+                        import traceback
+                        traceback.print_exc()
                         log_warning(f"Failed to load runs from memory: {e}")
                 if "team_context" in session.memory:
                     from agno.memory.v2.memory import TeamContext
@@ -6628,6 +6631,8 @@ class Team:
                             for session_id, team_context in session.memory["team_context"].items()
                         }
                     except Exception as e:
+                        import traceback
+                        traceback.print_exc()
                         log_warning(f"Failed to load team context: {e}")
                 if "memories" in session.memory:
                     if self.memory.memories is not None:
@@ -7311,7 +7316,6 @@ class Team:
                     run_responses = self.memory.runs.get(session_id)
                     if run_responses is not None:
                         memory_dict["runs"] = [rr.to_dict() for rr in run_responses]
-
         return TeamSession(
             session_id=session_id,
             team_id=self.team_id,
@@ -7439,7 +7443,6 @@ class Team:
 
         except Exception as e:
             log_debug(f"Could not create team on platform: {e}")
-            print(f"Could not create team on platform: {e}")
 
     async def _aregister_team(self) -> None:
         self._set_monitoring()
@@ -7460,7 +7463,6 @@ class Team:
                 ),
             )
         except Exception as e:
-            print(f"Could not create team on platform: {e}")
             log_debug(f"Could not create team on platform: {e}")
 
     def to_platform_dict(self) -> Dict[str, Any]:

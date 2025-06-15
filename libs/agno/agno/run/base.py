@@ -139,18 +139,6 @@ class BaseRunResponseEvent:
         if response_audio:
             data["response_audio"] = AudioResponse.model_validate(response_audio)
 
-        member_responses = data.pop("member_responses", None)
-        member_responses_final = []
-        for response in member_responses or []:
-            if "agent_id" in response:
-                run_response_parsed = "RunResponse".from_dict(response)
-            else:
-                run_response_parsed = "TeamRunResponse".from_dict(response)
-            member_responses_final.append(run_response_parsed)
-
-        if member_responses_final:
-            data["member_responses"] = member_responses_final
-
         extra_data = data.pop("extra_data", None)
         if extra_data:
             data["extra_data"] = RunResponseExtraData.from_dict(extra_data)

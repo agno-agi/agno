@@ -539,6 +539,8 @@ class Agent:
 
         self._formatter: Optional[SafeFormatter] = None
 
+        self._memory_deepcopy_done: bool = False
+
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
@@ -624,6 +626,11 @@ class Agent:
 
         if self.memory is None:
             self.memory = Memory()
+        elif not self._memory_deepcopy_done:
+            from copy import deepcopy
+            # We store a copy of memory to ensure different team instances reference unique memory copy
+            self.memory = deepcopy(self.memory)
+            self._memory_deepcopy_done = True
 
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -989,10 +996,6 @@ class Agent:
             async_mode=False,
             knowledge_filters=effective_filters,
         )
-
-        # Register Agent
-        thread = Thread(target=self.register_agent)
-        thread.start()
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
@@ -1407,9 +1410,6 @@ class Agent:
             async_mode=True,
             knowledge_filters=effective_filters,
         )
-
-        # Register Agent
-        asyncio.create_task(self._aregister_agent())
 
         # Create a run_id for this specific run
         run_id = str(uuid4())

@@ -9,7 +9,7 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
-from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.response import RunResponse, RunResponseEvent, RunEvent, run_response_event_from_dict
 
 
 class TeamRunEvent(str, Enum):
@@ -45,6 +45,24 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
 
     # For backwards compatibility
     content: Optional[Any] = None
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BaseTeamRunResponseEvent":
+        member_responses = data.pop("member_responses", None)
+        event = super().from_dict(data)
+        
+        member_responses_final = []
+        for response in member_responses or []:
+            if "agent_id" in response:
+                run_response_parsed = RunResponse.from_dict(response)
+            else:
+                run_response_parsed = TeamRunResponse.from_dict(response)
+            member_responses_final.append(run_response_parsed)
+
+        if member_responses_final:
+            event.member_responses = member_responses_final
+
+        return event
 
 
 @dataclass
@@ -177,10 +195,12 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
 
 def team_run_response_event_from_dict(data: dict) -> BaseTeamRunResponseEvent:
     event_type = data.get("event")
-    cls = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
-    if not cls:
+    event_class = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if event_class in RunEvent:
+        return run_response_event_from_dict(data)
+    if not event_class:
         raise ValueError(f"Unknown team event type: {event_type}")
-    return cls.from_dict(data)
+    return event_class.from_dict(data)
 
 
 @dataclass
