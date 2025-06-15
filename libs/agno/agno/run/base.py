@@ -113,6 +113,42 @@ class BaseRunResponseEvent:
 
         return json.dumps(_dict, indent=2)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]):
+        tool = data.pop("tool", None)
+        if tool:
+            data["tool"] = ToolExecution.from_dict(tool)
+
+        images = data.pop("images", None)
+        if images:
+            data["images"] = [ImageArtifact.model_validate(image) for image in images]
+
+        image = data.pop("image", None)
+        if image:
+            data["image"] = ImageArtifact.model_validate(image)
+
+        videos = data.pop("videos", None)
+        if videos:
+            data["videos"] = [VideoArtifact.model_validate(video) for video in videos]
+
+        audio = data.pop("audio", None)
+        if audio:
+            data["audio"] = [AudioArtifact.model_validate(audio) for audio in audio]
+
+        response_audio = data.pop("response_audio", None)
+        if response_audio:
+            data["response_audio"] = AudioResponse.model_validate(response_audio)
+
+        extra_data = data.pop("extra_data", None)
+        if extra_data:
+            data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
+
+        # To make it backwards compatible
+        if "event" in data:
+            data.pop("event")
+
+        return cls(**data)
+
     @property
     def is_paused(self):
         return False

@@ -77,6 +77,34 @@ def test_basic_intermediate_steps_events():
     assert len(events[RunEvent.run_completed]) == 1
 
 
+def test_basic_intermediate_steps_events_persisted(agent_storage):
+    """Test that the agent streams events."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        store_events=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
+
+    run_response_from_storage = agent_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 2, "We should only have the run started and run completed events"
+    assert run_response_from_storage["events"][0]["event"] == RunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == RunEvent.run_completed
+
+
 def test_intermediate_steps_with_tools():
     """Test that the agent streams events."""
     agent = Agent(
@@ -110,6 +138,43 @@ def test_intermediate_steps_with_tools():
     assert len(events[RunEvent.tool_call_completed]) == 1
     assert events[RunEvent.tool_call_completed][0].content is not None
     assert events[RunEvent.tool_call_completed][0].tool.result is not None
+
+
+def test_intermediate_steps_with_tools_events_persisted(agent_storage):
+    """Test that the agent streams events."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[YFinanceTools(cache_results=True)],
+        storage=agent_storage,
+        store_events=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+    }
+
+    run_response_from_storage = agent_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 4
+    assert run_response_from_storage["events"][0]["event"] == RunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == RunEvent.tool_call_started
+    assert run_response_from_storage["events"][2]["event"] == RunEvent.tool_call_completed
+    assert run_response_from_storage["events"][3]["event"] == RunEvent.run_completed
 
 
 def test_intermediate_steps_with_reasoning():

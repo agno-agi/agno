@@ -130,12 +130,12 @@ class Function(BaseModel):
         )
 
     @classmethod
-    def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
+    def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
-        function_name = c.__name__
+        function_name = name or c.__name__
         parameters = {"type": "object", "properties": {}, "required": []}
         try:
             sig = signature(c)

@@ -45,7 +45,14 @@ class TeamMemberInteraction:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamMemberInteraction":
-        return cls(member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"]))
+        if data["response"].get("agent_id"):
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"])
+            )
+        else:
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=TeamRunResponse.from_dict(data["response"])
+            )
 
 
 @dataclass
@@ -1086,3 +1093,21 @@ class Memory:
                 if interaction.response.audio:
                     audio.extend(interaction.response.audio)
         return audio
+
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        copied_obj = cls.__new__(cls)
+        memo[id(self)] = copied_obj
+
+        # Deep copy attributes
+        for k, v in self.__dict__.items():
+            # Reuse db
+            if k in {"db", "memory_manager", "summary_manager"}:
+                setattr(copied_obj, k, v)
+            else:
+                setattr(copied_obj, k, deepcopy(v, memo))
+
+        return copied_obj

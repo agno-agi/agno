@@ -141,16 +141,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
                     continue
             return {"anyOf": types} if types else None
 
-
     if isinstance(type_hint, type) and issubclass(type_hint, Enum):
         enum_values = [member.value for member in type_hint]
         return {"type": "string", "enum": enum_values}
-    
+
     if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
         # Get the schema and inline it
         schema = type_hint.model_json_schema()
         return inline_pydantic_schema(schema)  # type: ignore
-    
+
     if hasattr(type_hint, "__dataclass_fields__"):
         # Convert dataclass to JSON schema
         properties = {}
