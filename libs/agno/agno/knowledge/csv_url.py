@@ -8,6 +8,7 @@ from agno.utils.log import log_info, logger
 
 class CSVUrlKnowledgeBase(AgentKnowledge):
     urls: Optional[Union[List[str], List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
+    formats: List[str] = [".csv"]
     reader: CSVUrlReader = CSVUrlReader()
 
     @property
@@ -73,7 +74,7 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
         """Load documents from a single CSV URL with specific metadata into the vector DB."""
 
         # Validate URL and prepare collection in one step
-        if not self.prepare_load_url(url, metadata, recreate):
+        if not self.prepare_load(url, self.formats, metadata, recreate, is_url=True):
             return
 
         # Read documents
@@ -103,7 +104,7 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
         """Load documents from a single CSV URL with specific metadata into the vector DB."""
 
         # Validate URL and prepare collection in one step
-        if not await self.aprepare_load_url(url, metadata, recreate):
+        if not await self.aprepare_load(url, self.formats, metadata, recreate, is_url=True):
             return
 
         # Read documents
@@ -121,65 +122,3 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
             skip_existing=skip_existing,
             source_info=url,
         )
-
-    def prepare_load_url(
-        self,
-        url: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-    ) -> bool:
-        """Validate URL and prepare collection for loading."""
-        # 1. Validate URL
-        if not self._is_valid_csv_url(url):
-            logger.error(f"Invalid CSV URL: {url}")
-            return False
-
-        # 2. Track metadata
-        if metadata:
-            self._track_metadata_structure(metadata)
-
-        # 3. Prepare vector DB
-        if self.vector_db is None:
-            logger.warning("Cannot load URL: No vector db provided.")
-            return False
-
-        # Recreate collection if requested
-        if recreate:
-            self.vector_db.drop()
-
-        # Create collection if it doesn't exist
-        if not self.vector_db.exists():
-            self.vector_db.create()
-
-        return True
-
-    async def aprepare_load_url(
-        self,
-        url: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        recreate: bool = False,
-    ) -> bool:
-        """Validate URL and prepare collection for loading asynchronously."""
-        # 1. Validate URL
-        if not self._is_valid_csv_url(url):
-            logger.error(f"Invalid CSV URL: {url}")
-            return False
-
-        # 2. Track metadata
-        if metadata:
-            self._track_metadata_structure(metadata)
-
-        # 3. Prepare vector DB
-        if self.vector_db is None:
-            logger.warning("Cannot load URL: No vector db provided.")
-            return False
-
-        # Recreate collection if requested
-        if recreate:
-            await self.vector_db.async_drop()
-
-        # Create collection if it doesn't exist
-        if not await self.vector_db.async_exists():
-            await self.vector_db.async_create()
-
-        return True
