@@ -7,7 +7,7 @@ from agno.utils.media import (
 from agno.vectordb.lancedb import LanceDb
 
 # Download all sample sales files and get their paths
-downloaded_cv_paths = download_knowledge_filters_sample_data(
+downloaded_csv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
 
@@ -29,7 +29,7 @@ knowledge_base = CSVKnowledgeBase(
 )
 
 knowledge_base.load_document(
-    path=downloaded_cv_paths[0],
+    path=downloaded_csv_paths[0],
     metadata={
         "data_type": "sales",
         "quarter": "Q1",
@@ -41,7 +41,7 @@ knowledge_base.load_document(
 )
 
 knowledge_base.load_document(
-    path=downloaded_cv_paths[1],
+    path=downloaded_csv_paths[1],
     metadata={
         "data_type": "sales",
         "year": 2024,
@@ -51,7 +51,7 @@ knowledge_base.load_document(
 )
 
 knowledge_base.load_document(
-    path=downloaded_cv_paths[2],
+    path=downloaded_csv_paths[2],
     metadata={
         "data_type": "survey",
         "survey_type": "customer_satisfaction",
@@ -61,7 +61,7 @@ knowledge_base.load_document(
 )
 
 knowledge_base.load_document(
-    path=downloaded_cv_paths[3],
+    path=downloaded_csv_paths[3],
     metadata={
         "data_type": "financial",
         "sector": "technology",
