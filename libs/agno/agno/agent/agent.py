@@ -3665,6 +3665,7 @@ class Agent:
 
             self._tools_for_model = []
             self._functions_for_model = {}
+            self._tool_instructions = []
 
             # Get Agent tools
             if agent_tools is not None and len(agent_tools) > 0:
@@ -3703,8 +3704,6 @@ class Agent:
 
                         # Add instructions from the toolkit
                         if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
                             self._tool_instructions.append(tool.instructions)
 
                     elif isinstance(tool, Function):
@@ -3721,8 +3720,6 @@ class Agent:
 
                         # Add instructions from the Function
                         if tool.add_instructions and tool.instructions is not None:
-                            if self._tool_instructions is None:
-                                self._tool_instructions = []
                             self._tool_instructions.append(tool.instructions)
 
                     elif callable(tool):
