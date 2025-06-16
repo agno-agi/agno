@@ -1,27 +1,185 @@
-from typing import AsyncIterator, Iterator, List
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 from agno.document import Document
 from agno.document.reader.csv_reader import CSVUrlReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class CSVUrlKnowledgeBase(AgentKnowledge):
-    urls: List[str]
+    urls: Optional[Union[List[str], List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     reader: CSVUrlReader = CSVUrlReader()
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
-        for url in self.urls:
-            if url.endswith(".csv"):
-                yield self.reader.read(url=url)
-            else:
-                logger.error(f"Unsupported URL: {url}")
+        """Iterate over CSV URLs and yield lists of documents."""
+        if self.urls is None:
+            raise ValueError("URLs are not set")
+
+        if isinstance(self.urls, list):
+            for item in self.urls:
+                if isinstance(item, dict) and "url" in item:
+                    # Handle URL with metadata
+                    url = item["url"]
+                    config = item.get("metadata", {})
+                    if self._is_valid_csv_url(url):
+                        documents = self.reader.read(url=url)
+                        if config:
+                            for doc in documents:
+                                log_info(f"Adding metadata {config} to document: {doc.name}")
+                                doc.meta_data.update(config)  # type: ignore
+                        yield documents
+                elif isinstance(item, str):
+                    # Handle plain URL string
+                    if self._is_valid_csv_url(item):
+                        yield self.reader.read(url=item)
+
+    def _is_valid_csv_url(self, url: str) -> bool:
+        """Helper to check if URL is a valid CSV URL."""
+        return url.endswith(".csv")
 
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
-        for url in self.urls:
-            if url.endswith(".csv"):
-                yield await self.reader.async_read(url=url)
-            else:
-                logger.error(f"Unsupported URL: {url}")
+        """Iterate over CSV URLs and yield lists of documents asynchronously."""
+        if self.urls is None:
+            raise ValueError("URLs are not set")
+
+        if isinstance(self.urls, list):
+            for item in self.urls:
+                if isinstance(item, dict) and "url" in item:
+                    # Handle URL with metadata
+                    url = item["url"]
+                    config = item.get("metadata", {})
+                    if self._is_valid_csv_url(url):
+                        documents = await self.reader.async_read(url=url)
+                        if config:
+                            for doc in documents:
+                                log_info(f"Adding metadata {config} to document: {doc.name}")
+                                doc.meta_data.update(config)  # type: ignore
+                        yield documents
+                elif isinstance(item, str):
+                    # Handle plain URL string
+                    if self._is_valid_csv_url(item):
+                        yield await self.reader.async_read(url=item)
+
+    def load_document(
+        self,
+        url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        recreate: bool = False,
+        upsert: bool = False,
+        skip_existing: bool = True,
+    ) -> None:
+        """Load documents from a single CSV URL with specific metadata into the vector DB."""
+
+        # Validate URL and prepare collection in one step
+        if not self.prepare_load_url(url, metadata, recreate):
+            return
+
+        # Read documents
+        try:
+            documents = self.reader.read(url=url)
+        except Exception as e:
+            logger.exception(f"Failed to read documents from URL {url}: {e}")
+            return
+
+        # Process documents
+        self.process_documents(
+            documents=documents,
+            metadata=metadata,
+            upsert=upsert,
+            skip_existing=skip_existing,
+            source_info=url,
+        )
+
+    async def aload_document(
+        self,
+        url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        recreate: bool = False,
+        upsert: bool = False,
+        skip_existing: bool = True,
+    ) -> None:
+        """Load documents from a single CSV URL with specific metadata into the vector DB."""
+
+        # Validate URL and prepare collection in one step
+        if not await self.aprepare_load_url(url, metadata, recreate):
+            return
+
+        # Read documents
+        try:
+            documents = await self.reader.async_read(url=url)
+        except Exception as e:
+            logger.exception(f"Failed to read documents from URL {url}: {e}")
+            return
+
+        # Process documents
+        await self.aprocess_documents(
+            documents=documents,
+            metadata=metadata,
+            upsert=upsert,
+            skip_existing=skip_existing,
+            source_info=url,
+        )
+
+    def prepare_load_url(
+        self,
+        url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        recreate: bool = False,
+    ) -> bool:
+        """Validate URL and prepare collection for loading."""
+        # 1. Validate URL
+        if not self._is_valid_csv_url(url):
+            logger.error(f"Invalid CSV URL: {url}")
+            return False
+
+        # 2. Track metadata
+        if metadata:
+            self._track_metadata_structure(metadata)
+
+        # 3. Prepare vector DB
+        if self.vector_db is None:
+            logger.warning("Cannot load URL: No vector db provided.")
+            return False
+
+        # Recreate collection if requested
+        if recreate:
+            self.vector_db.drop()
+
+        # Create collection if it doesn't exist
+        if not self.vector_db.exists():
+            self.vector_db.create()
+
+        return True
+
+    async def aprepare_load_url(
+        self,
+        url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        recreate: bool = False,
+    ) -> bool:
+        """Validate URL and prepare collection for loading asynchronously."""
+        # 1. Validate URL
+        if not self._is_valid_csv_url(url):
+            logger.error(f"Invalid CSV URL: {url}")
+            return False
+
+        # 2. Track metadata
+        if metadata:
+            self._track_metadata_structure(metadata)
+
+        # 3. Prepare vector DB
+        if self.vector_db is None:
+            logger.warning("Cannot load URL: No vector db provided.")
+            return False
+
+        # Recreate collection if requested
+        if recreate:
+            await self.vector_db.async_drop()
+
+        # Create collection if it doesn't exist
+        if not await self.vector_db.async_exists():
+            await self.vector_db.async_create()
+
+        return True

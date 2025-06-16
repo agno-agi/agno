@@ -10,7 +10,8 @@ from agno.vectordb.lancedb import LanceDb
 
 # Download all sample sales files and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
-    num_files=4, file_extension=SampleDataFileExtension.CSV)
+    num_files=4, file_extension=SampleDataFileExtension.CSV
+)
 
 # Initialize LanceDB
 # By default, it stores data in /tmp/lancedb
@@ -36,7 +37,12 @@ knowledge_base = CSVKnowledgeBase(
         },
         {
             "path": downloaded_cv_paths[1],
-            "metadata": {"data_type": "sales", "year": 2024, "region": "europe", "currency": "EUR"},
+            "metadata": {
+                "data_type": "sales",
+                "year": 2024,
+                "region": "europe",
+                "currency": "EUR",
+            },
         },
         {
             "path": downloaded_cv_paths[2],
