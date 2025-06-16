@@ -6,7 +6,7 @@ from agno.utils.media import (
 )
 from agno.vectordb.lancedb import LanceDb
 
-# Download all sample CVs and get their paths
+# Download all sample sales files and get their paths
 downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=4, file_extension=SampleDataFileExtension.CSV
 )
@@ -21,7 +21,6 @@ vector_db = LanceDb(
 # Step 1: Initialize knowledge base with documents and metadata
 # ------------------------------------------------------------------------------
 # When loading the knowledge base, we can attach metadata that will be used for filtering
-# This metadata can include user IDs, document types, dates, or any other attributes
 
 # Initialize the PDFKnowledgeBase
 knowledge_base = CSVKnowledgeBase(
@@ -73,10 +72,6 @@ knowledge_base.load_document(
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
-# Uncomment the example you want to run
-
-# Option 1: Filters on the Agent
-# Initialize the Agent with the knowledge base
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
@@ -86,13 +81,3 @@ agent.print_response(
     "Revenue performance and top selling products",
     markdown=True,
 )
-
-# agent = Agent(
-#     knowledge=knowledge_base,
-#     search_knowledge=True,
-# )
-# agent.print_response(
-#     "Tell me about Jordan Mitchell's experience and skills",
-#     knowledge_filters = {"region": "north_america", "data_type": "sales"}
-#     markdown=True,
-# )
