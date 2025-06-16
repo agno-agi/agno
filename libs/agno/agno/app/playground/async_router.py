@@ -4,8 +4,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.operator import (
@@ -559,10 +559,7 @@ def get_async_playground_router(
             else:
                 # Return as a streaming response
                 return StreamingResponse(
-                    (
-                        json.dumps(jsonable_encoder(result))
-                        for result in new_workflow_instance.run(**body.input)
-                    ),
+                    (json.dumps(jsonable_encoder(result)) for result in new_workflow_instance.run(**body.input)),
                     media_type="text/event-stream",
                 )
         except Exception as e:
