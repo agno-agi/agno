@@ -4614,6 +4614,7 @@ class Team:
 
         self._functions_for_model = {}
         self._tools_for_model = []
+        self._tool_instructions = []
 
         # Get Agent tools
         if len(_tools) > 0:
@@ -5040,7 +5041,6 @@ class Team:
                     session_id=session_id,
                     last_n=self.num_history_runs,
                     skip_role=self.system_message_role,
-                    team_id=self.team_id,
                 )
 
             if len(history) > 0:
@@ -6739,7 +6739,7 @@ class Team:
         if isinstance(self.memory, AgentMemory):
             return self.memory.messages
         elif isinstance(self.memory, Memory):
-            return self.memory.get_messages_from_last_n_runs(session_id=_session_id, team_id=self.team_id)
+            return self.memory.get_messages_from_last_n_runs(session_id=_session_id)
         else:
             return []
 
