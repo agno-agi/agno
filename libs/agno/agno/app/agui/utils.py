@@ -115,16 +115,16 @@ def _create_events_from_chunk(
     """
     events_to_emit = []
 
-    # Extract content
-    if isinstance(chunk, RunResponseContentEvent):
-        content = extract_response_chunk_content(chunk)
-    elif isinstance(chunk, TeamRunResponseContentEvent):
-        content = extract_team_response_chunk_content(chunk)
+    # Extract content if the contextual event is a content event
+    if chunk.event == RunEvent.run_response_content:
+        content = extract_response_chunk_content(chunk)  # type: ignore
+    elif chunk.event == TeamRunEvent.run_response_content:
+        content = extract_team_response_chunk_content(chunk)  # type: ignore
     else:
         content = None
 
     # Handle text responses
-    if chunk.event == RunEvent.run_response_content or chunk.event == TeamRunEvent.run_response_content:
+    if content is not None:
         # Handle the message start event, emitted once per message
         if not message_started:
             message_started = True
