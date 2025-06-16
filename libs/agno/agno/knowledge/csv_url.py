@@ -16,23 +16,23 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
         if self.urls is None:
             raise ValueError("URLs are not set")
 
-        if isinstance(self.urls, list):
-            for item in self.urls:
-                if isinstance(item, dict) and "url" in item:
-                    # Handle URL with metadata
-                    url = item["url"]
+        for item in self.urls:
+            if isinstance(item, dict) and "url" in item:
+                # Handle URL with metadata
+                url = item["url"]
+                if isinstance(url, str):  # Type guard
                     config = item.get("metadata", {})
                     if self._is_valid_csv_url(url):
                         documents = self.reader.read(url=url)
-                        if config:
+                        if config and isinstance(config, dict):
                             for doc in documents:
                                 log_info(f"Adding metadata {config} to document: {doc.name}")
                                 doc.meta_data.update(config)  # type: ignore
                         yield documents
-                elif isinstance(item, str):
-                    # Handle plain URL string
-                    if self._is_valid_csv_url(item):
-                        yield self.reader.read(url=item)
+            elif isinstance(item, str):
+                # Handle plain URL string
+                if self._is_valid_csv_url(item):
+                    yield self.reader.read(url=item)
 
     def _is_valid_csv_url(self, url: str) -> bool:
         """Helper to check if URL is a valid CSV URL."""
@@ -44,23 +44,23 @@ class CSVUrlKnowledgeBase(AgentKnowledge):
         if self.urls is None:
             raise ValueError("URLs are not set")
 
-        if isinstance(self.urls, list):
-            for item in self.urls:
-                if isinstance(item, dict) and "url" in item:
-                    # Handle URL with metadata
-                    url = item["url"]
+        for item in self.urls:
+            if isinstance(item, dict) and "url" in item:
+                # Handle URL with metadata
+                url = item["url"]
+                if isinstance(url, str):  # Type guard
                     config = item.get("metadata", {})
                     if self._is_valid_csv_url(url):
                         documents = await self.reader.async_read(url=url)
-                        if config:
+                        if config and isinstance(config, dict):
                             for doc in documents:
                                 log_info(f"Adding metadata {config} to document: {doc.name}")
                                 doc.meta_data.update(config)  # type: ignore
                         yield documents
-                elif isinstance(item, str):
-                    # Handle plain URL string
-                    if self._is_valid_csv_url(item):
-                        yield await self.reader.async_read(url=item)
+            elif isinstance(item, str):
+                # Handle plain URL string
+                if self._is_valid_csv_url(item):
+                    yield await self.reader.async_read(url=item)
 
     def load_document(
         self,
