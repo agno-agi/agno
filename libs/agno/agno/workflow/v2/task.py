@@ -132,17 +132,19 @@ class Task:
 
     _retry_count: int = 0
 
-    def __init__(self,
-                 name: Optional[str] = None,
-                 agent: Optional[Agent] = None,
-                 team: Optional[Team] = None,
-                 execution_function: Optional[Callable[[Dict[str, Any]], Any]] = None,
-                 task_id: Optional[str] = None,
-                 description: Optional[str] = None,
-                 max_retries: int = 3,
-                 timeout_seconds: Optional[int] = None,
-                 skip_on_failure: bool = False,
-                 strict_input_validation: bool = False):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        agent: Optional[Agent] = None,
+        team: Optional[Team] = None,
+        execution_function: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        task_id: Optional[str] = None,
+        description: Optional[str] = None,
+        max_retries: int = 3,
+        timeout_seconds: Optional[int] = None,
+        skip_on_failure: bool = False,
+        strict_input_validation: bool = False,
+    ):
         self.name = name
         self.agent = agent
         self.team = team
@@ -213,9 +215,7 @@ class Task:
         else:
             return self._execute_task(task_input)
 
-    def _execute_task(
-        self, task_input: TaskInput
-    ) -> TaskOutput:
+    def _execute_task(self, task_input: TaskInput) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
 
         # Execute with retries
@@ -361,9 +361,7 @@ class Task:
         else:
             return await self._aexecute_task(task_input)
 
-    async def _aexecute_task(
-        self, task_input: TaskInput
-    ) -> TaskOutput:
+    async def _aexecute_task(self, task_input: TaskInput) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
 
         # Execute with retries
@@ -429,7 +427,6 @@ class Task:
                             final_response = TaskOutput(content=str(result))
                 else:
                     message = task_input.message
-
 
                     if self._executor_type in ["agent", "team"]:
                         response_stream = await self.active_executor.arun(  # type: ignore

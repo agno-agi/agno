@@ -1,0 +1,107 @@
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
+from agno.team import Team
+from agno.tools.googlesearch import GoogleSearchTools
+from agno.workflow.v2.pipeline import Pipeline
+from agno.workflow.v2.task import Task
+from agno.workflow.v2.workflow import Workflow
+
+# Define agents
+blog_analyzer = Agent(
+    name="Blog Analyzer",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleSearchTools()],
+    instructions="Extract key insights and content from blog posts",
+)
+
+content_planner = Agent(
+    name="Content Planner",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="Create engaging social media content plans based on analysis",
+)
+
+# Define research team for complex analysis
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",
+    members=[blog_analyzer, content_planner],
+    instructions="Analyze content and create comprehensive social media strategy",
+)
+
+# Define tasks with consistent query-based input
+analyze_blog_task = Task(
+    name="analyze_blog",
+    agent=blog_analyzer,
+    description="Analyze the provided topic and extract key insights",
+    # No expected_input needed - automatically handles any input
+)
+
+plan_content_task = Task(
+    name="plan_content",
+    agent=content_planner,
+    description="Create social media content plan based on the research topic and previous analysis",
+    # Automatically receives outputs from previous tasks
+)
+
+research_task = Task(
+    name="research_content",
+    team=research_team,
+    description="Deep research and analysis of content",
+    # Handles any input format automatically
+)
+
+# Define sequences
+content_creation_pipeline = Pipeline(
+    name="content_creation",
+    description="End-to-end content creation from blog to social media",
+    tasks=[analyze_blog_task],
+)
+
+research_pipeline = Pipeline(
+    name="research_pipeline",
+    description="Deep research workflow using teams",
+    tasks=[research_task, plan_content_task],
+)
+
+
+def smart_pipeline_selector(message, **kwargs):
+    """Smart pipeline selector based on message content"""
+    message_lower = message.lower() if message else ""
+
+    # Simple keyword-based selection
+    if any(
+        keyword in message_lower
+        for keyword in ["research", "analyze", "deep", "comprehensive"]
+    ):
+        return "research_pipeline"
+    elif any(
+        keyword in message_lower for keyword in ["create", "content", "blog", "quick"]
+    ):
+        return "content_creation"
+    else:
+        # Default to research for complex queries
+        return "research_pipeline"
+
+
+# Usage
+if __name__ == "__main__":
+    content_creation_workflow = Workflow(
+        name="Content Creation Workflow",
+        description="Automated content creation from blog posts to social media",
+        storage=SqliteStorage(
+            table_name="content_workflows_v2",
+            db_file="tmp/workflow_data_v2.db",
+            mode="workflow_v2",
+        ),
+        pipelines=[research_pipeline, content_creation_pipeline],
+    )
+    print("=== Research Sequence (Rich Display) ===")
+    try:
+        content_creation_workflow.print_response(
+            message="Comprehensive research on AI trends in 2024",
+            selector=smart_pipeline_selector,
+            markdown=True,
+        )
+    except Exception as e:
+        print(f"Research sequence failed: {e}")

@@ -49,7 +49,9 @@ class Pipeline:
     # Tasks to execute
     tasks: Optional[List[Task]] = None
 
-    def __init__(self, name: Optional[str] = None, description: Optional[str] = None, tasks: Optional[List[Task]] = None):
+    def __init__(
+        self, name: Optional[str] = None, description: Optional[str] = None, tasks: Optional[List[Task]] = None
+    ):
         self.name = name
         self.description = description
         self.tasks = tasks if tasks else []
@@ -210,7 +212,6 @@ class Pipeline:
                 else:
                     yield event
 
-
         # Create final output data
         final_output = {
             "pipeline_id": self.pipeline_id,
@@ -228,7 +229,9 @@ class Pipeline:
             ],
         }
 
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.images = pipeline_images
         workflow_run_response.videos = pipeline_videos
@@ -248,9 +251,7 @@ class Pipeline:
             extra_data=final_output,
         )
 
-    async def aexecute(
-        self, pipeline_input: PipelineInput, workflow_run_response: WorkflowRunResponse
-    ):
+    async def aexecute(self, pipeline_input: PipelineInput, workflow_run_response: WorkflowRunResponse):
         """Execute all tasks in the pipeline using TaskInput/TaskOutput (non-streaming)"""
         logger.info(f"Starting pipeline: {self.name}")
 
@@ -282,7 +283,6 @@ class Pipeline:
             # Collect the task output
             if task_output is None:
                 raise RuntimeError(f"Task {task.name} did not return a TaskOutput")
-
 
             # Update the input for the next task
             task_message = task_output.content
@@ -417,7 +417,9 @@ class Pipeline:
             ],
         }
 
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.images = pipeline_images
         workflow_run_response.videos = pipeline_videos

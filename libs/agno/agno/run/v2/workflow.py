@@ -135,7 +135,7 @@ class TaskCompletedEvent(BaseWorkflowRunResponseEvent):
     event: str = WorkflowRunEvent.task_completed.value
     task_name: Optional[str] = None
     task_index: Optional[int] = None
-    
+
     content: Optional[Any] = None
     content_type: str = "str"
 
