@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, Image, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
@@ -340,9 +340,12 @@ class Task:
 
         # Execute agent or team with media
         if self._executor_type in ["agent", "team"]:
+            # Convert ImageArtifact objects to Image objects
+            images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
+
             return self.active_executor.run(
                 message=message,
-                images=task_input.images,
+                images=images,
                 videos=task_input.videos,
                 audio=task_input.audio,
             )
@@ -546,6 +549,72 @@ class Task:
         else:
             # Convert any other type to string
             return RunResponse(content=str(result))
+
+    def _convert_image_artifacts_to_images(self, image_artifacts: List[ImageArtifact]) -> List[Image]:
+        """
+        Convert ImageArtifact objects to Image objects with proper content handling.
+
+        Args:
+            image_artifacts: List of ImageArtifact objects to convert
+
+        Returns:
+            List of Image objects ready for agent processing
+        """
+        import base64
+
+        images = []
+        for i, img_artifact in enumerate(image_artifacts):
+            logger.info(
+                f"Processing ImageArtifact {i}: url={img_artifact.url}, "
+                f"content_length={len(img_artifact.content) if img_artifact.content else 0}, "
+                f"mime_type={img_artifact.mime_type}"
+            )
+
+            # Create Image object with proper data from ImageArtifact
+            if img_artifact.url:
+                logger.info(f"Using URL for image {i}: {img_artifact.url}")
+                images.append(Image(url=img_artifact.url))
+
+            elif img_artifact.content:
+                logger.info(
+                    f"Using content for image {i}, content type: {type(img_artifact.content)}, "
+                    f"length: {len(img_artifact.content)}"
+                )
+
+                # Handle the case where content is base64-encoded bytes from OpenAI tools
+                try:
+                    # Try to decode as base64 first (for images from OpenAI tools)
+                    if isinstance(img_artifact.content, bytes):
+                        # Decode bytes to string, then decode base64 to get actual image bytes
+                        base64_string = img_artifact.content.decode("utf-8")
+                        actual_image_bytes = base64.b64decode(base64_string)
+                        logger.info(f"Decoded base64 content to {len(actual_image_bytes)} bytes")
+                    else:
+                        # If it's already actual image bytes
+                        actual_image_bytes = img_artifact.content
+
+                    # Create Image object with proper format
+                    image_kwargs = {"content": actual_image_bytes}
+                    if img_artifact.mime_type:
+                        # Convert mime_type to format (e.g., "image/png" -> "png")
+                        if "/" in img_artifact.mime_type:
+                            format_from_mime = img_artifact.mime_type.split("/")[-1]
+                            image_kwargs["format"] = format_from_mime
+                            logger.info(f"Setting format from mime_type: {format_from_mime}")
+
+                    images.append(Image(**image_kwargs))
+
+                except Exception as e:
+                    logger.error(f"Failed to process image content: {e}")
+                    # Skip this image if we can't process it
+                    continue
+
+            else:
+                # Skip images that have neither URL nor content
+                logger.warning(f"Skipping ImageArtifact {i} with no URL or content: {img_artifact}")
+                continue
+
+        return images
 
     @property
     def executor_name(self) -> str:
