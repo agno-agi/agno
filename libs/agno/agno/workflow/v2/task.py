@@ -1,140 +1,45 @@
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
-from uuid import uuid4
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, Optional, Union
+from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
-    WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
 from agno.team import Team
 from agno.utils.log import log_debug, logger
+from agno.workflow.v2.types import TaskInput, TaskOutput
 
-
-@dataclass
-class TaskInput:
-    """Input data for a task execution"""
-
-    message: Optional[str] = None
-
-    # state
-    workflow_session_state: Optional[Dict[str, Any]] = None
-
-    # Previous task outputs (for chaining)
-    previous_outputs: Optional[Dict[str, Any]] = None
-
-    # Media inputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-
-    def get_primary_input(self) -> str:
-        """Get the primary text input (query or message)"""
-        return self.message or ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        return {
-            "message": self.message,
-            "workflow_session_state": self.workflow_session_state,
-            "previous_outputs": self.previous_outputs,
-            "images": [img.to_dict() for img in self.images] if self.images else None,
-            "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
-            "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-        }
-
-
-@dataclass
-class TaskOutput:
-    """Output data from a task execution"""
-
-    # Primary output
-    content: Optional[str] = None
-
-    # Execution response
-    response: Optional[Union[RunResponse, TeamRunResponse]] = None
-
-    # Media outputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-
-    # Structured data
-    data: Optional[Dict[str, Any]] = None
-
-    # Execution metadata
-    metadata: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
-        return {
-            "content": self.content,
-            "response": self.response.to_dict() if self.response else None,
-            "images": [img.to_dict() for img in self.images] if self.images else None,
-            "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
-            "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-            "data": self.data,
-            "metadata": self.metadata,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TaskOutput":
-        """Create TaskOutput from dictionary"""
-        from agno.run.response import RunResponse
-        from agno.run.team import TeamRunResponse
-
-        # Reconstruct response if present
-        response_data = data.get("response")
-        response = None
-        if response_data:
-            # Determine if it's RunResponse or TeamRunResponse based on structure
-            if "team_id" in response_data or "team_name" in response_data:
-                response = TeamRunResponse.from_dict(response_data)
-            else:
-                response = RunResponse.from_dict(response_data)
-
-        # Reconstruct media artifacts
-        images = data.get("images")
-        if images:
-            images = [ImageArtifact.model_validate(img) for img in images]
-
-        videos = data.get("videos")
-        if videos:
-            videos = [VideoArtifact.model_validate(vid) for vid in videos]
-
-        audio = data.get("audio")
-        if audio:
-            audio = [AudioArtifact.model_validate(aud) for aud in audio]
-
-        return cls(
-            content=data.get("content"),
-            response=response,
-            images=images,
-            videos=videos,
-            audio=audio,
-            data=data.get("data"),
-            metadata=data.get("metadata"),
-        )
-
+TaskExecutor = Callable[
+            [TaskInput],
+            Union[
+                TaskOutput,
+                Iterator[TaskOutput],
+                Iterator[Any],
+                Awaitable[TaskOutput],
+                Awaitable[Any],
+                AsyncIterator[TaskOutput],
+                AsyncIterator[Any],
+            ]
+        ]
 
 @dataclass
 class Task:
     """A single unit of work in a workflow pipeline"""
 
-    name: str
+    name: Optional[str] = None
+
     # Executor options - only one should be provided
     agent: Optional[Agent] = None
     team: Optional[Team] = None
-    execution_function: Optional[Callable[[Dict[str, Any]], Any]] = None
+    executor: Optional[TaskExecutor] = None
 
     task_id: Optional[str] = None
     description: Optional[str] = None
 
     # Task configuration
-    retry_count: int = 0
     max_retries: int = 3
     timeout_seconds: Optional[int] = None
 
@@ -144,15 +49,52 @@ class Task:
     # If False, only warn about missing inputs
     strict_input_validation: bool = False
 
-    def __post_init__(self):
-        if self.task_id is None:
-            self.task_id = str(uuid4())
+    _retry_count: int = 0
+
+    def __init__(self,
+                 name: Optional[str] = None,
+                 agent: Optional[Agent] = None,
+                 team: Optional[Team] = None,
+                 executor: Optional[TaskExecutor] = None,
+                 task_id: Optional[str] = None,
+                 description: Optional[str] = None,
+                 max_retries: int = 3,
+                 timeout_seconds: Optional[int] = None,
+                 skip_on_failure: bool = False,
+                 strict_input_validation: bool = False):
+        self.name = name
+        self.agent = agent
+        self.team = team
+        self.executor = executor
 
         # Validate executor configuration
         self._validate_executor_config()
 
+        self.task_id = task_id
+        self.description = description
+        self.max_retries = max_retries
+        self.timeout_seconds = timeout_seconds
+        self.skip_on_failure = skip_on_failure
+        self.strict_input_validation = strict_input_validation
+
         # Set the active executor
         self._set_active_executor()
+
+    @property
+    def executor_name(self) -> str:
+        """Get the name of the current executor"""
+        if hasattr(self.active_executor, "name"):
+            return self.active_executor.name
+        elif self._executor_type == "function":
+            return getattr(self.active_executor, "__name__", "anonymous_function")
+        else:
+            return f"{self._executor_type}_executor"
+
+    @property
+    def executor_type(self) -> str:
+        """Get the type of the current executor"""
+        return self._executor_type
+
 
     def _validate_executor_config(self):
         """Validate that only one executor type is provided"""
@@ -160,12 +102,12 @@ class Task:
             [
                 self.agent is not None,
                 self.team is not None,
-                self.execution_function is not None,
+                self.executor is not None,
             ]
         )
 
         if executor_count == 0:
-            raise ValueError(f"Task '{self.name}' must have one executor: agent=, team=, or execution_function=")
+            raise ValueError(f"Task '{self.name}' must have one executor: agent=, team=, or executor=")
 
         if executor_count > 1:
             provided_executors = []
@@ -173,62 +115,84 @@ class Task:
                 provided_executors.append("agent")
             if self.team is not None:
                 provided_executors.append("team")
-            if self.execution_function is not None:
-                provided_executors.append("execution_function")
+            if self.executor is not None:
+                provided_executors.append("executor")
 
             raise ValueError(
                 f"Task '{self.name}' can only have one executor type. "
                 f"Provided: {', '.join(provided_executors)}. "
-                f"Please use only one of: agent=, team=, or execution_function="
+                f"Please use only one of: agent=, team=, or executor="
             )
 
     def _set_active_executor(self):
         """Set the active executor based on what was provided"""
         if self.agent is not None:
-            self._active_executor = self.agent
+            self.active_executor = self.agent
             self._executor_type = "agent"
         elif self.team is not None:
-            self._active_executor = self.team
+            self.active_executor = self.team
             self._executor_type = "team"
-        elif self.execution_function is not None:
-            self._active_executor = self.execution_function
+        elif self.executor is not None:
+            self.active_executor = self.executor
             self._executor_type = "function"
 
     def execute(
         self,
         task_input: TaskInput,
-        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
-        task_index: int = 0,
     ) -> Union[TaskOutput, Iterator[WorkflowRunResponseEvent]]:
         """Execute the task with TaskInput, with optional streaming support"""
         log_debug(f"Task Execute Start: {self.name}", center=True)
         log_debug(f"Task ID: {self.task_id}")
 
         if stream:
-            return self._execute_task_stream(task_input, workflow_run_response, stream_intermediate_steps, task_index)
+            return self._execute_task_stream(task_input=task_input, session_id=session_id, user_id=user_id, stream_intermediate_steps=stream_intermediate_steps)
         else:
-            return self._execute_task(task_input, workflow_run_response, task_index)
+            return self._execute_task(task_input=task_input, session_id=session_id, user_id=user_id)
 
     def _execute_task(
-        self, task_input: TaskInput, workflow_run_response: WorkflowRunResponse, task_index: int = 0
+        self, task_input: TaskInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
         log_debug(f"Executing task (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
-        # Initialize executor with workflow run response
-        self._initialize_executor_context(task_input, workflow_run_response)
-
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
                 log_debug(f"Task {self.name} attempt {attempt + 1}/{self.max_retries + 1}")
-                response = self._execute_task_sync(task_input)
+                if self._executor_type == "function":
+                    # Execute function directly with TaskInput
+                    result = self.active_executor(task_input)  # type: ignore
+
+                    # If function returns TaskOutput, use it directly
+                    if isinstance(result, TaskOutput):
+                        return result
+
+                    # Otherwise, wrap in TaskOutput
+                    response = TaskOutput(content=str(result))
+                else:
+                    # For agents and teams, prepare message with context
+                    message = self._prepare_message(task_input.message, task_input.message_data)
+
+                    # Execute agent or team with media
+                    if self._executor_type in ["agent", "team"]:
+                        response = self.active_executor.run(
+                            message=message,
+                            images=task_input.images,
+                            videos=task_input.videos,
+                            audio=task_input.audio,
+                            session_id=session_id,
+                            user_id=user_id,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create TaskOutput from response
-                task_output = self._create_task_output(response, task_input)
+                task_output = self._create_task_output(response)
 
                 log_debug(f"Task {self.name} completed successfully on attempt {attempt + 1}")
                 log_debug(f"Task Execute End: {self.name}", center=True, symbol="*")
@@ -245,7 +209,7 @@ class Task:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
                         return TaskOutput(
-                            content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
                         )
                     else:
                         raise e
@@ -253,33 +217,11 @@ class Task:
     def _execute_task_stream(
         self,
         task_input: TaskInput,
-        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        task_index: int = 0,
     ) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
         """Execute the task with event-driven streaming support"""
-        log_debug(f"Executing task (streaming): {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
-
-        from agno.run.response import RunResponseEvent
-        from agno.workflow.v2.workflow import TaskStartedEvent
-
-        log_debug(f"Yielding TaskStartedEvent for task: {self.name}")
-        # Yield task started event
-        yield TaskStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            content=f"Starting task: {self.name}",
-            workflow_name=workflow_run_response.workflow_name,
-            pipeline_name=workflow_run_response.pipeline_name,
-            task_name=self.name,
-            task_index=task_index,
-            workflow_id=workflow_run_response.workflow_id,
-            session_id=workflow_run_response.session_id,
-        )
-
-        # Initialize executor with workflow run response
-        self._initialize_executor_context(task_input, workflow_run_response)
-
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
@@ -289,7 +231,7 @@ class Task:
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for task: {self.name}")
                     # Handle custom function streaming
-                    result = self._active_executor(task_input)
+                    result = self.active_executor(task_input)  # type: ignore
 
                     if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, TaskOutput)):
                         log_debug(f"Function returned iterable, streaming events")
@@ -316,19 +258,16 @@ class Task:
                             final_response = TaskOutput(content=str(result))
                         log_debug(f"Function returned non-iterable, created TaskOutput")
                 else:
-                    message = task_input.get_primary_input()
-                    log_debug(f"Prepared message for {self._executor_type}: {len(message)} characters")
+                    message = self._prepare_message(task_input.message, task_input.message_data)
 
-                    if task_input.previous_outputs:
-                        message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-                    if self._executor_type == "agent":
-                        log_debug(f"Executing agent streaming for task: {self.name}")
-                        response_stream = self._active_executor.run(
+                    if self._executor_type in ["agent", "team"]:
+                        response_stream = self.active_executor.run(
                             message=message,
                             images=task_input.images,
                             videos=task_input.videos,
                             audio=task_input.audio,
+                            session_id=session_id,
+                            user_id=user_id,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
@@ -336,27 +275,7 @@ class Task:
                         for event in response_stream:
                             log_debug(f"Received event from agent: {type(event).__name__}")
                             yield event
-                            if isinstance(event, RunResponseEvent):
-                                final_response = self._create_task_output(event, task_input)
-                                log_debug(f"Created TaskOutput from agent RunResponseEvent")
-
-                    elif self._executor_type == "team":
-                        log_debug(f"Executing team streaming for task: {self.name}")
-                        response_stream = self._active_executor.run(
-                            message=message,
-                            images=task_input.images,
-                            videos=task_input.videos,
-                            audio=task_input.audio,
-                            stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                        )
-
-                        for event in response_stream:
-                            log_debug(f"Received event from team: {type(event).__name__}")
-                            yield event
-                            if isinstance(event, RunResponseEvent):
-                                final_response = self._create_task_output(event, task_input)
-                                log_debug(f"Created TaskOutput from team RunResponseEvent")
+                        final_response = self._create_task_output(self.active_executor.run_response)
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -379,86 +298,73 @@ class Task:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
                         task_output = TaskOutput(
-                            content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
                         )
                         yield task_output
                         return
                     else:
                         raise e
 
-    def _execute_task_sync(self, task_input: TaskInput) -> Union[RunResponse, TeamRunResponse, TaskOutput]:
-        """Execute the task based on executor type (non-streaming)"""
-        if self._executor_type == "function":
-            # Execute function directly with TaskInput
-            result = self._active_executor(task_input)
-
-            # If function returns TaskOutput, use it directly
-            if isinstance(result, TaskOutput):
-                return result
-
-            # Otherwise, wrap in TaskOutput
-            return TaskOutput(content=str(result))
-
-        # For agents and teams, prepare message with context
-        message = task_input.get_primary_input()
-
-        # Add context information to message if available
-        if task_input.previous_outputs:
-            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-        # Execute agent or team with media
-        if self._executor_type == "agent":
-            return self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
-        elif self._executor_type == "team":
-            return self._active_executor.run(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
-        else:
-            raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
     async def aexecute(
         self,
         task_input: TaskInput,
-        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
-        task_index: int = 0,
     ) -> Union[TaskOutput, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the task with TaskInput, with optional streaming support"""
         log_debug(f"Async Task Execute Start: {self.name}", center=True)
         log_debug(f"Task ID: {self.task_id}")
 
         if stream:
-            return self._aexecute_task_stream(task_input, workflow_run_response, stream_intermediate_steps, task_index)
+            return self._aexecute_task_stream(task_input=task_input, session_id=session_id, user_id=user_id, stream_intermediate_steps=stream_intermediate_steps)
         else:
-            return await self._aexecute_task(task_input, workflow_run_response, task_index)
+            return await self._aexecute_task(task_input=task_input, session_id=session_id, user_id=user_id)
 
     async def _aexecute_task(
-        self, task_input: TaskInput, workflow_run_response: WorkflowRunResponse, task_index: int = 0
+        self, task_input: TaskInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
         log_debug(f"Executing async task (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
-        # Initialize executor with workflow run response
-        self._initialize_executor_context(task_input, workflow_run_response)
-
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Async task {self.name} attempt {attempt + 1}/{self.max_retries + 1}")
-                response = await self._execute_task_async(task_input)
+                if self._executor_type == "function":
+                    import inspect
+                    if inspect.iscoroutinefunction(self.active_executor):
+                        result = await self.active_executor(task_input)  # type: ignore
+                    else:
+                        result = self.active_executor(task_input)  # type: ignore
+
+                    # If function returns TaskOutput, use it directly
+                    if isinstance(result, TaskOutput):
+                        return result
+
+                    # Otherwise, wrap in TaskOutput
+                    response = TaskOutput(content=str(result))
+                else:
+                # For agents and teams, prepare message with context
+                    message = self._prepare_message(task_input.message, task_input.message_data)
+
+                    # Execute agent or team with media
+                    if self._executor_type in ["agent", "team"]:
+                        response = await self.active_executor.arun(
+                            message=message,
+                            images=task_input.images,
+                            videos=task_input.videos,
+                            audio=task_input.audio,
+                            session_id=session_id,
+                            user_id=user_id,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create TaskOutput from response
-                task_output = self._create_task_output(response, task_input)
+                task_output = self._create_task_output(response)
 
                 logger.info(f"Async Task {self.name} completed successfully")
                 return task_output
@@ -472,7 +378,7 @@ class Task:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
                         return TaskOutput(
-                            content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
                         )
                     else:
                         raise e
@@ -480,33 +386,11 @@ class Task:
     async def _aexecute_task_stream(
         self,
         task_input: TaskInput,
-        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        task_index: int = 0,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
         """Execute the task with event-driven streaming support"""
-        log_debug(f"Executing async task (streaming): {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
-
-        from agno.run.response import RunResponseEvent
-        from agno.workflow.v2.workflow import TaskStartedEvent
-
-        log_debug(f"Yielding async TaskStartedEvent for task: {self.name}")
-        # Yield task started event
-        yield TaskStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            content=f"Starting task: {self.name}",
-            workflow_name=workflow_run_response.workflow_name,
-            pipeline_name=workflow_run_response.pipeline_name,
-            task_name=self.name,
-            task_index=task_index,
-            workflow_id=workflow_run_response.workflow_id,
-            session_id=workflow_run_response.session_id,
-        )
-
-        # Initialize executor with workflow run response
-        self._initialize_executor_context(task_input, workflow_run_response)
-
         # Execute with retries and streaming
         for attempt in range(self.max_retries + 1):
             try:
@@ -518,43 +402,46 @@ class Task:
                     import inspect
 
                     # Check if the function is an async generator
-                    if inspect.isasyncgenfunction(self._active_executor):
-                        log_debug(f"Function is async generator, iterating over events")
+                    if inspect.isasyncgenfunction(self.active_executor):
                         # It's an async generator - iterate over it
-                        async for event in self._active_executor(task_input):
+                        async for event in self.active_executor(task_input):
                             if isinstance(event, TaskOutput):
                                 final_response = event
                                 log_debug(f"Received final TaskOutput from async generator")
                             else:
                                 log_debug(f"Yielding event from async generator: {type(event).__name__}")
                                 yield event
-                    elif inspect.iscoroutinefunction(self._active_executor):
+                    elif inspect.iscoroutinefunction(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self._active_executor(task_input)
+                        result = await self.active_executor(task_input)
                         if isinstance(result, TaskOutput):
                             final_response = result
                         else:
                             final_response = TaskOutput(content=str(result))
+                    elif inspect.isgeneratorfunction(self.active_executor):
+                        # It's a regular generator function - iterate over it
+                        for event in self.active_executor(task_input):
+                            if isinstance(event, TaskOutput):
+                                final_response = event
+                            else:
+                                yield event
                     else:
                         # It's a regular function - call it directly
-                        result = self._active_executor(task_input)
+                        result = self.active_executor(task_input)  # type: ignore
                         if isinstance(result, TaskOutput):
                             final_response = result
                         else:
                             final_response = TaskOutput(content=str(result))
                 else:
-                    message = task_input.get_primary_input()
-
-                    if task_input.previous_outputs:
-                        message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-                    if self._executor_type == "agent":
-                        log_debug(f"Executing async agent streaming for task: {self.name}")
-                        response_stream = await self._active_executor.arun(
+                    message = self._prepare_message(task_input.message, task_input.message_data)
+                    if self._executor_type in ["agent", "team"]:
+                        response_stream = await self.active_executor.arun(  # type: ignore
                             message=message,
                             images=task_input.images,
                             videos=task_input.videos,
                             audio=task_input.audio,
+                            session_id=session_id,
+                            user_id=user_id,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
@@ -562,28 +449,7 @@ class Task:
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
                             yield event
-                            if isinstance(event, RunResponseEvent):
-                                final_response = self._create_task_output(event, task_input)
-                                log_debug(f"Created TaskOutput from async agent RunResponseEvent")
-
-                    elif self._executor_type == "team":
-                        log_debug(f"Executing async team streaming for task: {self.name}")
-                        response_stream = await self._active_executor.arun(
-                            message=message,
-                            images=task_input.images,
-                            videos=task_input.videos,
-                            audio=task_input.audio,
-                            stream=True,
-                            stream_intermediate_steps=stream_intermediate_steps,
-                        )
-
-                        async for event in response_stream:
-                            log_debug(f"Received async event from team: {type(event).__name__}")
-                            yield event
-                            if isinstance(event, RunResponseEvent):
-                                final_response = self._create_task_output(event, task_input)
-                                log_debug(f"Created TaskOutput from async team RunResponseEvent")
-
+                        final_response = self._create_task_output(self.active_executor.run_response)  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -604,140 +470,55 @@ class Task:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
                         task_output = TaskOutput(
-                            content=f"Task {self.name} failed but skipped", metadata={"skipped": True, "error": str(e)}
+                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
                         )
                         yield task_output
                         return
                     else:
                         raise e
 
-    async def _execute_task_async(self, task_input: TaskInput) -> Union[RunResponse, TeamRunResponse, TaskOutput]:
-        """Execute the task based on executor type (non-streaming)"""
-        log_debug(f"Executing async task sync method for: {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
+    def _parse_message_data(self, message_data: Optional[Union[BaseModel, Dict[str, Any]]]) -> Optional[str]:
+        """Parse the message data into a string"""
+        data_str = None
+        if message_data is not None:
+            if isinstance(message_data, BaseModel):
+                data_str = message_data.model_dump_json(indent=2, exclude_none=True)
+            elif isinstance(message_data, dict):
+                import json
+                data_str = json.dumps(message_data, indent=2, default=str)
+            else:
+                data_str = str(message_data)
+        return data_str
 
-        if self._executor_type == "function":
-            log_debug(f"Executing async function for task: {self.name}")
-            result = await self._active_executor(task_input)
+    def _prepare_message(
+        self, message: Optional[str], message_data: Optional[Union[BaseModel, Dict[str, Any]]]
+    ) -> Optional[str]:
+        """Prepare the primary input by combining message and message_data"""
 
-            # If function returns TaskOutput, use it directly
-            if isinstance(result, TaskOutput):
-                return result
-
-            # Otherwise, wrap in TaskOutput
-            log_debug(f"Function returned {type(result)}, wrapping in TaskOutput")
-            return TaskOutput(content=str(result))
-
-        # For agents and teams, prepare message with context
-        message = task_input.get_primary_input()
-
-        # Add context information to message if available
-        if task_input.previous_outputs:
-            message = self._format_message_with_previous_outputs(message, task_input.previous_outputs)
-
-        # Execute agent or team with media
-        if self._executor_type == "agent":
-            log_debug(f"Executing async agent run for task: {self.name}")
-            return await self._active_executor.arun(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
-        elif self._executor_type == "team":
-            log_debug(f"Executing async team run for task: {self.name}")
-            return await self._active_executor.arun(
-                message=message,
-                images=task_input.images,
-                videos=task_input.videos,
-                audio=task_input.audio,
-            )
+        # Convert message_data to string if provided
+        data_str = self._parse_message_data(message_data)
+        # Combine message and data
+        if message and data_str:
+            return f"{message}\n\n--- Structured Data ---\n{data_str}"
+        elif message:
+            return message
+        elif data_str:
+            return f"Process the following data:\n{data_str}"
         else:
-            raise ValueError(f"Unsupported executor type: {self._executor_type}")
+            return None
 
-    def _initialize_executor_context(self, task_input: TaskInput, workflow_run_response: WorkflowRunResponse):
-        """Initialize the executor with context from WorkflowRunResponse"""
-        log_debug(f"Initializing executor context for task: {self.name}")
-        log_debug(f"Executor type: {self._executor_type}")
-
-        if self._executor_type in ["agent", "team"]:
-            executor = self._active_executor
-            log_debug(f"Setting workflow context for {self._executor_type}")
-
-            # Set workflow context from WorkflowRunResponse
-            if hasattr(executor, "workflow_id"):
-                executor.workflow_id = workflow_run_response.workflow_id
-                log_debug(f"Set workflow_id: {workflow_run_response.workflow_id}")
-
-                if hasattr(executor, "workflow_session_id"):
-                    executor.workflow_session_id = workflow_run_response.session_id
-                    log_debug(f"Set workflow_session_id: {workflow_run_response.session_id}")
-
-            # Set workflow session state
-            if task_input.workflow_session_state and hasattr(executor, "workflow_session_state"):
-                if executor.workflow_session_state is None:
-                    executor.workflow_session_state = {}
-                    log_debug(f"Initialized empty workflow_session_state for {self._executor_type}")
-
-                executor.workflow_session_state.update(task_input.workflow_session_state)
-                log_debug(
-                    f"Updated {self._executor_type} workflow_session_state with {len(task_input.workflow_session_state)} keys"
-                )
-
-                # For teams, also initialize member workflow_session_state
-                if self._executor_type == "team" and hasattr(executor, "members"):
-                    log_debug(f"Updating workflow_session_state for {len(executor.members)} team members")
-
-                    for member in executor.members:
-                        if hasattr(member, "workflow_session_state"):
-                            if member.workflow_session_state is None:
-                                member.workflow_session_state = {}
-                            # Copy the team's session state to each member
-                            member.workflow_session_state.update(executor.workflow_session_state)
-
-    def _format_message_with_previous_outputs(self, message: str, previous_outputs: Dict[str, Any]) -> str:
-        """Format message with previous task outputs for context"""
-        context_parts = [message]
-
-        if previous_outputs:
-            context_parts.append("\n--- Previous Task Outputs ---")
-            for key, value in previous_outputs.items():
-                context_parts.append(f"{key}: {value}")
-            context_parts.append("--- End Previous Outputs ---\n")
-
-        return "\n".join(context_parts)
-
-    def _create_task_output(self, response: Union[RunResponseEvent, TaskOutput], task_input: TaskInput) -> TaskOutput:
+    def _create_task_output(self, response: Union[RunResponse, TeamRunResponse, TaskOutput]) -> TaskOutput:
         """Create TaskOutput from execution response"""
         log_debug(f"Creating TaskOutput for task: {self.name}")
         log_debug(f"Response type: {type(response).__name__}")
 
         if isinstance(response, TaskOutput):
-            log_debug(f"Response is already TaskOutput, updating metadata")
+            response.task_name = self.name
+            response.task_id = self.task_id
+            response.executor_type = self._executor_type
+            response.executor_name = self.executor_name
 
-            # Even if it's already a TaskOutput, ensure task metadata is present
-            if response.metadata is None:
-                response.metadata = {}
-
-            response.metadata.update(
-                {
-                    "task_name": self.name,
-                    "task_id": self.task_id,
-                    "executor_type": self._executor_type,
-                    "executor_name": self.executor_name,
-                }
-            )
-            log_debug(f"Updated TaskOutput metadata")
             return response
-
-        # Create metadata
-        metadata = {
-            "task_name": self.name,
-            "task_id": self.task_id,
-            "executor_type": self._executor_type,
-            "executor_name": self.executor_name,
-        }
-        log_debug(f"Created task metadata: {metadata}")
 
         # Extract media from response
         images = getattr(response, "images", None)
@@ -745,25 +526,27 @@ class Task:
         audio = getattr(response, "audio", None)
 
         return TaskOutput(
+            task_name=self.name,
+            task_id=self.task_id,
+            executor_type=self._executor_type,
+            executor_name=self.executor_name,
             content=response.content,
             response=response,
             images=images,
             videos=videos,
             audio=audio,
-            metadata=metadata,
         )
 
-    @property
-    def executor_name(self) -> str:
-        """Get the name of the current executor"""
-        if hasattr(self._active_executor, "name"):
-            return self._active_executor.name
-        elif self._executor_type == "function":
-            return getattr(self._active_executor, "__name__", "anonymous_function")
+    def _convert_function_result_to_response(self, result: Any) -> RunResponse:
+        """Convert function execution result to RunResponse"""
+        if isinstance(result, RunResponse):
+            return result
+        elif isinstance(result, str):
+            return RunResponse(content=result)
+        elif isinstance(result, dict):
+            # If it's a dict, try to extract content
+            content = result.get("content", str(result))
+            return RunResponse(content=content)
         else:
-            return f"{self._executor_type}_executor"
-
-    @property
-    def executor_type(self) -> str:
-        """Get the type of the current executor"""
-        return self._executor_type
+            # Convert any other type to string
+            return RunResponse(content=str(result))

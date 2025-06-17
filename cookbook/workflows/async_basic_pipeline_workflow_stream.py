@@ -1,3 +1,9 @@
+"""
+This example shows a basic sequential pipeline of tasks that run agents and teams.
+
+This shows how to stream the response from the pipeline.
+"""
+
 import asyncio
 
 from agno.agent import Agent
@@ -72,7 +78,7 @@ async def main():
             stream_intermediate_steps=True,
         )
     except Exception as e:
-        print(f"Research sequence failed: {e}")
+        print(f"Research workflow failed: {e}")
 
 
 if __name__ == "__main__":

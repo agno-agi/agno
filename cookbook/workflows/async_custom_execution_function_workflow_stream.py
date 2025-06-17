@@ -1,9 +1,3 @@
-"""
-This example shows how to use custom execution functions in tasks.
-
-These execution functions can run agents/teams or just any Python code.
-"""
-
 import asyncio
 
 from agno.agent import Agent
@@ -74,7 +68,11 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     """
 
     try:
-        response = await content_planner.arun(planning_prompt)
+        response_iterator = await content_planner.arun(planning_prompt, stream=True, stream_intermediate_steps=True)
+        for event in response_iterator:
+            yield event
+
+        response = content_planner.run_response
 
         enhanced_content = f"""
             ## Strategic Content Plan
@@ -92,13 +90,13 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        return TaskOutput(
+        yield TaskOutput(
             content=enhanced_content,
             response=response
         )
 
     except Exception as e:
-        return TaskOutput(
+        yield TaskOutput(
             content=f"Custom content planning failed: {str(e)}",
             success=False,
         )
@@ -116,7 +114,6 @@ content_planning_task = Task(
     executor=custom_content_planning_function,
 )
 
-
 async def main():
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
@@ -133,6 +130,8 @@ async def main():
         await content_creation_workflow.aprint_response(
             message="AI agent frameworks 2025",
             markdown=True,
+            stream=True,
+            stream_intermediate_steps=True,
         )
     except Exception as e:
         print(f"Custom workflow failed: {e}")

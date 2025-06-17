@@ -5,6 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.task import Task
 from agno.workflow.v2.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -19,44 +20,46 @@ class ResearchTopic(BaseModel):
 
 
 # Define agents
-blog_analyzer = Agent(
-    name="Blog Analyzer",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    instructions="Extract key insights and content from blog posts",
-)
 
-content_planner = Agent(
-    name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions="Create engaging social media content plans based on analysis",
+hackernews_agent = Agent(
+    name="Hackernews Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[HackerNewsTools()],
+    role="Extract key insights and content from Hackernews posts",
+)
+web_agent = Agent(
+    name="Web Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[DuckDuckGoTools()],
+    role="Search the web for the latest news and trends",
 )
 
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
     mode="coordinate",
-    members=[blog_analyzer, content_planner],
-    instructions="Analyze content and create comprehensive social media strategy",
+    members=[hackernews_agent, web_agent],
+    instructions="Research tech topics from Hackernews and the web",
 )
 
-# Define tasks with consistent query-based input
-analyze_blog_task = Task(
-    name="analyze_blog",
-    agent=blog_analyzer,
-    description="Analyze the provided topic and extract key insights",
+content_planner = Agent(
+    name="Content Planner",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=[
+        "Plan a content schedule over 4 weeks for the provided topic and research content",
+        "Ensure that I have posts for 3 posts per week",
+    ],
 )
 
-plan_content_task = Task(
-    name="plan_content",
-    agent=content_planner,
-    description="Create social media content plan based on the research topic and previous analysis",
-)
-
+# Define tasks
 research_task = Task(
-    name="research_content",
+    name="Research Task",
     team=research_team,
-    description="Deep research and analysis of content",
+)
+
+content_planning_task = Task(
+    name="Content Planning Task",
+    agent=content_planner,
 )
 
 # Create and use workflow
@@ -69,7 +72,7 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        tasks=[research_task, plan_content_task],
+        tasks=[research_task, content_planning_task],
     )
 
     print("=== Example 1: Research with Structured Topic ===")
@@ -90,4 +93,4 @@ if __name__ == "__main__":
             markdown=True,
         )
     except Exception as e:
-        print(f"Research sequence failed: {e}")
+        print(f"Research workflow failed: {e}")
