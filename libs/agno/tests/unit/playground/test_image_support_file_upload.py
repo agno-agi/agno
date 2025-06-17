@@ -21,11 +21,13 @@ from agno.run.response import RunResponse
 @pytest.fixture
 def mock_document_readers():
     """Mock all document readers to avoid actual document parsing."""
-    with patch("agno.document.reader.pdf_reader.PDFReader") as mock_pdf, patch(
-        "agno.document.reader.csv_reader.CSVReader"
-    ) as mock_csv, patch("agno.document.reader.docx_reader.DocxReader") as mock_docx, patch(
-        "agno.document.reader.text_reader.TextReader"
-    ) as mock_text, patch("agno.document.reader.json_reader.JSONReader") as mock_json:
+    with (
+        patch("agno.document.reader.pdf_reader.PDFReader") as mock_pdf,
+        patch("agno.document.reader.csv_reader.CSVReader") as mock_csv,
+        patch("agno.document.reader.docx_reader.DocxReader") as mock_docx,
+        patch("agno.document.reader.text_reader.TextReader") as mock_text,
+        patch("agno.document.reader.json_reader.JSONReader") as mock_json,
+    ):
         # Configure all mocks to return some dummy text content
         mock_pdf.return_value.read.return_value = ["This is mock PDF content"]
         mock_csv.return_value.read.return_value = ["This is mock CSV content"]
