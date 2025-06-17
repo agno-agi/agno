@@ -39,7 +39,6 @@ from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
 from agno.run.response import RunResponseErrorEvent, RunResponseEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.team import TeamRunResponseEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
