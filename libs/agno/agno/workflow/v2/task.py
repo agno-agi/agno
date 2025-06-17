@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, Optional, Union
+
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -13,17 +14,18 @@ from agno.utils.log import log_debug, logger
 from agno.workflow.v2.types import TaskInput, TaskOutput
 
 TaskExecutor = Callable[
-            [TaskInput],
-            Union[
-                TaskOutput,
-                Iterator[TaskOutput],
-                Iterator[Any],
-                Awaitable[TaskOutput],
-                Awaitable[Any],
-                AsyncIterator[TaskOutput],
-                AsyncIterator[Any],
-            ]
-        ]
+    [TaskInput],
+    Union[
+        TaskOutput,
+        Iterator[TaskOutput],
+        Iterator[Any],
+        Awaitable[TaskOutput],
+        Awaitable[Any],
+        AsyncIterator[TaskOutput],
+        AsyncIterator[Any],
+    ],
+]
+
 
 @dataclass
 class Task:
@@ -51,17 +53,19 @@ class Task:
 
     _retry_count: int = 0
 
-    def __init__(self,
-                 name: Optional[str] = None,
-                 agent: Optional[Agent] = None,
-                 team: Optional[Team] = None,
-                 executor: Optional[TaskExecutor] = None,
-                 task_id: Optional[str] = None,
-                 description: Optional[str] = None,
-                 max_retries: int = 3,
-                 timeout_seconds: Optional[int] = None,
-                 skip_on_failure: bool = False,
-                 strict_input_validation: bool = False):
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        agent: Optional[Agent] = None,
+        team: Optional[Team] = None,
+        executor: Optional[TaskExecutor] = None,
+        task_id: Optional[str] = None,
+        description: Optional[str] = None,
+        max_retries: int = 3,
+        timeout_seconds: Optional[int] = None,
+        skip_on_failure: bool = False,
+        strict_input_validation: bool = False,
+    ):
         self.name = name
         self.agent = agent
         self.team = team
@@ -94,7 +98,6 @@ class Task:
     def executor_type(self) -> str:
         """Get the type of the current executor"""
         return self._executor_type
-
 
     def _validate_executor_config(self):
         """Validate that only one executor type is provided"""
@@ -149,7 +152,12 @@ class Task:
         log_debug(f"Task ID: {self.task_id}")
 
         if stream:
-            return self._execute_task_stream(task_input=task_input, session_id=session_id, user_id=user_id, stream_intermediate_steps=stream_intermediate_steps)
+            return self._execute_task_stream(
+                task_input=task_input,
+                session_id=session_id,
+                user_id=user_id,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
         else:
             return self._execute_task(task_input=task_input, session_id=session_id, user_id=user_id)
 
@@ -157,7 +165,6 @@ class Task:
         self, task_input: TaskInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> TaskOutput:
         """Execute the task with TaskInput, returning final TaskOutput (non-streaming)"""
-        log_debug(f"Executing task (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
         # Execute with retries
@@ -208,9 +215,7 @@ class Task:
                     if self.skip_on_failure:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
-                        return TaskOutput(
-                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
-                        )
+                        return TaskOutput(content=f"Task {self.name} failed but skipped", success=False, error=str(e))
                     else:
                         raise e
 
@@ -305,7 +310,6 @@ class Task:
                     else:
                         raise e
 
-
     async def aexecute(
         self,
         task_input: TaskInput,
@@ -319,7 +323,12 @@ class Task:
         log_debug(f"Task ID: {self.task_id}")
 
         if stream:
-            return self._aexecute_task_stream(task_input=task_input, session_id=session_id, user_id=user_id, stream_intermediate_steps=stream_intermediate_steps)
+            return self._aexecute_task_stream(
+                task_input=task_input,
+                session_id=session_id,
+                user_id=user_id,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
         else:
             return await self._aexecute_task(task_input=task_input, session_id=session_id, user_id=user_id)
 
@@ -335,6 +344,7 @@ class Task:
             try:
                 if self._executor_type == "function":
                     import inspect
+
                     if inspect.iscoroutinefunction(self.active_executor):
                         result = await self.active_executor(task_input)  # type: ignore
                     else:
@@ -347,7 +357,7 @@ class Task:
                     # Otherwise, wrap in TaskOutput
                     response = TaskOutput(content=str(result))
                 else:
-                # For agents and teams, prepare message with context
+                    # For agents and teams, prepare message with context
                     message = self._prepare_message(task_input.message, task_input.message_data)
 
                     # Execute agent or team with media
@@ -377,9 +387,7 @@ class Task:
                     if self.skip_on_failure:
                         logger.info(f"Task {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty TaskOutput for skipped task
-                        return TaskOutput(
-                            content=f"Task {self.name} failed but skipped", success=False, error=str(e)
-                        )
+                        return TaskOutput(content=f"Task {self.name} failed but skipped", success=False, error=str(e))
                     else:
                         raise e
 
@@ -485,6 +493,7 @@ class Task:
                 data_str = message_data.model_dump_json(indent=2, exclude_none=True)
             elif isinstance(message_data, dict):
                 import json
+
                 data_str = json.dumps(message_data, indent=2, default=str)
             else:
                 data_str = str(message_data)

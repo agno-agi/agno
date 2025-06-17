@@ -84,10 +84,7 @@ def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        return TaskOutput(
-            content=enhanced_content,
-            response=response
-        )
+        return TaskOutput(content=enhanced_content, response=response)
 
     except Exception as e:
         return TaskOutput(

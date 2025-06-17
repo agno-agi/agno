@@ -1,43 +1,42 @@
 from dataclasses import dataclass, field
-from os import getenv
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, overload, Literal
-from typing_extensions import get_args
-from uuid import uuid4
 from datetime import datetime
+from os import getenv
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Literal, Optional, Union, overload
+from uuid import uuid4
 
 from pydantic import BaseModel
+from typing_extensions import get_args
 
 from agno.media import Audio, Image, Video
 from agno.run.base import RunStatus
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import (
+    TaskCompletedEvent,
+    TaskStartedEvent,
     WorkflowCompletedEvent,
+    WorkflowRunEvent,
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
     WorkflowStartedEvent,
-    WorkflowRunEvent,
-    TaskStartedEvent,
-    TaskCompletedEvent
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.utils.log import log_debug, log_info, logger, set_log_level_to_debug, set_log_level_to_info
-from agno.workflow.v2.types import WorkflowExecutionInput
+from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.v2.pipeline import Pipeline
 from agno.workflow.v2.task import Task
-from agno.utils.merge_dict import merge_dictionaries
-
+from agno.workflow.v2.types import WorkflowExecutionInput
 
 WorkflowExecutor = Callable[
-            [WorkflowExecutionInput, "Workflow"],
-            Union[
-                Any,
-                Iterator[Any],
-                Awaitable[Any],
-                AsyncIterator[Any],
-            ]
-        ]
+    [WorkflowExecutionInput, "Workflow"],
+    Union[
+        Any,
+        Iterator[Any],
+        Awaitable[Any],
+        AsyncIterator[Any],
+    ],
+]
 
 
 @dataclass
@@ -72,19 +71,20 @@ class Workflow:
     workflow_session: Optional[WorkflowSessionV2] = None
 
     debug_mode: bool = False
-    
-    def __init__(self,
-                 workflow_id: Optional[str] = None,
-                 name: Optional[str] = None,
-                 description: Optional[str] = None,
-                 storage: Optional[Storage] = None,
-                 pipelines: Optional[List[Pipeline]] = None,
-                 tasks: Optional[List[Task]] = None,
-                 executor: Optional[WorkflowExecutor] = None,
-                 session_id: Optional[str] = None,
-                 workflow_session_state: Optional[Dict[str, Any]] = None,
-                 user_id: Optional[str] = None):
 
+    def __init__(
+        self,
+        workflow_id: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        storage: Optional[Storage] = None,
+        pipelines: Optional[List[Pipeline]] = None,
+        tasks: Optional[List[Task]] = None,
+        executor: Optional[WorkflowExecutor] = None,
+        session_id: Optional[str] = None,
+        workflow_session_state: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ):
         self.workflow_id = workflow_id
         self.name = name
         self.description = description
@@ -99,9 +99,11 @@ class Workflow:
     def initialize_workflow(self):
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
+            log_debug(f"Generated new workflow_id: {self.workflow_id}")
 
         if self.session_id is None:
             self.session_id = str(uuid4())
+            log_debug(f"Generated new session_id: {self.session_id}")
 
         # Set storage mode to workflow_v2
         if self.storage is not None:
@@ -119,7 +121,6 @@ class Workflow:
                     active_executor.workflow_session_id = self.session_id
                 if hasattr(active_executor, "workflow_id"):
                     active_executor.workflow_id = self.workflow_id
-
 
                 if self.workflow_session_state is not None:
                     # Initialize session_state if it doesn't exist
@@ -188,16 +189,21 @@ class Workflow:
 
         log_debug(f"Starting workflow execution: {self.run_id}")
         workflow_run_response.status = RunStatus.running
-        
+
         if self.executor:
             # Execute the workflow with the custom executor
             workflow_run_response.content = self.executor(self, execution_input)
             workflow_run_response.status = RunStatus.completed
-            
+
         else:
             try:
                 # Execute the pipeline synchronously - pass WorkflowRunResponse instead of context
-                pipeline.execute(pipeline_input=execution_input, workflow_run_response=workflow_run_response, session_id=self.session_id, user_id=self.user_id)
+                pipeline.execute(
+                    pipeline_input=execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                )
 
                 # Collect updated workflow_session_state from agents after execution
                 self._collect_workflow_session_state_from_agents_and_teams()
@@ -235,11 +241,16 @@ class Workflow:
             )
 
             import inspect
+
             # Execute the workflow with the custom executor
             if inspect.isgeneratorfunction(self.executor):
                 content = ""
                 for chunk in self.executor(self, execution_input):
-                    if isinstance(chunk, tuple(get_args(RunResponseEvent))) or isinstance(chunk, tuple(get_args(TeamRunResponseEvent))) or isinstance(chunk, tuple(get_args(WorkflowRunResponseEvent))):
+                    if (
+                        isinstance(chunk, tuple(get_args(RunResponseEvent)))
+                        or isinstance(chunk, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(chunk, tuple(get_args(WorkflowRunResponseEvent)))
+                    ):
                         # Update the run_response with the content from the result
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                             content += chunk.content
@@ -247,7 +258,7 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 workflow_run_response.content = self.executor(self, execution_input)
-                
+
             workflow_run_response.status = RunStatus.completed
             yield WorkflowCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -261,6 +272,7 @@ class Workflow:
                 # Update pipeline info in the response
                 workflow_run_response.pipeline_name = pipeline.name
 
+                log_debug("Yielding WorkflowStartedEvent")
                 yield WorkflowStartedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name,
@@ -279,6 +291,7 @@ class Workflow:
                 ):
                     yield event
 
+                log_debug("Yielding WorkflowCompletedEvent")
                 # Yield workflow completed event
                 yield WorkflowCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -313,14 +326,13 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
-        
+
         # Store the completed workflow response
         if self.workflow_session:
             self.workflow_session.add_run(workflow_run_response)
 
         # Save to storage after complete execution
         self.write_to_storage()
-
 
     async def aexecute(
         self, pipeline: Pipeline, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
@@ -333,11 +345,16 @@ class Workflow:
             # Execute the workflow with the custom executor
             workflow_run_response.content = self.executor(self, execution_input)
             workflow_run_response.status = RunStatus.completed
-            
+
         else:
             try:
                 # Execute the pipeline asynchronously - pass WorkflowRunResponse instead of context
-                await pipeline.aexecute(pipeline_input=execution_input, workflow_run_response=workflow_run_response, session_id=self.session_id, user_id=self.user_id)
+                await pipeline.aexecute(
+                    pipeline_input=execution_input,
+                    workflow_run_response=workflow_run_response,
+                    session_id=self.session_id,
+                    user_id=self.user_id,
+                )
 
                 # Collect updated workflow_session_state from agents after execution
                 self._collect_workflow_session_state_from_agents_and_teams()
@@ -375,6 +392,7 @@ class Workflow:
             )
 
             import inspect
+
             # Execute the workflow with the custom executor
             if inspect.isasyncgenfunction(self.executor):
                 content = ""
@@ -385,7 +403,11 @@ class Workflow:
             elif inspect.isgeneratorfunction(self.executor):
                 content = ""
                 for chunk in self.executor(self, execution_input):
-                    if isinstance(chunk, tuple(get_args(RunResponseEvent))) or isinstance(chunk, tuple(get_args(TeamRunResponseEvent))) or isinstance(chunk, tuple(get_args(WorkflowRunResponseEvent))):
+                    if (
+                        isinstance(chunk, tuple(get_args(RunResponseEvent)))
+                        or isinstance(chunk, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(chunk, tuple(get_args(WorkflowRunResponseEvent)))
+                    ):
                         # Update the run_response with the content from the result
                         if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                             content += chunk.content
@@ -393,9 +415,9 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 workflow_run_response.content = self.executor(self, execution_input)
-                
+
             workflow_run_response.status = RunStatus.completed
-            
+
             yield WorkflowCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 content=workflow_run_response.content,
@@ -405,6 +427,18 @@ class Workflow:
             )
         else:
             try:
+                # Update pipeline info in the response
+                workflow_run_response.pipeline_name = pipeline.name
+
+                log_debug("Yielding WorkflowStartedEvent")
+                yield WorkflowStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name,
+                    pipeline_name=pipeline.name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                )
+
                 # Execute the pipeline with streaming and yield all events
                 async for event in pipeline.aexecute_stream(
                     pipeline_input=execution_input,
@@ -414,6 +448,19 @@ class Workflow:
                     stream_intermediate_steps=stream_intermediate_steps,
                 ):
                     yield event
+
+                log_debug("Yielding WorkflowCompletedEvent")
+                # Yield workflow completed event
+                yield WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    pipeline_name=pipeline.name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    task_responses=workflow_run_response.task_responses,
+                    extra_data=workflow_run_response.extra_data,
+                )
 
                 # Collect updated workflow_session_state from agents after execution
                 self._collect_workflow_session_state_from_agents_and_teams()
@@ -442,15 +489,16 @@ class Workflow:
         self.write_to_storage()
 
     def _update_workflow_session_state(self):
-
         if not self.workflow_session_state:
             self.workflow_session_state = {}
 
-        self.workflow_session_state.update({
-            "workflow_id": self.workflow_id,
-            "run_id": self.run_id,
-            "session_id": self.session_id,
-        })
+        self.workflow_session_state.update(
+            {
+                "workflow_id": self.workflow_id,
+                "run_id": self.run_id,
+                "session_id": self.session_id,
+            }
+        )
         if self.name:
             self.workflow_session_state["workflow_name"] = self.name
 
@@ -517,7 +565,7 @@ class Workflow:
 
         # Load or create session
         self.load_session()
-        
+
         selected_pipeline_name = self._get_pipeline_name(pipeline_name)
         log_debug(f"Selected pipeline: {selected_pipeline_name}")
 
@@ -560,9 +608,7 @@ class Workflow:
                 stream_intermediate_steps=stream_intermediate_steps,
             )
         else:
-            return self.execute(
-                pipeline=pipeline, execution_input=inputs, workflow_run_response=workflow_run_response
-            )
+            return self.execute(pipeline=pipeline, execution_input=inputs, workflow_run_response=workflow_run_response)
 
     @overload
     async def arun(
@@ -705,7 +751,7 @@ class Workflow:
             ]
         elif self.executor:
             workflow_data["executor"] = self.executor.__name__
-        
+
         return WorkflowSessionV2(
             session_id=self.session_id,
             user_id=self.user_id,
@@ -989,6 +1035,7 @@ class Workflow:
 
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 response_timer.stop()
                 error_panel = create_panel(

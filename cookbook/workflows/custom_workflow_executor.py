@@ -40,7 +40,9 @@ content_planner = Agent(
 )
 
 
-def custom_workflow_executor(workflow: Workflow, execution_input: WorkflowExecutionInput):
+def custom_workflow_executor(
+    workflow: Workflow, execution_input: WorkflowExecutionInput
+):
     print(f"Executing workflow: {workflow.name}")
 
     # Run the research team

@@ -12,10 +12,8 @@ from agno.run.v2.workflow import (
     WorkflowStartedEvent,
 )
 from agno.utils.log import log_debug, logger
-from agno.utils.log import logger
-from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.task import Task
-from agno.workflow.v2.types import TaskInput, TaskOutput
+from agno.workflow.v2.types import TaskInput, TaskOutput, WorkflowExecutionInput
 
 
 @dataclass
@@ -30,16 +28,25 @@ class Pipeline:
     # Tasks to execute
     tasks: Optional[List[Task]] = None
 
-    def __init__(self, name: Optional[str] = None, description: Optional[str] = None, tasks: Optional[List[Task]] = None):
+    def __init__(
+        self, name: Optional[str] = None, description: Optional[str] = None, tasks: Optional[List[Task]] = None
+    ):
         self.name = name
         self.description = description
         self.tasks = tasks if tasks else []
 
     def initialize(self):
         if self.pipeline_id is None:
+            log_debug(f"Initializing pipeline ID for {self.name}")
             self.pipeline_id = str(uuid4())
 
-    def execute(self, pipeline_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, session_id: Optional[str] = None, user_id: Optional[str] = None):
+    def execute(
+        self,
+        pipeline_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ):
         """Execute all tasks in the pipeline using TaskInput/TaskOutput (non-streaming)"""
         log_debug(f"Pipeline Execution Start: {self.name}", center=True)
         log_debug(f"Pipeline ID: {self.pipeline_id}")
@@ -112,7 +119,9 @@ class Pipeline:
         log_debug(f"Pipeline Execution End: {self.name}", center=True, symbol="*")
 
         # Update the workflow_run_response with completion data
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.extra_data = final_output
         workflow_run_response.images = pipeline_images
@@ -209,7 +218,6 @@ class Pipeline:
                 else:
                     yield event
 
-
         # Create final output data
         final_output = {
             "pipeline_id": self.pipeline_id,
@@ -227,7 +235,9 @@ class Pipeline:
             ],
         }
 
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.images = pipeline_images
         workflow_run_response.videos = pipeline_videos
@@ -236,7 +246,11 @@ class Pipeline:
         workflow_run_response.status = RunStatus.completed
 
     async def aexecute(
-        self, pipeline_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        pipeline_input: WorkflowExecutionInput,
+        workflow_run_response: WorkflowRunResponse,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ):
         """Execute all tasks in the pipeline using TaskInput/TaskOutput (non-streaming)"""
         log_debug(f"Async Pipeline Execution Start: {self.name}", center=True)
@@ -308,7 +322,9 @@ class Pipeline:
         log_debug(f"Async Pipeline Execution End: {self.name}", center=True, symbol="*")
 
         # Update the workflow_run_response with completion data
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.extra_data = final_output
         workflow_run_response.images = pipeline_images
@@ -331,16 +347,6 @@ class Pipeline:
         log_debug(f"Total tasks: {len(self.tasks)}")
 
         logger.info(f"Executing pipeline with streaming: {self.name}")
-
-        log_debug(f"Yielding async WorkflowStartedEvent for pipeline: {self.name}")
-        # Yield workflow started event
-        yield WorkflowStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name,
-            pipeline_name=self.name,
-            workflow_id=workflow_run_response.workflow_id,
-            session_id=workflow_run_response.session_id,
-        )
 
         # Track outputs from each task for chaining
         collected_task_outputs: List[TaskOutput] = []
@@ -437,26 +443,15 @@ class Pipeline:
 
         log_debug(f"Async Pipeline Streaming Execution End: {self.name}", center=True, symbol="*")
 
-        log_debug(f"Yielding async WorkflowCompletedEvent for pipeline: {self.name}")
-        workflow_run_response.content = collected_task_outputs[-1].content  # Final workflow response output is the last task's output
+        workflow_run_response.content = collected_task_outputs[
+            -1
+        ].content  # Final workflow response output is the last task's output
         workflow_run_response.task_responses = collected_task_outputs
         workflow_run_response.images = pipeline_images
         workflow_run_response.videos = pipeline_videos
         workflow_run_response.audio = pipeline_audio
         workflow_run_response.extra_data = final_output
         workflow_run_response.status = RunStatus.completed
-
-        # Yield workflow completed event
-        yield WorkflowCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            content=workflow_run_response.content,
-            workflow_name=workflow_run_response.workflow_name,
-            pipeline_name=self.name,
-            workflow_id=workflow_run_response.workflow_id,
-            session_id=workflow_run_response.session_id,
-            task_responses=collected_task_outputs,
-            extra_data=final_output,
-        )
 
     def add_task(self, task: Task) -> None:
         """Add a task to the pipeline"""

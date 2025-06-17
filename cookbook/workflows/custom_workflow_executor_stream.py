@@ -26,7 +26,9 @@ content_planner = Agent(
 )
 
 
-def custom_workflow_executor(workflow: Workflow, execution_input: WorkflowExecutionInput):
+def custom_workflow_executor(
+    workflow: Workflow, execution_input: WorkflowExecutionInput
+):
     print(f"Executing workflow: {workflow.name}")
 
     # Run the research team
@@ -50,7 +52,9 @@ def custom_workflow_executor(workflow: Workflow, execution_input: WorkflowExecut
 
         Please create a detailed, actionable content plan.
     """
-    yield from content_planner.run(planning_prompt, stream=True, stream_intermediate_steps=True)
+    yield from content_planner.run(
+        planning_prompt, stream=True, stream_intermediate_steps=True
+    )
 
 
 # Create and use workflow
@@ -75,5 +79,6 @@ if __name__ == "__main__":
         pprint_run_response(response, markdown=True)
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         print(f"Research workflow failed: {e}")

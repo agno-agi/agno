@@ -68,7 +68,9 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     """
 
     try:
-        response_iterator = await content_planner.arun(planning_prompt, stream=True, stream_intermediate_steps=True)
+        response_iterator = await content_planner.arun(
+            planning_prompt, stream=True, stream_intermediate_steps=True
+        )
         for event in response_iterator:
             yield event
 
@@ -90,10 +92,7 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        yield TaskOutput(
-            content=enhanced_content,
-            response=response
-        )
+        yield TaskOutput(content=enhanced_content, response=response)
 
     except Exception as e:
         yield TaskOutput(
@@ -113,6 +112,7 @@ content_planning_task = Task(
     name="Content Planning Task",
     executor=custom_content_planning_function,
 )
+
 
 async def main():
     content_creation_workflow = Workflow(
