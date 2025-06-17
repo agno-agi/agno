@@ -261,10 +261,13 @@ class Team:
     stream: Optional[bool] = None
     # Stream the intermediate steps from the Team
     stream_intermediate_steps: bool = False
-    # Store the events from the Team
-    store_events: bool = False
     # Stream the member events from the Team
     stream_member_events: bool = True
+
+    # Store the events from the Team
+    store_events: bool = False
+    # List of events to skip from the Team
+    events_to_skip: Optional[List[str]] = None
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -344,6 +347,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
+        events_to_skip: Optional[List[str]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
@@ -429,6 +433,10 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
+        self.events_to_skip = events_to_skip or [
+            RunEvent.run_response_content.value,
+            TeamRunEvent.run_response_content.value,
+        ]
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
@@ -2110,11 +2118,7 @@ class Team:
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
-        if (
-            self.store_events
-            and event.event != TeamRunEvent.run_response_content.value
-            and event.event != RunEvent.run_response_content.value
-        ):
+        if self.store_events and event.event not in self.events_to_skip or []:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)

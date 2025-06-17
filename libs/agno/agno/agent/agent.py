@@ -279,6 +279,7 @@ class Agent:
 
     # Persist the events on the run response
     store_events: bool = False
+    events_to_skip: Optional[List[str]] = None
 
     # --- Agent Team ---
     # The team of agents that this agent can transfer tasks to.
@@ -398,6 +399,7 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
+        events_to_skip: Optional[List[str]] = None,
         team: Optional[List[Agent]] = None,
         team_data: Optional[Dict[str, Any]] = None,
         role: Optional[str] = None,
@@ -501,6 +503,8 @@ class Agent:
         self.stream_intermediate_steps = stream_intermediate_steps
 
         self.store_events = store_events
+        # By default, we skip the run response content event
+        self.events_to_skip = events_to_skip or [RunEvent.run_response_content.value]
 
         self.team = team
 
@@ -6135,7 +6139,7 @@ class Agent:
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event != RunEvent.run_response_content.value:
+        if self.store_events and event.event not in self.events_to_skip or []:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)
