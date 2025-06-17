@@ -173,7 +173,7 @@ playground = Playground(
 app = playground.get_app()
 
 if __name__ == "__main__":
-    playground.serve(app="hitl:app", reload=True)
+    playground.serve(app="user_control_flows:app", reload=True)
 
 
 # Send an email with the body 'What is the weather in Tokyo?

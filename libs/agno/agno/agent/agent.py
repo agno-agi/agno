@@ -2626,7 +2626,7 @@ class Agent:
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
-                    _t.confirmation_note = "Tool call was rejected"
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
@@ -2664,7 +2664,7 @@ class Agent:
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
-                    _t.confirmation_note = "Tool call was rejected"
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
@@ -2701,7 +2701,7 @@ class Agent:
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
-                    _t.confirmation_note = "Tool call was rejected"
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
@@ -2739,7 +2739,7 @@ class Agent:
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
-                    _t.confirmation_note = "Tool call was rejected"
+                    _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
