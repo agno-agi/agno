@@ -80,6 +80,35 @@ def test_basic_intermediate_steps_events():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
+def test_basic_intermediate_steps_events_persisted(team_storage):
+    """Test that the agent streams events."""
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        storage=team_storage,
+        store_events=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_response_content, TeamRunEvent.run_completed}
+
+    run_response_from_storage = team_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 2, "We should only have the run started and run completed events"
+    assert run_response_from_storage["events"][0]["event"] == TeamRunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.run_completed
+
+
 def test_intermediate_steps_with_tools():
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -113,6 +142,43 @@ def test_intermediate_steps_with_tools():
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].content is not None
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+
+
+def test_intermediate_steps_with_tools_events_persisted(team_storage):
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=team_storage,
+        store_events=True,
+        members=[],
+        tools=[YFinanceTools(cache_results=True)],
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    run_response_from_storage = team_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 4
+    assert run_response_from_storage["events"][0]["event"] == TeamRunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.tool_call_started
+    assert run_response_from_storage["events"][2]["event"] == TeamRunEvent.tool_call_completed
+    assert run_response_from_storage["events"][3]["event"] == TeamRunEvent.run_completed
 
 
 def test_intermediate_steps_with_reasoning():
