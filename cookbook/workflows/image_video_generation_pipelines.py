@@ -32,7 +32,6 @@ image_generator = Agent(
     Include detailed, creative prompts that incorporate style, composition, lighting, and mood details.
     
     After generating the image, provide a brief description of what you created.""",
-    debug_mode=True,
 )
 
 image_describer = Agent(
@@ -130,29 +129,12 @@ def media_pipeline_selector(
     """
     # Default to image if no structured data provided
     if not message_data:
-        # Fall back to message content analysis
-        message_lower = message.lower()
-        if any(
-            keyword in message_lower
-            for keyword in ["video", "movie", "film", "animation", "motion"]
-        ):
-            return "video_generation"
-        else:
-            return "image_generation"
-
-    # Check if message_data is a Pydantic model
-    if hasattr(message_data, "content_type"):
-        content_type = message_data.content_type
-    # Check if message_data is a dictionary
-    elif isinstance(message_data, dict):
-        content_type = message_data.get("content_type", "image")
-    else:
-        content_type = "image"
+        return "image_generation"
 
     # Select pipeline based on content type
-    if content_type.lower() == "video":
+    if message_data.content_type.lower() == "video":
         return "video_generation"
-    elif content_type.lower() == "image":
+    elif message_data.content_type.lower() == "image":
         return "image_generation"
     else:
         # Default to image for unknown types
@@ -173,43 +155,43 @@ if __name__ == "__main__":
         pipelines=[image_pipeline, video_pipeline],
     )
 
-    print("=== Example 1: Image Generation (using message_data) ===")
-    try:
-        image_request = MediaRequest(
-            content_type="image",
-            prompt="A mystical forest with glowing mushrooms",
-            style="fantasy art",
-            resolution="1920x1080",
-        )
-
-        media_workflow.print_response(
-            message="Create a magical forest scene",
-            message_data=image_request,
-            selector=media_pipeline_selector,
-            markdown=True,
-        )
-    except Exception as e:
-        print(f"Image generation failed: {e}")
-
-    print("\n" + "=" * 60 + "\n")
-
-    # print("=== Example 2: Video Generation (using message_data) ===")
+    # print("=== Example 1: Image Generation (using message_data) ===")
     # try:
-    #     video_request = MediaRequest(
-    #         content_type="video",
-    #         prompt="A time-lapse of a city skyline from day to night",
-    #         style="cinematic",
-    #         duration=30,
-    #         resolution="4K"
+    #     image_request = MediaRequest(
+    #         content_type="image",
+    #         prompt="A mystical forest with glowing mushrooms",
+    #         style="fantasy art",
+    #         resolution="1920x1080",
     #     )
 
     #     media_workflow.print_response(
-    #         message="Create a cinematic video city timelapse",
-    #         message_data=video_request,
+    #         message="Create a magical forest scene",
+    #         message_data=image_request,
     #         selector=media_pipeline_selector,
     #         markdown=True,
     #     )
     # except Exception as e:
-    #     print(f"Video generation failed: {e}")
+    #     print(f"Image generation failed: {e}")
 
-    # print("\n" + "="*60 + "\n")
+    # print("\n" + "=" * 60 + "\n")
+
+    print("=== Example 2: Video Generation (using message_data) ===")
+    try:
+        video_request = MediaRequest(
+            content_type="video",
+            prompt="A time-lapse of a city skyline from day to night",
+            style="cinematic",
+            duration=30,
+            resolution="4K"
+        )
+
+        media_workflow.print_response(
+            message="Create a cinematic video city timelapse",
+            message_data=video_request,
+            selector=media_pipeline_selector,
+            markdown=True,
+        )
+    except Exception as e:
+        print(f"Video generation failed: {e}")
+
+    print("\n" + "="*60 + "\n")

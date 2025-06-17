@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.agent import Agent
-from agno.media import AudioArtifact, Image, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
@@ -342,11 +342,12 @@ class Task:
         if self._executor_type in ["agent", "team"]:
             # Convert ImageArtifact objects to Image objects
             images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
-
+            videos = self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+            
             return self.active_executor.run(
                 message=message,
                 images=images,
-                videos=task_input.videos,
+                videos=videos,
                 audio=task_input.audio,
             )
         else:
@@ -564,23 +565,11 @@ class Task:
 
         images = []
         for i, img_artifact in enumerate(image_artifacts):
-            logger.info(
-                f"Processing ImageArtifact {i}: url={img_artifact.url}, "
-                f"content_length={len(img_artifact.content) if img_artifact.content else 0}, "
-                f"mime_type={img_artifact.mime_type}"
-            )
-
             # Create Image object with proper data from ImageArtifact
             if img_artifact.url:
-                logger.info(f"Using URL for image {i}: {img_artifact.url}")
                 images.append(Image(url=img_artifact.url))
 
             elif img_artifact.content:
-                logger.info(
-                    f"Using content for image {i}, content type: {type(img_artifact.content)}, "
-                    f"length: {len(img_artifact.content)}"
-                )
-
                 # Handle the case where content is base64-encoded bytes from OpenAI tools
                 try:
                     # Try to decode as base64 first (for images from OpenAI tools)
@@ -615,6 +604,34 @@ class Task:
                 continue
 
         return images
+
+    def _convert_video_artifacts_to_videos(self, video_artifacts: List[VideoArtifact]) -> List[Video]:
+        """
+        Convert VideoArtifact objects to Video objects with proper content handling.
+
+        Args:
+            video_artifacts: List of VideoArtifact objects to convert
+
+        Returns:
+            List of Video objects ready for agent processing
+        """
+        import base64
+
+        videos = []
+        for i, video_artifact in enumerate(video_artifacts):
+            # Create Image object with proper data from ImageArtifact
+            if video_artifact.url:
+                videos.append(Video(url=video_artifact.url))
+
+            elif video_artifact.content:
+                videos.append(Video(content=video_artifact.content))
+
+            else:
+                # Skip images that have neither URL nor content
+                logger.warning(f"Skipping VideoArtifact {i} with no URL or content: {video_artifact}")
+                continue
+
+        return videos
 
     @property
     def executor_name(self) -> str:
