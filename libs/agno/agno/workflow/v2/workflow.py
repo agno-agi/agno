@@ -835,6 +835,7 @@ class Workflow:
                 # Execute workflow and get the response directly
                 workflow_response: WorkflowRunResponse = self.run(
                     message=message,
+                    selector=selector,
                     message_data=message_data,
                     user_id=user_id,
                     session_id=session_id,
@@ -986,6 +987,7 @@ class Workflow:
                 for response in self.run(
                     message=message,
                     message_data=message_data,
+                    selector=selector,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -1264,6 +1266,7 @@ class Workflow:
                 workflow_response: WorkflowRunResponse = await self.arun(
                     message=message,
                     message_data=message_data,
+                    selector=selector,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -1414,6 +1417,7 @@ class Workflow:
                 async for response in await self.arun(
                     message=message,
                     message_data=message_data,
+                    selector=selector,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
