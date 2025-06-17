@@ -267,7 +267,7 @@ class Team:
     # Store the events from the Team
     store_events: bool = False
     # List of events to skip from the Team
-    events_to_skip: Optional[List[str]] = None
+    events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -347,7 +347,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[str]] = None,
+        events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
@@ -433,10 +433,14 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
-        self.events_to_skip = events_to_skip or [
-            RunEvent.run_response_content.value,
-            TeamRunEvent.run_response_content.value,
+        
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [
+            RunEvent.run_response_content,
+            TeamRunEvent.run_response_content,
         ]
+        self.events_to_skip = [event.value for event in self.events_to_skip]
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode

@@ -399,7 +399,7 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[str]] = None,
+        events_to_skip: Optional[List[RunEvent]] = None,
         team: Optional[List[Agent]] = None,
         team_data: Optional[Dict[str, Any]] = None,
         role: Optional[str] = None,
@@ -504,7 +504,10 @@ class Agent:
 
         self.store_events = store_events
         # By default, we skip the run response content event
-        self.events_to_skip = events_to_skip or [RunEvent.run_response_content.value]
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [RunEvent.run_response_content]
+        self.events_to_skip = [event.value for event in self.events_to_skip]
 
         self.team = team
 
