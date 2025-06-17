@@ -135,7 +135,7 @@ async def test_pdf_url_knowledge_base_async():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] == "asearch_knowledge_base"
+            assert call["function"]["name"] == "search_knowledge_base"
 
     assert any(ingredient in response.content.lower() for ingredient in ["coconut", "chicken", "galangal"])
 
@@ -329,7 +329,7 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
     function_calls = [
         call
         for call in tool_calls
-        if call.get("type") == "function" and call["function"]["name"] == "asearch_knowledge_base"
+        if call.get("type") == "function" and call["function"]["name"] == "search_knowledge_base"
     ]
 
     # Check if any of the search_knowledge_base calls had the invalid filter
@@ -560,7 +560,7 @@ async def test_async_pdf_url_knowledge_base_with_invalid_filter(setup_vector_db)
     function_calls = [
         call
         for call in tool_calls
-        if call.get("type") == "function" and call["function"]["name"] == "asearch_knowledge_base"
+        if call.get("type") == "function" and call["function"]["name"] == "search_knowledge_base"
     ]
 
     # Check if any of the search_knowledge_base calls had the invalid filter

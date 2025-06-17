@@ -433,14 +433,13 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
-        
+
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:
             self.events_to_skip = [
-            RunEvent.run_response_content,
-            TeamRunEvent.run_response_content,
-        ]
-        self.events_to_skip = [event.value for event in self.events_to_skip]
+                RunEvent.run_response_content,
+                TeamRunEvent.run_response_content,
+            ]
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
@@ -602,7 +601,8 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            self.memory = deepcopy(self.memory)
+            if isinstance(self.memory, Memory):
+                self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
@@ -2122,7 +2122,8 @@ class Team:
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event not in (self.events_to_skip or []):
+        events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
+        if self.store_events and event.event not in events_to_skip:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)
