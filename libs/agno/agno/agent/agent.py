@@ -6192,7 +6192,7 @@ class Agent:
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event not in self.events_to_skip or []:
+        if self.store_events and event.event not in (self.events_to_skip or []):
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)
