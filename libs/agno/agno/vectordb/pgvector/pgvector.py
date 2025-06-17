@@ -387,6 +387,11 @@ class PgVector(VectorDb):
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
                                 content_hash = md5(cleaned_content.encode()).hexdigest()
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
                                 record = {
                                     "id": content_hash,  # use content_hash as a reproducible id to avoid duplicates while upsert
                                     "name": doc.name,

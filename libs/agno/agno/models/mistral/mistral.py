@@ -241,7 +241,7 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
-                response = await self.get_client().chat.parse_async(
+                response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
                     response_format=response_format_from_pydantic_model(response_format),

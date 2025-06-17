@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
@@ -63,7 +64,7 @@ def sidebar_widget() -> None:
             restart_agent()
 
 
-def display_tool_calls(tool_calls_container, tools):
+def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
     """Display tool calls in a streamlit container with expandable sections.
 
     Args:
@@ -72,10 +73,10 @@ def display_tool_calls(tool_calls_container, tools):
     """
     with tool_calls_container.container():
         for tool_call in tools:
-            _tool_name = tool_call.get("tool_name")
-            _tool_args = tool_call.get("tool_args")
-            _content = tool_call.get("content")
-            _metrics = tool_call.get("metrics")
+            _tool_name = tool_call.tool_name or "Unknown Tool"
+            _tool_args = tool_call.tool_args or {}
+            _content = tool_call.result or None
+            _metrics = tool_call.metrics or None
 
             with st.expander(
                 f"🛠️ {_tool_name.replace('_', ' ').title()}", expanded=False
@@ -96,4 +97,6 @@ def display_tool_calls(tool_calls_container, tools):
 
                 if _metrics:
                     st.markdown("**Metrics:**")
-                    st.json(_metrics)
+                    st.json(
+                        _metrics if isinstance(_metrics, dict) else _metrics._to_dict()
+                    )

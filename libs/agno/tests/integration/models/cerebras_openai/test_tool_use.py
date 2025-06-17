@@ -9,7 +9,6 @@ def test_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -26,7 +25,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -37,7 +35,6 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
             if any(tc.tool_name for tc in chunk.tools):
@@ -53,7 +50,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -71,7 +67,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -82,7 +77,6 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
             if any(tc.tool_name for tc in chunk.tools):
@@ -97,7 +91,6 @@ def test_tool_use_with_content():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         tools=[GoogleSearchTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )

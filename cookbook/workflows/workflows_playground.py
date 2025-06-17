@@ -21,6 +21,8 @@ blog_post_generator = BlogPostGenerator(
     storage=SqliteStorage(
         table_name="generate_blog_post_workflows",
         db_file="tmp/agno_workflows.db",
+        mode="workflow",
+        auto_upgrade_schema=True,
     ),
 )
 personalised_email_generator = PersonalisedEmailGenerator(
@@ -28,6 +30,8 @@ personalised_email_generator = PersonalisedEmailGenerator(
     storage=SqliteStorage(
         table_name="personalized_email_workflows",
         db_file="tmp/agno_workflows.db",
+        mode="workflow",
+        auto_upgrade_schema=True,
     ),
 )
 
@@ -36,6 +40,8 @@ investment_report_generator = InvestmentReportGenerator(
     storage=SqliteStorage(
         table_name="investment_report_workflows",
         db_file="tmp/agno_workflows.db",
+        mode="workflow",
+        auto_upgrade_schema=True,
     ),
 )
 
@@ -44,6 +50,8 @@ startup_idea_validator = StartupIdeaValidator(
     storage=SqliteStorage(
         table_name="validate_startup_ideas_workflow",
         db_file="tmp/agno_workflows.db",
+        mode="workflow",
+        auto_upgrade_schema=True,
     ),
 )
 

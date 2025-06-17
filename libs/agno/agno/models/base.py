@@ -3,7 +3,20 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    get_args,
+)
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -12,6 +25,9 @@ from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.run.response import RunResponseContentEvent, RunResponseEvent
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
@@ -223,9 +239,6 @@ class Model(ABC):
     # True if the Model requires a json_schema for structured outputs (e.g. LMStudio)
     supports_json_schema_outputs: bool = False
 
-    # Function call stack.
-    _function_call_stack: Optional[List[FunctionCall]] = None
-
     # Controls which (if any) function is called by the model.
     # "none" means the model will not call a function and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a function.
@@ -317,6 +330,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = self._process_model_response(
@@ -342,26 +357,31 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
-                    if (
-                        function_call_response.event
-                        in [
-                            ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_paused.value,
-                        ]
-                        and function_call_response.tool_executions is not None
-                    ):
-                        if model_response.tool_executions is None:
-                            model_response.tool_executions = []
-                        model_response.tool_executions.extend(function_call_response.tool_executions)
+                    if isinstance(function_call_response, ModelResponse):
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
 
-                    elif function_call_response.event not in [
-                        ModelResponseEvent.tool_call_started.value,
-                        ModelResponseEvent.tool_call_completed.value,
-                    ]:
-                        if function_call_response.content:
-                            model_response.content += function_call_response.content  # type: ignore
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
+                            ModelResponseEvent.tool_call_completed.value,
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -413,6 +433,8 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
+        function_call_count = 0
+
         while True:
             # Get response from model
             assistant_message, has_tool_calls = await self._aprocess_model_response(
@@ -438,25 +460,30 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
-                    if (
-                        function_call_response.event
-                        in [
+                    if isinstance(function_call_response, ModelResponse):
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_paused.value,
-                        ]
-                        and function_call_response.tool_executions is not None
-                    ):
-                        if model_response.tool_executions is None:
-                            model_response.tool_executions = []
-                        model_response.tool_executions.extend(function_call_response.tool_executions)
-                    elif function_call_response.event not in [
-                        ModelResponseEvent.tool_call_started.value,
-                        ModelResponseEvent.tool_call_completed.value,
-                    ]:
-                        if function_call_response.content:
-                            model_response.content += function_call_response.content  # type: ignore
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -716,7 +743,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate a streaming response from the model.
         """
@@ -724,6 +751,8 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
+
+        function_call_count = 0
 
         while True:
             # Create assistant message and stream data
@@ -774,9 +803,13 @@ class Model(ABC):
                 for function_call_response in self.run_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
@@ -845,7 +878,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-    ) -> AsyncIterator[ModelResponse]:
+    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
         """
@@ -853,6 +886,8 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
+
+        function_call_count = 0
 
         while True:
             # Create assistant message and stream data
@@ -902,9 +937,13 @@ class Model(ABC):
                 async for function_call_response in self.arun_function_calls(
                     function_calls=function_calls_to_run,
                     function_call_results=function_call_results,
-                    tool_call_limit=tool_call_limit,
+                    current_function_call_count=function_call_count,
+                    function_call_limit=tool_call_limit,
                 ):
                     yield function_call_response
+
+                # Add a function call for each successful execution
+                function_call_count += len(function_call_results)
 
                 # Format and add results to messages
                 if stream_data.extra is not None:
@@ -1093,12 +1132,22 @@ class Model(ABC):
             **kwargs,
         )
 
+    def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
+        return Message(
+            role=self.tool_message_role,
+            content=f"Tool call limit reached. Tool call {function_call.function.name} not executed. Don't try to execute it again.",
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1137,9 +1186,25 @@ class Model(ABC):
 
         if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_call.result:
-                function_call_output += str(item)
-                if function_call.function.show_result:
-                    yield ModelResponse(content=str(item))
+                # This function yields agent/team run events
+                if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                    item, tuple(get_args(TeamRunResponseEvent))
+                ):
+                    # We only capture content events
+                    if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        # Capture output
+                        function_call_output += item.content or ""
+
+                        if function_call.function.show_result:
+                            yield ModelResponse(content=item.content)
+
+                    # Yield the event itself to bubble it up
+                    yield item
+
+                else:
+                    function_call_output += str(item)
+                    if function_call.function.show_result:
+                        yield ModelResponse(content=str(item))
         else:
             function_call_output = str(function_call.result)
             if function_call.function.show_result:
@@ -1172,17 +1237,22 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
-    ) -> Iterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    continue
+
             paused_tool_executions = []
 
             # The function cannot be executed without user confirmation
@@ -1262,14 +1332,6 @@ class Model(ABC):
                 function_call=fc, function_call_results=function_call_results, additional_messages=additional_messages
             )
 
-            # Add function call result to function call results
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
-
         # Add any additional messages at the end
         if additional_messages:
             function_call_results.extend(additional_messages)
@@ -1317,19 +1379,28 @@ class Model(ABC):
         self,
         function_calls: List[FunctionCall],
         function_call_results: List[Message],
-        tool_call_limit: Optional[int] = None,
         additional_messages: Optional[List[Message]] = None,
+        current_function_call_count: int = 0,
+        function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
-    ) -> AsyncIterator[ModelResponse]:
-        if self._function_call_stack is None:
-            self._function_call_stack = []
-
+    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
 
-        # Yield tool_call_started events for all function calls
+        function_calls_to_run = []
         for fc in function_calls:
+            if function_call_limit is not None:
+                current_function_call_count += 1
+                # We have reached the function call limit, so we add an error result to the function call results
+                if current_function_call_count > function_call_limit:
+                    function_call_results.append(self.create_tool_call_limit_error_result(fc))
+                    # Skip this function call
+                    continue
+            function_calls_to_run.append(fc)
+
+        # Yield tool_call_started events for all function calls or pause them
+        for fc in function_calls_to_run:
             paused_tool_executions = []
             # The function cannot be executed without user confirmation
             if fc.function.requires_confirmation and not skip_pause_check:
@@ -1424,11 +1495,11 @@ class Model(ABC):
 
         # Create and run all function calls in parallel (skip ones that need confirmation)
         if skip_pause_check:
-            function_calls_to_run = function_calls
+            function_calls_to_run = function_calls_to_run
         else:
             function_calls_to_run = [
                 fc
-                for fc in function_calls
+                for fc in function_calls_to_run
                 if not (
                     fc.function.requires_confirmation
                     or fc.function.external_execution
@@ -1462,14 +1533,44 @@ class Model(ABC):
             function_call_output: str = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            # Capture output
+                            function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            # Capture output
+                            function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             else:
                 function_call_output = str(fc.result)
                 if fc.function.show_result:
@@ -1497,12 +1598,6 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
-            self._function_call_stack.append(fc)
-
-            # Check function call limit
-            if tool_call_limit and len(self._function_call_stack) >= tool_call_limit:
-                self._tool_choice = "none"
-                break
 
         # Add any additional messages at the end
         if additional_messages:
@@ -1543,11 +1638,6 @@ class Model(ABC):
     def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
         return self.instructions
 
-    def clear(self) -> None:
-        """Clears the Model's state."""
-
-        self._function_call_stack = None
-
     def __deepcopy__(self, memo):
         """Create a deep copy of the Model instance.
 
@@ -1566,7 +1656,7 @@ class Model(ABC):
 
         # Deep copy all attributes
         for k, v in self.__dict__.items():
-            if k in {"response_format", "_tools", "_functions", "_function_call_stack"}:
+            if k in {"response_format", "_tools", "_functions"}:
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
@@ -1576,6 +1666,4 @@ class Model(ABC):
                 except Exception:
                     setattr(new_model, k, v)
 
-        # Clear the new model to remove any references to the old model
-        new_model.clear()
         return new_model
