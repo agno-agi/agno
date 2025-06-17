@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Literal, Optional, Union, overload
 from typing import Sequence as TypingSequence
 from uuid import uuid4
@@ -19,7 +20,7 @@ from agno.run.v2.workflow import (
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.workflow.v2.pipeline import Pipeline, PipelineInput
 from agno.workflow.v2.task import Task
 
@@ -50,6 +51,8 @@ class Workflow:
 
     # Workflow session for storage
     workflow_session: Optional[WorkflowSessionV2] = None
+
+    debug_mode: bool = False
 
     def __post_init__(self):
         # Handle inheritance - get name from class attribute if not provided
@@ -82,12 +85,37 @@ class Workflow:
         # Set storage mode to workflow_v2
         self.set_storage_mode()
 
+    def _set_debug(self) -> None:
+        """Set debug mode and configure logging"""
+        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            self.debug_mode = True
+            set_log_level_to_debug()
+
+            # Propagate to pipelines
+            for pipeline in self.pipelines:
+                # Propagate to tasks in pipeline
+                for task in pipeline.tasks:
+                    # Propagate to task executors (agents/teams)
+                    if hasattr(task, "_active_executor") and task._active_executor:
+                        executor = task._active_executor
+                        if hasattr(executor, "debug_mode"):
+                            executor.debug_mode = True
+
+                        # If it's a team, propagate to all members
+                        if hasattr(executor, "members"):
+                            for member in executor.members:
+                                if hasattr(member, "debug_mode"):
+                                    member.debug_mode = True
+        else:
+            set_log_level_to_info()
+
     def _auto_create_pipeline_from_tasks(self):
         """Auto-create a pipeline from tasks for manual triggers"""
         # Only auto-create for manual triggers and when tasks are provided but no pipelines
         if self.tasks and not self.pipelines:
             # Create a default pipeline_name
             pipeline_name = "Default Pipeline"
+
             # Create pipeline from tasks
             auto_pipeline = Pipeline(
                 name=pipeline_name,
@@ -110,24 +138,33 @@ class Workflow:
         self, pipeline: Pipeline, pipeline_input: PipelineInput, workflow_run_response: WorkflowRunResponse
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
+        self._set_debug()
+
         log_debug(f"Starting workflow execution: {self.run_id}")
         workflow_run_response.status = RunStatus.running
 
         try:
+            log_debug(f"Executing pipeline '{pipeline.name}' with {len(pipeline.tasks)} tasks")
+
             # Execute the pipeline synchronously - pass WorkflowRunResponse instead of context
             pipeline.execute(pipeline_input=pipeline_input, workflow_run_response=workflow_run_response)
+
+            log_debug("Pipeline execution completed successfully")
 
             # Collect updated workflow_session_state from agents after execution
             self._collect_workflow_session_state_from_agents_and_teams()
 
             workflow_run_response.status = RunStatus.completed
+            log_debug(f"Workflow status set to: {workflow_run_response.status}")
 
             # Store the completed workflow response
             if self.workflow_session:
                 self.workflow_session.add_run(workflow_run_response)
+                log_debug(f"Added run to workflow session: {workflow_run_response.run_id}")
 
             # Save to storage after complete execution
             self.write_to_storage()
+            log_debug("Workflow saved to storage")
 
             return workflow_run_response
 
@@ -152,26 +189,35 @@ class Workflow:
         stream_intermediate_steps: bool = False,
     ) -> Iterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
+        self._set_debug()
 
         log_debug(f"Starting workflow execution with streaming: {self.run_id}")
         workflow_run_response.status = RunStatus.running
 
         try:
+            log_debug(f"Executing pipeline '{pipeline.name}' with streaming")
+
             # Execute the pipeline with streaming and yield all events
             for event in pipeline.execute_stream(
                 pipeline_input=pipeline_input,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
             ):
+                log_debug(f"Yielding event: {type(event).__name__}")
+
                 # Store completed workflow response when we get the final event
                 if isinstance(event, WorkflowCompletedEvent):
+                    log_debug("Received WorkflowCompletedEvent")
                     # Update the workflow_run_response with final data
                     workflow_run_response.content = event.content
                     workflow_run_response.task_responses = event.task_responses
                     workflow_run_response.extra_data = event.extra_data
                     workflow_run_response.status = RunStatus.completed
+                    log_debug(f"Final workflow status: {workflow_run_response.status}")
 
                 yield event
+
+            log_debug("Pipeline streaming execution completed")
 
             # Collect updated workflow_session_state from agents after execution
             self._collect_workflow_session_state_from_agents_and_teams()
@@ -179,9 +225,11 @@ class Workflow:
             # Store the completed workflow response
             if self.workflow_session:
                 self.workflow_session.add_run(workflow_run_response)
+                log_debug(f"Added streamed run to workflow session: {workflow_run_response.run_id}")
 
             # Save to storage after complete execution
             self.write_to_storage()
+            log_debug("Streamed workflow saved to storage")
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
@@ -213,24 +261,31 @@ class Workflow:
         self, pipeline: Pipeline, pipeline_input: PipelineInput, workflow_run_response: WorkflowRunResponse
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
-        log_debug(f"Starting workflow execution: {self.run_id}")
+        log_debug(f"Starting async workflow execution: {self.run_id}")
         workflow_run_response.status = RunStatus.running
 
         try:
+            log_debug(f"Executing pipeline '{pipeline.name}' with {len(pipeline.tasks)} tasks asynchronously")
+
             # Execute the pipeline asynchronously - pass WorkflowRunResponse instead of context
             await pipeline.aexecute(pipeline_input=pipeline_input, workflow_run_response=workflow_run_response)
+
+            log_debug("Async pipeline execution completed successfully")
 
             # Collect updated workflow_session_state from agents after execution
             self._collect_workflow_session_state_from_agents_and_teams()
 
             workflow_run_response.status = RunStatus.completed
+            log_debug(f"Async workflow status set to: {workflow_run_response.status}")
 
             # Store the completed workflow response
             if self.workflow_session:
                 self.workflow_session.add_run(workflow_run_response)
+                log_debug(f"Added async run to workflow session: {workflow_run_response.run_id}")
 
             # Save to storage after complete execution
             self.write_to_storage()
+            log_debug("Async workflow saved to storage")
 
             return workflow_run_response
 
@@ -255,25 +310,34 @@ class Workflow:
         stream_intermediate_steps: bool = False,
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
-        log_debug(f"Starting workflow execution with streaming: {self.run_id}")
+        log_debug(f"Starting async workflow execution with streaming: {self.run_id}")
         workflow_run_response.status = RunStatus.running
 
         try:
+            log_debug(f"Executing pipeline '{pipeline.name}' with async streaming")
+
             # Execute the pipeline with streaming and yield all events
             async for event in pipeline.aexecute_stream(
                 pipeline_input=pipeline_input,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
             ):
+                log_debug(f"Yielding async event: {type(event).__name__}")
+
                 # Store completed workflow response when we get the final event
                 if isinstance(event, WorkflowCompletedEvent):
+                    log_debug("Received async WorkflowCompletedEvent")
+
                     # Update the workflow_run_response with final data
                     workflow_run_response.content = event.content
                     workflow_run_response.task_responses = event.task_responses
                     workflow_run_response.extra_data = event.extra_data
                     workflow_run_response.status = RunStatus.completed
+                    log_debug(f"Final async workflow status: {workflow_run_response.status}")
 
                 yield event
+
+            log_debug("Async pipeline streaming execution completed")
 
             # Collect updated workflow_session_state from agents after execution
             self._collect_workflow_session_state_from_agents_and_teams()
@@ -281,9 +345,11 @@ class Workflow:
             # Store the completed workflow response
             if self.workflow_session:
                 self.workflow_session.add_run(workflow_run_response)
+                log_debug(f"Added async streamed run to workflow session: {workflow_run_response.run_id}")
 
             # Save to storage after complete execution
             self.write_to_storage()
+            log_debug("Async streamed workflow saved to storage")
 
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
@@ -313,26 +379,37 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
+        log_debug("Updating agents and teams with workflow session information")
+        log_debug(f"Workflow ID: {self.workflow_id}")
+        log_debug(f"Session ID: {self.session_id}")
+
         # Update all agents in pipelines
         for pipeline in self.pipelines:
+            log_debug(f"Processing pipeline: {pipeline.name}")
             for task in pipeline.tasks:
+                log_debug(f"Processing task: {task.name}")
                 active_executor = task._active_executor
 
                 if hasattr(active_executor, "workflow_session_id"):
                     active_executor.workflow_session_id = self.session_id
+                    log_debug(f"Set workflow_session_id for {type(active_executor).__name__}")
                 if hasattr(active_executor, "workflow_id"):
                     active_executor.workflow_id = self.workflow_id
+                    log_debug(f"Set workflow_id for {type(active_executor).__name__}")
 
                 # Set workflow_session_state on agents and teams
                 self._update_executor_workflow_session_state(active_executor)
 
                 # If it's a team, update all members
                 if hasattr(active_executor, "members"):
+                    log_debug(f"Processing {len(active_executor.members)} team members")
                     for member in active_executor.members:
                         if hasattr(member, "workflow_session_id"):
                             member.workflow_session_id = self.session_id
+                            log_debug(f"Set workflow_session_id for team member: {type(member).__name__}")
                         if hasattr(member, "workflow_id"):
                             member.workflow_id = self.workflow_id
+                            log_debug(f"Set workflow_id for team member: {type(member).__name__}")
 
                         # Set workflow_session_state on team members
                         self._update_executor_workflow_session_state(member)
@@ -381,23 +458,34 @@ class Workflow:
         stream_intermediate_steps: Optional[bool] = None,
     ) -> Union[WorkflowRunResponse, Iterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+        log_debug(f"Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Stream: {stream}")
+
         if user_id is not None:
             self.user_id = user_id
+            log_debug(f"User ID: {user_id}")
         if session_id is not None:
             self.session_id = session_id
+            log_debug(f"Session ID: {session_id}")
 
         # Load or create session
         self.load_session()
 
         # Prepare primary input by combining message and message_data
         primary_input = self._prepare_primary_input(message, message_data)
+        log_debug(f"Primary input prepared: {len(primary_input) if primary_input else 0} characters")
 
         self.run_id = str(uuid4())
+        log_debug(f"Run ID: {self.run_id}")
+
         selected_pipeline_name = self._get_pipeline_name(pipeline_name)
+        log_debug(f"Selected pipeline: {selected_pipeline_name}")
 
         pipeline = self.get_pipeline(selected_pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{selected_pipeline_name}' not found")
+
+        log_debug(f"Pipeline found with {len(pipeline.tasks)} tasks")
 
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunResponse(
@@ -409,6 +497,8 @@ class Workflow:
             created_at=int(datetime.now().timestamp()),
         )
         self.run_response = workflow_run_response
+        log_debug(f"Created workflow run response: {workflow_run_response.run_id}")
+
         inputs = PipelineInput(
             message=primary_input,
             workflow_session_state=self.workflow_session_state,
@@ -416,10 +506,14 @@ class Workflow:
             images=images,
             videos=videos,
         )
+        log_debug(
+            f"Created pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
+        )
 
         self.update_agents_and_teams_session_info()
 
         if stream:
+            log_debug("Starting streaming execution")
             return self.execute_pipeline_stream(
                 pipeline=pipeline,
                 pipeline_input=inputs,
@@ -427,6 +521,7 @@ class Workflow:
                 stream_intermediate_steps=stream_intermediate_steps,
             )
         else:
+            log_debug("Starting non-streaming execution")
             return self.execute_pipeline(
                 pipeline=pipeline, pipeline_input=inputs, workflow_run_response=workflow_run_response
             )
@@ -475,24 +570,34 @@ class Workflow:
         stream_intermediate_steps: bool = False,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+        log_debug(f"Async Workflow Run Start: {self.name}", center=True)
+        log_debug(f"Stream: {stream}")
+
         # Set user_id and session_id if provided
         if user_id is not None:
             self.user_id = user_id
+            log_debug(f"User ID: {user_id}")
         if session_id is not None:
             self.session_id = session_id
+            log_debug(f"Session ID: {session_id}")
 
         # Load or create session
         self.load_session()
 
         # Prepare primary input by combining message and message_data
         primary_input = self._prepare_primary_input(message, message_data)
+        log_debug(f"Primary input prepared: {len(primary_input) if primary_input else 0} characters")
 
         # Initialize execution
         self.run_id = str(uuid4())
+        log_debug(f"Run ID: {self.run_id}")
+
         selected_pipeline_name = self._get_pipeline_name(pipeline_name)
         pipeline = self.get_pipeline(selected_pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{selected_pipeline_name}' not found")
+
+        log_debug(f"Pipeline found with {len(pipeline.tasks)} tasks")
 
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunResponse(
@@ -504,7 +609,8 @@ class Workflow:
             created_at=int(datetime.now().timestamp()),
         )
         self.run_response = workflow_run_response
-        
+        log_debug(f"Created async workflow run response: {workflow_run_response.run_id}")
+
         inputs = PipelineInput(
             message=primary_input,
             workflow_session_state=self.workflow_session_state,
@@ -512,10 +618,14 @@ class Workflow:
             images=images,
             videos=videos,
         )
+        log_debug(
+            f"Created async pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
+        )
 
         self.update_agents_and_teams_session_info()
 
         if stream:
+            log_debug("Starting async streaming execution")
             return self.aexecute_pipeline_stream(
                 pipeline=pipeline,
                 pipeline_input=inputs,
@@ -523,6 +633,7 @@ class Workflow:
                 stream_intermediate_steps=stream_intermediate_steps,
             )
         else:
+            log_debug("Starting async non-streaming execution")
             return await self.aexecute_pipeline(
                 pipeline=pipeline, pipeline_input=inputs, workflow_run_response=workflow_run_response
             )
@@ -605,8 +716,11 @@ class Workflow:
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from storage or create a new one"""
+        log_debug(f"Current session_id: {self.session_id}")
+
         if self.workflow_session is not None and not force:
             if self.session_id is not None and self.workflow_session.session_id == self.session_id:
+                log_debug("Using existing workflow session")
                 return self.workflow_session.session_id
 
         if self.storage is not None:
@@ -632,8 +746,12 @@ class Workflow:
 
     def new_session(self) -> None:
         """Create a new workflow session"""
+        log_debug("Creating new workflow session")
+
         self.workflow_session = None
         self.session_id = str(uuid4())
+
+        log_debug(f"New session ID: {self.session_id}")
         self.load_session(force=True)
 
     def print_response(
@@ -1595,32 +1713,51 @@ class Workflow:
     def _update_executor_workflow_session_state(self, executor) -> None:
         """Update executor with workflow_session_state"""
         if self.workflow_session_state is not None:
+            log_debug(f"Updating executor {type(executor).__name__} with workflow session state")
+            log_debug(f"Session state keys: {list(self.workflow_session_state.keys())}")
+
             # Initialize session_state if it doesn't exist
             if not hasattr(executor, "workflow_session_state") or executor.workflow_session_state is None:
                 executor.workflow_session_state = {}
+                log_debug("Initialized empty workflow_session_state for executor")
 
             # Update session_state with workflow_session_state
             from agno.utils.merge_dict import merge_dictionaries
 
             merge_dictionaries(executor.workflow_session_state, self.workflow_session_state)
+            log_debug(f"Merged workflow session state into executor")
 
     def _collect_workflow_session_state_from_agents_and_teams(self):
         """Collect updated workflow_session_state from agents after task execution"""
+        log_debug("Collecting workflow session state from agents and teams")
+
         if self.workflow_session_state is None:
             self.workflow_session_state = {}
+            log_debug("Initialized empty workflow session state")
 
         # Collect state from all agents in all pipelines
         for pipeline in self.pipelines:
+            log_debug(f"Collecting state from pipeline: {pipeline.name}")
             for task in pipeline.tasks:
+                log_debug(f"Collecting state from task: {task.name}")
                 executor = task._active_executor
                 if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
+                    log_debug(
+                        f"Found session state in {type(executor).__name__}: {list(executor.workflow_session_state.keys())}"
+                    )
                     # Merge the agent's session state back into workflow session state
                     from agno.utils.merge_dict import merge_dictionaries
 
                     merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
+                    log_debug("Merged executor session state into workflow")
 
                 # If it's a team, collect from all members
                 if hasattr(executor, "members"):
+                    log_debug(f"Collecting state from {len(executor.members)} team members")
                     for member in executor.members:
                         if hasattr(member, "workflow_session_state") and member.workflow_session_state:
+                            log_debug(
+                                f"Found session state in team member {type(member).__name__}: {list(member.workflow_session_state.keys())}"
+                            )
                             merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
+                            log_debug("Merged team member session state into workflow")
