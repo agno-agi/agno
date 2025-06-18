@@ -45,6 +45,14 @@ class BaseDb(ABC):
     # --- READ ---
 
     @abstractmethod
+    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_runs(self) -> List[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_runs(self, session_id: str, session_type: SessionType) -> List[Union[RunResponse, TeamRunResponse]]:
         raise NotImplementedError
 

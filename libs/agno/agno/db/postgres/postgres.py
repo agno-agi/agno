@@ -701,17 +701,6 @@ class PostgresDb(BaseDb):
 
     # -- Eval methods --
 
-    def get_eval_table(self) -> Table:
-        """Get or create the eval table."""
-        if not hasattr(self, "eval_table"):
-            if self.eval_table_name is None:
-                raise ValueError("Eval table was not provided on initialization")
-            log_info(f"Getting eval table: {self.eval_table_name}")
-            self.eval_table = self.get_or_create_table(
-                table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-            )
-        return self.eval_table
-
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database."""
         try:
@@ -727,3 +716,46 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
             return None
+
+    def get_eval_table(self) -> Table:
+        """Get or create the eval table."""
+        if not hasattr(self, "eval_table"):
+            if self.eval_table_name is None:
+                raise ValueError("Eval table was not provided on initialization")
+            log_info(f"Getting eval table: {self.eval_table_name}")
+            self.eval_table = self.get_or_create_table(
+                table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+            )
+        return self.eval_table
+
+    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+        """Get an eval run from the database."""
+        try:
+            table = self.get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return EvalRunRecord.model_validate(result._mapping)
+
+        except Exception as e:
+            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
+            return None
+
+    def get_eval_runs(self) -> List[EvalRunRecord]:
+        """Get all eval runs from the database."""
+        try:
+            table = self.get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                result = sess.execute(stmt).fetchall()
+
+                return [EvalRunRecord.model_validate(row._mapping) for row in result]
+
+        except Exception as e:
+            log_debug(f"Exception getting eval runs: {e}")
+            return []
