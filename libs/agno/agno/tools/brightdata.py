@@ -1,9 +1,13 @@
+import base64
 import json
 from os import getenv
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
+from agno.agent import Agent
+from agno.media import ImageArtifact
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     import requests
@@ -15,26 +19,32 @@ class BrightDataTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        zone: str = "unlocker",
+        serp_zone: str = "serp_api",
+        web_unlocker_zone: str = "web_unlocker1",
         scrape_as_markdown: bool = True,
         get_screenshot: bool = False,
-        search_engine: bool = False,
-        web_data_feed: bool = False,
+        search_engine: bool = True,
+        web_data_feed: bool = True,
         verbose: bool = False,
+        timeout: int = 600,
         **kwargs,
     ):
         self.api_key = api_key or getenv("BRIGHT_DATA_API_KEY")
         if not self.api_key:
-            logger.warning("No Bright Data API key provided")
-        self.zone = getenv("BRIGHT_DATA_ZONE", zone)
-        if not self.zone:
-            logger.warning("No Bright Data Zone  provided")
+            log_error("No Bright Data API key provided")
+            raise ValueError(
+                "No Bright Data API key provided. Please provide an api_key or set the BRIGHT_DATA_API_KEY environment variable."
+            )
+
         self.verbose = verbose
         self.endpoint = "https://api.brightdata.com/request"
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
+        self.web_unlocker_zone = getenv("BRIGHT_DATA_WEB_UNLOCKER_ZONE", web_unlocker_zone)
+        self.serp_zone = getenv("BRIGHT_DATA_SERP_ZONE", serp_zone)
+        self.timeout = timeout
 
         tools: List[Any] = []
 
@@ -64,13 +74,12 @@ class BrightDataTools(Toolkit):
         except Exception as e:
             raise Exception(f"Request failed: {e}")
 
-    def scrape_as_markdown(self, url: str, zone: Optional[str] = None) -> str:
+    def scrape_as_markdown(self, url: str) -> str:
         """
         Scrape a webpage and return content in Markdown format.
 
         Args:
             url (str): URL to scrape
-            zone (Optional[str]): Override default zone
 
         Returns:
             str: Scraped content as Markdown
@@ -85,7 +94,7 @@ class BrightDataTools(Toolkit):
 
             payload = {
                 "url": url,
-                "zone": zone or self.zone,
+                "zone": self.web_unlocker_zone,
                 "format": "raw",
                 "data_format": "markdown",
             }
@@ -95,17 +104,15 @@ class BrightDataTools(Toolkit):
         except Exception as e:
             return f"Error scraping URL {url}: {e}"
 
-    def get_screenshot(self, url: str, output_path: str = "screenshot.png", zone: Optional[str] = None) -> str:
+    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> str:
         """
-        Take a screenshot of a webpage.
+        Capture a screenshot of a webpage
 
         Args:
             url (str): URL to screenshot
-            output_path (str): Path to save the screenshot
-            zone (Optional[str]): Override default zone
 
         Returns:
-            str: Status message with path to saved screenshot
+            str: A message indicating success (including media ID) or failure.
         """
         try:
             if not self.api_key:
@@ -117,7 +124,7 @@ class BrightDataTools(Toolkit):
 
             payload = {
                 "url": url,
-                "zone": zone or self.zone,
+                "zone": self.web_unlocker_zone,
                 "format": "raw",
                 "data_format": "screenshot",
             }
@@ -127,10 +134,22 @@ class BrightDataTools(Toolkit):
             if response.status_code != 200:
                 raise Exception(f"Error {response.status_code}: {response.text}")
 
-            with open(output_path, "wb") as f:
-                f.write(response.content)
+            image_bytes = response.content
+            base64_encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+            log_debug(f"Base64 encoded image: {type(base64_encoded_image)}")
 
-            return f"Screenshot saved to: {output_path}"
+            media_id = str(uuid4())
+
+            agent.add_image(
+                ImageArtifact(
+                    id=media_id,
+                    content=base64_encoded_image.encode("utf-8"),
+                    mime_type="image/png",
+                    original_prompt=f"Screenshot of {url}",
+                )
+            )
+            log_debug(f"Screenshot captured and added as artifact with ID: {media_id}")
+            return f"Screenshot captured and added as artifact with ID: {media_id}"
         except Exception as e:
             return f"Error taking screenshot of {url}: {e}"
 
@@ -141,7 +160,6 @@ class BrightDataTools(Toolkit):
         num_results: int = 10,
         language: Optional[str] = None,
         country_code: Optional[str] = None,
-        zone: Optional[str] = None,
     ) -> str:
         """
         Search using Google, Bing, or Yandex and return results in Markdown.
@@ -152,7 +170,6 @@ class BrightDataTools(Toolkit):
             num_results (int): Number of results to return
             language (Optional[str]): Two-letter language code
             country_code (Optional[str]): Two-letter country code
-            zone (Optional[str]): Override default zone
 
         Returns:
             str: Search results as Markdown
@@ -194,7 +211,7 @@ class BrightDataTools(Toolkit):
 
             payload = {
                 "url": search_url,
-                "zone": zone or self.zone,
+                "zone": self.serp_zone,
                 "format": "raw",
                 "data_format": "markdown",
             }
@@ -209,7 +226,6 @@ class BrightDataTools(Toolkit):
         source_type: str,
         url: str,
         num_of_reviews: Optional[int] = None,
-        timeout: int = 600,
     ) -> str:
         """
         Retrieve structured web data from various sources like LinkedIn, Amazon, Instagram, etc.
@@ -218,7 +234,6 @@ class BrightDataTools(Toolkit):
             source_type (str): Type of data source (e.g., 'linkedin_person_profile', 'amazon_product')
             url (str): URL of the web resource to retrieve data from
             num_of_reviews (Optional[int]): Number of reviews to retrieve
-            timeout (int): Maximum time in seconds to wait for data retrieval
 
         Returns:
             str: Structured data from the requested source as JSON
@@ -289,7 +304,7 @@ class BrightDataTools(Toolkit):
 
             trigger_response = requests.post(
                 "https://api.brightdata.com/datasets/v3/trigger",
-                params={"dataset_id": dataset_id, "include_errors": True},
+                params={"dataset_id": dataset_id, "include_errors": "true"},
                 headers=self.headers,
                 json=[request_data],
             )
@@ -303,7 +318,7 @@ class BrightDataTools(Toolkit):
             import time
 
             attempts = 0
-            max_attempts = timeout
+            max_attempts = self.timeout
 
             while attempts < max_attempts:
                 try:
