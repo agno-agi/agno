@@ -2,8 +2,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
-from agno.api.evals import async_create_eval_run, create_eval_run
-from agno.api.schemas.evals import EvalRunCreate, EvalType
+from agno.db.base import BaseDb
+from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.utils.log import log_debug, logger
 
 if TYPE_CHECKING:
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 def log_eval_run(
+    db: BaseDb,
     run_id: str,
     run_data: dict,
     eval_type: EvalType,
@@ -20,14 +21,15 @@ def log_eval_run(
     model_id: Optional[str] = None,
     model_provider: Optional[str] = None,
     name: Optional[str] = None,
-    evaluated_entity_name: Optional[str] = None,
+    evaluated_component_name: Optional[str] = None,
     team_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
 ) -> None:
     """Call the API to create an evaluation run."""
 
     try:
-        create_eval_run(
-            eval_run=EvalRunCreate(
+        db.create_eval_run(
+            EvalRunRecord(
                 run_id=run_id,
                 eval_type=eval_type,
                 eval_data=run_data,
@@ -35,8 +37,9 @@ def log_eval_run(
                 model_id=model_id,
                 model_provider=model_provider,
                 name=name,
-                evaluated_entity_name=evaluated_entity_name,
+                evaluated_component_name=evaluated_component_name,
                 team_id=team_id,
+                workflow_id=workflow_id,
             )
         )
     except Exception as e:
@@ -44,6 +47,7 @@ def log_eval_run(
 
 
 async def async_log_eval_run(
+    db: BaseDb,
     run_id: str,
     run_data: dict,
     eval_type: EvalType,
@@ -51,23 +55,25 @@ async def async_log_eval_run(
     model_id: Optional[str] = None,
     model_provider: Optional[str] = None,
     name: Optional[str] = None,
-    evaluated_entity_name: Optional[str] = None,
+    evaluated_component_name: Optional[str] = None,
     team_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
 ) -> None:
-    """Asycn call to the API to create an evaluation run."""
+    """Call the API to create an evaluation run."""
 
     try:
-        await async_create_eval_run(
-            eval_run=EvalRunCreate(
+        db.create_eval_run(
+            EvalRunRecord(
                 run_id=run_id,
                 eval_type=eval_type,
                 eval_data=run_data,
                 agent_id=agent_id,
                 model_id=model_id,
                 model_provider=model_provider,
-                team_id=team_id,
                 name=name,
-                evaluated_entity_name=evaluated_entity_name,
+                evaluated_component_name=evaluated_component_name,
+                team_id=team_id,
+                workflow_id=workflow_id,
             )
         )
     except Exception as e:

@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List, Optional, Union
 
+from agno.eval.schemas import EvalRunRecord
 from agno.memory.db.schema import MemoryRow
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
@@ -76,6 +77,10 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- WRITE ---
+
+    @abstractmethod
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        raise NotImplementedError
 
     @abstractmethod
     def create_table(self) -> None:

@@ -6,7 +6,8 @@ from os import getenv
 from typing import TYPE_CHECKING, Callable, List, Optional
 from uuid import uuid4
 
-from agno.api.schemas.evals import EvalType
+from agno.db.base import BaseDb
+from agno.eval.schemas import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.utils.log import logger
 from agno.utils.timer import Timer
@@ -179,8 +180,8 @@ class PerformanceEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform. On by default.
-    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
+    # The database to store Evaluation results
+    db: Optional[BaseDb] = None
 
     def _measure_time(self) -> float:
         """Measure execution time for a single run."""
@@ -389,13 +390,14 @@ class PerformanceEval:
             self.result.print_summary(console)
 
         # 7. Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.func.__name__,
+                evaluated_component_name=self.func.__name__,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -496,13 +498,14 @@ class PerformanceEval:
             self.result.print_summary(console)
 
         # 7. Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             await async_log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.func.__name__,
+                evaluated_component_name=self.func.__name__,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

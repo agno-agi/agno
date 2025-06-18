@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.eval.schemas import EvalRunRecord
 from agno.memory.db.schema import MemoryRow
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
@@ -232,17 +233,6 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
-
-    def get_user_memory_table(self) -> Table:
-        """Get or create the user memory table."""
-        if not hasattr(self, "user_memory_table"):
-            if self.user_memory_table_name is None:
-                raise ValueError("User memory table was not provided on initialization")
-            log_info(f"Getting user memory table: {self.user_memory_table_name}")
-            self.user_memory_table = self.get_or_create_table(
-                table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
-            )
-        return self.user_memory_table
 
     def get_table_for_session_type(self, session_type: Optional[SessionType] = None) -> Optional[Table]:
         """Map the given session type into the appropriate table.
@@ -585,6 +575,17 @@ class PostgresDb(BaseDb):
 
     # -- Memory methods --
 
+    def get_user_memory_table(self) -> Table:
+        """Get or create the user memory table."""
+        if not hasattr(self, "user_memory_table"):
+            if self.user_memory_table_name is None:
+                raise ValueError("User memory table was not provided on initialization")
+            log_info(f"Getting user memory table: {self.user_memory_table_name}")
+            self.user_memory_table = self.get_or_create_table(
+                table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
+            )
+        return self.user_memory_table
+
     def get_user_memory(self, memory_id: str, table: Optional[Table] = None) -> Optional[MemoryRow]:
         """Get a memory from the database."""
         try:
@@ -697,3 +698,32 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
             return False
+
+    # -- Eval methods --
+
+    def get_eval_table(self) -> Table:
+        """Get or create the eval table."""
+        if not hasattr(self, "eval_table"):
+            if self.eval_table_name is None:
+                raise ValueError("Eval table was not provided on initialization")
+            log_info(f"Getting eval table: {self.eval_table_name}")
+            self.eval_table = self.get_or_create_table(
+                table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+            )
+        return self.eval_table
+
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        """Create an EvalRunRecord in the database."""
+        try:
+            table = self.get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values({"created_at": int(time.time()), **eval_run.model_dump()})
+                sess.execute(stmt)
+                sess.commit()
+
+            return eval_run
+
+        except Exception as e:
+            log_error(f"Error creating eval run: {e}")
+            return None

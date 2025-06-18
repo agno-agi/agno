@@ -62,8 +62,22 @@ USER_MEMORY_TABLE_SCHEMA = {
     "feedback": {"type": String, "nullable": True},
     "last_updated": {"type": BigInteger, "nullable": True},
 }
+
+EVAL_TABLE_SCHEMA = {
+    "run_id": {"type": String, "primary_key": True, "nullable": False},
+    "eval_type": {"type": String, "nullable": False},
+    "eval_data": {"type": JSON, "nullable": False},
+    "name": {"type": String, "nullable": True},
+    "agent_id": {"type": String, "nullable": True},
+    "team_id": {"type": String, "nullable": True},
+    "workflow_id": {"type": String, "nullable": True},
+    "model_id": {"type": String, "nullable": True},
+    "model_provider": {"type": String, "nullable": True},
+    "evaluated_component_name": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+}
+
 LEARNING_TABLE_SCHEMA = {}
-EVAL_TABLE_SCHEMA = {}
 
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
@@ -81,8 +95,8 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
         "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "evals": EVAL_TABLE_SCHEMA,
         "learnings": {},
-        "eval_runs": {},
     }
 
     schema = schemas.get(table_type, {})

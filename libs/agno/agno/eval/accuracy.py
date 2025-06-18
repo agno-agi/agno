@@ -7,7 +7,8 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.api.schemas.evals import EvalType
+from agno.db.base import BaseDb
+from agno.eval.schemas import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
@@ -167,8 +168,8 @@ class AccuracyEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform. On by default.
-    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
+    # The database to store Evaluation results
+    db: Optional[BaseDb] = None
 
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the evaluator fields and default instructions."""
@@ -398,22 +399,23 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         if self.print_summary or print_summary:
             self.result.print_summary(console)
 
-        # Log results to the Agno platform if requested
+        # Log results to the Agno DB if requested
         if self.agent is not None:
             agent_id = self.agent.agent_id
             team_id = None
             model_id = self.agent.model.id if self.agent.model is not None else None
             model_provider = self.agent.model.provider if self.agent.model is not None else None
-            evaluated_entity_name = self.agent.name
+            evaluated_component_name = self.agent.name
         elif self.team is not None:
             agent_id = None
             team_id = self.team.team_id
             model_id = self.team.model.id if self.team.model is not None else None
             model_provider = self.team.model.provider if self.team.model is not None else None
-            evaluated_entity_name = self.team.name
+            evaluated_component_name = self.team.name
 
-        if self.monitoring:
+        if self.db:
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
@@ -422,7 +424,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_id=model_id,
                 model_provider=model_provider,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=evaluated_entity_name,
+                evaluated_component_name=evaluated_component_name,
+                workflow_id=None,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -520,19 +523,33 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         if self.print_summary or print_summary:
             self.result.print_summary(console)
 
-        # Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.agent is not None:
+            agent_id = self.agent.agent_id
+            team_id = None
+            model_id = self.agent.model.id if self.agent.model is not None else None
+            model_provider = self.agent.model.provider if self.agent.model is not None else None
+            evaluated_component_name = self.agent.name
+        elif self.team is not None:
+            agent_id = None
+            team_id = self.team.team_id
+            model_id = self.team.model.id if self.team.model is not None else None
+            model_provider = self.team.model.provider if self.team.model is not None else None
+            evaluated_component_name = self.team.name
+
+        # Log results to the Agno DB if requested
+        if self.db:
             await async_log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=self.agent.agent_id if self.agent is not None else None,
-                model_id=self.agent.model.id if self.agent is not None and self.agent.model is not None else None,
-                model_provider=self.agent.model.provider
-                if self.agent is not None and self.agent.model is not None
-                else None,
+                agent_id=agent_id,
+                model_id=model_id,
+                model_provider=model_provider,
                 name=self.name if self.name is not None else None,
-                evaluated_entity_name=self.agent.name if self.agent is not None else None,
+                evaluated_component_name=evaluated_component_name,
+                team_id=team_id,
+                workflow_id=None,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -596,22 +613,23 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     eval_id=self.eval_id,
                     result=self.result,
                 )
-        # Log results to the Agno platform if requested
-        if self.monitoring:
+        # Log results to the Agno DB if requested
+        if self.db:
             if self.agent is not None:
                 agent_id = self.agent.agent_id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
-                evaluated_entity_name = self.agent.name
+                evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
                 team_id = self.team.team_id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
-                evaluated_entity_name = self.team.name
+                evaluated_component_name = self.team.name
 
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
@@ -620,7 +638,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
-                evaluated_entity_name=evaluated_entity_name,
+                evaluated_component_name=evaluated_component_name,
+                workflow_id=None,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -684,22 +703,23 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     eval_id=self.eval_id,
                     result=self.result,
                 )
-        # Log results to the Agno platform if requested
-        if self.monitoring:
+        # Log results to the Agno DB if requested
+        if self.db:
             if self.agent is not None:
                 agent_id = self.agent.agent_id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
-                evaluated_entity_name = self.agent.name
+                evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
                 team_id = self.team.team_id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
-                evaluated_entity_name = self.team.name
+                evaluated_component_name = self.team.name
 
             await async_log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
@@ -708,7 +728,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
-                evaluated_entity_name=evaluated_entity_name,
+                evaluated_component_name=evaluated_component_name,
+                workflow_id=None,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
