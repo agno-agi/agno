@@ -44,7 +44,7 @@ class TeamSession:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[TeamSession]:
         if data is None or data.get("session_id") is None:
-            logger.warning("AgentSession is missing session_id")
+            logger.warning("TeamSession is missing session_id")
             return None
         return cls(
             session_id=data.get("session_id"),  # type: ignore

@@ -45,7 +45,14 @@ class TeamMemberInteraction:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamMemberInteraction":
-        return cls(member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"]))
+        if data["response"].get("agent_id"):
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"])
+            )
+        else:
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=TeamRunResponse.from_dict(data["response"])
+            )
 
 
 @dataclass
@@ -692,6 +699,8 @@ class Memory:
     def get_messages_from_last_n_runs(
         self,
         session_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         last_n: Optional[int] = None,
         skip_role: Optional[str] = None,
         skip_history_messages: bool = True,
@@ -699,6 +708,8 @@ class Memory:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
             session_id: The session id to get the messages from.
+            agent_id: The id of the agent to get the messages from.
+            team_id: The id of the team to get the messages from.
             last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
             skip_role: Skip messages with this role.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
@@ -709,6 +720,10 @@ class Memory:
             return []
 
         session_runs = self.runs.get(session_id, [])
+        if agent_id:
+            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+        if team_id:
+            session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
         system_message = None
@@ -1078,3 +1093,21 @@ class Memory:
                 if interaction.response.audio:
                     audio.extend(interaction.response.audio)
         return audio
+
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        copied_obj = cls.__new__(cls)
+        memo[id(self)] = copied_obj
+
+        # Deep copy attributes
+        for k, v in self.__dict__.items():
+            # Reuse db
+            if k in {"db", "memory_manager", "summary_manager"}:
+                setattr(copied_obj, k, v)
+            else:
+                setattr(copied_obj, k, deepcopy(v, memo))
+
+        return copied_obj

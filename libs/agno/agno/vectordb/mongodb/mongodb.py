@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
+from bson import ObjectId
+
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -624,15 +626,17 @@ class MongoDb(VectorDb):
 
                 results = list(collection.aggregate(pipeline))  # type: ignore
 
-                docs = [
-                    Document(
-                        id=str(doc["_id"]),
-                        name=doc.get("name"),
-                        content=doc["content"],
-                        meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                docs = []
+                for doc in results:
+                    # Convert ObjectIds to strings before creating Document
+                    clean_doc = self._convert_objectids_to_strings(doc)
+                    document = Document(
+                        id=str(clean_doc["_id"]),
+                        name=clean_doc.get("name"),
+                        content=clean_doc["content"],
+                        meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
                     )
-                    for doc in results
-                ]
+                    docs.append(document)
 
                 log_info(f"Search completed. Found {len(docs)} documents.")
                 return docs
@@ -805,15 +809,19 @@ class MongoDb(VectorDb):
 
         try:
             results = list(collection.aggregate(pipeline))
-            docs = [
-                Document(
-                    id=str(doc["_id"]),
-                    name=doc.get("name"),
-                    content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+
+            docs = []
+            for doc in results:
+                # Convert ObjectIds to strings before creating Document
+                clean_doc = self._convert_objectids_to_strings(doc)
+                document = Document(
+                    id=str(clean_doc["_id"]),
+                    name=clean_doc.get("name"),
+                    content=clean_doc["content"],
+                    meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
                 )
-                for doc in results
-            ]
+                docs.append(document)
+
             log_info(f"Hybrid search completed. Found {len(docs)} documents.")
             return docs
         except errors.OperationFailure as e:
@@ -1091,3 +1099,24 @@ class MongoDb(VectorDb):
         # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
         metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
         return metric_mapping.get(self.distance_metric, "COS")
+
+    def _convert_objectids_to_strings(self, obj: Any) -> Any:
+        """
+        Recursively convert MongoDB ObjectIds to strings in any data structure.
+
+        Args:
+            obj: Any object that might contain ObjectIds
+
+        Returns:
+            The same object with ObjectIds converted to strings
+        """
+        if ObjectId and isinstance(obj, ObjectId):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {key: self._convert_objectids_to_strings(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_objectids_to_strings(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self._convert_objectids_to_strings(item) for item in obj)
+        else:
+            return obj
