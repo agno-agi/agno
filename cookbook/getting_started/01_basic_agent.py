@@ -4,12 +4,6 @@ This example shows how to create a basic AI agent with a distinct personality.
 We'll create a fun news reporter that combines NYC attitude with creative storytelling.
 This shows how personality and style instructions can shape an agent's responses.
 
-Example prompts to try:
-- "What's the latest scoop from Central Park?"
-- "Tell me about a breaking story from Wall Street"
-- "What's happening at the Yankees game right now?"
-- "Give me the buzz about a new Broadway show"
-
 Run `pip install openai agno` to install dependencies.
 """
 

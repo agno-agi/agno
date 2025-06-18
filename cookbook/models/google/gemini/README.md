@@ -2,7 +2,7 @@
 
 > Note: Fork and clone this repository if needed
 >
-> This cookbook is for testing Gemini models. You can also 
+> This cookbook is for testing Gemini models. You can also
 
 ### 1. Create and activate a virtual environment
 
@@ -11,10 +11,20 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export `GOOGLE_API_KEY`
+### 2. Export environment variables
+
+If you want to use the Gemini API, you need to export the following environment variables:
 
 ```shell
 export GOOGLE_API_KEY=***
+```
+
+If you want to use Vertex AI, you need to export the following environment variables:
+
+```shell
+export GOOGLE_GENAI_USE_VERTEXAI="true"
+export GOOGLE_CLOUD_PROJECT="your-project-id"
+export GOOGLE_CLOUD_LOCATION="your-location"
 ```
 
 ### 3. Install libraries
@@ -44,7 +54,6 @@ python cookbook/models/google/gemini/basic.py
 ```shell
 python cookbook/models/google/gemini/tool_use.py
 ```
-
 
 ### 6. Run Agent that returns structured output
 

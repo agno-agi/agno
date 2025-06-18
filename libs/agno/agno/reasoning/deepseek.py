@@ -7,10 +7,8 @@ from agno.models.message import Message
 from agno.utils.log import logger
 
 
-def get_deepseek_reasoning_agent(reasoning_model: Model, monitoring: bool = False) -> "Agent":  # type: ignore  # noqa: F821
-    from agno.agent import Agent
-
-    return Agent(model=reasoning_model, monitoring=monitoring)
+def is_deepseek_reasoning_model(reasoning_model: Model) -> bool:
+    return reasoning_model.__class__.__name__ == "DeepSeek" and reasoning_model.id.lower() == "deepseek-reasoner"
 
 
 def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821

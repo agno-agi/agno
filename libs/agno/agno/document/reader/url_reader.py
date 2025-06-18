@@ -1,64 +1,59 @@
-from time import sleep
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
+
+import httpx
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import logger
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
+from agno.utils.log import log_debug
 
 
 class URLReader(Reader):
     """Reader for general URL content"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
-        try:
-            import httpx
-        except ImportError:
-            raise ImportError("`httpx` not installed. Please install it via `pip install httpx`.")
-
-        logger.info(f"Reading: {url}")
+        log_debug(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
-        for attempt in range(3):
-            try:
-                response = httpx.get(url)
-                break
-            except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
-                    raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
+        response = fetch_with_retry(url, proxy=self.proxy)
 
-        try:
-            logger.debug(f"Status: {response.status_code}")
-            logger.debug(f"Content size: {len(response.content)} bytes")
-        except Exception:
-            pass
+        document = self._create_document(url, response.text)
+        if self.chunk:
+            return self.chunk_document(document)
+        return [document]
 
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            raise
+    async def async_read(self, url: str) -> List[Document]:
+        """Async version of read method"""
+        if not url:
+            raise ValueError("No url provided")
 
-        # Create a clean document name from the URL
+        log_debug(f"Reading async: {url}")
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
+            response = await async_fetch_with_retry(url, client=client)
+
+        document = self._create_document(url, response.text)
+        if self.chunk:
+            return await self.chunk_documents_async([document])
+        return [document]
+
+    def _create_document(self, url: str, content: str) -> Document:
+        """Helper method to create a document from URL content"""
         parsed_url = urlparse(url)
         doc_name = parsed_url.path.strip("/").replace("/", "_").replace(" ", "_")
         if not doc_name:
             doc_name = parsed_url.netloc
 
-        # Create a single document with the URL content
-        document = Document(
+        return Document(
             name=doc_name,
             id=doc_name,
             meta_data={"url": url},
-            content=response.text,
+            content=content,
         )
-
-        if self.chunk:
-            return self.chunk_document(document)
-        return [document]
