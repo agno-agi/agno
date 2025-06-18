@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, Optional, Union, List
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -11,7 +12,7 @@ from agno.run.v2.workflow import (
 )
 from agno.team import Team
 from agno.utils.log import log_debug, logger
-from agno.workflow.v2.types import TaskInput, TaskOutput
+from agno.workflow.v2.types import TaskInput, TaskOutput, WorkflowExecutionInput
 
 TaskExecutor = Callable[
     [TaskInput],
@@ -51,6 +52,12 @@ class Task:
     # If False, only warn about missing inputs
     strict_input_validation: bool = False
 
+    # Independent task configuration
+    independent: bool = False  # NEW: Mark task as independent
+    message: Optional[str] = None  # NEW: Override message for this task
+    # NEW: Override message_data
+    message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None
+
     _retry_count: int = 0
 
     def __init__(
@@ -65,6 +72,9 @@ class Task:
         timeout_seconds: Optional[int] = None,
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
+        independent: bool = False,
+        message: Optional[str] = None,
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
     ):
         self.name = name
         self.agent = agent
@@ -80,6 +90,9 @@ class Task:
         self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
+        self.independent = independent
+        self.message = message
+        self.message_data = message_data
 
         # Set the active executor
         self._set_active_executor()
@@ -98,6 +111,29 @@ class Task:
     def executor_type(self) -> str:
         """Get the type of the current executor"""
         return self._executor_type
+
+    def _create_independent_task_input(self, pipeline_input: WorkflowExecutionInput) -> TaskInput:
+        """Create TaskInput for independent task, overriding pipeline chaining"""
+        # Otherwise, create TaskInput with task-level overrides
+        task_message = self.message if self.message is not None else None
+        task_message_data = self.message_data if self.message_data is not None else None
+
+        log_debug(f"Creating independent TaskInput for task: {self.name}")
+        log_debug(f"Task message: {task_message}")
+        log_debug(f"Task message_data: {task_message_data}")
+
+        return TaskInput(
+            message=task_message,
+            message_data=task_message_data,
+            previous_task_content=None,
+            images=pipeline_input.images or [],
+            videos=pipeline_input.videos or [],
+            audio=pipeline_input.audio or [],
+        )
+
+    def should_use_independent_input(self) -> bool:
+        """Check if this task should use independent input"""
+        return self.independent or self.message is not None or self.message_data is not None
 
     def _validate_executor_config(self):
         """Validate that only one executor type is provided"""
@@ -186,8 +222,12 @@ class Task:
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
-                        images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
-                        videos = self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        images = (
+                            self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
+                        )
+                        videos = (
+                            self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        )
                         response = self.active_executor.run(
                             message=message,
                             images=images,
@@ -267,8 +307,12 @@ class Task:
                     message = self._prepare_message(task_input.message, task_input.message_data)
 
                     if self._executor_type in ["agent", "team"]:
-                        images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
-                        videos = self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        images = (
+                            self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
+                        )
+                        videos = (
+                            self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        )
                         response_stream = self.active_executor.run(
                             message=message,
                             images=images,
@@ -364,8 +408,12 @@ class Task:
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
-                        images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
-                        videos = self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        images = (
+                            self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
+                        )
+                        videos = (
+                            self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        )
                         response = await self.active_executor.arun(
                             message=message,
                             images=images,
@@ -447,8 +495,12 @@ class Task:
                 else:
                     message = self._prepare_message(task_input.message, task_input.message_data)
                     if self._executor_type in ["agent", "team"]:
-                        images = self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
-                        videos = self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        images = (
+                            self._convert_image_artifacts_to_images(task_input.images) if task_input.images else None
+                        )
+                        videos = (
+                            self._convert_video_artifacts_to_videos(task_input.videos) if task_input.videos else None
+                        )
                         response_stream = await self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,

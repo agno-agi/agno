@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Literal, Optional, Union, overload, Awaitable
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Literal, Optional, Union, overload
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -29,14 +29,14 @@ from agno.workflow.v2.task import Task
 from agno.workflow.v2.types import WorkflowExecutionInput
 
 WorkflowExecutor = Callable[
-            ["Workflow", WorkflowExecutionInput],
-            Union[
-                Any,
-                Iterator[Any],
-                Awaitable[Any],
-                AsyncIterator[Any],
-            ]
-        ]
+    ["Workflow", WorkflowExecutionInput],
+    Union[
+        Any,
+        Iterator[Any],
+        Awaitable[Any],
+        AsyncIterator[Any],
+    ],
+]
 
 
 @dataclass
@@ -233,7 +233,6 @@ class Workflow:
 
         log_debug(f"Starting workflow execution with streaming: {self.run_id}")
         workflow_run_response.status = RunStatus.running
-
 
         if self.executor:
             yield WorkflowStartedEvent(

@@ -71,16 +71,20 @@ class Pipeline:
 
             logger.info(f"Executing task {i + 1}/{len(self.tasks)}: {task.name}")
 
-            # Create TaskInput for this task
-            log_debug(f"Created TaskInput for task {task.name}")
-            task_input = TaskInput(
-                message=pipeline_input.message,
-                message_data=pipeline_input.message_data,
-                previous_task_content=previous_task_content,
-                images=pipeline_images,
-                videos=pipeline_videos,
-                audio=pipeline_audio,
-            )
+            # Create TaskInput for this task - check if independent
+            if task.should_use_independent_input():
+                log_debug(f"Task {task.name} is independent, using task-specific input")
+                task_input = task._create_independent_task_input(pipeline_input)
+            else:
+                log_debug(f"Task {task.name} is chained, using pipeline input with previous content")
+                task_input = TaskInput(
+                    message=pipeline_input.message,
+                    message_data=pipeline_input.message_data,
+                    previous_task_content=previous_task_content,
+                    images=pipeline_images,
+                    videos=pipeline_videos,
+                    audio=pipeline_audio,
+                )
 
             # Execute the task (non-streaming)
             task_output = task.execute(task_input, session_id=session_id, user_id=user_id)
@@ -89,11 +93,12 @@ class Pipeline:
             if task_output is None:
                 raise RuntimeError(f"Task {task.name} did not return a TaskOutput")
 
-            # Update the input for the next task
-            previous_task_content = task_output.content
-            pipeline_images.extend(task_output.images or [])
-            pipeline_videos.extend(task_output.videos or [])
-            pipeline_audio.extend(task_output.audio or [])
+            # Update the input for the next task (only if not independent)
+            if not task.should_use_independent_input():
+                previous_task_content = task_output.content
+                pipeline_images.extend(task_output.images or [])
+                pipeline_videos.extend(task_output.videos or [])
+                pipeline_audio.extend(task_output.audio or [])
 
             # Collect the TaskOutput for storage
             collected_task_outputs.append(task_output)
