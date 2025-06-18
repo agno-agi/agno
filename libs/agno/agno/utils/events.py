@@ -109,6 +109,7 @@ def create_run_response_paused_event(
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
+        content=from_run_response.content,
     )
 
 

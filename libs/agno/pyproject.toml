@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.2"
+version = "1.6.3"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -287,6 +287,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
+target-version = "py39"
 # Ignore `F401` (import violations) in all `__init__.py` files
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
