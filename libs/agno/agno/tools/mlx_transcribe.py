@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import mlx_whisper
@@ -47,9 +47,8 @@ class MLXTranscribeTools(Toolkit):
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         hallucination_silence_threshold: Optional[float] = None,
         decode_options: Optional[dict] = None,
+        **kwargs,
     ):
-        super().__init__(name="mlx_transcribe")
-
         self.base_dir: Path = base_dir or Path.cwd()
         self.path_or_hf_repo: str = path_or_hf_repo
         self.verbose: Optional[bool] = verbose
@@ -66,9 +65,11 @@ class MLXTranscribeTools(Toolkit):
         self.hallucination_silence_threshold: Optional[float] = hallucination_silence_threshold
         self.decode_options: Optional[dict] = decode_options
 
-        self.register(self.transcribe)
+        tools: List[Any] = [self.transcribe]
         if read_files_in_base_dir:
-            self.register(self.read_files)
+            tools.append(self.read_files)
+
+        super().__init__(name="mlx_transcribe", tools=tools, **kwargs)
 
     def transcribe(self, file_name: str) -> str:
         """
@@ -85,7 +86,7 @@ class MLXTranscribeTools(Toolkit):
             if audio_file_path is None:
                 return "No audio file path provided"
 
-            logger.info(f"Transcribing audio file {audio_file_path}")
+            log_info(f"Transcribing audio file {audio_file_path}")
             transcription_kwargs: Dict[str, Any] = {
                 "path_or_hf_repo": self.path_or_hf_repo,
             }
@@ -130,7 +131,7 @@ class MLXTranscribeTools(Toolkit):
             str: A JSON string containing the list of files in the base directory.
         """
         try:
-            logger.info(f"Reading files in : {self.base_dir}")
+            log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
         except Exception as e:
             logger.error(f"Error reading files: {e}")

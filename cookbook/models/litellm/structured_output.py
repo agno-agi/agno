@@ -29,7 +29,7 @@ json_mode_agent = Agent(
     model=LiteLLM(id="gpt-4o"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    debug_mode=True,
+    use_json_mode=True,
 )
 
 json_mode_agent.print_response("New York")

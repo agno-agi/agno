@@ -1,9 +1,9 @@
 import json
 from os import getenv
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     import requests
@@ -32,9 +32,8 @@ class OpenWeatherTools(Toolkit):
         forecast: bool = True,
         air_pollution: bool = True,
         geocoding: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="openweather_tools")
-
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
         if not self.api_key:
             raise ValueError(
@@ -45,15 +44,17 @@ class OpenWeatherTools(Toolkit):
         self.base_url = "https://api.openweathermap.org/data/2.5"
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
-        # Register functions based on parameters
+        tools: List[Any] = []
         if current_weather:
-            self.register(self.get_current_weather)
+            tools.append(self.get_current_weather)
         if forecast:
-            self.register(self.get_forecast)
+            tools.append(self.get_forecast)
         if air_pollution:
-            self.register(self.get_air_pollution)
+            tools.append(self.get_air_pollution)
         if geocoding:
-            self.register(self.geocode_location)
+            tools.append(self.geocode_location)
+
+        super().__init__(name="openweather_tools", tools=tools, **kwargs)
 
     def _make_request(self, url: str, params: Dict) -> Dict:
         """Make a request to the OpenWeatherMap API.
@@ -85,7 +86,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing location data with coordinates.
         """
         try:
-            logger.info(f"Geocoding location: {location}")
+            log_info(f"Geocoding location: {location}")
             url = f"{self.geo_url}/direct"
             params = {"q": location, "limit": limit}
 
@@ -112,7 +113,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing current weather data.
         """
         try:
-            logger.info(f"Getting current weather for: {location}")
+            log_info(f"Getting current weather for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
@@ -153,7 +154,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing forecast data.
         """
         try:
-            logger.info(f"Getting {days}-day forecast for: {location}")
+            log_info(f"Getting {days}-day forecast for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
@@ -199,7 +200,7 @@ class OpenWeatherTools(Toolkit):
             str: JSON string containing air pollution data.
         """
         try:
-            logger.info(f"Getting air pollution data for: {location}")
+            log_info(f"Getting air pollution data for: {location}")
 
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))

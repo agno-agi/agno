@@ -22,5 +22,5 @@ class InternLM(OpenAILike):
     name: str = "InternLM"
     provider: str = "InternLM"
 
-    api_key: Optional[str] = getenv("INTERNLM_API_KEY", None)
+    api_key: Optional[str] = getenv("INTERNLM_API_KEY")
     base_url: Optional[str] = "https://internlm-chat.intern-ai.org.cn/puyu/api/v1/chat/completions"

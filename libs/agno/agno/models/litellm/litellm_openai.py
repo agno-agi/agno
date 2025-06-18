@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
+from typing import Optional
 
 from agno.models.openai.like import OpenAILike
 
@@ -8,6 +9,7 @@ from agno.models.openai.like import OpenAILike
 class LiteLLMOpenAI(OpenAILike):
     """
     A class for interacting with LiteLLM.
+
     Attributes:
         id (str): The id of the LiteLLM model. Default is "gpt-4o".
         name (str): The name of this chat model instance. Default is "LiteLLM".
@@ -19,5 +21,5 @@ class LiteLLMOpenAI(OpenAILike):
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
 
-    api_key = getenv("LITELLM_API_KEY", None)
+    api_key: Optional[str] = getenv("LITELLM_API_KEY")
     base_url: str = "http://0.0.0.0:4000"

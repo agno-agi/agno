@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     import requests
@@ -24,9 +24,8 @@ class ClickUpTools(Toolkit):
         delete_task: bool = True,
         list_spaces: bool = True,
         list_lists: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="clickup")
-
         self.api_key = api_key or os.getenv("CLICKUP_API_KEY")
         self.master_space_id = master_space_id or os.getenv("MASTER_SPACE_ID")
         self.base_url = "https://api.clickup.com/api/v2"
@@ -37,20 +36,23 @@ class ClickUpTools(Toolkit):
         if not self.master_space_id:
             raise ValueError("MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable.")
 
+        tools: List[Any] = []
         if list_tasks:
-            self.register(self.list_tasks)
+            tools.append(self.list_tasks)
         if create_task:
-            self.register(self.create_task)
+            tools.append(self.create_task)
         if get_task:
-            self.register(self.get_task)
+            tools.append(self.get_task)
         if update_task:
-            self.register(self.update_task)
+            tools.append(self.update_task)
         if delete_task:
-            self.register(self.delete_task)
+            tools.append(self.delete_task)
         if list_spaces:
-            self.register(self.list_spaces)
+            tools.append(self.list_spaces)
         if list_lists:
-            self.register(self.list_lists)
+            tools.append(self.list_lists)
+
+        super().__init__(name="clickup", tools=tools, **kwargs)
 
     def _make_request(
         self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None
@@ -175,7 +177,7 @@ class ClickUpTools(Toolkit):
 
         # Get first list in space
         response = self._make_request("GET", f"space/{space['id']}/list")
-        logger.debug(f"Lists: {response}")
+        log_debug(f"Lists: {response}")
         lists_data = response.get("lists", [])
         if not lists_data:
             return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)

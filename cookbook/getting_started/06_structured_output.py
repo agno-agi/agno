@@ -1,16 +1,9 @@
-"""🎬 Movie Script Generator - Your AI Screenwriting Partner
+"""🎬 Agent with Structured Output - Your AI Movie Script Generator
 
 This example shows how to use structured outputs with AI agents to generate
 well-formatted movie script concepts. It shows two approaches:
 1. JSON Mode: Traditional JSON response parsing
 2. Structured Output: Enhanced structured data handling
-
-Example prompts to try:
-- "Tokyo" - Get a high-tech thriller set in futuristic Japan
-- "Ancient Rome" - Experience an epic historical drama
-- "Manhattan" - Explore a modern romantic comedy
-- "Amazon Rainforest" - Adventure in an exotic location
-- "Mars Colony" - Science fiction in a space settlement
 
 Run `pip install openai agno` to install dependencies.
 """
@@ -86,6 +79,7 @@ json_mode_agent = Agent(
         Transform every location into an unforgettable cinematic experience!\
     """),
     response_model=MovieScript,
+    use_json_mode=True,
 )
 
 # Agent that uses structured outputs

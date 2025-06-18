@@ -26,18 +26,19 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode
-json_mode_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You write movie scripts.",
-    response_model=MovieScript,
-)
-
 # Agent that uses structured outputs
 structured_output_agent = Agent(
     model=OpenAIChat(id="gpt-4o-2024-08-06"),
     description="You write movie scripts.",
     response_model=MovieScript,
+)
+
+# Agent that uses JSON mode
+json_mode_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    description="You write movie scripts.",
+    response_model=MovieScript,
+    use_json_mode=True,
 )
 
 
@@ -47,5 +48,5 @@ structured_output_agent = Agent(
 # structured_output_response: RunResponse = structured_output_agent.arun("New York")
 # pprint(structured_output_response.content)
 
-asyncio.run(json_mode_agent.aprint_response("New York"))
 asyncio.run(structured_output_agent.aprint_response("New York"))
+asyncio.run(json_mode_agent.aprint_response("New York"))

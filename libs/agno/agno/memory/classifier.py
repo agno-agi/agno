@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from agno.memory.memory import Memory
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class MemoryClassifier(BaseModel):
@@ -62,7 +62,7 @@ class MemoryClassifier(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** MemoryClassifier Start ***********")
+        log_debug("*********** MemoryClassifier Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -77,7 +77,7 @@ class MemoryClassifier(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = self.model.response(messages=messages_for_model)
-        logger.debug("*********** MemoryClassifier End ***********")
+        log_debug("*********** MemoryClassifier End ***********")
         return response.content
 
     async def arun(
@@ -85,7 +85,7 @@ class MemoryClassifier(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** Async MemoryClassifier Start ***********")
+        log_debug("*********** Async MemoryClassifier Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -100,5 +100,5 @@ class MemoryClassifier(BaseModel):
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
         response = await self.model.aresponse(messages=messages_for_model)
-        logger.debug("*********** Async MemoryClassifier End ***********")
+        log_debug("*********** Async MemoryClassifier End ***********")
         return response.content

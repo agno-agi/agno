@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, cast
 
 from rich.prompt import Prompt
 
-from agno.api.schemas.team import TeamIdentifier, TeamSchema
+from agno.api.schemas.user import TeamIdentifier, TeamSchema
 from agno.api.schemas.workspace import (
     WorkspaceCreate,
     WorkspaceEvent,
@@ -254,8 +254,7 @@ def setup_workspace(ws_root_path: Path) -> Optional[WorkspaceConfig]:
     if agno_config.user is not None:
         # 2.2 Create WorkspaceSchema if it doesn't exist
         if ws_schema is None or ws_schema.id_workspace is None:
-            from agno.api.team import get_teams_for_user
-            from agno.api.workspace import create_workspace_for_user
+            from agno.api.workspace import create_workspace_for_user, get_teams_for_user
 
             # If ws_schema is None, this is a NEW WORKSPACE.
             # We make a call to the api to create a new ws_schema

@@ -27,7 +27,7 @@ class MovieScript(BaseModel):
 # Agent that uses JSON mode
 json_mode_agent = Agent(
     model=Perplexity(id="sonar-pro"),
-    description="You write movie scripts.  Please give the response in JSON format.",
+    description="You write movie scripts.",
     response_model=MovieScript,
     markdown=True,
     debug_mode=True,
