@@ -155,43 +155,43 @@ if __name__ == "__main__":
         pipelines=[image_pipeline, video_pipeline],
     )
 
-    # print("=== Example 1: Image Generation (using message_data) ===")
+    print("=== Example 1: Image Generation (using message_data) ===")
+    try:
+        image_request = MediaRequest(
+            content_type="image",
+            prompt="A mystical forest with glowing mushrooms",
+            style="fantasy art",
+            resolution="1920x1080",
+        )
+
+        media_workflow.print_response(
+            message="Create a magical forest scene",
+            message_data=image_request,
+            selector=media_pipeline_selector,  # Alternatively supply just the pipeline name string
+            markdown=True,
+        )
+    except Exception as e:
+        print(f"Image generation failed: {e}")
+
+    print("\n" + "=" * 60 + "\n")
+
+    # print("=== Example 2: Video Generation (using message_data) ===")
     # try:
-    #     image_request = MediaRequest(
-    #         content_type="image",
-    #         prompt="A mystical forest with glowing mushrooms",
-    #         style="fantasy art",
-    #         resolution="1920x1080",
+    #     video_request = MediaRequest(
+    #         content_type="video",
+    #         prompt="A time-lapse of a city skyline from day to night",
+    #         style="cinematic",
+    #         duration=30,
+    #         resolution="4K"
     #     )
 
     #     media_workflow.print_response(
-    #         message="Create a magical forest scene",
-    #         message_data=image_request,
+    #         message="Create a cinematic video city timelapse",
+    #         message_data=video_request,
     #         selector=media_pipeline_selector,
     #         markdown=True,
     #     )
     # except Exception as e:
-    #     print(f"Image generation failed: {e}")
+    #     print(f"Video generation failed: {e}")
 
-    # print("\n" + "=" * 60 + "\n")
-
-    print("=== Example 2: Video Generation (using message_data) ===")
-    try:
-        video_request = MediaRequest(
-            content_type="video",
-            prompt="A time-lapse of a city skyline from day to night",
-            style="cinematic",
-            duration=30,
-            resolution="4K"
-        )
-
-        media_workflow.print_response(
-            message="Create a cinematic video city timelapse",
-            message_data=video_request,
-            selector=media_pipeline_selector,
-            markdown=True,
-        )
-    except Exception as e:
-        print(f"Video generation failed: {e}")
-
-    print("\n" + "="*60 + "\n")
+    # print("\n" + "="*60 + "\n")

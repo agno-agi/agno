@@ -1,13 +1,8 @@
-"""
-This example shows how to use custom execution functions in tasks.
-
-These execution functions can run agents/teams or just any Python code.
-"""
-
-import asyncio
+from typing import Iterator, Union
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import TaskErrorEvent, WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -58,23 +53,27 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
-
+        
         Core Topic: {message}
-
+        
         Research Results: {previous_task_content[:500] if previous_task_content else "No research results"}
-
+        
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
         3. Identify content formats and channels
         4. Provide timeline and priority recommendations
         5. Include engagement and distribution strategies
-
+        
         Please create a detailed, actionable content plan.
     """
 
     try:
-        response = await content_planner.arun(planning_prompt)
+        response_iterator = await content_planner.arun(planning_prompt, stream=True, stream_intermediate_steps=True)
+        for event in response_iterator:
+            yield event
+            
+        response = content_planner.run_response
 
         enhanced_content = f"""
             ## Strategic Content Plan
@@ -92,13 +91,13 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        return TaskOutput(
+        yield TaskOutput(
             content=enhanced_content,
             response=response
         )
 
     except Exception as e:
-        return TaskOutput(
+        yield TaskOutput(
             content=f"Custom content planning failed: {str(e)}",
             success=False,
         )
@@ -117,28 +116,31 @@ content_planning_task = Task(
 )
 
 
-async def main():
-    content_creation_workflow = Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation with custom execution options",
+# Define and use examples
+if __name__ == "__main__":
+    streaming_content_workflow = Workflow(
+        name="Streaming Content Creation Workflow",
+        description="Automated content creation with streaming custom execution functions",
         storage=SqliteStorage(
-            table_name="workflow_v2",
-            db_file="tmp/workflow_v2.db",
+            table_name="workflow_v2_streaming",
+            db_file="tmp/workflow_v2_streaming.db",
             mode="workflow_v2",
         ),
-        tasks=[research_task, content_planning_task],
+        tasks=[
+            research_task,
+            content_planning_task,
+        ],
     )
-    print("=== Custom Sequence (Custom Execution Functions) ===")
+
+    print("=== Streaming Custom Functions Workflow ===")
     try:
-        await content_creation_workflow.aprint_response(
-            message="AI agent frameworks 2025",
+        streaming_content_workflow.print_response(
+            message="AI trends in 2024",
             markdown=True,
+            stream=True,
+            stream_intermediate_steps=True,
         )
     except Exception as e:
-        print(f"Custom workflow failed: {e}")
+        print(f"Streaming workflow failed: {e}")
 
     print("\n" + "=" * 60 + "\n")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

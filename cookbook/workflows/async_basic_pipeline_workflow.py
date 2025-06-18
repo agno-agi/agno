@@ -1,7 +1,7 @@
 """
 This example shows a basic sequential pipeline of tasks that run agents and teams.
 
-It is for a content writer that creates posts about tech trends from Hackernews.
+It is for a content writer that creates posts about tech trends from Hackernews and the web.
 """
 
 import asyncio
@@ -77,7 +77,7 @@ async def main():
             markdown=True,
         )
     except Exception as e:
-        print(f"Research sequence failed: {e}")
+        print(f"Research workflow failed: {e}")
 
 
 if __name__ == "__main__":

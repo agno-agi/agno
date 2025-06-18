@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -9,9 +9,6 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Message
 from agno.run.base import RunStatus
 from agno.utils.log import log_error
-
-if TYPE_CHECKING:
-    from agno.workflow.v2.task import TaskOutput
 
 
 class WorkflowRunEvent(str, Enum):
