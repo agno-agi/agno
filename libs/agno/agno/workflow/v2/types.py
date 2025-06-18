@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import ImageArtifact, VideoArtifact, AudioArtifact
+from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 
@@ -13,7 +13,7 @@ class WorkflowExecutionInput:
     """Input data for a task execution"""
 
     message: Optional[str] = None
-    message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None,
+    message_data: Optional[Union[BaseModel, Dict[str, Any]]] = (None,)
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -62,6 +62,7 @@ class TaskInput:
             previous_task_content_str = self.previous_task_content.model_dump_json(indent=2, exclude_none=True)
         elif isinstance(self.previous_task_content, dict):
             import json
+
             previous_task_content_str = json.dumps(self.previous_task_content, indent=2, default=str)
         else:
             previous_task_content_str = str(self.previous_task_content)

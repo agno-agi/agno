@@ -182,6 +182,33 @@ RunResponseEvent = Union[
 ]
 
 
+# Map event string to dataclass
+RUN_EVENT_TYPE_REGISTRY = {
+    RunEvent.run_started.value: RunResponseStartedEvent,
+    RunEvent.run_response_content.value: RunResponseContentEvent,
+    RunEvent.run_completed.value: RunResponseCompletedEvent,
+    RunEvent.run_error.value: RunResponseErrorEvent,
+    RunEvent.run_cancelled.value: RunResponseCancelledEvent,
+    RunEvent.run_paused.value: RunResponsePausedEvent,
+    RunEvent.run_continued.value: RunResponseContinuedEvent,
+    RunEvent.reasoning_started.value: ReasoningStartedEvent,
+    RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
+    RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
+    RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.tool_call_started.value: ToolCallStartedEvent,
+    RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+}
+
+
+def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
+    event_type = data.get("event", "")
+    cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not cls:
+        raise ValueError(f"Unknown event type: {event_type}")
+    return cls.from_dict(data)  # type: ignore
+
+
 @dataclass
 class RunResponse:
     """Response returned by Agent.run() or Workflow.run() functions"""
@@ -210,6 +237,8 @@ class RunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    events: Optional[List[RunResponseEvent]] = None
+
     status: RunStatus = RunStatus.running
 
     @property
@@ -237,8 +266,22 @@ class RunResponse:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k
+            not in [
+                "messages",
+                "tools",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+                "citations",
+                "events",
+            ]
         }
+
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -313,7 +356,10 @@ class RunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
-        messages = data.pop("messages", [])
+        events = data.pop("events", None)
+        events = [run_response_event_from_dict(event) for event in events] if events else None
+
+        messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
         tools = data.pop("tools", [])
@@ -339,9 +385,10 @@ class RunResponse:
             messages=messages,
             tools=tools,
             images=images,
-            videos=videos,
             audio=audio,
+            videos=videos,
             response_audio=response_audio,
+            events=events,
             **data,
         )
 

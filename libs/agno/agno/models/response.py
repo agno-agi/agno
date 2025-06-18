@@ -39,6 +39,7 @@ class ToolExecution:
 
     requires_user_input: Optional[bool] = None
     user_input_schema: Optional[List[UserInputField]] = None
+    answered: Optional[bool] = None
 
     external_execution_required: Optional[bool] = None
 

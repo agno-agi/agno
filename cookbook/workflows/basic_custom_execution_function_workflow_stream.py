@@ -2,7 +2,7 @@ from typing import Iterator, Union
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import TaskErrorEvent, WorkflowRunResponseEvent
+from agno.run.v2.workflow import WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -43,7 +43,9 @@ content_planner = Agent(
 )
 
 
-async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
+def custom_content_planning_function(
+    task_input: TaskInput,
+) -> Iterator[Union[WorkflowRunResponseEvent, TaskOutput]]:
     """
     Custom function that does intelligent content planning with context awareness
     """
@@ -69,10 +71,12 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
     """
 
     try:
-        response_iterator = await content_planner.arun(planning_prompt, stream=True, stream_intermediate_steps=True)
+        response_iterator = content_planner.run(
+            planning_prompt, stream=True, stream_intermediate_steps=True
+        )
         for event in response_iterator:
             yield event
-            
+
         response = content_planner.run_response
 
         enhanced_content = f"""
@@ -91,10 +95,7 @@ async def custom_content_planning_function(task_input: TaskInput) -> TaskOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        yield TaskOutput(
-            content=enhanced_content,
-            response=response
-        )
+        yield TaskOutput(content=enhanced_content, response=response)
 
     except Exception as e:
         yield TaskOutput(

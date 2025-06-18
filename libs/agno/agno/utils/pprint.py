@@ -11,7 +11,14 @@ from agno.utils.timer import Timer
 
 
 def pprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponseEvent], TeamRunResponse, Iterable[TeamRunResponseEvent], WorkflowRunResponse, Iterable[WorkflowRunResponseEvent]],
+    run_response: Union[
+        RunResponse,
+        Iterable[RunResponseEvent],
+        TeamRunResponse,
+        Iterable[TeamRunResponseEvent],
+        WorkflowRunResponse,
+        Iterable[WorkflowRunResponseEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
@@ -25,7 +32,11 @@ def pprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse) or isinstance(run_response, WorkflowRunResponse):
+    if (
+        isinstance(run_response, RunResponse)
+        or isinstance(run_response, TeamRunResponse)
+        or isinstance(run_response, WorkflowRunResponse)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -75,7 +86,14 @@ def pprint_run_response(
 
 
 async def apprint_run_response(
-    run_response: Union[RunResponse, AsyncIterable[RunResponse], TeamRunResponse, AsyncIterable[TeamRunResponse], WorkflowRunResponse, AsyncIterable[WorkflowRunResponseEvent]],
+    run_response: Union[
+        RunResponse,
+        AsyncIterable[RunResponse],
+        TeamRunResponse,
+        AsyncIterable[TeamRunResponse],
+        WorkflowRunResponse,
+        AsyncIterable[WorkflowRunResponseEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
@@ -89,7 +107,11 @@ async def apprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse) or isinstance(run_response, WorkflowRunResponse):
+    if (
+        isinstance(run_response, RunResponse)
+        or isinstance(run_response, TeamRunResponse)
+        or isinstance(run_response, WorkflowRunResponse)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
