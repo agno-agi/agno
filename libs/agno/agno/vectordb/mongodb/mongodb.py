@@ -1,6 +1,7 @@
 import asyncio
 import time
 from typing import Any, Dict, List, Optional
+
 from bson import ObjectId
 
 from agno.document import Document
@@ -808,7 +809,7 @@ class MongoDb(VectorDb):
 
         try:
             results = list(collection.aggregate(pipeline))
-            
+
             docs = []
             for doc in results:
                 # Convert ObjectIds to strings before creating Document
@@ -817,11 +818,10 @@ class MongoDb(VectorDb):
                     id=str(clean_doc["_id"]),
                     name=clean_doc.get("name"),
                     content=clean_doc["content"],
-                    meta_data={
-                        **clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
+                    meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
                 )
                 docs.append(document)
-                
+
             log_info(f"Hybrid search completed. Found {len(docs)} documents.")
             return docs
         except errors.OperationFailure as e:

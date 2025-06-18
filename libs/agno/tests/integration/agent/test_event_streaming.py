@@ -267,13 +267,12 @@ def test_intermediate_steps_with_user_confirmation(agent_storage):
     run_id = agent.run_response.run_id
     updated_tools[0].confirmed = True
 
-    # Check stored events    
+    # Check stored events
     stored_session = agent_storage.get_all_sessions()[0]
     assert stored_session.memory["runs"][0]["events"] is not None
     assert len(stored_session.memory["runs"][0]["events"]) == 2
     assert stored_session.memory["runs"][0]["events"][0]["event"] == RunEvent.run_started
     assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
-
 
     # Then we continue the run
     response_generator = agent.continue_run(
@@ -306,8 +305,8 @@ def test_intermediate_steps_with_user_confirmation(agent_storage):
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response.is_paused is False
-    
-    # Check stored events    
+
+    # Check stored events
     stored_session = agent_storage.get_all_sessions()[0]
     assert stored_session.memory["runs"][0]["events"] is not None
     assert len(stored_session.memory["runs"][0]["events"]) == 6
@@ -317,7 +316,6 @@ def test_intermediate_steps_with_user_confirmation(agent_storage):
     assert stored_session.memory["runs"][0]["events"][3]["event"] == RunEvent.tool_call_started
     assert stored_session.memory["runs"][0]["events"][4]["event"] == RunEvent.tool_call_completed
     assert stored_session.memory["runs"][0]["events"][5]["event"] == RunEvent.run_completed
-
 
 
 def test_intermediate_steps_with_memory(agent_storage, memory):

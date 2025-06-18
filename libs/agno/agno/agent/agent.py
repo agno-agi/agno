@@ -2485,7 +2485,6 @@ class Agent:
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
 
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
 
@@ -2497,7 +2496,7 @@ class Agent:
             ),
             run_response,
         )
-        
+
         # Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
         # Log Agent Run
