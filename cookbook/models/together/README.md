@@ -48,3 +48,20 @@ python cookbook/models/together/tool_use.py
 python cookbook/models/together/structured_output.py
 ```
 
+### 7. Run Agent with Image URL Input
+
+```shell
+python cookbook/models/together/image_agent.py
+```
+
+### 8. Run Agent with Image Input
+
+```shell
+python cookbook/models/together/image_agent_bytes.py
+```
+
+### 9. Run Agent with Image Input and Memory
+
+```shell
+python cookbook/models/together/image_agent_with_memory.py
+```

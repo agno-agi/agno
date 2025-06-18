@@ -22,6 +22,17 @@ class AgentRunException(Exception):
 class RetryAgentRun(AgentRunException):
     """Exception raised when a tool call should be retried."""
 
+    def __init__(
+        self,
+        exc,
+        user_message: Optional[Union[str, Message]] = None,
+        agent_message: Optional[Union[str, Message]] = None,
+        messages: Optional[List[Union[dict, Message]]] = None,
+    ):
+        super().__init__(
+            exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=False
+        )
+
 
 class StopAgentRun(AgentRunException):
     """Exception raised when an agent should stop executing entirely."""
@@ -38,10 +49,46 @@ class StopAgentRun(AgentRunException):
         )
 
 
-class ModelProviderError(Exception):
+class RunCancelledException(Exception):
+    """Exception raised when a run is cancelled."""
+
+    def __init__(self, message: str = "Operation cancelled by user"):
+        super().__init__(message)
+
+
+class AgnoError(Exception):
+    """Exception raised when an internal error occurs."""
+
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+    def __str__(self) -> str:
+        return str(self.message)
+
+
+class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
 
-    def __init__(self, exc, model_name: str, model_id: str):
-        super().__init__(exc)
+    def __init__(
+        self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
+    ):
+        super().__init__(message, status_code)
         self.model_name = model_name
         self.model_id = model_id
+
+
+class ModelRateLimitError(ModelProviderError):
+    """Exception raised when a model provider returns a rate limit error."""
+
+    def __init__(
+        self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
+    ):
+        super().__init__(message, status_code, model_name, model_id)
+
+
+class EvalError(Exception):
+    """Exception raised when an evaluation fails."""
+
+    pass

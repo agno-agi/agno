@@ -8,13 +8,13 @@ from agno.memory.row import MemoryRow
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class MemoryManager(BaseModel):
     model: Optional[Model] = None
     user_id: Optional[str] = None
-
+    limit: Optional[int] = None
     # Provide the system prompt for the manager as a string
     system_prompt: Optional[str] = None
     # Memory Database
@@ -40,10 +40,7 @@ class MemoryManager(BaseModel):
                 exit(1)
             self.model = OpenAIChat(id="gpt-4o")
 
-        # Add tools to the Model
-        self.add_tools_to_model(model=self.model)
-
-    def add_tools_to_model(self, model: Model) -> None:
+    def determine_tools_for_model(self) -> None:
         if self._tools_for_model is None:
             self._tools_for_model = []
         if self._functions_for_model is None:
@@ -61,19 +58,15 @@ class MemoryManager(BaseModel):
                     func = Function.from_callable(tool)  # type: ignore
                     self._functions_for_model[func.name] = func
                     self._tools_for_model.append({"type": "function", "function": func.to_dict()})
-                    logger.debug(f"Included function {func.name}")
+                    log_debug(f"Added function {func.name}")
             except Exception as e:
                 logger.warning(f"Could not add function {tool}: {e}")
-        # Set tools on the model
-        model.set_tools(tools=self._tools_for_model)
-        # Set functions on the model
-        model.set_functions(functions=self._functions_for_model)
 
     def get_existing_memories(self) -> Optional[List[MemoryRow]]:
         if self.db is None:
             return None
 
-        return self.db.read_memories(user_id=self.user_id)
+        return self.db.read_memories(user_id=self.user_id, limit=self.limit)
 
     def add_memory(self, memory: str) -> str:
         """Use this function to add a memory to the database.
@@ -171,10 +164,11 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** MemoryManager Start ***********")
+        log_debug("*********** MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
+        self.determine_tools_for_model()
 
         # Prepare the List of messages to send to the Model
         messages_for_model: List[Message] = [self.get_system_message()]
@@ -189,8 +183,10 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = self.model.response(messages=messages_for_model)
-        logger.debug("*********** MemoryManager End ***********")
+        response = self.model.response(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
+        log_debug("*********** MemoryManager End ***********")
         return response.content
 
     async def arun(
@@ -198,7 +194,7 @@ class MemoryManager(BaseModel):
         message: Optional[str] = None,
         **kwargs: Any,
     ) -> Optional[str]:
-        logger.debug("*********** Async MemoryManager Start ***********")
+        log_debug("*********** Async MemoryManager Start ***********")
 
         # Update the Model (set defaults, add logit etc.)
         self.update_model()
@@ -215,6 +211,8 @@ class MemoryManager(BaseModel):
 
         # Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        response = await self.model.aresponse(messages=messages_for_model)
-        logger.debug("*********** Async MemoryManager End ***********")
+        response = await self.model.aresponse(
+            messages=messages_for_model, tools=self._tools_for_model, functions=self._functions_for_model
+        )
+        log_debug("*********** Async MemoryManager End ***********")
         return response.content

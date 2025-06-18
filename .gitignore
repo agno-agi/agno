@@ -23,10 +23,12 @@
 # Ignore .envrc files (used by direnv: https://direnv.net/)
 .envrc
 
+certs/
 
 # ignore storage dir
 /storage
 .images
+/qdrant_storage
 
 # ignore wip dir
 wip
@@ -48,9 +50,8 @@ junk
 tmp
 agents.db
 data.db
-
 .ipynb_checkpoints
-
+build
 audio_generations
 
 *.db
@@ -59,3 +60,7 @@ audio_generations
 token.json
 
 .composio.lock
+
+# Coverage
+coverage_report
+.coverage

@@ -3,10 +3,10 @@ from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioOutput, Image, Video
-from agno.utils.log import logger
+from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 
 
@@ -16,9 +16,37 @@ class MessageReferences(BaseModel):
     # The query used to retrieve the references.
     query: str
     # References (from the vector database or function calls)
-    references: Optional[List[Dict[str, Any]]] = None
+    references: Optional[List[Union[Dict[str, Any], str]]] = None
     # Time taken to retrieve the references.
     time: Optional[float] = None
+
+
+class UrlCitation(BaseModel):
+    """URL of the citation"""
+
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
+class DocumentCitation(BaseModel):
+    """Document of the citation"""
+
+    document_title: Optional[str] = None
+    cited_text: Optional[str] = None
+    file_name: Optional[str] = None
+
+
+class Citations(BaseModel):
+    """Citations for the message"""
+
+    # Raw citations from the model
+    raw: Optional[Any] = None
+
+    # URLs of the citations.
+    urls: Optional[List[UrlCitation]] = None
+
+    # Document Citations
+    documents: Optional[List[DocumentCitation]] = None
 
 
 @dataclass
@@ -27,6 +55,12 @@ class MessageMetrics:
     output_tokens: int = 0
     total_tokens: int = 0
 
+    audio_tokens: int = 0
+    input_audio_tokens: int = 0
+    output_audio_tokens: int = 0
+    cached_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     prompt_tokens_details: Optional[dict] = None
@@ -72,6 +106,12 @@ class MessageMetrics:
             total_tokens=self.total_tokens + other.total_tokens,
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
+            audio_tokens=self.audio_tokens + other.audio_tokens,
+            input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
+            output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
+            cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
         # Handle prompt_tokens_details
@@ -141,9 +181,21 @@ class Message(BaseModel):
     audio: Optional[Sequence[Audio]] = None
     images: Optional[Sequence[Image]] = None
     videos: Optional[Sequence[Video]] = None
+    files: Optional[Sequence[File]] = None
 
     # Output from the models
-    audio_output: Optional[AudioOutput] = None
+    audio_output: Optional[AudioResponse] = None
+    image_output: Optional[ImageArtifact] = None
+
+    # The thinking content from the model
+    thinking: Optional[str] = None
+    redacted_thinking: Optional[str] = None
+
+    # Data from the provider we might need on subsequent messages
+    provider_data: Optional[Dict[str, Any]] = None
+
+    # Citations received from the model
+    citations: Optional[Citations] = None
 
     # --- Data not sent to the Model API ---
     # The reasoning content from the model
@@ -180,30 +232,6 @@ class Message(BaseModel):
                 return json.dumps(self.content)
         return ""
 
-    def serialize_for_model(self) -> Dict[str, Any]:
-        _dict: Dict[str, Any] = {
-            "role": self.role,
-            "content": self.content,
-            "name": self.name,
-            "tool_call_id": self.tool_call_id,
-            "tool_calls": self.tool_calls,
-            "audio": self.audio,
-        }
-
-        # Remove None values
-        _dict = {k: v for k, v in _dict.items() if v is not None}
-
-        # Add the message's output as then input (for multi-turn audio)
-        if self.audio_output is not None:
-            _dict["content"] = None
-            _dict["audio"] = {"id": self.audio_output.id}
-
-        # Manually add the content field even if it is None
-        if self.content is None:
-            _dict["content"] = None
-
-        return _dict
-
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""
         message_dict = {
@@ -218,6 +246,8 @@ class Message(BaseModel):
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
             "tool_calls": self.tool_calls,
+            "thinking": self.thinking,
+            "redacted_thinking": self.redacted_thinking,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -255,10 +285,6 @@ class Message(BaseModel):
             "created_at": self.created_at,
         }
 
-    @model_serializer
-    def serialize_model(self):
-        return self.serialize_for_model()
-
     def log(self, metrics: bool = True, level: Optional[str] = None):
         """Log the message to the console
 
@@ -267,41 +293,88 @@ class Message(BaseModel):
             level (str): The level to log the message at. One of debug, info, warning, or error.
                 Defaults to debug.
         """
-        _logger = logger.debug
+        _logger = log_debug
         if level == "info":
-            _logger = logger.info
+            _logger = log_info
         elif level == "warning":
-            _logger = logger.warning
+            _logger = log_warning
         elif level == "error":
-            _logger = logger.error
+            _logger = log_error
 
-        _logger(f"============== {self.role} ==============")
+        try:
+            import shutil
+
+            terminal_width = shutil.get_terminal_size().columns
+        except Exception:
+            terminal_width = 80  # fallback width
+
+        header = f" {self.role} "
+        _logger(f"{header.center(terminal_width - 20, '=')}")
+
         if self.name:
             _logger(f"Name: {self.name}")
         if self.tool_call_id:
             _logger(f"Tool call Id: {self.tool_call_id}")
+        if self.thinking:
+            _logger(f"<thinking>\n{self.thinking}\n</thinking>")
         if self.content:
             if isinstance(self.content, str) or isinstance(self.content, list):
                 _logger(self.content)
             elif isinstance(self.content, dict):
                 _logger(json.dumps(self.content, indent=2))
         if self.tool_calls:
-            _logger(f"Tool Calls: {json.dumps(self.tool_calls, indent=2)}")
+            tool_calls_list = ["Tool Calls:"]
+            for tool_call in self.tool_calls:
+                tool_id = tool_call.get("id")
+                function_name = tool_call.get("function", {}).get("name")
+                tool_calls_list.append(f"  - ID: '{tool_id}'") if tool_id else None
+                tool_calls_list.append(f"    Name: '{function_name}'") if function_name else None
+                tool_call_arguments = tool_call.get("function", {}).get("arguments")
+                if tool_call_arguments:
+                    try:
+                        tool_call_args: dict = (
+                            tool_call_arguments
+                            if isinstance(tool_call_arguments, dict)
+                            else json.loads(tool_call_arguments)
+                        )
+                        arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
+                        tool_calls_list.append(f"    Arguments: '{arguments}'")
+                    except json.JSONDecodeError:
+                        tool_calls_list.append("    Arguments: 'Invalid JSON format'")
+            tool_calls_str = "\n".join(tool_calls_list)
+
+            _logger(tool_calls_str)
         if self.images:
             _logger(f"Images added: {len(self.images)}")
         if self.videos:
             _logger(f"Videos added: {len(self.videos)}")
         if self.audio:
             _logger(f"Audio Files added: {len(self.audio)}")
+        if self.files:
+            _logger(f"Files added: {len(self.files)}")
 
+        metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
         if metrics and self.metrics is not None and self.metrics != MessageMetrics():
-            _logger("**************** METRICS ****************")
+            _logger(metrics_header, center=True, symbol="*")
+
+            # Combine token metrics into a single line
+            token_metrics = []
             if self.metrics.input_tokens:
-                _logger(f"* Input tokens:                {self.metrics.input_tokens}")
+                token_metrics.append(f"input={self.metrics.input_tokens}")
             if self.metrics.output_tokens:
-                _logger(f"* Output tokens:               {self.metrics.output_tokens}")
+                token_metrics.append(f"output={self.metrics.output_tokens}")
             if self.metrics.total_tokens:
-                _logger(f"* Total tokens:                {self.metrics.total_tokens}")
+                token_metrics.append(f"total={self.metrics.total_tokens}")
+            if self.metrics.cached_tokens:
+                token_metrics.append(f"cached={self.metrics.cached_tokens}")
+            if self.metrics.cache_write_tokens:
+                token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
+            if self.metrics.reasoning_tokens:
+                token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
+            if self.metrics.audio_tokens:
+                token_metrics.append(f"audio={self.metrics.audio_tokens}")
+            if token_metrics:
+                _logger(f"* Tokens:                      {', '.join(token_metrics)}")
             if self.metrics.prompt_tokens_details:
                 _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
             if self.metrics.completion_tokens_details:
@@ -314,7 +387,7 @@ class Message(BaseModel):
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
             if self.metrics.additional_metrics:
                 _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
-            _logger("**************** METRICS ******************")
+            _logger(metrics_header, center=True, symbol="*")
 
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""

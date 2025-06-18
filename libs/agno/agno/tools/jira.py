@@ -1,9 +1,9 @@
 import json
 import os
-from typing import Optional, cast
+from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from jira import JIRA, Issue
@@ -18,9 +18,8 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="jira_tools")
-
         self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
         self.username = username or os.getenv("JIRA_USERNAME")
         self.password = password or os.getenv("JIRA_PASSWORD")
@@ -42,12 +41,13 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        # Register methods
-        self.register(self.get_issue)
-        self.register(self.create_issue)
-        self.register(self.search_issues)
-        self.register(self.add_comment)
-        # You can register more methods here
+        tools: List[Any] = []
+        tools.append(self.get_issue)
+        tools.append(self.create_issue)
+        tools.append(self.search_issues)
+        tools.append(self.add_comment)
+
+        super().__init__(name="jira_tools", tools=tools, **kwargs)
 
     def get_issue(self, issue_key: str) -> str:
         """
@@ -67,7 +67,7 @@ class JiraTools(Toolkit):
                 "summary": issue.fields.summary,
                 "description": issue.fields.description or "",
             }
-            logger.debug(f"Issue details retrieved for {issue_key}: {issue_details}")
+            log_debug(f"Issue details retrieved for {issue_key}: {issue_details}")
             return json.dumps(issue_details)
         except Exception as e:
             logger.error(f"Error retrieving issue {issue_key}: {e}")
@@ -92,7 +92,7 @@ class JiraTools(Toolkit):
             }
             new_issue = self.jira.create_issue(fields=issue_dict)
             issue_url = f"{self.server_url}/browse/{new_issue.key}"
-            logger.debug(f"Issue created with key: {new_issue.key}")
+            log_debug(f"Issue created with key: {new_issue.key}")
             return json.dumps({"key": new_issue.key, "url": issue_url})
         except Exception as e:
             logger.error(f"Error creating issue in project {project_key}: {e}")
@@ -118,7 +118,7 @@ class JiraTools(Toolkit):
                     "assignee": issue.fields.assignee.displayName if issue.fields.assignee else "Unassigned",
                 }
                 results.append(issue_details)
-            logger.debug(f"Found {len(results)} issues for JQL '{jql_str}'")
+            log_debug(f"Found {len(results)} issues for JQL '{jql_str}'")
             return json.dumps(results)
         except Exception as e:
             logger.error(f"Error searching issues with JQL '{jql_str}': {e}")
@@ -134,7 +134,7 @@ class JiraTools(Toolkit):
         """
         try:
             self.jira.add_comment(issue_key, comment)
-            logger.debug(f"Comment added to issue {issue_key}")
+            log_debug(f"Comment added to issue {issue_key}")
             return json.dumps({"status": "success", "issue_key": issue_key})
         except Exception as e:
             logger.error(f"Error adding comment to issue {issue_key}: {e}")

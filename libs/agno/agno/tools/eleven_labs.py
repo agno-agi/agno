@@ -2,11 +2,12 @@ from base64 import b64encode
 from io import BytesIO
 from os import getenv, path
 from pathlib import Path
-from typing import Iterator, Literal, Optional
+from typing import Any, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -38,9 +39,8 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
+        **kwargs,
     ):
-        super().__init__(name="elevenlabs_tools")
-
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key:
             logger.error("ELEVEN_LABS_API_KEY not set. Please set the ELEVEN_LABS_API_KEY environment variable.")
@@ -55,9 +55,14 @@ class ElevenLabsTools(Toolkit):
             target_path.mkdir(parents=True, exist_ok=True)
 
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
-        self.register(self.get_voices)
-        self.register(self.generate_sound_effect)
-        self.register(self.text_to_speech)
+
+        tools: List[Any] = []
+
+        tools.append(self.get_voices)
+        tools.append(self.generate_sound_effect)
+        tools.append(self.text_to_speech)
+
+        super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 
     def get_voices(self) -> str:
         """
@@ -117,7 +122,9 @@ class ElevenLabsTools(Toolkit):
 
         return base64_audio
 
-    def generate_sound_effect(self, agent: Agent, prompt: str, duration_seconds: Optional[float] = None) -> str:
+    def generate_sound_effect(
+        self, agent: Union[Agent, Team], prompt: str, duration_seconds: Optional[float] = None
+    ) -> str:
         """
         Use this function to generate sound effect audio from a text prompt.
 
@@ -149,7 +156,7 @@ class ElevenLabsTools(Toolkit):
             logger.error(f"Failed to generate audio: {e}")
             return f"Error: {e}"
 
-    def text_to_speech(self, agent: Agent, prompt: str) -> str:
+    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> str:
         """
         Use this function to convert text to speech audio.
 

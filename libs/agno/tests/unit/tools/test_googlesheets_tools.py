@@ -26,6 +26,13 @@ def mock_sheets_service():
 
 
 @pytest.fixture
+def mock_drive_service():
+    """Mock Google Drive API service."""
+    mock_service = MagicMock()
+    return mock_service
+
+
+@pytest.fixture
 def sheets_tools(mock_credentials, mock_sheets_service):
     """Create GoogleSheetsTools instance with mocked dependencies."""
     with patch("agno.tools.googlesheets.build") as mock_build:
@@ -114,27 +121,66 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
     assert "Sheet updated successfully: test_id" in result
 
 
-def test_create_duplicate_sheet(sheets_tools, mock_sheets_service):
+def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_service):
     """Test duplicating a sheet."""
     # Setup mock data
     mock_source = {"properties": {"title": "Source Sheet"}, "sheets": [{"properties": {"title": "Sheet1"}}]}
-    mock_values = {"values": [["Data1", "Data2"]]}
-    mock_new_sheet = {"spreadsheetId": "new_id"}
+    mock_new_file = {"id": "new_id"}
+    mock_permissions = {
+        "permissions": [
+            {"emailAddress": "user@example.com", "role": "writer", "type": "user"},
+            {"emailAddress": "owner@example.com", "role": "owner", "type": "user"},
+        ]
+    }
 
-    # Setup mock chain for getting source sheet
+    # Setup mock for sheets service
     mock_sheets_service.spreadsheets().get().execute.return_value = mock_source
 
-    # Setup mock chain for getting values
-    mock_sheets_service.spreadsheets().values().get().execute.return_value = mock_values
+    # Setup mock for drive service with proper chaining
+    files_mock = MagicMock()
+    permissions_mock = MagicMock()
 
-    # Setup mock chain for creating new sheet
-    mock_sheets_service.spreadsheets().create().execute.return_value = mock_new_sheet
+    # Configure the mock chain for files().copy()
+    copy_mock = MagicMock()
+    copy_mock.execute.return_value = mock_new_file
+    files_mock.copy.return_value = copy_mock
 
-    # Execute test
-    result = sheets_tools.create_duplicate_sheet(source_id="source_id")
+    # Configure the mock chain for permissions().list()
+    list_mock = MagicMock()
+    list_mock.execute.return_value = mock_permissions
+    permissions_mock.list.return_value = list_mock
+
+    # Configure the mock chain for permissions().create()
+    create_mock = MagicMock()
+    create_mock.execute.return_value = {}
+    permissions_mock.create.return_value = create_mock
+
+    mock_drive_service.files.return_value = files_mock
+    mock_drive_service.permissions.return_value = permissions_mock
+
+    # Setup mock for drive service
+    with patch("agno.tools.googlesheets.build") as mock_build:
+        mock_build.return_value = mock_drive_service
+
+        # Execute test
+        result = sheets_tools.create_duplicate_sheet(
+            source_id="source_id", new_title="New Sheet", copy_permissions=True
+        )
 
     # Verify the result
     assert "https://docs.google.com/spreadsheets/d/new_id" in result
+
+    # Verify drive service calls
+    files_mock.copy.assert_called_once_with(fileId="source_id", body={"name": "New Sheet"})
+
+    # Verify permissions were listed and created (excluding owner)
+    permissions_mock.list.assert_called_once_with(fileId="source_id", fields="permissions(emailAddress,role,type)")
+
+    # Verify one permission was created (excluding owner)
+    assert permissions_mock.create.call_count == 1
+    permissions_mock.create.assert_called_once_with(
+        fileId="new_id", body={"role": "writer", "type": "user", "emailAddress": "user@example.com"}
+    )
 
 
 def test_error_handling(sheets_tools, mock_sheets_service):
