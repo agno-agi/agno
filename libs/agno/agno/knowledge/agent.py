@@ -44,7 +44,7 @@ class AgentKnowledge(BaseModel):
         raise NotImplementedError
 
     @property
-    def async_document_lists(self) -> AsyncIterator[List[Document]]:
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         """Iterator that yields lists of documents in the knowledge base
         Each object yielded by the iterator is a list of documents.
         """
@@ -167,7 +167,8 @@ class AgentKnowledge(BaseModel):
 
         log_info("Loading knowledge base")
         num_documents = 0
-        async for document_list in self.async_document_lists:
+        document_iterator = self.async_document_lists
+        async for document_list in document_iterator:  # type: ignore
             documents_to_load = document_list
             # Track metadata for filtering capabilities
             for doc in document_list:

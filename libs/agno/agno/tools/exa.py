@@ -1,7 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -23,6 +23,7 @@ class ExaTools(Toolkit):
         text_length_limit (int): Max length of text content per result. Default is 1000.
         highlights (bool): Include highlighted snippets. Default is True.
         answer (bool): Enable answer generation. Default is True.
+        research (bool): Enable research tool functionality. Default is True.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
@@ -45,6 +46,7 @@ class ExaTools(Toolkit):
         get_contents: bool = True,
         find_similar: bool = True,
         answer: bool = True,
+        research: bool = False,
         text: bool = True,
         text_length_limit: int = 1000,
         highlights: bool = True,
@@ -64,6 +66,7 @@ class ExaTools(Toolkit):
         show_results: bool = False,
         model: Optional[str] = None,
         timeout: int = 30,
+        research_model: Literal["exa-research", "exa-research-pro"] = "exa-research",
         **kwargs,
     ):
         self.api_key = api_key or getenv("EXA_API_KEY")
@@ -90,6 +93,7 @@ class ExaTools(Toolkit):
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
+        self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
         tools: List[Any] = []
         if search:
@@ -100,6 +104,8 @@ class ExaTools(Toolkit):
             tools.append(self.find_similar)
         if answer:
             tools.append(self.exa_answer)
+        if research:
+            tools.append(self.research)
 
         super().__init__(name="exa", tools=tools, **kwargs)
 
@@ -318,3 +324,63 @@ class ExaTools(Toolkit):
         except Exception as e:
             logger.error(f"Failed to get answer from Exa: {e}")
             return f"Error: {e}"
+
+    def research(
+        self,
+        instructions: str,
+        output_schema: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Perform deep research on a topic.
+
+        Args:
+            instructions (str): Research instructions.
+            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output. If not provided, the API will auto-infer an appropriate schema.
+        Returns:
+            str: JSON formatted research results including data and citations.
+        """
+        try:
+            log_debug(f"Creating research task with instructions: {instructions}")
+            log_debug(f"Output schema: {output_schema}")
+
+            task_kwargs: Dict[str, Any] = {
+                "instructions": instructions,
+                "model": self.research_model,
+            }
+
+            if output_schema is not None:
+                task_kwargs["output_schema"] = output_schema
+            else:
+                task_kwargs["output_infer_schema"] = True
+
+            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)
+            task_id = task_result.id
+
+            if self.show_results:
+                log_info(f"Research task created with ID: {task_id}")
+
+            # Step 2: Poll until complete (using default polling settings)
+            task = self.exa.research.poll_task(task_id)
+
+            # Step 3: Format and return results
+            result: Dict[str, Any] = {"data": task.data, "citations": {}}
+
+            # Process citations by field
+            for field, sources in task.citations.items():
+                result["citations"][field] = [
+                    {"url": source.url, "title": source.title, "id": source.id} for source in sources
+                ]
+
+            if self.show_results:
+                log_info("Research completed successfully")
+
+            return json.dumps(result, indent=4)
+
+        except TimeoutError:
+            error_msg = "Research task timed out"
+            logger.error(error_msg)
+            return json.dumps({"error": error_msg}, indent=4)
+        except Exception as e:
+            error_msg = f"Research failed: {str(e)}"
+            logger.error(error_msg)
+            return json.dumps({"error": error_msg}, indent=4)

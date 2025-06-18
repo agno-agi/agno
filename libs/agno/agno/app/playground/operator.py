@@ -75,6 +75,10 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
                                     return content
 
             except Exception as e:
+                import traceback
+
+                traceback.print_exc(limit=3)
+
                 logger.error(f"Error parsing chat: {e}")
 
     return "Unnamed session"
@@ -94,11 +98,24 @@ def get_session_title_from_workflow_session(workflow_session: WorkflowSession) -
         runs = cast(List[Any], runs)
         for _run in runs:
             try:
+                # Try to get content directly from the run first (workflow structure)
+                content = _run.get("content")
+                if content:
+                    # Split content by newlines and take first line, but limit to 100 chars
+                    first_line = content.split("\n")[0]
+                    return first_line[:100] + "..." if len(first_line) > 100 else first_line
+
+                # Fallback to response.content structure (if it exists)
                 response = _run.get("response")
-                content = response.get("content") if response else None
-                return content.split("\n")[0] if content else "No title"
+                if response:
+                    content = response.get("content")
+                    if content:
+                        # Split content by newlines and take first line, but limit to 100 chars
+                        first_line = content.split("\n")[0]
+                        return first_line[:100] + "..." if len(first_line) > 100 else first_line
+
             except Exception as e:
-                logger.error(f"Error parsing chat: {e}")
+                logger.error(f"Error parsing workflow session: {e}")
     return "Unnamed session"
 
 

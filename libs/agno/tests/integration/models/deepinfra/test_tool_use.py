@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -43,10 +41,11 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -62,7 +61,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -81,7 +79,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -95,10 +92,11 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -113,7 +111,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -135,7 +132,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -164,7 +160,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -194,7 +189,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -213,7 +207,6 @@ def test_tool_call_list_parameters():
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

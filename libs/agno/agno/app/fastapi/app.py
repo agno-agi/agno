@@ -1,143 +1,92 @@
 import logging
-from os import getenv
-from typing import Any, Dict, Optional
-from uuid import uuid4
+from typing import List, Optional, Union
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from fastapi.routing import APIRouter
-from git import Union
-from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.api.app import AppCreate, create_app
+from agno.app.base import BaseAPIApp
 from agno.app.fastapi.async_router import get_async_router
 from agno.app.fastapi.sync_router import get_sync_router
 from agno.app.settings import APIAppSettings
+from agno.app.utils import generate_id
 from agno.team.team import Team
-from agno.utils.log import log_debug
+from agno.utils.log import log_info
+from agno.workflow.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
 
-class FastAPIApp:
+class FastAPIApp(BaseAPIApp):
+    type = "fastapi"
+
     def __init__(
         self,
-        agent: Optional[Agent] = None,
-        team: Optional[Team] = None,
+        agents: Optional[List[Agent]] = None,
+        teams: Optional[List[Team]] = None,
+        workflows: Optional[List[Workflow]] = None,
         settings: Optional[APIAppSettings] = None,
         api_app: Optional[FastAPI] = None,
         router: Optional[APIRouter] = None,
-        monitoring: bool = True,
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        version: Optional[str] = None,
+        monitoring: bool = True,
     ):
-        if not agent and not team:
-            raise ValueError("Either agent, or team must be provided.")
+        if not agents and not teams and not workflows:
+            raise ValueError("Either agents, teams or workflows must be provided.")
 
-        self.agent: Optional[Agent] = agent
-        self.team: Optional[Team] = team
+        self.agents: Optional[List[Agent]] = agents
+        self.teams: Optional[List[Team]] = teams
+        self.workflows: Optional[List[Workflow]] = workflows
+
         self.settings: APIAppSettings = settings or APIAppSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
-        self.monitoring = monitoring
+
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
+        self.monitoring = monitoring
         self.description = description
+        self.version = version
+
         self.set_app_id()
 
-        if self.agent:
-            if not self.agent.app_id:
-                self.agent.app_id = self.app_id
-            self.agent.initialize_agent()
+        if self.agents:
+            for agent in self.agents:
+                if not agent.app_id:
+                    agent.app_id = self.app_id
+                agent.initialize_agent()
 
-        if self.team:
-            if not self.team.app_id:
-                self.team.app_id = self.app_id
-            self.team.initialize_team()
-            for member in self.team.members:
-                if isinstance(member, Agent):
-                    if not member.app_id:
-                        member.app_id = self.app_id
-                    member.team_id = None
-                    member.initialize_agent()
-                elif isinstance(member, Team):
-                    member.initialize_team()
+        if self.teams:
+            for team in self.teams:
+                if not team.app_id:
+                    team.app_id = self.app_id
+                team.initialize_team()
+                for member in team.members:
+                    if isinstance(member, Agent):
+                        if not member.app_id:
+                            member.app_id = self.app_id
 
-    def set_app_id(self) -> str:
-        # If app_id is already set, keep it instead of overriding with UUID
-        if self.app_id is None:
-            self.app_id = str(uuid4())
+                        member.team_id = None
+                        member.initialize_agent()
+                    elif isinstance(member, Team):
+                        member.initialize_team()
 
-        # Don't override existing app_id
-        return self.app_id
-
-    def _set_monitoring(self) -> None:
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
+        if self.workflows:
+            for workflow in self.workflows:
+                if not workflow.app_id:
+                    workflow.app_id = self.app_id
+                if not workflow.workflow_id:
+                    workflow.workflow_id = generate_id(workflow.name)
 
     def get_router(self) -> APIRouter:
-        return get_sync_router(agent=self.agent, team=self.team)
+        return get_sync_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
 
     def get_async_router(self) -> APIRouter:
-        return get_async_router(agent=self.agent, team=self.team)
-
-    def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
-        if not self.api_app:
-            self.api_app = FastAPI(
-                title=self.settings.title,
-                docs_url="/docs" if self.settings.docs_enabled else None,
-                redoc_url="/redoc" if self.settings.docs_enabled else None,
-                openapi_url="/openapi.json" if self.settings.docs_enabled else None,
-            )
-
-        if not self.api_app:
-            raise Exception("API App could not be created.")
-
-        @self.api_app.exception_handler(HTTPException)
-        async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": str(exc.detail)},
-            )
-
-        async def general_exception_handler(request: Request, call_next):
-            try:
-                return await call_next(request)
-            except Exception as e:
-                return JSONResponse(
-                    status_code=e.status_code if hasattr(e, "status_code") else 500,
-                    content={"detail": str(e)},
-                )
-
-        self.api_app.middleware("http")(general_exception_handler)
-
-        if not self.router:
-            self.router = APIRouter(prefix=prefix)
-
-        if not self.router:
-            raise Exception("API Router could not be created.")
-
-        if use_async:
-            self.router.include_router(self.get_async_router())
-        else:
-            self.router.include_router(self.get_router())
-
-        self.api_app.include_router(self.router)
-
-        self.api_app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            expose_headers=["*"],
-        )
-        return self.api_app
+        return get_async_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
 
     def serve(
         self,
@@ -151,47 +100,17 @@ class FastAPIApp:
         self.set_app_id()
         self.register_app_on_platform()
 
-        if self.agent:
-            self.agent.register_agent()
-        if self.team:
-            self.team.register_team()
-        logger.info(f"Starting API on {host}:{port}")
+        if self.agents:
+            for agent in self.agents:
+                agent.register_agent()
+
+        if self.teams:
+            for team in self.teams:
+                team.register_team()
+
+        if self.workflows:
+            for workflow in self.workflows:
+                workflow.register_workflow()
+        log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
-
-    def register_app_on_platform(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        try:
-            log_debug(f"Creating app on Platform: {self.name}, {self.app_id}")
-            create_app(app=AppCreate(name=self.name, app_id=self.app_id, config=self.to_dict()))
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-        log_debug(f"Agent app created: {self.name}, {self.app_id}")
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload = {
-            "agents": [
-                {
-                    **self.agent.get_agent_config_dict(),
-                    "agent_id": self.agent.agent_id,
-                    "team_id": self.agent.team_id,
-                }
-            ]
-            if self.agent
-            else None,
-            "teams": [
-                {
-                    **self.team.to_platform_dict(),
-                    "team_id": self.team.team_id,
-                }
-            ]
-            if self.team
-            else None,
-            "type": "fastapi",
-            "description": self.description,
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload
