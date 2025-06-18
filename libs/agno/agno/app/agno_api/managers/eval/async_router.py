@@ -1,6 +1,6 @@
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from agno.app.agno_api.managers.eval.schemas import EvalSchema
 from agno.db.base import BaseDb
@@ -8,8 +8,11 @@ from agno.db.base import BaseDb
 
 def attach_async_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.get("/evals", response_model=List[EvalSchema], status_code=200)
-    async def get_eval_runs() -> List[EvalSchema]:
-        eval_runs = db.get_eval_runs()
+    async def get_eval_runs(
+        limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
+        offset: Optional[int] = Query(default=0, description="Number of eval runs to skip"),
+    ) -> List[EvalSchema]:
+        eval_runs = db.get_eval_runs(limit=limit, offset=offset)
         return [EvalSchema.from_eval_run(eval_run) for eval_run in eval_runs]
 
     @router.get("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)

@@ -745,13 +745,17 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs(self) -> List[EvalRunRecord]:
+    def get_eval_runs(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[EvalRunRecord]:
         """Get all eval runs from the database."""
         try:
             table = self.get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
                 result = sess.execute(stmt).fetchall()
 
                 return [EvalRunRecord.model_validate(row._mapping) for row in result]

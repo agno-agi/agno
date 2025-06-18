@@ -49,7 +49,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_eval_runs(self) -> List[EvalRunRecord]:
+    def get_eval_runs(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[EvalRunRecord]:
         raise NotImplementedError
 
     @abstractmethod
