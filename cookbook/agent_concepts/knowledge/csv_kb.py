@@ -6,7 +6,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-
 knowledge_base = CSVKnowledgeBase(
     path=Path("data/csvs"),
     vector_db=PgVector(

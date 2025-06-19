@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from agno.api.schemas.team import TeamSchema
+from agno.api.schemas.user import TeamSchema
 from agno.api.schemas.workspace import WorkspaceSchema
 from agno.infra.base import InfraBase
 from agno.infra.resources import InfraResources

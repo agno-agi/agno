@@ -1,5 +1,6 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -23,17 +24,23 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
-    team=[web_agent, finance_agent],
+agent_team = Team(
+    members=[web_agent, finance_agent],
+    mode="coordinate",
     model=Groq(
         id="llama-3.3-70b-versatile"
     ),  # You can use a different model for the team leader agent
+    success_criteria="The team has successfully completed the task",
     instructions=["Always include sources", "Use tables to display data"],
     show_tool_calls=True,  # Comment to hide transfer of tasks between agents
     markdown=True,
+    enable_agentic_context=True,
+    debug_mode=True,
+    show_members_responses=False,  # Comment to hide responses from team members
 )
 
 # Give the team a task
 agent_team.print_response(
-    "Summarize the latest news about Nvidia and share its stock price?", stream=True
+    message="Summarize the latest news about Nvidia and share its stock price?",
+    stream=True,
 )

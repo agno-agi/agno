@@ -5,22 +5,32 @@ from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    import pkg_resources
-    from packaging import version
-
-    ollama_version = pkg_resources.get_distribution("ollama").version
-    if version.parse(ollama_version).major == 0 and version.parse(ollama_version).minor < 3:
-        import warnings
-
-        warnings.warn(
-            "We only support Ollama v0.3.x and above.",
-            UserWarning,
-        )
-        raise RuntimeError("Incompatible Ollama version detected. Execution halted.")
+    import importlib.metadata as metadata
 
     from ollama import Client as OllamaClient
-except (ModuleNotFoundError, ImportError):
-    raise ImportError("`ollama` not installed. Please install using `pip install ollama`")
+    from packaging import version
+
+    # Get installed Ollama version
+    ollama_version = metadata.version("ollama")
+
+    # Check version compatibility (requires v0.3.x or higher)
+    parsed_version = version.parse(ollama_version)
+    if parsed_version.major == 0 and parsed_version.minor < 3:
+        import warnings
+
+        warnings.warn("Only Ollama v0.3.x and above are supported", UserWarning)
+        raise RuntimeError("Incompatible Ollama version detected")
+
+except ImportError as e:
+    # Handle different import error scenarios
+    if "ollama" in str(e):
+        raise ImportError("Ollama not installed. Install with `pip install ollama`") from e
+    else:
+        raise ImportError("Missing dependencies. Install with `pip install packaging importlib-metadata`") from e
+
+except Exception as e:
+    # Catch-all for unexpected errors
+    print(f"An unexpected error occurred: {e}")
 
 
 @dataclass
@@ -53,14 +63,23 @@ class OllamaEmbedder(Embedder):
         if self.options is not None:
             kwargs["options"] = self.options
 
-        return self.client.embed(input=text, model=self.id, **kwargs)  # type: ignore
+        response = self.client.embed(input=text, model=self.id, **kwargs)
+        if response and "embeddings" in response:
+            embeddings = response["embeddings"]
+            if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
+                return {"embeddings": embeddings[0]}  # Use the first element
+            elif isinstance(embeddings, list) and all(isinstance(x, (int, float)) for x in embeddings):
+                return {"embeddings": embeddings}  # Return as-is if already flat
+        return {"embeddings": []}  # Return an empty list if no valid embedding is found
 
     def get_embedding(self, text: str) -> List[float]:
         try:
             response = self._response(text=text)
-            if response is None:
+            embedding = response.get("embeddings", [])
+            if len(embedding) != self.dimensions:
+                logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
-            return response.get("embeddings", [])
+            return embedding
         except Exception as e:
             logger.warning(e)
             return []
