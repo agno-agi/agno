@@ -95,7 +95,6 @@ fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
-opencv = ["opencv-python"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
@@ -103,6 +102,7 @@ matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+opencv = ["opencv-python"]
 todoist = ["todoist-api-python"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
@@ -188,7 +188,6 @@ tools = [
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[crawl4ai]",
-  "agno["opencv-python"]
   "agno[github]",
   "agno[gmail]",
   "agno[googlemaps]",
@@ -200,6 +199,7 @@ tools = [
   "agno[mcp]",
   "agno[browserbase]",
   "agno[agentql]",
+  "agno[opencv]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
   "agno[zep]",
@@ -329,7 +329,6 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
-  "opencv-python.*"
   "daytona_sdk.*",
   "docker.*",
   "docx.*",
@@ -373,6 +372,7 @@ module = [
   "numpy.*",
   "ollama.*",
   "openai.*",
+  "cv2.*",
   "openbb.*",
   "pandas.*",
   "pgvector.*",
