@@ -95,6 +95,7 @@ fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
+opencv = ["opencv-python"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
@@ -187,6 +188,7 @@ tools = [
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[crawl4ai]",
+  "agno["opencv-python"]
   "agno[github]",
   "agno[gmail]",
   "agno[googlemaps]",
@@ -327,6 +329,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "opencv-python.*"
   "daytona_sdk.*",
   "docker.*",
   "docx.*",

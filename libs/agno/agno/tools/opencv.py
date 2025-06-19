@@ -14,7 +14,7 @@ except ImportError:
 
 
 class OpenCVTools(Toolkit):
-    """Tools for capturing images and videos from the webcam using OpenCV with live preview"""
+    """Tools for capturing images and videos from the webcam using OpenCV"""
 
     def __init__(self, show_preview=False, **kwargs):
         super().__init__(
@@ -33,7 +33,7 @@ class OpenCVTools(Toolkit):
         agent: Agent,
         prompt: str = "Webcam capture",
     ) -> str:
-        """Capture an image from the webcam and attach it as an artifact to the agent.
+        """Capture an image from the webcam.
 
         Args:
             prompt (str): Description of the image capture. Defaults to "Webcam capture".
@@ -137,7 +137,7 @@ class OpenCVTools(Toolkit):
         duration: int = 10,
         prompt: str = "Webcam video capture",
     ) -> str:
-        """Capture a video from the webcam and attach it as an artifact to the agent.
+        """Capture a video from the webcam.
 
         Args:
             duration (int): Duration in seconds to record video. Defaults to 10 seconds.
