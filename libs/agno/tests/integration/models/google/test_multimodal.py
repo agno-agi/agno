@@ -136,12 +136,11 @@ def test_image_generation_streaming():
 
     image_received = False
     for chunk in response:
-        if chunk.images:
+        if chunk.image:
             image_received = True
-            assert len(chunk.images) > 0
-            assert chunk.images[0].content is not None
+            assert chunk.image is not None
 
-            image = PILImage.open(BytesIO(chunk.images[0].content))
+            image = PILImage.open(BytesIO(chunk.image.content))
             assert image.format in ["JPEG", "PNG"]
 
     assert image_received, "No image was received in the stream"

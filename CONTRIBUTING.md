@@ -8,10 +8,22 @@ Please follow the [fork and pull request](https://docs.github.com/en/get-started
 
 - Fork the repository.
 - Create a new branch for your feature.
-- Add your feature or improvement.
-- Send a pull request.
-- We appreciate your support & input!
+  - Add your feature or improvement.
+  - **Ensure your Pull Request follows our guidelines (see below).**
+  - Send a pull request.
+  - We appreciate your support & input!
 
+## Pull Request Guidelines
+
+To maintain a clear and organized project history, please adhere to the following guidelines when submitting Pull Requests:
+
+1.  **Title Format:** Your PR title must start with a type tag enclosed in square brackets, followed by a space and a concise subject.
+    - Example: `[feat] Add user authentication`
+    - Valid types: `[feat]`, `[fix]`, `[docs]`, `[test]`, `[refactor]`, `[build]`, `[ci]`, `[chore]`, `[perf]`, `[style]`, `[revert]`.
+2.  **Link to Issue:** The PR description should ideally reference the issue it addresses using keywords like `fixes #<issue_number>`, `closes #<issue_number>`, or `resolves #<issue_number>`.
+    - Example: `This PR fixes #42 by implementing the new login flow.`
+
+_These guidelines are enforced automatically by our [PR Lint workflow](.github/workflows/pr-lint.yml)._
 
 ## Development setup
 
@@ -67,7 +79,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
 4. Add a recipe for using your `VectorDb` under `cookbook/agent_concepts/knowledge/vector_dbs/<your_db>`.
-   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pg_vector.py) for an example.
+   - Checkout [`cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector`](https://github.com/agno-agi/agno/blob/main/cookbook/agent_concepts/knowledge/vector_dbs/pgvector_db/pg_vector.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 

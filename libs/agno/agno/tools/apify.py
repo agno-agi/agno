@@ -19,7 +19,7 @@ class ApifyTools(Toolkit):
         """Initialize ApifyTools with specific Actors.
 
         Args:
-            actors (Union[str, List[str]]): Single Actor ID as string or list of Actor IDs to register as individual tools
+            actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
 
         Examples:
@@ -66,8 +66,6 @@ class ApifyTools(Toolkit):
                 markdown=True
             )
         """
-        super().__init__(name="ApifyTools")
-
         # Get API token from args or environment
         self.apify_api_token = apify_api_token or os.getenv("APIFY_API_TOKEN")
         if not self.apify_api_token:
@@ -75,11 +73,16 @@ class ApifyTools(Toolkit):
 
         self.client = create_apify_client(self.apify_api_token)
 
-        # Register specific Actors if provided
+        tools: List[Any] = []
         if actors:
             actor_list = [actors] if isinstance(actors, str) else actors
             for actor_id in actor_list:
-                self.register_actor(actor_id)
+                tools.append(actor_id)
+
+        super().__init__(name="ApifyTools", tools=[], auto_register=False)
+
+        for actor_id in tools:
+            self.register_actor(actor_id)
 
     def register_actor(self, actor_id: str) -> None:
         """Register an Apify Actor as a function in the toolkit.
@@ -156,7 +159,7 @@ Returns:
             actor_function.__doc__ = docstring
 
             # Register the function with the toolkit
-            self.register(actor_function, sanitize_arguments=False)
+            self.register(actor_function)
             # Fix params schema
             self.functions[tool_name].parameters = props_to_json_schema(properties, required)
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")

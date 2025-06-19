@@ -20,6 +20,7 @@ class RedisMemoryDb(MemoryDb):
         port: int = 6379,
         db: int = 0,
         password: Optional[str] = None,
+        expire: Optional[int] = None,
     ):
         """
         Initialize Redis memory store.
@@ -30,8 +31,10 @@ class RedisMemoryDb(MemoryDb):
             port (int): Redis port number
             db (int): Redis database number
             password (Optional[str]): Redis password if authentication is required
+            expire (Optional[int]): TTL (time to live) in seconds for Redis keys. None means no expiration.
         """
         self.prefix = prefix
+        self.expire = expire
         self.redis_client = Redis(
             host=host,
             port=port,
@@ -45,6 +48,7 @@ class RedisMemoryDb(MemoryDb):
         return {
             "name": "RedisMemoryDb",
             "prefix": self.prefix,
+            "expire": self.expire,
         }
 
     def _get_key(self, memory_id: str) -> str:
@@ -128,7 +132,11 @@ class RedisMemoryDb(MemoryDb):
 
             # Save to Redis
             key = self._get_key(memory.id)  # type: ignore
-            self.redis_client.set(key, json.dumps(memory_data))
+            if self.expire is not None:
+                self.redis_client.set(key, json.dumps(memory_data), ex=self.expire)
+            else:
+                self.redis_client.set(key, json.dumps(memory_data))
+
             return memory
 
         except Exception as e:

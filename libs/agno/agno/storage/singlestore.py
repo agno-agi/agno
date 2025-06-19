@@ -236,6 +236,70 @@ class SingleStoreStorage(Storage):
             log_debug(f"Table does not exist: {self.table.name}")
         return sessions
 
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        sessions: List[Session] = []
+        try:
+            with self.SqlSession.begin() as sess:
+                # Build base query
+                stmt = select(self.table)
+
+                # Add filters
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
+                if entity_id is not None:
+                    if self.mode == "agent":
+                        stmt = stmt.where(self.table.c.agent_id == entity_id)
+                    elif self.mode == "team":
+                        stmt = stmt.where(self.table.c.team_id == entity_id)
+                    elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+
+                # Order by created_at desc and limit results
+                stmt = stmt.order_by(self.table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                # Execute query
+                rows = sess.execute(stmt).fetchall()
+                for row in rows:
+                    if row.session_id is not None:
+                        if self.mode == "agent":
+                            session = AgentSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+                        elif self.mode == "team":
+                            session = TeamSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+                        elif self.mode == "workflow":
+                            session = WorkflowSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+
+        except Exception as e:
+            if "doesn't exist" in str(e):
+                log_debug(f"Table does not exist: {self.table.name}")
+                self.create()
+            else:
+                logger.error(f"Error getting last {limit} sessions: {e}")
+
+        return sessions
+
     def upgrade_schema(self) -> None:
         """
         Upgrade the schema to the latest version.

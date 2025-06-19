@@ -21,6 +21,14 @@ async def test_stdio_transport_without_command_nor_server_params():
             pass
 
 
+@pytest.mark.asyncio
+async def test_streamable_http_transport_without_url_nor_server_params():
+    """Test that ValueError is raised when transport is streamable_http but URL is not provided."""
+    with pytest.raises(ValueError, match="One of 'url' or 'server_params' parameters must be provided"):
+        async with MCPTools(transport="streamable-http"):
+            pass
+
+
 def test_empty_command_string():
     """Test that ValueError is raised when command string is empty."""
     with pytest.raises(ValueError, match="Empty command string"):

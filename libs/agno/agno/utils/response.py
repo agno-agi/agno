@@ -1,10 +1,12 @@
-from typing import Any, Dict, List, Set, Union
+from typing import List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
+from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
-from agno.run.team import TeamRunResponse
+from agno.run.base import RunResponseExtraData
+from agno.run.response import RunResponse, RunResponseEvent, RunResponsePausedEvent
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 
 
 def create_panel(content, title, border_style="blue"):
@@ -27,8 +29,8 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
     return escaped_content
 
 
-def check_if_run_cancelled(run_response: Union[RunResponse, TeamRunResponse]):
-    if run_response.event == RunEvent.run_cancelled:
+def check_if_run_cancelled(run_response: Union[RunResponse, RunResponseEvent, TeamRunResponse, TeamRunResponseEvent]):
+    if run_response.is_cancelled:
         raise RunCancelledException()
 
 
@@ -53,7 +55,7 @@ def update_run_response_with_reasoning(
         run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
 
 
-def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
+def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
     """Format tool calls for display in a readable format.
 
     Args:
@@ -64,10 +66,52 @@ def format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[str]:
     """
     formatted_tool_calls = []
     for tool_call in tool_calls:
-        if "tool_name" in tool_call and "tool_args" in tool_call:
-            tool_name = tool_call["tool_name"]
+        if tool_call.tool_name and tool_call.tool_args:
+            tool_name = tool_call.tool_name
             args_str = ""
-            if "tool_args" in tool_call and tool_call["tool_args"] is not None:
-                args_str = ", ".join(f"{k}={v}" for k, v in tool_call["tool_args"].items())
+            if tool_call.tool_args is not None:
+                args_str = ", ".join(f"{k}={v}" for k, v in tool_call.tool_args.items())
             formatted_tool_calls.append(f"{tool_name}({args_str})")
     return formatted_tool_calls
+
+
+def create_paused_run_response_panel(run_response: Union[RunResponsePausedEvent, RunResponse]):
+    from rich.text import Text
+
+    tool_calls_content = Text("Run is paused. ")
+    if run_response.tools is not None:
+        if any(tc.requires_confirmation for tc in run_response.tools):
+            tool_calls_content.append("The following tool calls require confirmation:\n")
+        for tool_call in run_response.tools:
+            if tool_call.requires_confirmation:
+                args_str = ""
+                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                    args_str += f"{arg}={value}, "
+                args_str = args_str.rstrip(", ")
+                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+        if any(tc.requires_user_input for tc in run_response.tools):
+            tool_calls_content.append("The following tool calls require user input:\n")
+        for tool_call in run_response.tools:
+            if tool_call.requires_user_input:
+                args_str = ""
+                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                    args_str += f"{arg}={value}, "
+                args_str = args_str.rstrip(", ")
+                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+        if any(tc.external_execution_required for tc in run_response.tools):
+            tool_calls_content.append("The following tool calls require external execution:\n")
+        for tool_call in run_response.tools:
+            if tool_call.external_execution_required:
+                args_str = ""
+                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                    args_str += f"{arg}={value}, "
+                args_str = args_str.rstrip(", ")
+                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+
+    # Create panel for response
+    response_panel = create_panel(
+        content=tool_calls_content,
+        title="Run Paused",
+        border_style="blue",
+    )
+    return response_panel
