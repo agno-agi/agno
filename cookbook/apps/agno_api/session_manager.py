@@ -45,5 +45,11 @@ if __name__ == "__main__":
     # Simple run to generate and record a session
     basic_agent.print_response("What is the capital of France?")
 
-    # Run the Agno API App
+    """ Run the Agno API App:
+    Now you can interact with your sessions using the API. Examples:
+    - http://localhost:8001/sessions/v1/sessions
+    - http://localhost:8001/sessions/v1/sessions/123
+    - http://localhost:8001/sessions/v1/sessions?agent_id=123
+    - http://localhost:8001/sessions/v1/sessions?limit=10&offset=0&sort_by=created_at&sort_order=desc
+    """
     agno_client.serve(app="session_manager:app", reload=True)

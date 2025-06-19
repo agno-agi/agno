@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import Table
 
-from agno.eval.schemas import EvalRunRecord
+from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.memory.db.schema import MemoryRow
 from agno.session import Session
 
@@ -219,6 +219,11 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -230,5 +235,10 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
     ) -> List[EvalRunRecord]:
         raise NotImplementedError

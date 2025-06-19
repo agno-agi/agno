@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
-from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.eval.schemas import EvalType
 
 
 class EvalSchema(BaseModel):
@@ -19,16 +19,16 @@ class EvalSchema(BaseModel):
     eval_data: Dict[str, Any]
 
     @classmethod
-    def from_eval_run(cls, eval_run: EvalRunRecord) -> "EvalSchema":
+    def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":
         return cls(
-            id=eval_run.run_id,
-            name=eval_run.name or "",
-            agent_id=eval_run.agent_id,
-            model_id=eval_run.model_id,
-            model_provider=eval_run.model_provider,
-            team_id=eval_run.team_id,
-            workflow_id=eval_run.workflow_id,
-            evaluated_component_name=eval_run.evaluated_component_name,
-            eval_type=eval_run.eval_type,
-            eval_data=eval_run.eval_data,
+            id=eval_run["run_id"],
+            name=eval_run["name"],
+            agent_id=eval_run["agent_id"],
+            model_id=eval_run["model_id"],
+            model_provider=eval_run["model_provider"],
+            team_id=eval_run["team_id"],
+            workflow_id=eval_run["workflow_id"],
+            evaluated_component_name=eval_run["evaluated_component_name"],
+            eval_type=eval_run["eval_type"],
+            eval_data=eval_run["eval_data"],
         )

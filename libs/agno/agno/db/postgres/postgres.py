@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
-from agno.eval.schemas import EvalRunRecord
+from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.memory.db.schema import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -300,7 +300,7 @@ class PostgresDb(BaseDb):
             log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
             raise
 
-    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str], sort_order: Optional[str]):
+    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
         """Apply sorting to the given SQLAlchemy statement.
 
         Args:
@@ -313,7 +313,7 @@ class PostgresDb(BaseDb):
             The modified statement with sorting applied
         """
         if sort_by is None:
-            return stmt.order_by(table.c.last_updated.desc())
+            return stmt
 
         # Validate the field to sort by exists in the given table
         if not hasattr(table.c, sort_by):
@@ -1108,7 +1108,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Eval table was not provided on initialization")
             log_info(f"Getting eval table: {self.eval_table_name}")
             self.eval_table = self.get_or_create_table(
-                table_name=self.eval_table_name, table_type="eval_runs", db_schema=self.db_schema
+                table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
             )
         return self.eval_table
 
@@ -1184,6 +1184,11 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
     ) -> List[Dict[str, Any]]:
         """Get all eval runs from the database as raw dictionaries.
 
@@ -1193,6 +1198,11 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             table (Optional[Table]): The table to read from.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[EvalType]): The type of eval to filter by.
 
         Returns:
             List[Dict[str, Any]]: The eval runs as raw dictionaries.
@@ -1203,10 +1213,17 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                if offset is not None:
-                    stmt = stmt.offset(offset)
+                # Filtering
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if model_id is not None:
+                    stmt = stmt.where(table.c.model_id == model_id)
+                if eval_type is not None:
+                    stmt = stmt.where(table.c.eval_type == eval_type)
                 # Sorting
                 stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
@@ -1232,6 +1249,11 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
     ) -> List[EvalRunRecord]:
         """Get all eval runs from the database.
 
@@ -1241,6 +1263,11 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             table (Optional[Table]): The table to read from.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[EvalType]): The type of eval to filter by.
 
         Returns:
             List[EvalRunRecord]: The eval runs.
@@ -1255,6 +1282,11 @@ class PostgresDb(BaseDb):
                 sort_by=sort_by,
                 sort_order=sort_order,
                 table=table,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_type,
             )
             if not eval_runs_raw:
                 return []
