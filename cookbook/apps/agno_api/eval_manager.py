@@ -33,7 +33,7 @@ evaluation = AccuracyEval(
     expected_output="No",
     num_iterations=1,
 )
-# evaluation.run(print_results=True)
+evaluation.run(print_results=True)
 
 # Setup the Agno API App
 agno_client = AgnoAPI(
