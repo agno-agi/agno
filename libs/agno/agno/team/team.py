@@ -28,12 +28,12 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent.metrics import SessionMetrics
 from agno.db.base import BaseDb
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
-from agno.memory.memory import Memory, SessionSummary
+from agno.memory.memory import Memory
+from agno.session.summarizer import SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -43,6 +43,7 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
 from agno.session import TeamSession
+from agno.session.metrics import SessionMetrics
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (

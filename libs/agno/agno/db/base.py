@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import Table
 
 from agno.eval.schemas import EvalRunRecord
 from agno.memory.db.schema import MemoryRow
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
-from agno.session import AgentSession, Session
+from agno.session import Session
 
 
 class SessionType(str, Enum):
@@ -24,6 +24,7 @@ class BaseDb(ABC):
         user_memory_table: Optional[str] = None,
         learning_table: Optional[str] = None,
         eval_table: Optional[str] = None,
+        knowledge_table: Optional[str] = None,
     ):
         if (
             not agent_session_table
@@ -32,6 +33,7 @@ class BaseDb(ABC):
             and not user_memory_table
             and not learning_table
             and not eval_table
+            and not knowledge_table
         ):
             raise ValueError("At least one of the tables must be provided")
 
@@ -41,34 +43,81 @@ class BaseDb(ABC):
         self.user_memory_table_name = user_memory_table
         self.learning_table_name = learning_table
         self.eval_table_name = eval_table
+        self.knowledge_table_name = knowledge_table
 
-    # --- READ ---
+    # --- Base ---
 
     @abstractmethod
-    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+    def create_schema(self, db_schema: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_eval_runs(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[EvalRunRecord]:
+    def create_table(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_runs(self, session_id: str, session_type: SessionType) -> List[Union[RunResponse, TeamRunResponse]]:
+    def get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Table]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
+    def table_exists(self, table_name: str, db_schema: str) -> bool:
+        raise NotImplementedError
+
+    # @abstractmethod
+    # def upgrade_schema(self) -> None:
+    #     raise NotImplementedError
+
+    # --- Sessions Table ---
+
+    @abstractmethod
+    def delete_session(self, session_id: Optional[str] = None):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_runs_raw(self, session_id: str, session_type: SessionType) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_session_raw(
+        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_session(
+        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
+    ) -> Optional[Session]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_sessions_raw(
+        self,
+        session_type: SessionType,
+        user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
     def get_sessions(
-        self, session_type: SessionType, entity_id: Optional[str] = None, limit: Optional[int] = None
+        self,
+        session_type: SessionType,
+        user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> List[Session]:
         raise NotImplementedError
 
     @abstractmethod
     def get_recent_sessions(
-        self, session_type: SessionType, entity_id: Optional[str] = None, limit: Optional[int] = None
+        self, session_type: SessionType, component_id: Optional[str] = None, limit: Optional[int] = None
     ) -> List[str]:
         raise NotImplementedError
 
@@ -77,49 +126,93 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
+    def upsert_session_raw(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_user_memories(self, user_id: Optional[str] = None) -> List[MemoryRow]:
+    def upsert_session(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
 
-    # --- WRITE ---
-
-    @abstractmethod
-    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def create_table(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None):
-        raise NotImplementedError
+    # --- User Memory Table ---
 
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_agent_session(self, session: AgentSession) -> Optional[AgentSession]:
+    def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user_memories_raw(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> List[MemoryRow]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
         raise NotImplementedError
 
-    # --- UTILITIES ---
+    # --- Knowledge Table ---
 
-    # @abstractmethod
-    # def create_table(self, table_name: str, schema: str) -> None:
-    #     raise NotImplementedError
+    @abstractmethod
+    def get_knowledge_document(self, knowledge_id: str):
+        raise NotImplementedError
 
-    # @abstractmethod
-    # def validate_table_schema(self, table_name: str, schema: str) -> None:
-    #     raise NotImplementedError
+    @abstractmethod
+    def get_knowledge_documents(self, knowledge_id: str):
+        raise NotImplementedError
 
-    # @abstractmethod
-    # def upgrade_schema(self) -> None:
-    #     raise NotImplementedError
+    @abstractmethod
+    def upsert_knowledge_document(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_knowledge_document(self):
+        raise NotImplementedError
+
+    # --- Eval Table ---
+
+    @abstractmethod
+    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> List[EvalRunRecord]:
+        raise NotImplementedError

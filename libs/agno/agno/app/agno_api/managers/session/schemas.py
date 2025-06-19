@@ -1,12 +1,9 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
 from agno.app.agno_api.managers.session.utils import get_first_user_message
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
-from agno.run.workflow import BaseWorkflowRunResponseEvent
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 
 
@@ -80,15 +77,15 @@ class RunSchema(BaseModel):
     created_at: Optional[datetime]
 
     @classmethod
-    def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
+    def from_dict(cls, run_response: Dict[str, Any]) -> "RunSchema":
         return cls(
-            run_id=run_response.run_id or "",
-            agent_session_id=run_response.session_id or "",
+            run_id=run_response.get("run_id", ""),
+            agent_session_id=run_response.get("session_id", ""),
             workspace_id=None,
             user_id=None,
-            run_data=run_response.to_dict(),
+            run_data=run_response,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_response.created_at) if run_response.created_at else None,
+            created_at=datetime.fromtimestamp(run_response["created_at"]) if run_response["created_at"] else None,
         )
 
 
@@ -102,15 +99,15 @@ class TeamRunSchema(BaseModel):
     created_at: Optional[datetime]
 
     @classmethod
-    def from_team_run_response(cls, run_response: TeamRunResponse) -> "TeamRunSchema":
+    def from_dict(cls, run_response: Dict[str, Any]) -> "TeamRunSchema":
         return cls(
-            run_id=run_response.run_id or "",
-            team_session_id=run_response.session_id or "",
+            run_id=run_response.get("run_id", ""),
+            team_session_id=run_response.get("session_id", ""),
             workspace_id=None,
             user_id=None,
-            run_data=run_response.to_dict(),
+            run_data=run_response,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_response.created_at) if run_response.created_at else None,
+            created_at=datetime.fromtimestamp(run_response["created_at"]) if run_response["created_at"] else None,
         )
 
 
@@ -123,12 +120,12 @@ class WorkflowRunSchema(BaseModel):
     created_at: Optional[datetime]
 
     @classmethod
-    def from_workflow_run_response(cls, run_response: BaseWorkflowRunResponseEvent) -> "WorkflowRunSchema":
+    def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         return cls(
-            run_id=run_response.run_id or "",
+            run_id=run_response.get("run_id", ""),
             workspace_id=None,
             user_id=None,
-            run_data=run_response.to_dict(),
+            run_data=run_response,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_response.created_at) if run_response.created_at else None,
+            created_at=datetime.fromtimestamp(run_response["created_at"]) if run_response["created_at"] else None,
         )

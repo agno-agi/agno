@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from agno.models.message import Message
 from agno.run.response import RunResponse
+from agno.session.summarizer import SessionSummarizer, SessionSummary
 from agno.utils.log import log_debug, log_warning
 
 
@@ -37,7 +38,7 @@ class AgentSession:
     # List of all runs in the session
     runs: Optional[list[RunResponse]] = None
     # Summary of the session
-    summary: Optional[Dict[str, Any]] = None
+    summary: Optional[SessionSummary] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -161,10 +162,11 @@ class AgentSession:
         """Returns a list of messages for the session that iterate through user message and assistant response."""
 
         if assistant_role is None:
+            # TODO: Check if we still need CHATBOT as a role
             assistant_role = ["assistant", "model", "CHATBOT"]
 
         final_messages: List[Message] = []
-        session_runs = self.runs.get(session_id, []) if self.runs else []
+        session_runs = self.runs
         for run_response in session_runs:
             if run_response and run_response.messages:
                 user_message_from_run = None
@@ -190,3 +192,67 @@ class AgentSession:
                     final_messages.append(user_message_from_run)
                     final_messages.append(assistant_message_from_run)
         return final_messages
+
+    # Session Summary functions
+    def create_session_summary(
+        self, session_id: str, user_id: Optional[str] = None, summary_manager: Optional[SessionSummarizer] = None
+    ) -> Optional[SessionSummary]:
+        """Creates a summary of the session"""
+        from datetime import datetime
+
+        if not summary_manager:
+            raise ValueError("Summarizer not initialized")
+
+        if user_id is None:
+            user_id = "default"
+
+        summary_response = summary_manager.run(conversation=self.get_messages_for_session(session_id=session_id))
+        if summary_response is None:
+            return None
+        session_summary = SessionSummary(
+            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
+        )
+        self.summary = session_summary  # type: ignore
+
+        return session_summary
+
+    async def acreate_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Creates a summary of the session"""
+        from datetime import datetime
+
+        if not self.summary_manager:
+            raise ValueError("Summarizer not initialized")
+
+        self.set_log_level()
+
+        if user_id is None:
+            user_id = "default"
+
+        summary_response = await self.summary_manager.arun(
+            conversation=self.get_messages_for_session(session_id=session_id)
+        )
+        if summary_response is None:
+            return None
+        session_summary = SessionSummary(
+            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
+        )
+        self.summary = session_summary  # type: ignore
+
+        return session_summary
+
+    def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+        """Get the session summary for a given user id"""
+
+        if user_id is None:
+            user_id = "default"
+        if self.summary is None:
+            return None
+        return self.summary
+
+    def get_session_summaries(self, user_id: Optional[str] = None) -> List[SessionSummary]:
+        """Get the session summaries for a given user id"""
+        if user_id is None:
+            user_id = "default"
+        if self.summary is None:
+            return []
+        return self.summary

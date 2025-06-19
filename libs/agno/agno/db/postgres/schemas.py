@@ -79,6 +79,12 @@ EVAL_TABLE_SCHEMA = {
 
 LEARNING_TABLE_SCHEMA = {}
 
+KNOWLEDGE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    "description": {"type": String, "nullable": False},
+}
+
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """

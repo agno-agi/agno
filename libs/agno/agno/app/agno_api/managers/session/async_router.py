@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, HTTPException, Path, Query
 
@@ -11,6 +11,7 @@ from agno.app.agno_api.managers.session.schemas import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
+from agno.app.agno_api.managers.utils import SortOrder
 from agno.db.base import BaseDb, SessionType
 
 
@@ -18,8 +19,20 @@ def attach_async_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.get("/sessions", response_model=List[SessionSchema], status_code=200)
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
+        component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
+        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
+        offset: Optional[int] = Query(default=0, description="Number of sessions to skip"),
+        sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
     ) -> List[SessionSchema]:
-        sessions = db.get_sessions(session_type=session_type)
+        sessions = db.get_sessions(
+            session_type=session_type,
+            component_id=component_id,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
         return [SessionSchema.from_session(session) for session in sessions]
 
     @router.get(
@@ -49,19 +62,15 @@ def attach_async_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
     ) -> Union[List[RunSchema], List[TeamRunSchema]]:
-        session = db.get_session(session_id=session_id, session_type=session_type)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
-
-        runs = db.get_runs(session_id=session_id, session_type=session_type)
+        runs = db.get_runs_raw(session_id=session_id, session_type=session_type)
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
         if session_type == SessionType.AGENT:
-            return [RunSchema.from_run_response(run) for run in runs]  # type: ignore
+            return [RunSchema.from_dict(run) for run in runs]  # type: ignore
         elif session_type == SessionType.TEAM:
-            return [TeamRunSchema.from_team_run_response(run) for run in runs]  # type: ignore
+            return [TeamRunSchema.from_dict(run) for run in runs]  # type: ignore
         elif session_type == SessionType.WORKFLOW:
-            return [WorkflowRunSchema.from_workflow_run_response(run) for run in runs]  # type: ignore
+            return [WorkflowRunSchema.from_dict(run) for run in runs]  # type: ignore
 
     return router

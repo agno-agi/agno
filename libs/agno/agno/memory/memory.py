@@ -11,14 +11,12 @@ from agno.db.base import BaseDb, SessionType
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.db.schema import MemoryRow
 from agno.memory.manager import MemoryManager
-from agno.memory.schema import SessionSummary, UserMemory
-from agno.memory.summarizer import SessionSummarizer
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.session import AgentSession
-from agno.utils.log import log_debug, log_warning, logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import log_debug, log_error, log_warning, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
 
@@ -29,6 +27,34 @@ class MemorySearchResponse(BaseModel):
     memory_ids: List[str] = Field(
         ..., description="The IDs of the memories that are most semantically similar to the query."
     )
+
+
+@dataclass
+class UserMemory:
+    """Model for User Memories"""
+
+    memory: str
+    topics: Optional[List[str]] = None
+    input: Optional[str] = None
+    last_updated: Optional[datetime] = None
+    memory_id: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = {
+            "memory_id": self.memory_id,
+            "memory": self.memory,
+            "topics": self.topics,
+            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "input": self.input,
+        }
+        return {k: v for k, v in _dict.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
+        last_updated = data.get("last_updated")
+        if last_updated:
+            data["last_updated"] = datetime.fromisoformat(last_updated)
+        return cls(**data)
 
 
 @dataclass
@@ -128,14 +154,6 @@ class Memory:
             if self.memory_manager.model is None:
                 self.memory_manager.model = deepcopy(self.model)
 
-        # We are making session summaries
-        if self.model is not None:
-            if self.summary_manager is None:
-                self.summary_manager = SessionSummarizer(model=deepcopy(self.model))
-            # Set the model on the summary_manager if it is not set
-            elif self.summary_manager.model is None:
-                self.summary_manager.model = deepcopy(self.model)
-
         self.debug_mode = debug_mode
 
     def set_model(self, model: Model) -> None:
@@ -143,18 +161,14 @@ class Memory:
             self.memory_manager = MemoryManager(model=deepcopy(model))
         if self.memory_manager.model is None:
             self.memory_manager.model = deepcopy(model)
-        # if self.summary_manager is None:
-        #     self.summary_manager = SessionSummarizer(model=deepcopy(model))
-        # if self.summary_manager.model is None:
-        #     self.summary_manager.model = deepcopy(model)
 
     def get_model(self) -> Model:
         if self.model is None:
             try:
                 from agno.models.openai import OpenAIChat
             except ModuleNotFoundError as e:
-                logger.exception(e)
-                logger.error(
+                log_error(e)
+                log_error(
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
@@ -189,30 +203,18 @@ class Memory:
 
     def to_dict(self) -> Dict[str, Any]:
         _memory_dict = {}
-        # Add summary if it exists
-        if self.summaries is not None:
-            _memory_dict["summaries"] = {
-                user_id: {session_id: summary.to_dict() for session_id, summary in session_summaries.items()}
-                for user_id, session_summaries in self.summaries.items()
-            }
         # Add memories if they exist
         if self.memories is not None:
             _memory_dict["memories"] = {
                 user_id: {memory_id: memory.to_dict() for memory_id, memory in user_memories.items()}
                 for user_id, user_memories in self.memories.items()
             }
-        # Add runs if they exist
-        if self.runs is not None:
-            _memory_dict["runs"] = {}
-            for session_id, runs in self.runs.items():
-                if session_id is not None:
-                    _memory_dict["runs"][session_id] = [run.to_dict() for run in runs]  # type: ignore
 
-        if self.team_context is not None:
-            _memory_dict["team_context"] = {}
-            for session_id, team_context in self.team_context.items():
-                if session_id is not None:
-                    _memory_dict["team_context"][session_id] = team_context.to_dict()
+        # if self.team_context is not None:
+        #     _memory_dict["team_context"] = {}
+        #     for session_id, team_context in self.team_context.items():
+        #         if session_id is not None:
+        #             _memory_dict["team_context"][session_id] = team_context.to_dict()
 
         _memory_dict = {k: v for k, v in _memory_dict.items() if v is not None}
         return _memory_dict
@@ -229,14 +231,6 @@ class Memory:
             return []
         return list(self.memories.get(user_id, {}).values())
 
-    def get_session_summaries(self, user_id: Optional[str] = None) -> List[SessionSummary]:
-        """Get the session summaries for a given user id"""
-        if user_id is None:
-            user_id = "default"
-        if self.summaries is None:
-            return []
-        return list(self.summaries.get(user_id, {}).values())
-
     def get_user_memory(
         self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
     ) -> Optional[UserMemory]:
@@ -249,15 +243,6 @@ class Memory:
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
-
-    def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
-        """Get the session summary for a given user id"""
-
-        if user_id is None:
-            user_id = "default"
-        if self.summaries is None:
-            return None
-        return self.summaries.get(user_id, {}).get(session_id, None)
 
     def add_user_memory(
         self,
@@ -368,58 +353,7 @@ class Memory:
         if self.db:
             self._delete_db_memory(memory_id=memory_id)
 
-    def delete_session_summary(self, user_id: str, session_id: str) -> None:
-        """Delete a session summary for a given user id
-        Args:
-            user_id (str): The user id to delete the memory from
-            session_id (str): The id of the session to delete
-        """
-        del self.summaries[user_id][session_id]  # type: ignore
-
     # -*- Agent Functions
-    def create_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
-        """Creates a summary of the session"""
-
-        if not self.summary_manager:
-            raise ValueError("Summarizer not initialized")
-
-        self.set_log_level()
-
-        if user_id is None:
-            user_id = "default"
-
-        summary_response = self.summary_manager.run(conversation=self.get_messages_for_session(session_id=session_id))
-        if summary_response is None:
-            return None
-        session_summary = SessionSummary(
-            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
-        )
-        self.summaries.setdefault(user_id, {})[session_id] = session_summary  # type: ignore
-
-        return session_summary
-
-    async def acreate_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
-        """Creates a summary of the session"""
-        if not self.summary_manager:
-            raise ValueError("Summarizer not initialized")
-
-        self.set_log_level()
-
-        if user_id is None:
-            user_id = "default"
-
-        summary_response = await self.summary_manager.arun(
-            conversation=self.get_messages_for_session(session_id=session_id)
-        )
-        if summary_response is None:
-            return None
-        session_summary = SessionSummary(
-            summary=summary_response.summary, topics=summary_response.topics, last_updated=datetime.now()
-        )
-        self.summaries.setdefault(user_id, {})[session_id] = session_summary  # type: ignore
-
-        return session_summary
-
     def create_user_memories(
         self,
         message: Optional[str] = None,
@@ -594,7 +528,7 @@ class Memory:
             self.db.upsert_user_memory(memory=memory)
             return "Memory added successfully"
         except Exception as e:
-            logger.warning(f"Error storing memory in db: {e}")
+            log_warning(f"Error storing memory in db: {e}")
             return f"Error adding memory: {e}"
 
     def _delete_db_memory(self, memory_id: str) -> str:
@@ -605,7 +539,7 @@ class Memory:
             self.db.delete_user_memory(memory_id=memory_id)
             return "Memory deleted successfully"
         except Exception as e:
-            logger.warning(f"Error deleting memory in db: {e}")
+            log_warning(f"Error deleting memory in db: {e}")
             return f"Error deleting memory: {e}"
 
     # -*- Session Db Functions
@@ -617,7 +551,7 @@ class Memory:
             session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             return session
         except Exception as e:
-            logger.warning(f"Error getting session from db: {e}")
+            log_warning(f"Error getting session from db: {e}")
             return None
 
     def upsert_agent_session(self, session: AgentSession) -> Optional[AgentSession]:
@@ -627,7 +561,7 @@ class Memory:
                 raise ValueError("Db not initialized")
             return self.db.upsert_agent_session(session=session)
         except Exception as e:
-            logger.warning(f"Error upserting session into db: {e}")
+            log_warning(f"Error upserting session into db: {e}")
             return None
 
     # -*- Utility Functions
@@ -893,7 +827,7 @@ class Memory:
                 try:
                     setattr(copied_obj, field_name, deepcopy(field_value))
                 except Exception as e:
-                    logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
+                    log_warning(f"Failed to deepcopy field: {field_name} - {e}")
                     setattr(copied_obj, field_name, field_value)
 
         copied_obj.db = self.db

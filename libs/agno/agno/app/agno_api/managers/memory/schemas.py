@@ -1,34 +1,32 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
-
-from agno.memory.db.schema import MemoryRow
-from agno.memory.memory import UserMemory
 
 
 class UserMemorySchema(BaseModel):
     memory_id: str
     memory: str
     topics: Optional[List[str]]
+
+    agent_id: Optional[str]
+    team_id: Optional[str]
+    workflow_id: Optional[str]
+    user_id: Optional[str]
+
     last_updated: Optional[datetime]
 
     @classmethod
-    def from_memory_row(cls, memory_row: MemoryRow) -> "UserMemorySchema":
+    def from_dict(cls, memory_dict: Dict[str, Any]) -> "UserMemorySchema":
         return cls(
-            memory_id=memory_row.id,  # type: ignore
-            memory=memory_row.memory["memory"],
-            topics=memory_row.memory.get("topics", []),
-            last_updated=memory_row.last_updated,
-        )
-
-    @classmethod
-    def from_user_memory(cls, memory: UserMemory) -> "UserMemorySchema":
-        return cls(
-            memory_id=memory.memory_id,  # type: ignore
-            memory=memory.memory,
-            topics=memory.topics,
-            last_updated=memory.last_updated,
+            memory_id=memory_dict["memory_id"],
+            user_id=memory_dict["user_id"],
+            agent_id=memory_dict["agent_id"],
+            team_id=memory_dict["team_id"],
+            workflow_id=memory_dict["workflow_id"],
+            memory=memory_dict["memory"]["memory"],
+            topics=memory_dict["memory"]["topics"],
+            last_updated=memory_dict["last_updated"],
         )
 
 
