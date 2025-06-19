@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info
 
 
 class FileTools(Toolkit):
@@ -26,7 +26,7 @@ class FileTools(Toolkit):
         if list_files:
             tools.append(self.list_files)
         if search_files:
-            self.register(self.search_files)
+            tools.append(self.search_files)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
 
@@ -49,7 +49,7 @@ class FileTools(Toolkit):
             log_info(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
-            logger.error(f"Error saving to file: {e}")
+            log_error(f"Error saving to file: {e}")
             return f"Error saving to file: {e}"
 
     def read_file(self, file_name: str) -> str:
@@ -64,7 +64,7 @@ class FileTools(Toolkit):
             contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {e}")
             return f"Error reading file: {e}"
 
     def list_files(self) -> str:
@@ -76,18 +76,34 @@ class FileTools(Toolkit):
             log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_path) for file_path in self.base_dir.iterdir()], indent=4)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            log_error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
 
-    def search_files(self, pattern) -> list[Path]:
+    def search_files(self, pattern: str) -> str:
         """Searches for files in the base directory that match the pattern
 
         :param pattern: The pattern to search for, e.g. "*.txt", "file*.csv", "**/*.py".
-        :return: A list of files that match the pattern
+        :return: JSON formatted list of matching file paths, or error message.
         """
         try:
-            logger.info(f"Searching files in {self.base_dir} with pattern {pattern}")
-            return list(self.base_dir.glob(pattern))
+            if not pattern or not pattern.strip():
+                return "Error: Pattern cannot be empty"
+
+            log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
+            matching_files = list(self.base_dir.glob(pattern))
+
+            file_paths = [str(file_path) for file_path in matching_files]
+
+            result = {
+                "pattern": pattern,
+                "base_directory": str(self.base_dir),
+                "matches_found": len(file_paths),
+                "files": file_paths,
+            }
+            log_debug(f"Found {len(file_paths)} files matching pattern {pattern}")
+            return json.dumps(result, indent=2)
+
         except Exception as e:
-            logger.error(f"Error searching files: {e}")
-            return []
+            error_msg = f"Error searching files with pattern '{pattern}': {e}"
+            log_error(error_msg)
+            return error_msg
