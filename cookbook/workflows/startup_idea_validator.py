@@ -50,6 +50,7 @@ from typing import Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger
@@ -88,7 +89,6 @@ class StartupIdeaValidator(Workflow):
         add_history_to_messages=True,
         add_datetime_to_instructions=True,
         response_model=IdeaClarification,
-        structured_outputs=True,
         debug_mode=False,
     )
 
@@ -104,8 +104,6 @@ class StartupIdeaValidator(Workflow):
         add_history_to_messages=True,
         add_datetime_to_instructions=True,
         response_model=MarketResearch,
-        structured_outputs=True,
-        debug_mode=False,
     )
 
     competitor_analysis_agent: Agent = Agent(
@@ -208,8 +206,8 @@ class StartupIdeaValidator(Workflow):
         )
 
         if idea_clarification is None:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
+                run_id=self.run_id,
                 content=f"Sorry, could not even clarify the idea: {startup_idea}",
             )
             return
@@ -220,8 +218,8 @@ class StartupIdeaValidator(Workflow):
         )
 
         if market_research is None:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
+                run_id=self.run_id,
                 content="Market research failed",
             )
             return
@@ -243,9 +241,7 @@ class StartupIdeaValidator(Workflow):
             )
         )
 
-        yield RunResponse(
-            content=final_response.content, event=RunEvent.workflow_completed
-        )
+        yield WorkflowCompletedEvent(run_id=self.run_id, content=final_response.content)
 
 
 # Run the workflow if the script is executed directly
@@ -266,6 +262,8 @@ if __name__ == "__main__":
         session_id=f"validate-startup-idea-{url_safe_idea}",
         storage=SqliteStorage(
             table_name="validate_startup_ideas_workflow",
+            mode="workflow",
+            auto_upgrade_schema=True,
             db_file="tmp/agno_workflows.db",
         ),
     )

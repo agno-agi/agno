@@ -41,7 +41,10 @@ db_engine = create_engine(db_url)
 # Create an agent with SingleStore storage
 agent = Agent(
     storage=SingleStoreStorage(
-        table_name="agent_sessions", db_engine=db_engine, schema=DATABASE
+        table_name="agent_sessions",
+        db_engine=db_engine,
+        schema=DATABASE,
+        auto_upgrade_schema=True,
     ),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,

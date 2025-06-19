@@ -22,53 +22,35 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-
-async def create_filesystem_agent(session):
-    """Create and configure a filesystem agent with MCP tools."""
-    # Initialize the MCP toolkit
-    mcp_tools = MCPTools(session=session)
-    await mcp_tools.initialize()
-
-    # Create an agent with the MCP toolkit
-    return Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        tools=[mcp_tools],
-        instructions=dedent("""\
-            You are a filesystem assistant. Help users explore files and directories.
-
-            - Navigate the filesystem to answer questions
-            - Use the list_allowed_directories tool to find directories that you can access
-            - Provide clear context about files you examine
-            - Use headings to organize your responses
-            - Be concise and focus on relevant information\
-        """),
-        markdown=True,
-        show_tool_calls=True,
-    )
 
 
 async def run_agent(message: str) -> None:
     """Run the filesystem agent with the given message."""
     # Initialize the MCP server
-    server_params = StdioServerParameters(
-        command="npx",
-        args=[
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            str(Path(__file__).parent.parent.parent.parent),
-        ],
-    )
+    file_path = str(Path(__file__).parent.parent.parent.parent)
 
     # Create a client session to connect to the MCP server
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            agent = await create_filesystem_agent(session)
+    async with MCPTools(
+        f"npx -y @modelcontextprotocol/server-filesystem {file_path}"
+    ) as mcp_tools:
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            tools=[mcp_tools],
+            instructions=dedent("""\
+                You are a filesystem assistant. Help users explore files and directories.
 
-            # Run the agent
-            await agent.aprint_response(message, stream=True)
+                - Navigate the filesystem to answer questions
+                - Use the list_allowed_directories tool to find directories that you can access
+                - Provide clear context about files you examine
+                - Use headings to organize your responses
+                - Be concise and focus on relevant information\
+            """),
+            markdown=True,
+            show_tool_calls=True,
+        )
+
+        # Run the agent
+        await agent.aprint_response(message, stream=True)
 
 
 # Example usage

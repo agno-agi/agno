@@ -8,7 +8,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 agent = Agent(
-    model=Cohere(id="command-r-08-2024"),
+    model=Cohere(id="command-a-03-2025"),
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,

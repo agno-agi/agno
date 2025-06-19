@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 
 class LocalFileSystemTools(Toolkit):
@@ -12,6 +12,7 @@ class LocalFileSystemTools(Toolkit):
         self,
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
+        **kwargs,
     ):
         """
         Initialize the WriteToLocal toolkit.
@@ -19,7 +20,6 @@ class LocalFileSystemTools(Toolkit):
             target_directory (Optional[str]): Default directory to write files to. Creates if doesn't exist.
             default_extension (str): Default file extension to use if none specified.
         """
-        super().__init__(name="write_to_local")
 
         self.target_directory = target_directory or os.getcwd()
         self.default_extension = default_extension.lstrip(".")
@@ -27,7 +27,10 @@ class LocalFileSystemTools(Toolkit):
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
-        self.register(self.write_file)
+        tools = []
+        tools.append(self.write_file)
+
+        super().__init__(name="write_to_local", tools=tools, **kwargs)
 
     def write_file(
         self,
@@ -53,7 +56,7 @@ class LocalFileSystemTools(Toolkit):
                 filename, file_ext = os.path.splitext(filename)
                 extension = extension or file_ext.lstrip(".")
 
-            logger.debug(f"Writing file to local system: {filename}")
+            log_debug(f"Writing file to local system: {filename}")
 
             extension = (extension or self.default_extension).lstrip(".")
 

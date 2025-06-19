@@ -18,7 +18,6 @@ audio_agent = Agent(
         "Generate the text prompt we send in hindi language",
     ],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 

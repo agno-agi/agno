@@ -26,12 +26,13 @@ from typing import Dict, Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunEvent, RunResponse, Workflow
+from agno.workflow import RunResponse, Workflow
 from pydantic import BaseModel, Field
 
 
@@ -83,7 +84,6 @@ class ResearchReportGenerator(Workflow):
         Avoid opinion pieces and non-authoritative sources.\
         """),
         response_model=SearchResults,
-        structured_outputs=True,
     )
 
     article_scraper: Agent = Agent(
@@ -104,7 +104,6 @@ class ResearchReportGenerator(Workflow):
         Format everything in clean markdown for optimal readability.\
         """),
         response_model=ScrapedArticle,
-        structured_outputs=True,
     )
 
     writer: Agent = Agent(
@@ -215,9 +214,7 @@ class ResearchReportGenerator(Workflow):
         if use_cached_report:
             cached_report = self.get_cached_report(topic)
             if cached_report:
-                yield RunResponse(
-                    content=cached_report, event=RunEvent.workflow_completed
-                )
+                yield WorkflowCompletedEvent(content=cached_report)
                 return
 
         # Search the web for articles on the topic
@@ -226,8 +223,7 @@ class ResearchReportGenerator(Workflow):
         )
         # If no search_results are found for the topic, end the workflow
         if search_results is None or len(search_results.articles) == 0:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
                 content=f"Sorry, could not find any articles on the topic: {topic}",
             )
             return

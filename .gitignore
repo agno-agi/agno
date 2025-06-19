@@ -28,6 +28,7 @@ certs/
 # ignore storage dir
 /storage
 .images
+/qdrant_storage
 
 # ignore wip dir
 wip
@@ -49,9 +50,8 @@ junk
 tmp
 agents.db
 data.db
-
 .ipynb_checkpoints
-
+build
 audio_generations
 
 *.db

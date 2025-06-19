@@ -1,8 +1,8 @@
-# Getting Started with Agno 🚀
+# Getting Started with Agno Agents 🚀
 
 This guide walks through the basics of building Agents with Agno.
 
-The examples build on each other, introducing new concepts and capabilities progressively. Each example contains detailed comments, example prompts, and required dependencies.
+Each example builds on the previous one, introducing new concepts and capabilities progressively. Examples contain detailed comments, example prompts, and required dependencies.
 
 ## Setup
 

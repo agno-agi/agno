@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 try:
     from twilio.base.exceptions import TwilioRestException
@@ -22,6 +22,7 @@ class TwilioTools(Toolkit):
         region: Optional[str] = None,
         edge: Optional[str] = None,
         debug: bool = False,
+        **kwargs,
     ):
         """Initialize the Twilio toolkit.
 
@@ -38,8 +39,6 @@ class TwilioTools(Toolkit):
             edge: Optional Twilio edge location (e.g. 'sydney')
             debug: Enable debug logging
         """
-        super().__init__(name="twilio")
-
         # Get credentials from environment if not provided
         self.account_sid = account_sid or getenv("TWILIO_ACCOUNT_SID")
         self.auth_token = auth_token or getenv("TWILIO_AUTH_TOKEN")
@@ -84,9 +83,12 @@ class TwilioTools(Toolkit):
             logging.basicConfig()
             self.client.http_client.logger.setLevel(logging.INFO)
 
-        self.register(self.send_sms)
-        self.register(self.get_call_details)
-        self.register(self.list_messages)
+        tools: List[Any] = []
+        tools.append(self.send_sms)
+        tools.append(self.get_call_details)
+        tools.append(self.list_messages)
+
+        super().__init__(name="twilio", tools=tools, **kwargs)
 
     @staticmethod
     def validate_phone_number(phone: str) -> bool:
@@ -114,7 +116,7 @@ class TwilioTools(Toolkit):
                 return "Error: Message body cannot be empty"
 
             message = self.client.messages.create(to=to, from_=from_, body=body)
-            logger.info(f"SMS sent. SID: {message.sid}, to: {to}")
+            log_info(f"SMS sent. SID: {message.sid}, to: {to}")
             return f"Message sent successfully. SID: {message.sid}"
         except TwilioRestException as e:
             logger.error(f"Failed to send SMS to {to}: {e}")
@@ -132,7 +134,7 @@ class TwilioTools(Toolkit):
         """
         try:
             call = self.client.calls(call_sid).fetch()
-            logger.info(f"Fetched details for call SID: {call_sid}")
+            log_info(f"Fetched details for call SID: {call_sid}")
             return {
                 "to": call.to,
                 "from": call.from_,
@@ -170,7 +172,7 @@ class TwilioTools(Toolkit):
                         "date_sent": str(message.date_sent),
                     }
                 )
-            logger.info(f"Retrieved {len(messages)} messages")
+            log_info(f"Retrieved {len(messages)} messages")
             return messages
         except TwilioRestException as e:
             logger.error(f"Failed to list messages: {e}")
