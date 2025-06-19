@@ -7,10 +7,10 @@ Steps:
 """
 
 from agno.agent import Agent
+from agno.db.agent.postgres import PostgresAgentStorage
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.lmstudio import LMStudio
-from agno.storage.agent.postgres import PostgresAgentStorage
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(

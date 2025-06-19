@@ -2,8 +2,8 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.models.lmstudio import LMStudio
-from agno.storage.agent.sqlite import SqliteAgentStorage
 
 
 def _assert_metrics(response: RunResponse):

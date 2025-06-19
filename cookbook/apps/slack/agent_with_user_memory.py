@@ -2,11 +2,11 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.app.slack.app import SlackAPI
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.memory import Memory
 from agno.models.anthropic.claude import Claude
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 
 agent_storage = SqliteStorage(

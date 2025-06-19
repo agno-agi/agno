@@ -1,8 +1,8 @@
 """Run `pip install sqlalchemy` and ensure Postgres is running (`./cookbook/scripts/run_pgvector.sh`)."""
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresStorage
 from agno.models.vllm import vLLM
-from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"

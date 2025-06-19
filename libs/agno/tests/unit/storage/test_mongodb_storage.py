@@ -2,9 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.storage.mongodb import MongoDbStorage
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.db.mongodb import MongoDbStorage
+from agno.session import AgentSession, WorkflowSession
 
 
 @pytest.fixture

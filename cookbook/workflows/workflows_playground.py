@@ -3,8 +3,8 @@
 2. Run the script using: `python cookbook/workflows/workflows_playground.py`
 """
 
-from agno.playground import Playground, serve_playground_app
-from agno.storage.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteStorage
+from agno.playground import Playground
 
 # Import the workflows
 from blog_post_generator import BlogPostGenerator

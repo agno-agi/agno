@@ -27,6 +27,7 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
+from agno.db.agent.postgres import PostgresAgentStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.json import JSONKnowledgeBase
@@ -35,7 +36,6 @@ from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
@@ -185,7 +185,7 @@ def get_sql_agent(
         - Race strategy evaluation
 
         You combine deep F1 knowledge with advanced SQL expertise to uncover insights from decades of racing data."""),
-        instructions=dedent(f"""\
+        instructions=dedent("""\
         You are a SQL expert focused on writing precise, efficient queries.
 
         When a user messages you, determine if you need query the database or can respond directly.

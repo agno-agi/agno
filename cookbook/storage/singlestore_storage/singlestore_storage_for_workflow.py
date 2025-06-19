@@ -5,8 +5,8 @@ from typing import Iterator
 
 import httpx
 from agno.agent import Agent
+from agno.db.singlestore import SingleStoreStorage
 from agno.run.response import RunResponse
-from agno.storage.singlestore import SingleStoreStorage
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.certs import download_cert
 from agno.utils.log import logger

@@ -3,9 +3,7 @@ from typing import Any, List, Optional, Union, cast
 from agno.agent.agent import Agent, Function, Toolkit
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
@@ -143,7 +141,6 @@ def get_session_title_from_team_session(team_session: TeamSession) -> str:
 
         for _run in runs:
             try:
-
                 if "agent_id" in _run:
                     run_response_parsed = RunResponse.from_dict(_run)
                 else:

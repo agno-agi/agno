@@ -11,7 +11,7 @@ docker ps
 """
 
 from agno.agent import Agent
-from agno.storage.redis import RedisStorage
+from agno.db.redis import RedisStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Initialize Redis storage with default local connection

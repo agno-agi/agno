@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.vectordb.clickhouse import Clickhouse
 
 agent = Agent(

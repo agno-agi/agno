@@ -5,9 +5,8 @@ from typing import Generator
 
 import pytest
 
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.workflow import WorkflowSession
-from agno.storage.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteStorage
+from agno.session import AgentSession, WorkflowSession
 
 
 @pytest.fixture

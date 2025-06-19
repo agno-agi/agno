@@ -2,11 +2,11 @@ from datetime import datetime
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.memory import Memory
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

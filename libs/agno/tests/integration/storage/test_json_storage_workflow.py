@@ -3,9 +3,9 @@ import shutil
 import pytest
 
 from agno.agent import Agent
+from agno.db.json import JsonStorage
 from agno.run.response import RunResponse
-from agno.storage.json import JsonStorage
-from agno.storage.session.workflow import WorkflowSession
+from agno.session import WorkflowSession
 from agno.workflow import Workflow
 
 

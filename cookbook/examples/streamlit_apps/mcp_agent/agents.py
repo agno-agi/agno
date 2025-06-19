@@ -3,13 +3,13 @@ from textwrap import dedent
 from typing import List, Optional
 
 from agno.agent import Agent
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.mcp import MCPTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 

@@ -3,9 +3,9 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
+from agno.db.sqlite import SqliteStorage
 from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
-from agno.storage.sqlite import SqliteStorage
 
 
 def _assert_metrics(response: RunResponse):

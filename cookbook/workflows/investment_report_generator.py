@@ -32,7 +32,7 @@ from textwrap import dedent
 from typing import Iterator
 
 from agno.agent import Agent, RunResponse
-from agno.storage.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteStorage
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response

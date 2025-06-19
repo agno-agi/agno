@@ -7,12 +7,12 @@ Steps:
 """
 
 from agno.agent import Agent
+from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.models.google.gemini import Gemini
 from agno.models.openai import OpenAIChat
 from agno.models.perplexity.perplexity import Perplexity
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from utils import print_chat_history, print_team_memory

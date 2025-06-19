@@ -1,9 +1,9 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Database file for memory and storage

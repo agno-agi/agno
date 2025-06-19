@@ -4,6 +4,6 @@ from agno.document.local_document_store import LocalDocumentStore
 
 __all__ = [
     "Document",
-    "DocumentStore", 
+    "DocumentStore",
     "LocalDocumentStore",
 ]

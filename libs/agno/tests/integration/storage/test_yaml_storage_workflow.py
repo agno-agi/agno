@@ -3,9 +3,9 @@ import shutil
 import pytest
 
 from agno.agent import Agent
+from agno.db.yaml import YamlStorage
 from agno.run.response import RunResponse
-from agno.storage.session.workflow import WorkflowSession
-from agno.storage.yaml import YamlStorage
+from agno.session import WorkflowSession
 from agno.workflow import Workflow
 
 

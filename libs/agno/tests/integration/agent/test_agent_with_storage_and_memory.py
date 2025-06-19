@@ -87,6 +87,7 @@ def test_agent_runs_in_memory(chat_agent):
     # Check that the run is also stored in the agent session
     assert len(chat_agent.agent_session.memory["runs"]) == 1
 
+
 @pytest.mark.asyncio
 async def test_multi_user_multi_session_chat(memory_agent, agent_storage, memory):
     """Test multi-user multi-session chat with storage and memory."""

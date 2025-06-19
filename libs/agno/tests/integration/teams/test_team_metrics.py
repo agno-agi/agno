@@ -2,8 +2,8 @@ from dataclasses import replace
 from typing import Iterator
 
 from agno.agent import Agent
-from agno.agent.metrics import SessionMetrics
 from agno.models.openai import OpenAIChat
+from agno.session.metrics import SessionMetrics
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 

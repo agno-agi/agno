@@ -25,9 +25,9 @@ from textwrap import dedent
 from typing import Dict, Iterator, Optional
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowCompletedEvent
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger

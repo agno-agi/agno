@@ -28,11 +28,11 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.agent.metrics import SessionMetrics
+from agno.db.base import BaseDb
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
-from agno.memory.memory import Memory, SessionSummary
+from agno.memory.memory import Memory
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -41,8 +41,9 @@ from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
-from agno.storage.base import Storage
-from agno.storage.session.team import TeamSession
+from agno.session import TeamSession
+from agno.session.metrics import SessionMetrics
+from agno.session.summarizer import SessionSummary
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -243,7 +244,7 @@ class Team:
     num_history_runs: int = 3
 
     # --- Team Storage ---
-    storage: Optional[Storage] = None
+    storage: Optional[BaseDb] = None
     # Extra data stored with this team
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -328,7 +329,7 @@ class Team:
         add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
         num_history_runs: int = 3,
-        storage: Optional[Storage] = None,
+        storage: Optional[BaseDb] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
@@ -6267,7 +6268,7 @@ class Team:
                 except Exception as e:
                     log_warning(f"Failed to load runs from memory: {e}")
             if "team_context" in session.memory:
-                from agno.memory.memory import TeamContext
+                from agno.memory.schemas import TeamContext
 
                 try:
                     self.memory.team_context = {
@@ -6280,13 +6281,12 @@ class Team:
                 if self.memory.memories is not None:
                     pass
                 else:
-                    from agno.memory.memory import UserMemory as UserMemoryV2
+                    from agno.memory.schemas import UserMemory as UserMemoryV2
 
                     try:
                         self.memory.memories = {
                             user_id: {
-                                memory_id: UserMemoryV2.from_dict(memory)
-                                for memory_id, memory in user_memories.items()
+                                memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
                             }
                             for user_id, user_memories in session.memory["memories"].items()
                         }

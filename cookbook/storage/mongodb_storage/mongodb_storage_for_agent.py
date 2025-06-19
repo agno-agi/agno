@@ -7,7 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.storage.mongodb import MongoDbStorage
+from agno.db.mongodb import MongoDbStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # MongoDB connection settings

@@ -39,9 +39,7 @@ from agno.memory import Memory
 from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponseEvent
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
@@ -124,10 +122,8 @@ def attach_async_routes(
     workflows: Optional[List[Workflow]] = None,
     teams: Optional[List[Team]] = None,
 ) -> APIRouter:
-
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
-
 
     @router.get("/agents", response_model=List[AgentGetResponse])
     async def get_agents():
@@ -586,7 +582,7 @@ def attach_async_routes(
             )
         return workflow_sessions
 
-    @router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
+    @router.get("/workflows/{workflow_id}/sessions/{session_id}")
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
     ):

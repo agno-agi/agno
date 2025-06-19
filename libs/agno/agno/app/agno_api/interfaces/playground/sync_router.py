@@ -39,9 +39,7 @@ from agno.memory import Memory
 from agno.run.response import RunResponseErrorEvent, RunResponseEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponseEvent
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
@@ -125,7 +123,6 @@ def attach_sync_routes(
     workflows: Optional[List[Workflow]] = None,
     teams: Optional[List[Team]] = None,
 ) -> APIRouter:
-
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
 

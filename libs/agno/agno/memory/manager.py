@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional
 
+from agno.db.schemas.memory import MemoryRow
 from agno.memory.db.base import MemoryDb
-from agno.memory.db.schema import MemoryRow
-from agno.memory.schema import UserMemory
+from agno.memory.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
@@ -349,7 +349,7 @@ class MemoryManager:
             try:
                 last_updated = datetime.now()
                 memory_id = str(uuid4())
-                db.upsert_memory(
+                db.upsert_user_memory(
                     MemoryRow(
                         id=memory_id,
                         user_id=user_id,
@@ -378,9 +378,10 @@ class MemoryManager:
             Returns:
                 str: A message indicating if the memory was updated successfully or not.
             """
+
             try:
                 last_updated = datetime.now()
-                db.upsert_memory(
+                db.upsert_user(
                     MemoryRow(
                         id=memory_id,
                         user_id=user_id,

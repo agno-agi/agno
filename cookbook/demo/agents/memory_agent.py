@@ -1,10 +1,10 @@
 from typing import Optional
 
 from agno.agent import Agent
+from agno.db.agent.postgres import PostgresAgentStorage
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ************* Database Connection *************

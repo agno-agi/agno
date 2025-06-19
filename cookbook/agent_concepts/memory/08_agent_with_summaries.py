@@ -7,8 +7,8 @@ To enable this, set `enable_session_summaries=True` in the Agent config.
 from agno.agent.agent import Agent
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
-from agno.memory.summarizer import SessionSummarizer
 from agno.models.anthropic.claude import Claude
+from agno.session.summarizer import SessionSummarizer
 from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")

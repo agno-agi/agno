@@ -21,7 +21,6 @@ def get_base_async_router(
     return router
 
 
-
 def get_base_sync_router(
     active_app_id: Optional[str] = None,
 ) -> APIRouter:

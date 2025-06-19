@@ -1,8 +1,8 @@
 from agno.agent.agent import Agent
+from agno.db.mongodb import MongoDbStorage
 from agno.memory.db.mongodb import MongoMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.mongodb import MongoDbStorage
 
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
 

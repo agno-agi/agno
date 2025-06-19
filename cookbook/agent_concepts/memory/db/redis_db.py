@@ -1,8 +1,8 @@
 from agno.agent.agent import Agent
+from agno.db.redis import RedisStorage
 from agno.memory.db.redis import RedisMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.redis import RedisStorage
 
 memory = Memory(db=RedisMemoryDb(prefix="agno_memory", host="localhost", port=6379))
 

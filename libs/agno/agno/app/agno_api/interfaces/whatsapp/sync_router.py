@@ -16,7 +16,6 @@ from .security import validate_webhook_signature
 
 
 def attach_sync_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
-
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 

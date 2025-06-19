@@ -5,10 +5,8 @@ from uuid import uuid4
 import pytest
 import redis
 
-from agno.storage.redis import RedisStorage
-from agno.storage.session.agent import AgentSession
-from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
+from agno.db.redis import RedisStorage
+from agno.session import AgentSession, TeamSession, WorkflowSession
 
 
 @pytest.fixture

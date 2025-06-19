@@ -1,8 +1,8 @@
 import json
 from typing import List
 
-from agno.memory.schema import UserMemory
 from agno.run.team import TeamRunResponse
+from agno.session.schema import UserMemory
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel

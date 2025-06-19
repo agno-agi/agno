@@ -5,11 +5,11 @@ from textwrap import dedent
 from typing import List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.memory import Memory
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools

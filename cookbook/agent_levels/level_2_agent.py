@@ -1,8 +1,8 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
-from agno.storage.sqlite import SqliteStorage
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Load Agno documentation in a knowledge base

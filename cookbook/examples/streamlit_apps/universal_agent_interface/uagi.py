@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from agents import get_agent
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
 from agno.memory import Memory
@@ -13,7 +14,6 @@ from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.tools.reasoning import ReasoningTools

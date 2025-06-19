@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteStorage
 from agno.models.litellm import LiteLLM
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Create a storage backend using the Sqlite database

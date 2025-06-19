@@ -14,10 +14,10 @@ from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.agno_api.base import BaseInterface
 from agno.app.agno_api.router import get_base_async_router, get_base_sync_router
+from agno.app.agno_api.settings import AgnoAPISettings
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
-from agno.app.agno_api.settings import AgnoAPISettings
 from agno.team.team import Team
 from agno.utils.log import log_debug, logger
 from agno.workflow.workflow import Workflow
@@ -50,19 +50,19 @@ class AgnoAPI:
 
         self.interfaces = interfaces or []
         self.managers = managers or []
-        
+
         self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
 
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
         self.description = description
-        
+
         self.interfaces_loaded: List[Tuple[str, str]] = []
         self.managers_loaded: List[Tuple[str, str]] = []
-        
+
         self.set_app_id()
-        
+
         if self.agents:
             for agent in self.agents:
                 if not agent.app_id:
@@ -91,7 +91,6 @@ class AgnoAPI:
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
 
-
     def set_app_id(self) -> str:
         # If app_id is already set, keep it instead of overriding with UUID
         if self.app_id is None:
@@ -107,7 +106,6 @@ class AgnoAPI:
         monitor_env = getenv("AGNO_MONITOR")
         if monitor_env is not None:
             self.monitoring = monitor_env.lower() == "true"
-
 
     def get_app(self, use_async: bool = True) -> FastAPI:
         if not self.api_app:
@@ -144,13 +142,17 @@ class AgnoAPI:
             self.api_app.include_router(get_base_async_router(self.app_id))
         else:
             self.api_app.include_router(get_base_sync_router(self.app_id))
-        
+
         for interface in self.interfaces:
             if interface.type == "playground":
-                self.api_app.include_router(interface.get_router(agents=self.agents, teams=self.teams, workflows=self.workflows, use_async=use_async))
+                self.api_app.include_router(
+                    interface.get_router(
+                        agents=self.agents, teams=self.teams, workflows=self.workflows, use_async=use_async
+                    )
+                )
             else:
                 self.api_app.include_router(interface.get_router(use_async=use_async))
-                
+
             self.interfaces_loaded.append((interface.type, interface.router.prefix))
 
         for manager in self.managers:
@@ -179,15 +181,15 @@ class AgnoAPI:
         **kwargs,
     ):
         import uvicorn
-        
+
         full_host = host
         if scheme not in host:
             full_host = f"{scheme}://{host}"
-        
+
         logger.info(f"Starting AgnoAPI on {full_host}:{port}")
-        
+
         # Encode the full endpoint (host:port)
-        
+
         # TODO: Register app
         # self.endpoints_created = PlaygroundEndpointCreate(
         #     endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix}
@@ -199,59 +201,66 @@ class AgnoAPI:
             if interface_type == "playground":
                 encoded_endpoint = quote(f"{full_host}:{port}{interface_prefix}")
                 url = f"{agno_cli_settings.playground_url}?endpoint={encoded_endpoint}"
-                panels.append(Panel(
-                    f"[bold orange1]Playground URL:[/bold orange1] [link={url}]{url}[/link]",
-                    title="Agno Playground",
-                    expand=False,
-                    border_style="orange1",
-                    box=box.HEAVY,
-                    padding=(2, 2),
-                ))
+                panels.append(
+                    Panel(
+                        f"[bold orange1]Playground URL:[/bold orange1] [link={url}]{url}[/link]",
+                        title="Agno Playground",
+                        expand=False,
+                        border_style="orange1",
+                        box=box.HEAVY,
+                        padding=(2, 2),
+                    )
+                )
             elif interface_type == "whatsapp":
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(Panel(
-                    f"[bold green]Whatsapp URL:[/bold green] {encoded_endpoint}",
-                    title="Whatsapp",
-                    expand=False,
-                    border_style="cyan",
-                    box=box.HEAVY,
-                    padding=(2, 2),
-                ))
+                panels.append(
+                    Panel(
+                        f"[bold green]Whatsapp URL:[/bold green] {encoded_endpoint}",
+                        title="Whatsapp",
+                        expand=False,
+                        border_style="cyan",
+                        box=box.HEAVY,
+                        padding=(2, 2),
+                    )
+                )
             elif interface_type == "slack":
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(Panel(
-                    f"[bold green]Slack URL:[/bold green] {encoded_endpoint}",
-                    title="Slack",
-                    expand=False,
-                    border_style="purple",
-                    box=box.HEAVY,
-                    padding=(2, 2),
-                ))
-        
+                panels.append(
+                    Panel(
+                        f"[bold green]Slack URL:[/bold green] {encoded_endpoint}",
+                        title="Slack",
+                        expand=False,
+                        border_style="purple",
+                        box=box.HEAVY,
+                        padding=(2, 2),
+                    )
+                )
+
         managers_panel_text = ""
         for manager_type, manager_prefix in self.managers_loaded:
-            
             if manager_type == "knowledge":
                 managers_panel_text += "Knowledge Manager\n"
             if manager_type == "evals":
                 managers_panel_text += "Evals Manager\n"
             if manager_type == "sessions":
                 managers_panel_text += "Sessions Manager\n"
-        
+
         if managers_panel_text:
-            panels.append(Panel(
-                managers_panel_text,
-                title="Configured Managers",
-                expand=False,
-                border_style="bright_cyan",
-                box=box.HEAVY,
-                padding=(2, 2),
-            ))
+            panels.append(
+                Panel(
+                    managers_panel_text,
+                    title="Configured Managers",
+                    expand=False,
+                    border_style="bright_cyan",
+                    box=box.HEAVY,
+                    padding=(2, 2),
+                )
+            )
 
         # Print the panel
         for panel in panels:
             console.print(panel)
-        
+
         # TODO: Register app
         # self.set_app_id()
         # self.register_app_on_platform()
@@ -264,7 +273,7 @@ class AgnoAPI:
         # if self.workflows:
         #     for workflow in self.workflows:
         #         workflow.register_workflow()
-        
+
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
