@@ -204,7 +204,22 @@ class BaseDb(ABC):
     # --- Eval Table ---
 
     @abstractmethod
-    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_runs_raw(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+    ) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -214,5 +229,6 @@ class BaseDb(ABC):
         offset: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
     ) -> List[EvalRunRecord]:
         raise NotImplementedError

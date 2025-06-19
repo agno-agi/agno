@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.eval.schemas import EvalRunRecord
 from agno.memory.db.schema import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -806,6 +807,17 @@ class PostgresDb(BaseDb):
 
     # -- Memory methods --
 
+    def get_user_memory_table(self) -> Table:
+        """Get or create the user memory table."""
+        if not hasattr(self, "user_memory_table"):
+            if self.user_memory_table_name is None:
+                raise ValueError("User memory table was not provided on initialization")
+            log_info(f"Getting user memory table: {self.user_memory_table_name}")
+            self.user_memory_table = self.get_or_create_table(
+                table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
+            )
+        return self.user_memory_table
+
     def get_user_memory_raw(self, memory_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
         """Get a memory from the database as a raw dictionary.
 
@@ -1089,6 +1101,17 @@ class PostgresDb(BaseDb):
 
     # -- Eval methods --
 
+    def get_eval_table(self) -> Table:
+        """Get or create the eval table."""
+        if not hasattr(self, "eval_table"):
+            if self.eval_table_name is None:
+                raise ValueError("Eval table was not provided on initialization")
+            log_info(f"Getting eval table: {self.eval_table_name}")
+            self.eval_table = self.get_or_create_table(
+                table_name=self.eval_table_name, table_type="eval_runs", db_schema=self.db_schema
+            )
+        return self.eval_table
+
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database."""
         try:
@@ -1105,21 +1128,18 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating eval run: {e}")
             return None
 
-    def get_eval_table(self) -> Table:
-        """Get or create the eval table."""
-        if not hasattr(self, "eval_table"):
-            if self.eval_table_name is None:
-                raise ValueError("Eval table was not provided on initialization")
-            log_info(f"Getting eval table: {self.eval_table_name}")
-            self.eval_table = self.get_or_create_table(
-                table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-            )
-        return self.eval_table
+    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        """Get an eval run from the database as a raw dictionary.
 
-    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
-        """Get an eval run from the database."""
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+
+        Returns:
+            Optional[Dict[str, Any]]: The eval run as a raw dictionary, or None if not found.
+        """
         try:
-            table = self.get_eval_table()
+            if table is None:
+                table = self.get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1127,16 +1147,59 @@ class PostgresDb(BaseDb):
                 if result is None:
                     return None
 
-                return EvalRunRecord.model_validate(result._mapping)
+                return result._mapping
 
         except Exception as e:
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs(self, limit: Optional[int] = None, offset: Optional[int] = None) -> List[EvalRunRecord]:
-        """Get all eval runs from the database."""
+    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
+        """Get an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            Optional[EvalRunRecord]: The eval run, or None if not found.
+        """
         try:
-            table = self.get_eval_table()
+            if table is None:
+                table = self.get_eval_table()
+
+            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id, table=table)
+            if eval_run_raw is None:
+                return None
+
+            return EvalRunRecord.model_validate(eval_run_raw)
+
+        except Exception as e:
+            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
+            return None
+
+    def get_eval_runs_raw(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get all eval runs from the database as raw dictionaries.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            offset (Optional[int]): The number of eval runs to skip.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            List[Dict[str, Any]]: The eval runs as raw dictionaries.
+        """
+        try:
+            if table is None:
+                table = self.get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1144,9 +1207,59 @@ class PostgresDb(BaseDb):
                     stmt = stmt.limit(limit)
                 if offset is not None:
                     stmt = stmt.offset(offset)
-                result = sess.execute(stmt).fetchall()
+                # Sorting
+                stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                if offset is not None:
+                    stmt = stmt.offset(offset)
 
-                return [EvalRunRecord.model_validate(row._mapping) for row in result]
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return []
+
+                return [row._mapping for row in result]
+
+        except Exception as e:
+            log_debug(f"Exception getting eval runs: {e}")
+            return []
+
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+    ) -> List[EvalRunRecord]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            offset (Optional[int]): The number of eval runs to skip.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            List[EvalRunRecord]: The eval runs.
+        """
+        try:
+            if table is None:
+                table = self.get_eval_table()
+
+            eval_runs_raw = self.get_eval_runs_raw(
+                limit=limit,
+                offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                table=table,
+            )
+            if not eval_runs_raw:
+                return []
+
+            return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
