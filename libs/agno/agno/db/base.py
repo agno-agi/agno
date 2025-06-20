@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import Table
 
+from agno.db.schemas.memory import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
-from agno.memory.db.schema import MemoryRow
 from agno.session import Session
 
 

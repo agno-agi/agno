@@ -4,21 +4,19 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
+class MemoryRow(BaseModel):
+    """Memory Row that is stored in the database"""
 
-
-class SummaryRow(BaseModel):
-    """Session Summary Row that is stored in the database"""
-
-    # id for this summary
+    # id for this memory, auto-generated if not provided
     id: Optional[str] = None
-    summary: Dict[str, Any]
+    memory: Dict[str, Any]
     user_id: Optional[str] = None
     last_updated: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
-    def generate_id(self) -> "SummaryRow":
+    def generate_id(self) -> "MemoryRow":
         if self.id is None:
             from uuid import uuid4
 

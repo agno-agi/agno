@@ -4,21 +4,20 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
+class KnowledgeRow(BaseModel):
+    """Knowledge Row that is stored in the database"""
 
-
-class SummaryRow(BaseModel):
-    """Session Summary Row that is stored in the database"""
-
-    # id for this summary
+    # id for this knowledge, auto-generated if not provided
     id: Optional[str] = None
-    summary: Dict[str, Any]
-    user_id: Optional[str] = None
-    last_updated: Optional[datetime] = None
+    name: str
+    description: str
+    content: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
-    def generate_id(self) -> "SummaryRow":
+    def generate_id(self) -> "KnowledgeRow":
         if self.id is None:
             from uuid import uuid4
 

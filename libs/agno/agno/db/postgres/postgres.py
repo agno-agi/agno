@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.schemas.memory import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
-from agno.memory.db.schema import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 

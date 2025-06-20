@@ -5,8 +5,8 @@ from fastapi.routing import APIRouter
 
 from agno.app.agno_api.managers.memory.schemas import UserMemoryCreateSchema, UserMemorySchema
 from agno.app.agno_api.managers.utils import SortOrder
+from agno.db.schemas.memory import MemoryRow
 from agno.memory import Memory
-from agno.memory.db.schema import MemoryRow
 
 
 def attach_async_routes(router: APIRouter, memory: Memory) -> APIRouter:
