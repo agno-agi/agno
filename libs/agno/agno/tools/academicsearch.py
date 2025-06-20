@@ -66,7 +66,7 @@ class AcademicSearchTools(Toolkit):
                 "VALYU_API_KEY not set. Please set the VALYU_API_KEY environment variable."
             )
             logger.error(
-                "Get your free API key with $10 credits at: https://valyu.network"
+                "Get your free API key with $10 credits at: https://platform.valyu.network"
             )
 
         self.valyu = Valyu(api_key=self.api_key) if self.api_key else None
