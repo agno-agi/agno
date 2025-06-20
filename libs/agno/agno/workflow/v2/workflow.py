@@ -313,7 +313,7 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
-                        
+
                     self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
@@ -420,7 +420,7 @@ class Workflow:
 
                     # Execute the step (non-streaming)
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
-                    
+
                     self._collect_workflow_session_state_from_agents_and_teams()
 
                     previous_step_content = step_output.content
@@ -545,7 +545,7 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
-                            
+
                     self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
@@ -783,7 +783,7 @@ class Workflow:
         log_debug(
             f"Created async pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
         )
-        
+
         self.update_agents_and_teams_session_info()
 
         if stream:
