@@ -1,3 +1,3 @@
-from agno.app.agno_api.managers.knowledge.knowledge import Knowledge
+from agno.app.agno_api.managers.knowledge.knowledge import KnowledgeManager
 
-__all__ = ["Knowledge"]
+__all__ = ["KnowledgeManager"]

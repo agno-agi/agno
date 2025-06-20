@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.agno_api.managers.knowledge import Knowledge
+from agno.app.agno_api.managers.knowledge import KnowledgeManager
 from agno.models.openai import OpenAIChat
 from agno.app.agno_api import AgnoAPI
 from agno.app.agno_api.interfaces.playground import Playground
@@ -53,7 +53,7 @@ agno_client = AgnoAPI(
         Playground(),
     ],
     managers=[
-        Knowledge(knowledge=knowledge_base)
+        KnowledgeManager(knowledge=knowledge_base)
     ]
 )
 app = agno_client.get_app()
