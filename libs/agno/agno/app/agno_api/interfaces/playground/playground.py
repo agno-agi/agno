@@ -3,7 +3,7 @@ from typing import List
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent
-from agno.app.agno_api.base import BaseInterface
+from agno.app.agno_api.interfaces.base import BaseInterface
 from agno.app.agno_api.interfaces.playground.async_router import attach_async_routes
 from agno.app.agno_api.interfaces.playground.sync_router import attach_sync_routes
 from agno.team import Team

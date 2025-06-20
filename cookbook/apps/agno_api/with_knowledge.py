@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.app.agno_api import AgnoAPI
 from agno.app.agno_api.interfaces.playground import Playground
-from agno.app.agno_api.managers.knowledge import Knowledge
+from agno.app.agno_api.managers.knowledge import KnowledgeManager
 from agno.document import Document
 from agno.document.local_document_store import LocalDocumentStore
 from agno.knowledge.knowledge_base import KnowledgeBase
@@ -52,7 +52,7 @@ agno_client = AgnoAPI(
     interfaces=[
         Playground(),
     ],
-    managers=[Knowledge(knowledge=knowledge_base)],
+    managers=[KnowledgeManager(knowledge=knowledge_base)],
 )
 app = agno_client.get_app()
 
