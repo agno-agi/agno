@@ -3,24 +3,25 @@ from typing import List, Optional
 from fastapi import HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
-from agno.app.agno_api.managers.memory.schemas import UserMemoryCreateSchema, UserMemorySchema
+from agno.app.agno_api.managers.memory.schemas import UserMemoryCreateSchema, UserMemorySchema, MemoriesResponse
 from agno.app.agno_api.managers.utils import SortOrder
 from agno.memory import Memory
 from agno.memory.db.schema import MemoryRow
 
 
 def attach_async_routes(router: APIRouter, memory: Memory) -> APIRouter:
-    @router.get("/memories", response_model=List[UserMemorySchema], status_code=200)
+    @router.get("/memories", response_model=MemoriesResponse, status_code=200)
     async def get_memories(
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter memories by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Filter memories by workflow ID"),
+        topics: Optional[List[str]] = Query(default=None, description="Filter memories by topics"),
         limit: Optional[int] = Query(default=20, description="Number of memories to return"),
         offset: Optional[int] = Query(default=0, description="Number of memories to skip"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
-    ) -> List[UserMemorySchema]:
+    ) -> MemoriesResponse:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
@@ -31,11 +32,18 @@ def attach_async_routes(router: APIRouter, memory: Memory) -> APIRouter:
             agent_id=agent_id,
             team_id=team_id,
             workflow_id=workflow_id,
+            topics=topics,
             sort_by=sort_by,
             sort_order=sort_order,
         )
 
-        return [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]
+        # Get all available unique topics
+        available_topics = memory.db.get_unique_topics()
+
+        return MemoriesResponse(
+            memories=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],
+            available_topics=available_topics
+        )
 
     @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
     async def get_memory(memory_id: str = Path()) -> UserMemorySchema:

@@ -36,3 +36,10 @@ class UserMemoryCreateSchema(BaseModel):
     memory: str
     user_id: str
     topics: Optional[List[str]] = None
+
+
+class MemoriesResponse(BaseModel):
+    """Response model for get_memories endpoint that includes memories and available topics"""
+
+    memories: List[UserMemorySchema]
+    available_topics: List[str]

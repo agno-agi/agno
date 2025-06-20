@@ -153,6 +153,7 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -167,6 +168,7 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -180,6 +182,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_unique_topics(self) -> List[str]:
         raise NotImplementedError
 
     # --- Knowledge Table ---
