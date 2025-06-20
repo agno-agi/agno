@@ -577,7 +577,7 @@ class Team:
         self.session_name = None
         self.session_state = None
         self.team_session_state = None
-        self.workflow_session_state = None
+        self.workflow_session_state = self.workflow_session_state # being set by Workflow, at Team.run cannot be None
         self.session_metrics = None
         self.images = None
         self.videos = None
@@ -5517,8 +5517,6 @@ class Team:
             # Only merge if both are dictionaries and member state is not empty
             if isinstance(self.workflow_session_state, dict) and member_state:
                 from agno.utils.merge_dict import merge_dictionaries
-
-                print("--> 3")
 
                 merge_dictionaries(self.workflow_session_state, member_state)
 

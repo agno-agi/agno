@@ -113,34 +113,6 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-        # Initialize steps - only if steps is iterable (not callable)
-        if self.steps and not isinstance(self.steps, Callable):
-            for step in self.steps:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
-
-                    if hasattr(active_executor, "workflow_session_id"):
-                        active_executor.workflow_session_id = self.session_id
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.workflow_id
-
-                    if self.workflow_session_state is not None:
-                        # Initialize session_state if it doesn't exist
-                        if hasattr(active_executor, "workflow_session_state"):
-                            if active_executor.workflow_session_state is None:
-                                active_executor.workflow_session_state = {}
-
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:
-                            member.workflow_session_id = self.session_id
-                            member.workflow_id = self.workflow_id
-
-                            # Initialize session_state if it doesn't exist
-                            if member.workflow_session_state is None:
-                                member.workflow_session_state = {}
-
     def _set_debug(self) -> None:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
@@ -225,6 +197,8 @@ class Workflow:
                     # Execute the step (non-streaming)
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
+                    self._collect_workflow_session_state_from_agents_and_teams()
+
                     previous_step_content = step_output.content
                     shared_images.extend(step_output.images or [])
                     output_images.extend(step_output.images or [])
@@ -251,10 +225,10 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
-        # Store error response
-        if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
-        self.write_to_storage()
+            # Store error response
+            if self.workflow_session:
+                self.workflow_session.add_run(workflow_run_response)
+            self.write_to_storage()
 
         return workflow_run_response
 
@@ -339,6 +313,8 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
+                        
+                    self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
                 workflow_run_response.content = collected_step_outputs[
@@ -444,6 +420,8 @@ class Workflow:
 
                     # Execute the step (non-streaming)
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
+                    
+                    self._collect_workflow_session_state_from_agents_and_teams()
 
                     previous_step_content = step_output.content
                     shared_images.extend(step_output.images or [])
@@ -567,6 +545,8 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
+                            
+                    self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
                 workflow_run_response.content = collected_step_outputs[
@@ -713,6 +693,8 @@ class Workflow:
             f"Created pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
         )
 
+        self.update_agents_and_teams_session_info()
+
         if stream:
             return self._execute_stream(
                 execution_input=inputs,
@@ -801,6 +783,8 @@ class Workflow:
         log_debug(
             f"Created async pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
         )
+        
+        self.update_agents_and_teams_session_info()
 
         if stream:
             return self._aexecute_stream(
@@ -1775,3 +1759,59 @@ class Workflow:
             ],
             "session_id": self.session_id,
         }
+
+    def _collect_workflow_session_state_from_agents_and_teams(self):
+        """Collect updated workflow_session_state from agents after step execution"""
+        if self.workflow_session_state is None:
+            self.workflow_session_state = {}
+
+        # Collect state from all agents in all steps
+        if self.steps and not isinstance(self.steps, Callable):
+            for step in self.steps:
+                if isinstance(step, Step):
+                    executor = step.active_executor
+                    if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
+                        # Merge the agent's session state back into workflow session state
+                        from agno.utils.merge_dict import merge_dictionaries
+
+                        merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
+
+                    # If it's a team, collect from all members
+                    if hasattr(executor, "members"):
+                        for member in executor.members:
+                            if hasattr(member, "workflow_session_state") and member.workflow_session_state:
+                                merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
+
+    def _update_executor_workflow_session_state(self, executor) -> None:
+        """Update executor with workflow_session_state"""
+        if self.workflow_session_state is not None:
+            # Update session_state with workflow_session_state
+            executor.workflow_session_state = self.workflow_session_state
+
+    def update_agents_and_teams_session_info(self):
+        """Update agents and teams with workflow session information"""
+        # Initialize steps - only if steps is iterable (not callable)
+        if self.steps and not isinstance(self.steps, Callable):
+            for step in self.steps:
+                # TODO: Handle properly steps inside other primitives
+                if isinstance(step, Step):
+                    active_executor = step.active_executor
+
+                    if hasattr(active_executor, "workflow_session_id"):
+                        active_executor.workflow_session_id = self.session_id
+                    if hasattr(active_executor, "workflow_id"):
+                        active_executor.workflow_id = self.workflow_id
+
+                    # Set workflow_session_state on agents and teams
+                    self._update_executor_workflow_session_state(active_executor)
+
+                    # If it's a team, update all members
+                    if hasattr(active_executor, "members"):
+                        for member in active_executor.members:
+                            if hasattr(member, "workflow_session_id"):
+                                member.workflow_session_id = self.session_id
+                            if hasattr(member, "workflow_id"):
+                                member.workflow_id = self.workflow_id
+
+                            # Set workflow_session_state on team members
+                            self._update_executor_workflow_session_state(member)

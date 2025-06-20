@@ -609,7 +609,7 @@ class Agent:
         self.session_name = None
         self.session_state = None
         self.team_session_state = None
-        self.workflow_session_state = None
+        self.workflow_session_state = self.workflow_session_state # being set by Workflow, at Agent.run cannot be None
         self.session_metrics = None
         self.images = None
         self.videos = None
