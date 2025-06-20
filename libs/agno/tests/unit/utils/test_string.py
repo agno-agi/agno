@@ -233,3 +233,35 @@ def test_parse_nested_json():
     assert result.steps[0].description == "Step 1 description"
     assert result.steps[1].step == "2"
     assert result.steps[1].description == "Step 2 description"
+
+
+def test_parse_concatenated_reasoning_steps():
+    """Test concatenated JSON objects."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = (
+        '{"reasoning_steps":[{"title":"Step A","confidence":1.0}]}'
+        '{"reasoning_steps":[{"title":"Step B","confidence":0.9}]}'
+    )
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 2
+    assert result.reasoning_steps[0].title == "Step A"
+    assert result.reasoning_steps[1].title == "Step B"
+
+
+def test_parse_json_with_prefix_suffix_noise():
+    """Test JSON with trailing characters."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = 'Here is my reasoning: {"reasoning_steps":[{"title":"Only Step","confidence":0.8}]} -- end of reasoning'
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 1
+    assert result.reasoning_steps[0].title == "Only Step"
