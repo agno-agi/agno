@@ -21,6 +21,7 @@ class GithubTools(Toolkit):
         get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
         create_issue: bool = False,
+        list_repositories : bool = False,
         create_repository: bool = False,
         delete_repository: bool = False,
         get_repository_languages: bool = False,
@@ -72,6 +73,8 @@ class GithubTools(Toolkit):
             tools.append(self.get_pull_request_changes)
         if create_issue:
             tools.append(self.create_issue)
+        if list_repositories:
+            tools.append(self.list_repositories)
         if create_repository:
             tools.append(self.create_repository)
         if delete_repository:
