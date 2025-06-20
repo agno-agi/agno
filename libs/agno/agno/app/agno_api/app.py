@@ -12,7 +12,7 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
-from agno.app.agno_api.interfaces.base import w
+from agno.app.agno_api.interfaces.base import BaseInterface
 from agno.app.agno_api.router import get_base_async_router, get_base_sync_router
 from agno.app.utils import generate_id
 from agno.cli.console import console
