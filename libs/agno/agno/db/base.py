@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import Table
 
+from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.memory.db.schema import MemoryRow
 from agno.session import Session
 
@@ -198,4 +199,46 @@ class BaseDb(ABC):
 
     @abstractmethod
     def delete_knowledge_document(self):
+        raise NotImplementedError
+
+    # --- Eval Table ---
+
+    @abstractmethod
+    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_runs_raw(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[EvalType] = None,
+    ) -> List[EvalRunRecord]:
         raise NotImplementedError

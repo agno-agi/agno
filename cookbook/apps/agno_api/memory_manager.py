@@ -43,5 +43,12 @@ if __name__ == "__main__":
     # Generate a memory
     agent.print_response("I love astronomy, specifically the science behind nebulae")
 
-    # Run the Agno API App
-    agno_client.serve(app="with_memory:app", reload=True)
+    """ Run the Agno API App:
+    Now you can interact with your eval runs using the API. Examples:
+    - http://localhost:8001/memories/v1/memories
+    - http://localhost:8001/memories/v1/memories/123
+    - http://localhost:8001/memories/v1/memories?agent_id=123
+    - http://localhost:8001/memories/v1/memories?limit=10&offset=0&sort_by=created_at&sort_order=desc
+
+    """
+    agno_client.serve(app="memory_manager:app", reload=True)

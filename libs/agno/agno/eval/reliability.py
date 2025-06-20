@@ -3,11 +3,13 @@ from os import getenv
 from typing import TYPE_CHECKING, List, Optional
 from uuid import uuid4
 
+from agno.db.base import BaseDb
+
 if TYPE_CHECKING:
     from rich.console import Console
 
 from agno.agent import RunResponse
-from agno.api.schemas.evals import EvalType
+from agno.eval.schemas import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.run.team import TeamRunResponse
 from agno.utils.log import logger
@@ -60,8 +62,8 @@ class ReliabilityEval:
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
-    # Log the results to the Agno platform. On by default.
-    monitoring: bool = getenv("AGNO_MONITOR", "true").lower() == "true"
+    # The database to store Evaluation results
+    db: Optional[BaseDb] = None
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         if self.agent_response is None and self.team_response is None:
@@ -130,7 +132,7 @@ class ReliabilityEval:
             self.result.print_eval(console)
 
         # Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             if self.agent_response is not None:
                 agent_id = self.agent_response.agent_id
                 team_id = None
@@ -143,6 +145,7 @@ class ReliabilityEval:
                 model_provider = self.team_response.model_provider
 
             log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
@@ -223,7 +226,7 @@ class ReliabilityEval:
             self.result.print_eval(console)
 
         # Log results to the Agno platform if requested
-        if self.monitoring:
+        if self.db:
             if self.agent_response is not None:
                 agent_id = self.agent_response.agent_id
                 team_id = None
@@ -236,6 +239,7 @@ class ReliabilityEval:
                 model_provider = self.team_response.model_provider
 
             await async_log_eval_run(
+                db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
