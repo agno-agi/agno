@@ -216,21 +216,16 @@ class AgentSession:
 
         return session_summary
 
-    async def acreate_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
+    async def acreate_session_summary(
+        self, session_id: str, summary_manager: Optional[SessionSummarizer] = None
+    ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         from datetime import datetime
 
-        if not self.summary_manager:
+        if not summary_manager:
             raise ValueError("Summarizer not initialized")
 
-        self.set_log_level()
-
-        if user_id is None:
-            user_id = "default"
-
-        summary_response = await self.summary_manager.arun(
-            conversation=self.get_messages_for_session(session_id=session_id)
-        )
+        summary_response = await summary_manager.arun(conversation=self.get_messages_for_session(session_id=session_id))
         if summary_response is None:
             return None
         session_summary = SessionSummary(
@@ -240,19 +235,9 @@ class AgentSession:
 
         return session_summary
 
-    def get_session_summary(self, session_id: str, user_id: Optional[str] = None) -> Optional[SessionSummary]:
-        """Get the session summary for a given user id"""
+    def get_session_summary(self) -> Optional[SessionSummary]:
+        """Get the session summary for the session"""
 
-        if user_id is None:
-            user_id = "default"
         if self.summary is None:
             return None
-        return self.summary
-
-    def get_session_summaries(self, user_id: Optional[str] = None) -> List[SessionSummary]:
-        """Get the session summaries for a given user id"""
-        if user_id is None:
-            user_id = "default"
-        if self.summary is None:
-            return []
         return self.summary

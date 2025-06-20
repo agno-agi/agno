@@ -1,12 +1,11 @@
-from dataclasses import dataclass
-from typing import Optional, Union
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Optional, Union
 
-from agno.models.message import MessageMetrics
 from agno.utils.timer import Timer
 
 
 @dataclass
-class SessionMetrics:
+class Metrics:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -29,6 +28,16 @@ class SessionMetrics:
 
     timer: Optional[Timer] = None
 
+    def _to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        metrics_dict.pop("timer")
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
+        return metrics_dict
+
     def start_timer(self):
         if self.timer is None:
             self.timer = Timer()
@@ -44,9 +53,9 @@ class SessionMetrics:
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
 
-    def __add__(self, other: Union["SessionMetrics", "MessageMetrics"]) -> "SessionMetrics":
+    def __add__(self, other: "Metrics") -> "Metrics":
         # Create new instance with summed basic metrics
-        result = SessionMetrics(
+        result = Metrics(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
@@ -101,7 +110,7 @@ class SessionMetrics:
 
         return result
 
-    def __radd__(self, other: Union["SessionMetrics", "MessageMetrics"]) -> "SessionMetrics":
+    def __radd__(self, other: "Metrics") -> "Metrics":
         if other == 0:  # Handle sum() starting value
             return self
         return self + other

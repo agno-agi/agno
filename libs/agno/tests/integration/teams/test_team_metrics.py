@@ -2,8 +2,8 @@ from dataclasses import replace
 from typing import Iterator
 
 from agno.agent import Agent
+from agno.models.metrics import Metrics
 from agno.models.openai import OpenAIChat
-from agno.session.metrics import SessionMetrics
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
@@ -47,7 +47,7 @@ def test_team_metrics_basic():
 
     # Check session metrics
     assert team.session_metrics is not None
-    assert isinstance(team.session_metrics, SessionMetrics)
+    assert isinstance(team.session_metrics, Metrics)
     assert team.session_metrics.input_tokens is not None
     assert team.session_metrics.output_tokens is not None
     assert team.session_metrics.total_tokens is not None

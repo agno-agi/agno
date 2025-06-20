@@ -15,7 +15,8 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.session import AgentSession
+from agno.session import Session
+from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_warning, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
@@ -543,23 +544,37 @@ class Memory:
             return f"Error deleting memory: {e}"
 
     # -*- Session Db Functions
-    def read_agent_session(self, session_id: str) -> Optional[AgentSession]:
-        """Get a session from the database."""
+    def read_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
+        """Get an AgentSession from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+            session = self.db.get_session(session_id=session_id, session_type=session_type)
+            if session and session.runs:
+                session.runs = [RunResponse.from_dict(run) for run in session.runs]
+
+            if session and session.summary:
+                session.summary = SessionSummary.from_dict(session.summary)
+
             return session
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
 
-    def upsert_agent_session(self, session: AgentSession) -> Optional[AgentSession]:
-        """Upsert a session into the database."""
+    def upsert_session(self, session: Session) -> Optional[Session]:
+        """Upsert a Session into the database."""
+        from copy import deepcopy
+
+        session_copy = deepcopy(session)
+        session_copy.summary = deepcopy(session.summary)
+
+        session_copy.runs = [run.to_dict() for run in session.runs] if session.runs else []
+        session_copy.summary = session.summary.to_dict() if session.summary else None
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.upsert_agent_session(session=session)
+            return self.db.upsert_session(session=session_copy)
         except Exception as e:
             log_warning(f"Error upserting session into db: {e}")
             return None

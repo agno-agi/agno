@@ -33,9 +33,9 @@ from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory
-from agno.session.summarizer import SessionSummary
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
@@ -43,7 +43,7 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
 from agno.session import TeamSession
-from agno.session.metrics import SessionMetrics
+from agno.session.summarizer import SessionSummary
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -428,8 +428,8 @@ class Team:
         self.telemetry = telemetry
 
         # --- Params not to be set by user ---
-        self.session_metrics: Optional[SessionMetrics] = None
-        self.full_team_session_metrics: Optional[SessionMetrics] = None
+        self.session_metrics: Optional[Metrics] = None
+        self.full_team_session_metrics: Optional[Metrics] = None
 
         self.run_id: Optional[str] = None
         self.run_input: Optional[Union[str, List, Dict]] = None
@@ -3698,8 +3698,8 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
-        session_metrics = SessionMetrics()
+    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
+        session_metrics = Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team-agent's messages
@@ -3709,7 +3709,7 @@ class Team:
 
         return session_metrics
 
-    def _calculate_full_team_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+    def _calculate_full_team_session_metrics(self, messages: List[Message]) -> Metrics:
         current_session_metrics = self.session_metrics or self._calculate_session_metrics(messages)
         current_session_metrics = replace(current_session_metrics)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
@@ -6215,7 +6215,7 @@ class Team:
             if "session_metrics" in session.session_data:
                 session_metrics_from_db = session.session_data.get("session_metrics")
                 if session_metrics_from_db is not None and isinstance(session_metrics_from_db, dict):
-                    self.session_metrics = SessionMetrics(**session_metrics_from_db)
+                    self.session_metrics = Metrics(**session_metrics_from_db)
 
             # Get images, videos, and audios from the database
             if "images" in session.session_data:

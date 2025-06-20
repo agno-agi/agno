@@ -196,6 +196,7 @@ class RunResponse:
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    user_id: Optional[str] = None
     tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
