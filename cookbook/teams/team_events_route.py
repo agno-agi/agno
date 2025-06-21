@@ -6,7 +6,6 @@ from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
 from agno.tools.yfinance import YFinanceTools
 
-
 stock_searcher = Agent(
     name="Stock Searcher",
     model=OpenAIChat("gpt-4o"),
@@ -39,8 +38,9 @@ team = Team(
     members=[stock_searcher, company_info_agent],
     markdown=True,
     # If you want to disable the member events, set this to False (default is True)
-    # stream_member_events=False  
+    # stream_member_events=False
 )
+
 
 async def run_team_with_events(prompt: str):
     content_started = False
@@ -76,12 +76,11 @@ async def run_team_with_events(prompt: str):
             print(f"\nMEMBER EVENT: {run_response_event.event}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
-            
+
         if run_response_event.event in [RunEvent.tool_call_completed]:
             print(f"\nMEMBER EVENT: {run_response_event.event}")
             print(f"MEMBER TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"MEMBER TOOL CALL RESULT: {run_response_event.tool.result}")
-
 
         if run_response_event.event in [TeamRunEvent.run_response_content]:
             if not content_started:
@@ -94,6 +93,7 @@ async def run_team_with_events(prompt: str):
                 print("MEMBER CONTENT:")
                 member_content_started = True
             print(run_response_event.content, end="")
+
 
 if __name__ == "__main__":
     asyncio.run(

@@ -57,13 +57,16 @@ def get_top_hackernews_stories(num_stories: int) -> str:
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
+    add_history_to_messages=True,
+    num_history_responses=2,
     markdown=True,
 )
 
+agent.run("What can you do?")
+
 agent.run("Fetch the top 2 hackernews stories.")
-run_response = agent.run_response
 if agent.is_paused:  # Or agent.run_response.is_paused
-    for tool in run_response.tools_requiring_confirmation:
+    for tool in agent.run_response.tools_requiring_confirmation:
         # Ask for confirmation
         console.print(
             f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
@@ -81,13 +84,4 @@ if agent.is_paused:  # Or agent.run_response.is_paused
             tool.confirmed = True
 
 run_response = agent.continue_run()
-# Or
-# run_response = agent.continue_run(run_id=run_response.run_id, updated_tools=run_response.tools)
-# Or
-# run_response = agent.continue_run(run_response=run_response)
-
 pprint.pprint_run_response(run_response)
-
-
-# Or for simple debug flow
-# agent.print_response("Fetch the top 2 hackernews stories")

@@ -323,7 +323,6 @@ class OpenAIChat(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,

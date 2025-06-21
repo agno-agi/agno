@@ -106,9 +106,7 @@ class GoogleBigQueryTools(Toolkit):
         try:
             log_debug(f"Running Google SQL |\n{sql}")
             cleaned_query = sql.replace("\\n", " ").replace("\n", "").replace("\\", "")
-            job_config = bigquery.QueryJobConfig(
-                default_dataset=f"{self.project}.{self.dataset}"
-            )
+            job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
             results_str = str([dict(row) for row in results])
