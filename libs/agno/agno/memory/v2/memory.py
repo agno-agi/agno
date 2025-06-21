@@ -721,9 +721,9 @@ class Memory:
         """
         if not self.runs:
             return []
-        
+
         if skip_status is None:
-            skip_status = [RunStatus.paused,RunStatus.cancelled, RunStatus.error]
+            skip_status = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
         session_runs = self.runs.get(session_id, [])
         # Filter by agent_id and team_id

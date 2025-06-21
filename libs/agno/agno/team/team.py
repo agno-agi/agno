@@ -75,13 +75,13 @@ from agno.utils.log import (
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
+    async_generator_wrapper,
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
     format_tool_calls,
-    update_run_response_with_reasoning,
-    async_generator_wrapper,
     generator_wrapper,
+    update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import is_valid_uuid, parse_response_model_str, url_safe_string
@@ -891,16 +891,12 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 

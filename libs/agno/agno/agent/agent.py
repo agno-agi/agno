@@ -78,13 +78,13 @@ from agno.utils.log import (
 from agno.utils.message import get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.response import (
+    async_generator_wrapper,
     create_panel,
     create_paused_run_response_panel,
     escape_markdown_tags,
     format_tool_calls,
-    get_paused_content,
     generator_wrapper,
-    async_generator_wrapper,
+    get_paused_content,
 )
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
@@ -1517,15 +1517,11 @@ class Agent:
             )
 
             if stream and self.is_streamable:
-                return async_generator_wrapper(
-                    create_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return async_generator_wrapper(
-                    create_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     @overload
@@ -2182,15 +2178,11 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return async_generator_wrapper(
-                    create_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return async_generator_wrapper(
-                    create_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _acontinue_run(
@@ -2359,7 +2351,6 @@ class Agent:
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
-
 
     def _handle_agent_run_paused(
         self,
@@ -3402,7 +3393,11 @@ class Agent:
                 )
 
             # Parse messages if provided
-            if self.enable_user_memories and run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+            if (
+                self.enable_user_memories
+                and run_messages.extra_messages is not None
+                and len(run_messages.extra_messages) > 0
+            ):
                 parsed_messages = []
                 for _im in run_messages.extra_messages:
                     if isinstance(_im, Message):
@@ -3469,7 +3464,11 @@ class Agent:
             )
 
         # Parse messages if provided
-        if self.enable_user_memories and run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0:
+        if (
+            self.enable_user_memories
+            and run_messages.extra_messages is not None
+            and len(run_messages.extra_messages) > 0
+        ):
             parsed_messages = []
             for _im in run_messages.extra_messages:
                 if isinstance(_im, Message):

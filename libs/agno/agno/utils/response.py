@@ -1,4 +1,4 @@
-from typing import List, Set, Union, Iterator, AsyncIterator
+from typing import AsyncIterator, Iterator, List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
@@ -151,6 +151,7 @@ def get_paused_content(run_response: RunResponse) -> str:
 
 def generator_wrapper(event: RunResponseEvent) -> Iterator[RunResponseEvent]:
     yield event
+
 
 async def async_generator_wrapper(event: RunResponseEvent) -> AsyncIterator[RunResponseEvent]:
     yield event
