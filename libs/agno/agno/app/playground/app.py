@@ -61,12 +61,16 @@ class Playground:
                 if not agent.app_id:
                     agent.app_id = self.app_id
                 agent.initialize_agent()
+                # Required for playground to work
+                agent.store_events = True
 
         if self.teams:
             for team in self.teams:
                 if not team.app_id:
                     team.app_id = self.app_id
                 team.initialize_team()
+                # Required for playground to work
+                team.store_events = True
                 for member in team.members:
                     if isinstance(member, Agent):
                         if not member.app_id:
