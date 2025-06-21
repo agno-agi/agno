@@ -17,6 +17,7 @@ class GithubTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         search_repositories: bool = True,
+        list_repositories: bool = False,
         get_repository: bool = False,
         get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
@@ -64,6 +65,8 @@ class GithubTools(Toolkit):
         tools: List[Any] = []
         if search_repositories:
             tools.append(self.search_repositories)
+        if list_repositories:
+            tools.append(self.list_repositories)
         if get_repository:
             tools.append(self.get_repository)
         if get_pull_request:
