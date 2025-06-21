@@ -26,7 +26,7 @@ class SentenceTransformerEmbedder(Embedder):
             model = self.sentence_transformer_client
         embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
-            return embedding  # type: ignore
+            return embedding.tolist() # type: ignore
         except Exception as e:
             logger.warning(e)
             return []
