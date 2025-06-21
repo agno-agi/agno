@@ -220,9 +220,6 @@ class GithubTools(Toolkit):
             repo_names = [repo.full_name for repo in repos]
             return json.dumps(repo_names, indent=2)
         except GithubException as e:
-            logger.debug("An error occured, please check if your token has the right privileges. \
-                         Also, if you are providing a base_url, you will authenticate as an 'enterprise', \
-                         dont provide this URL for personal use.")
             logger.error(f"Error listing repositories: {e}")
             return json.dumps({"error": str(e)})
 
