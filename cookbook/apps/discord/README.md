@@ -30,7 +30,7 @@ pip install discord.py agno
    - Copy your bot token (you'll need this later)
 
 3. Set up your environment:
-   - Create a `.env` file in your project root
+   - Create a `.envrc` file in your project root
    - Add your Discord bot token:
    ```
    DISCORD_TOKEN=your_bot_token_here
@@ -56,10 +56,10 @@ agent = Agent(
     instructions=["Your agent instructions here"],
     # Add other agent configurations as needed
 )
-
-# Initialize and run the Discord client
+# Initialize the Discord client
+discord_agent = DiscordClient(media_agent)
 if __name__ == "__main__":
-    DiscordClient(agent)
+    discord_agent.run()
 ```
 
 ## Features
