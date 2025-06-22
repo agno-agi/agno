@@ -50,20 +50,16 @@ class JinaReaderTools(Toolkit):
         log_info(f"Reading URL: {url}")
         try:
             with httpx.Client(timeout=self.config.timeout) as client:
-                response = client.post(
-                    str(self.config.base_url),
-                    headers=self._get_reader_headers(),
-                    json={"url": url}
-                )
+                response = client.post(str(self.config.base_url), headers=self._get_reader_headers(), json={"url": url})
                 response.raise_for_status()
                 data = response.json()
-                
+
                 if data.get("code") == 200 and "data" in data:
                     content = data["data"].get("content", "")
                     return self._truncate_content(content)
                 else:
                     return f"Error: {data.get('message', 'Unknown error')}"
-                    
+
         except Exception as e:
             error_msg = f"Error reading URL: {str(e)}"
             logger.error(error_msg)
@@ -76,13 +72,11 @@ class JinaReaderTools(Toolkit):
         try:
             with httpx.Client(timeout=self.config.timeout) as client:
                 response = client.post(
-                    str(self.config.search_url),
-                    headers=self._get_search_headers(),
-                    json={"q": query}
+                    str(self.config.search_url), headers=self._get_search_headers(), json={"q": query}
                 )
                 response.raise_for_status()
                 data = response.json()
-                
+
                 if data.get("code") == 200 and "data" in data:
                     results = data["data"]
                     formatted_results = []
@@ -90,12 +84,12 @@ class JinaReaderTools(Toolkit):
                         title = result.get("title", "")
                         url = result.get("url", "")
                         content = result.get("content", "")[:500]  # Truncate content
-                        formatted_results.append(f"{i+1}. {title}\nURL: {url}\nContent: {content}...\n")
-                    
+                        formatted_results.append(f"{i + 1}. {title}\nURL: {url}\nContent: {content}...\n")
+
                     return self._truncate_content("\n".join(formatted_results))
                 else:
                     return f"Error: {data.get('message', 'Unknown error')}"
-                    
+
         except Exception as e:
             error_msg = f"Error performing search: {str(e)}"
             logger.error(error_msg)
@@ -116,7 +110,7 @@ class JinaReaderTools(Toolkit):
 
     def _get_search_headers(self) -> Dict[str, str]:
         headers = {
-            "Accept": "application/json", 
+            "Accept": "application/json",
             "Content-Type": "application/json",
             "X-Engine": "direct",  # Use 'direct' for speed
             "X-Timeout": str(self.config.timeout),
