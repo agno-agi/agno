@@ -194,26 +194,56 @@ class Workflow:
                         audio=shared_audio,
                     )
 
-                    # Execute the step (non-streaming)
-                    step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
+                    # Check if this is a Parallel step
+                    if hasattr(step, "__class__") and step.__class__.__name__ == "Parallel":
+                        # Execute parallel steps
+                        parallel_outputs = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
+
+                        # Collect outputs from all parallel steps
+                        for output in parallel_outputs:
+                            shared_images.extend(output.images or [])
+                            output_images.extend(output.images or [])
+                            shared_videos.extend(output.videos or [])
+                            output_videos.extend(output.videos or [])
+                            shared_audio.extend(output.audio or [])
+                            output_audio.extend(output.audio or [])
+
+                        # Use the last parallel step's content as previous content
+                        if parallel_outputs:
+                            previous_step_content = parallel_outputs[-1].content
+
+                        collected_step_outputs.append(parallel_outputs)
+                    else:
+                        # Execute regular step
+                        step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
+
+                        previous_step_content = step_output.content
+                        shared_images.extend(step_output.images or [])
+                        output_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        output_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
+                        output_audio.extend(step_output.audio or [])
+
+                        collected_step_outputs.append(step_output)
 
                     self._collect_workflow_session_state_from_agents_and_teams()
 
-                    previous_step_content = step_output.content
-                    shared_images.extend(step_output.images or [])
-                    output_images.extend(step_output.images or [])
-                    shared_videos.extend(step_output.videos or [])
-                    output_videos.extend(step_output.videos or [])
-                    shared_audio.extend(step_output.audio or [])
-                    output_audio.extend(step_output.audio or [])
-
-                    # Collect the StepOutput for storage
-                    collected_step_outputs.append(step_output)
-
                 # Update the workflow_run_response with completion data
-                workflow_run_response.content = collected_step_outputs[
-                    -1
-                ].content  # Final workflow response output is the last step's output
+                if collected_step_outputs:
+                    # Get the last step output (handling both single StepOutput and List[StepOutput])
+                    last_output = collected_step_outputs[-1]
+                    if isinstance(last_output, list) and last_output:
+                        # If it's a list (parallel outputs), use the last one
+                        workflow_run_response.content = last_output[-1].content
+                    elif hasattr(last_output, "content"):
+                        # If it's a single StepOutput
+                        workflow_run_response.content = last_output.content
+                    else:
+                        workflow_run_response.content = str(last_output)
+                else:
+                    workflow_run_response.content = "No steps executed"
+
                 workflow_run_response.step_responses = collected_step_outputs
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
@@ -225,10 +255,10 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
-            # Store error response
-            if self.workflow_session:
-                self.workflow_session.add_run(workflow_run_response)
-            self.write_to_storage()
+        # Store error response
+        if self.workflow_session:
+            self.workflow_session.add_run(workflow_run_response)
+        self.write_to_storage()
 
         return workflow_run_response
 
@@ -1050,13 +1080,28 @@ class Workflow:
 
                 if show_step_details and workflow_response.step_responses:
                     for i, step_output in enumerate(workflow_response.step_responses):
-                        if step_output.content:
-                            step_panel = create_panel(
-                                content=Markdown(step_output.content) if markdown else step_output.content,
-                                title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                border_style="green",
-                            )
-                            console.print(step_panel)
+                        # Handle both single StepOutput and List[StepOutput] (from parallel steps)
+                        if isinstance(step_output, list):
+                            # This is a parallel step with multiple outputs
+                            for j, parallel_step_output in enumerate(step_output):
+                                if parallel_step_output.content:
+                                    step_panel = create_panel(
+                                        content=Markdown(parallel_step_output.content)
+                                        if markdown
+                                        else parallel_step_output.content,
+                                        title=f"Step {i + 1}.{j + 1}: {parallel_step_output.step_name} (Parallel - Completed)",
+                                        border_style="green",
+                                    )
+                                    console.print(step_panel)
+                        else:
+                            # This is a regular single step
+                            if step_output.content:
+                                step_panel = create_panel(
+                                    content=Markdown(step_output.content) if markdown else step_output.content,
+                                    title=f"Step {i + 1}: {step_output.step_name} (Completed)",
+                                    border_style="green",
+                                )
+                                console.print(step_panel)
 
                 # For callable functions, show the content directly since there are no step_responses
                 elif show_step_details and isinstance(self.steps, Callable) and workflow_response.content:
