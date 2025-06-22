@@ -1,10 +1,10 @@
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 
 
 class LinearTools(Toolkit):
@@ -17,8 +17,8 @@ class LinearTools(Toolkit):
         get_user_assigned_issues: bool = True,
         get_workflow_issues: bool = True,
         get_high_priority_issues: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="linear tools")
         self.api_token = getenv("LINEAR_API_KEY")
 
         if not self.api_token:
@@ -28,20 +28,23 @@ class LinearTools(Toolkit):
         self.endpoint = "https://api.linear.app/graphql"
         self.headers = {"Authorization": f"{self.api_token}"}
 
+        tools: List[Any] = []
         if get_user_details:
-            self.register(self.get_user_details)
+            tools.append(self.get_user_details)
         if get_issue_details:
-            self.register(self.get_issue_details)
+            tools.append(self.get_issue_details)
         if create_issue:
-            self.register(self.create_issue)
+            tools.append(self.create_issue)
         if update_issue:
-            self.register(self.update_issue)
+            tools.append(self.update_issue)
         if get_user_assigned_issues:
-            self.register(self.get_user_assigned_issues)
+            tools.append(self.get_user_assigned_issues)
         if get_workflow_issues:
-            self.register(self.get_workflow_issues)
+            tools.append(self.get_workflow_issues)
         if get_high_priority_issues:
-            self.register(self.get_high_priority_issues)
+            tools.append(self.get_high_priority_issues)
+
+        super().__init__(name="linear tools", tools=tools, **kwargs)
 
     def _execute_query(self, query, variables=None):
         """Helper method to execute GraphQL queries with optional variables."""
@@ -56,7 +59,7 @@ class LinearTools(Toolkit):
                 logger.error(f"GraphQL Error: {data['errors']}")
                 raise Exception(f"GraphQL Error: {data['errors']}")
 
-            logger.info("GraphQL query executed successfully.")
+            log_info("GraphQL query executed successfully.")
             return data.get("data")
 
         except requests.exceptions.RequestException as e:
@@ -94,7 +97,7 @@ class LinearTools(Toolkit):
 
             if response.get("viewer"):
                 user = response["viewer"]
-                logger.info(
+                log_info(
                     f"Retrieved authenticated user details with name: {user['name']}, ID: {user['id']}, Email: {user['email']}"
                 )
                 return str(user)
@@ -136,7 +139,7 @@ class LinearTools(Toolkit):
 
             if response.get("issue"):
                 issue = response["issue"]
-                logger.info(f"Issue '{issue['title']}' retrieved successfully with ID {issue['id']}.")
+                log_info(f"Issue '{issue['title']}' retrieved successfully with ID {issue['id']}.")
                 return str(issue)
             else:
                 logger.error(f"Failed to retrieve issue with ID {issue_id}.")
@@ -189,11 +192,11 @@ class LinearTools(Toolkit):
         }
         try:
             response = self._execute_query(query, variables)
-            logger.info(f"Response: {response}")
+            log_info(f"Response: {response}")
 
             if response["issueCreate"]["success"]:
                 issue = response["issueCreate"]["issue"]
-                logger.info(f"Issue '{issue['title']}' created successfully with ID {issue['id']}")
+                log_info(f"Issue '{issue['title']}' created successfully with ID {issue['id']}")
                 return str(issue)
             else:
                 logger.error("Issue creation failed.")
@@ -244,7 +247,7 @@ class LinearTools(Toolkit):
 
             if response["issueUpdate"]["success"]:
                 issue = response["issueUpdate"]["issue"]
-                logger.info(f"Issue ID {issue_id} updated successfully.")
+                log_info(f"Issue ID {issue_id} updated successfully.")
                 return str(issue)
             else:
                 logger.error(f"Failed to update issue ID {issue_id}. Success flag was false.")
@@ -292,7 +295,7 @@ class LinearTools(Toolkit):
             if response.get("user"):
                 user = response["user"]
                 issues = user["assignedIssues"]["nodes"]
-                logger.info(f"Retrieved {len(issues)} issues assigned to user '{user['name']}' (ID: {user['id']}).")
+                log_info(f"Retrieved {len(issues)} issues assigned to user '{user['name']}' (ID: {user['id']}).")
                 return str(issues)
             else:
                 logger.error("Failed to retrieve user or issues.")
@@ -335,7 +338,7 @@ class LinearTools(Toolkit):
 
             if response.get("workflowState"):
                 issues = response["workflowState"]["issues"]["nodes"]
-                logger.info(f"Retrieved {len(issues)} issues in workflow state ID {workflow_id}.")
+                log_info(f"Retrieved {len(issues)} issues in workflow state ID {workflow_id}.")
                 return str(issues)
             else:
                 logger.error("Failed to retrieve issues for the specified workflow state.")
@@ -376,7 +379,7 @@ class LinearTools(Toolkit):
 
             if response.get("issues"):
                 high_priority_issues = response["issues"]["nodes"]
-                logger.info(f"Retrieved {len(high_priority_issues)} high-priority issues.")
+                log_info(f"Retrieved {len(high_priority_issues)} high-priority issues.")
                 return str(high_priority_issues)
             else:
                 logger.error("Failed to retrieve high-priority issues.")

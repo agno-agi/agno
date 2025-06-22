@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug
 
 try:
     from baidusearch.baidusearch import search  # type: ignore
@@ -35,15 +35,19 @@ class BaiduSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         debug: Optional[bool] = False,
+        **kwargs,
     ):
-        super().__init__(name="baidusearch")
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language
         self.headers = headers
         self.proxy = proxy
         self.timeout = timeout
         self.debug = debug
-        self.register(self.baidu_search)
+
+        tools = []
+        tools.append(self.baidu_search)
+
+        super().__init__(name="baidusearch", tools=tools, **kwargs)
 
     def baidu_search(self, query: str, max_results: int = 5, language: str = "zh") -> str:
         """Execute Baidu search and return results
@@ -65,7 +69,7 @@ class BaiduSearchTools(Toolkit):
             except LookupError:
                 language = "zh"
 
-        logger.debug(f"Searching Baidu [{language}] for: {query}")
+        log_debug(f"Searching Baidu [{language}] for: {query}")
 
         results = search(keyword=query, num_results=max_results)
 
