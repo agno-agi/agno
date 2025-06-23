@@ -702,7 +702,7 @@ class MongoDb(VectorDb):
         collection = self._get_collection()
 
         k = self.hybrid_rank_constant
-        
+
         mongo_filters = {}
         if filters:
             for key, value in filters.items():
@@ -816,7 +816,7 @@ class MongoDb(VectorDb):
             {"$sort": {"score": -1}},
             {"$limit": limit},
         ]
-        
+
         # Apply filters if provided
         if mongo_filters:
             pipeline.append({"$match": mongo_filters})
