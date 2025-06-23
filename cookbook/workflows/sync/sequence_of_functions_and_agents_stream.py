@@ -1,9 +1,8 @@
 from textwrap import dedent
-from typing import Iterator, Union
+from typing import Iterator
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
