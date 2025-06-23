@@ -272,7 +272,7 @@ class Team:
     # Store the events from the Team
     store_events: bool = False
     # List of events to skip from the Team
-    events_to_skip: Optional[List[str]] = None
+    events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -353,7 +353,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[str]] = None,
+        events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
@@ -440,10 +440,13 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
-        self.events_to_skip = events_to_skip or [
-            RunEvent.run_response_content.value,
-            TeamRunEvent.run_response_content.value,
-        ]
+
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [
+                RunEvent.run_response_content,
+                TeamRunEvent.run_response_content,
+            ]
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
@@ -612,7 +615,8 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            self.memory = deepcopy(self.memory)
+            if isinstance(self.memory, Memory):
+                self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
@@ -2142,7 +2146,8 @@ class Team:
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event not in (self.events_to_skip or []):
+        events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
+        if self.store_events and event.event not in events_to_skip:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)
@@ -6534,6 +6539,9 @@ class Team:
             raise ValueError("Session ID is not initialized")
 
         session_id = session_id or self.session_id
+
+        # Ensure storage mode is set to "team" before reading
+        self._set_storage_mode()
 
         # -*- Read from storage
         self.read_from_storage(session_id=session_id)  # type: ignore

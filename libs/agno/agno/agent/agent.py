@@ -279,7 +279,7 @@ class Agent:
 
     # Persist the events on the run response
     store_events: bool = False
-    events_to_skip: Optional[List[str]] = None
+    events_to_skip: Optional[List[RunEvent]] = None
 
     # --- Agent Team ---
     # The team of agents that this agent can transfer tasks to.
@@ -403,7 +403,7 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[str]] = None,
+        events_to_skip: Optional[List[RunEvent]] = None,
         team: Optional[List[Agent]] = None,
         team_data: Optional[Dict[str, Any]] = None,
         role: Optional[str] = None,
@@ -508,7 +508,9 @@ class Agent:
 
         self.store_events = store_events
         # By default, we skip the run response content event
-        self.events_to_skip = events_to_skip or [RunEvent.run_response_content.value]
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [RunEvent.run_response_content]
 
         self.team = team
 
@@ -638,7 +640,8 @@ class Agent:
             from copy import deepcopy
 
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            self.memory = deepcopy(self.memory)
+            if isinstance(self.memory, Memory):
+                self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the agent's model if no model is provided
@@ -2487,13 +2490,6 @@ class Agent:
         if not run_response.content:
             run_response.content = self._get_paused_content(run_response)
 
-        # Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
-
-        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=message, session_id=session_id)
 
@@ -2505,6 +2501,13 @@ class Agent:
             ),
             run_response,
         )
+
+        # Save session to storage
+        self.write_to_storage(user_id=user_id, session_id=session_id)
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
     def _convert_response_to_structured_format(self, run_response: RunResponse):
         # Convert the response to the structured format if needed
@@ -6225,7 +6228,8 @@ class Agent:
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event not in (self.events_to_skip or []):
+        events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
+        if self.store_events and event.event not in events_to_skip:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)

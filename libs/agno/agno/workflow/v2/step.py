@@ -240,12 +240,12 @@ class Step:
                     result = self.active_executor(step_input)  # type: ignore
 
                     if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, StepOutput)):
-                        log_debug(f"Function returned iterable, streaming events")
+                        log_debug("Function returned iterable, streaming events")
                         try:
                             for event in result:
                                 if isinstance(event, StepOutput):
                                     final_response = event
-                                    log_debug(f"Received final StepOutput from function")
+                                    log_debug("Received final StepOutput from function")
                                 else:
                                     log_debug(f"Yielding event from function: {type(event).__name__}")
                                     yield event
@@ -262,7 +262,7 @@ class Step:
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
-                        log_debug(f"Function returned non-iterable, created StepOutput")
+                        log_debug("Function returned non-iterable, created StepOutput")
                 else:
                     message = self._prepare_message(step_input.message, step_input.message_data)
 
@@ -295,7 +295,7 @@ class Step:
                 # If we didn't get a final response, create one
                 if final_response is None:
                     final_response = StepOutput(content="")
-                    log_debug(f"Created empty StepOutput as fallback")
+                    log_debug("Created empty StepOutput as fallback")
 
                 logger.info(f"Step {self.name} completed successfully with streaming")
 
@@ -431,7 +431,7 @@ class Step:
                         async for event in self.active_executor(step_input):
                             if isinstance(event, StepOutput):
                                 final_response = event
-                                log_debug(f"Received final StepOutput from async generator")
+                                log_debug("Received final StepOutput from async generator")
                             else:
                                 log_debug(f"Yielding event from async generator: {type(event).__name__}")
                                 yield event

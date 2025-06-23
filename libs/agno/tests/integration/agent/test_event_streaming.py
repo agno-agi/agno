@@ -227,7 +227,7 @@ def test_intermediate_steps_with_reasoning():
     assert events[RunEvent.reasoning_step][0].reasoning_content is not None
 
 
-def test_intermediate_steps_with_user_confirmation():
+def test_intermediate_steps_with_user_confirmation(agent_storage):
     """Test that the agent streams events."""
 
     @tool(requires_confirmation=True)
@@ -237,6 +237,8 @@ def test_intermediate_steps_with_user_confirmation():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        storage=agent_storage,
+        store_events=True,
         telemetry=False,
         monitoring=False,
     )
@@ -264,6 +266,13 @@ def test_intermediate_steps_with_user_confirmation():
     updated_tools = agent.run_response.tools
     run_id = agent.run_response.run_id
     updated_tools[0].confirmed = True
+
+    # Check stored events
+    stored_session = agent_storage.get_all_sessions()[0]
+    assert stored_session.memory["runs"][0]["events"] is not None
+    assert len(stored_session.memory["runs"][0]["events"]) == 2
+    assert stored_session.memory["runs"][0]["events"][0]["event"] == RunEvent.run_started
+    assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
 
     # Then we continue the run
     response_generator = agent.continue_run(
@@ -296,6 +305,17 @@ def test_intermediate_steps_with_user_confirmation():
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response.is_paused is False
+
+    # Check stored events
+    stored_session = agent_storage.get_all_sessions()[0]
+    assert stored_session.memory["runs"][0]["events"] is not None
+    assert len(stored_session.memory["runs"][0]["events"]) == 6
+    assert stored_session.memory["runs"][0]["events"][0]["event"] == RunEvent.run_started
+    assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
+    assert stored_session.memory["runs"][0]["events"][2]["event"] == RunEvent.run_continued
+    assert stored_session.memory["runs"][0]["events"][3]["event"] == RunEvent.tool_call_started
+    assert stored_session.memory["runs"][0]["events"][4]["event"] == RunEvent.tool_call_completed
+    assert stored_session.memory["runs"][0]["events"][5]["event"] == RunEvent.run_completed
 
 
 def test_intermediate_steps_with_memory(agent_storage, memory):

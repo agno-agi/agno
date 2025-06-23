@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.2"
+version = "1.6.3"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -102,6 +102,7 @@ matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+opencv = ["opencv-python"]
 todoist = ["todoist-api-python"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
@@ -198,6 +199,7 @@ tools = [
   "agno[mcp]",
   "agno[browserbase]",
   "agno[agentql]",
+  "agno[opencv]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
   "agno[zep]",
@@ -370,6 +372,7 @@ module = [
   "numpy.*",
   "ollama.*",
   "openai.*",
+  "cv2.*",
   "openbb.*",
   "pandas.*",
   "pgvector.*",

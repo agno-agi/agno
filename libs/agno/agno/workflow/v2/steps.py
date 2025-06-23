@@ -16,10 +16,10 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",
-        "Loop",
-        "Parallel",
-        "Condition",
+        "Steps",  # noqa: F821
+        "Loop",  # noqa: F821
+        "Parallel",  # noqa: F821
+        "Condition",  # noqa: F821
     ]
 ]
 
