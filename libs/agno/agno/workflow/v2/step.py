@@ -294,7 +294,7 @@ class Step:
                             final_response = result
                         else:
                             final_response = StepOutput(content=str(result))
-                        log_debug(f"Function returned non-iterable, created StepOutput")
+                        log_debug("Function returned non-iterable, created StepOutput")
                 else:
                     message = self._prepare_message(step_input.message, step_input.message_data)
 
@@ -327,7 +327,7 @@ class Step:
                 # If we didn't get a final response, create one
                 if final_response is None:
                     final_response = StepOutput(content="")
-                    log_debug(f"Created empty StepOutput as fallback")
+                    log_debug("Created empty StepOutput as fallback")
 
                 # Yield the step output
                 yield final_response

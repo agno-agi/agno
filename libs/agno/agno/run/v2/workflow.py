@@ -91,7 +91,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
     content_type: str = "str"
 
     # Store actual step execution results as StepOutput objects
-    step_responses: List["StepOutput"] = field(default_factory=list)
+    step_responses: List["StepOutput"] = field(default_factory=list)  # noqa: F821
     extra_data: Optional[Dict[str, Any]] = None
 
 
@@ -142,7 +142,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
     response_audio: Optional[AudioResponse] = None
 
     # Store actual step execution results as StepOutput objects
-    step_response: Optional["StepOutput"] = None
+    step_response: Optional["StepOutput"] = None  # noqa: F821
 
 
 @dataclass
@@ -189,7 +189,7 @@ class WorkflowRunResponse:
     response_audio: Optional[AudioResponse] = None
 
     # Store actual step execution results as StepOutput objects
-    step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)
+    step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
     extra_data: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
