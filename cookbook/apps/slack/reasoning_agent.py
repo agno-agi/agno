@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.slack.app import SlackAPI
+from agno.app.slack import SlackAPI
 from agno.models.anthropic.claude import Claude
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
