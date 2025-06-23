@@ -147,6 +147,8 @@ class Step:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
+        logger.info(f"Executing step (non-streaming): {self.name}")
+
         log_debug(f"Executor type: {self._executor_type}")
 
         # Execute with retries

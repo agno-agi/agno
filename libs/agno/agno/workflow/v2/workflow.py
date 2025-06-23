@@ -443,9 +443,8 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
-                    
-                    step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
+                    step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
                     # Handle both single StepOutput and List[StepOutput] (from Parallel/Loop steps)
                     if isinstance(step_output, list):
