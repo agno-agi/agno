@@ -29,7 +29,7 @@ class SerperTools(Toolkit):
         num_results: int = 10,
     ):
         """
-        Initializes the SerperApiTools instance.
+        Initializes the SerperTools instance.
 
         Args:
             api_key (str, optional): The Serper API key. If not provided, will be fetched from the environment variable "SERPER_API_KEY".
@@ -78,6 +78,3 @@ class SerperTools(Toolkit):
 
         except Exception as e:
             return f"Error searching for the query {query}: {e}"
-
-
-SerperApiTools = SerperTools  # Alias for backward compatibility

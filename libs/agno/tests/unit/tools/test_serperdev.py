@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from agno.tools.serperapi import SerperTools
+from agno.tools.serper import SerperTools
 
 
 @pytest.fixture(autouse=True)
