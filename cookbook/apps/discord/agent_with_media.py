@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.discord.client import DiscordClient
+from agno.app.discord import DiscordClient
 from agno.models.google import Gemini
 
 media_agent = Agent(
