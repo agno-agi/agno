@@ -330,6 +330,7 @@ module = [
   "cohere.*",
   "crawl4ai.*",
   "daytona_sdk.*",
+  "discord.*",
   "docker.*",
   "docx.*",
   "duckdb.*",

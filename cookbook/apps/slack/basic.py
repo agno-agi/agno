@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.slack.app import SlackAPI
+from agno.app.slack import SlackAPI
 from agno.models.openai import OpenAIChat
 
 basic_agent = Agent(

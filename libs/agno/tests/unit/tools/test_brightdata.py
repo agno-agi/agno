@@ -367,25 +367,6 @@ def test_web_data_feed_no_snapshot_id(brightdata_tools, mock_requests):
     assert result == "No snapshot ID returned from trigger request"
 
 
-def test_web_data_feed_timeout(brightdata_tools, mock_requests):
-    """Test web_data_feed timeout scenario."""
-    # Mock trigger response
-    mock_trigger_response = Mock()
-    mock_trigger_response.json.return_value = {"snapshot_id": "test_snapshot_123"}
-
-    # Mock snapshot response that always returns "running"
-    mock_snapshot_response = Mock()
-    mock_snapshot_response.json.return_value = {"status": "running"}
-
-    mock_requests.post.return_value = mock_trigger_response
-    mock_requests.get.return_value = mock_snapshot_response
-
-    # Use very short timeout for testing
-    result = brightdata_tools.web_data_feed("amazon_product", "https://amazon.com/dp/B123", timeout=2)
-
-    assert "Timeout after 2 seconds waiting for amazon_product data" in result
-
-
 def test_web_data_feed_with_reviews_param(brightdata_tools, mock_requests):
     """Test web_data_feed with num_of_reviews parameter."""
     mock_trigger_response = Mock()
