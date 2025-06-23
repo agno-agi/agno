@@ -329,8 +329,6 @@ class Step:
                     final_response = StepOutput(content="")
                     log_debug(f"Created empty StepOutput as fallback")
 
-                logger.info(f"Step {self.name} completed successfully with streaming")
-                
                 # Yield the step output
                 yield final_response
                 
@@ -564,8 +562,6 @@ class Step:
                 if final_response is None:
                     final_response = StepOutput(content="")
 
-                logger.info(f"Step {self.name} completed successfully with streaming")
-                
                 # Yield the final response
                 yield final_response
                 

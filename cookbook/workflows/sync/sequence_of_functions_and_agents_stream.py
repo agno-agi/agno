@@ -30,6 +30,8 @@ writer_agent = Agent(
 
 def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
 	topic = step_input.message
+  
+    # Can return a StepOutput object
 	return StepOutput(content=dedent(f"""\
 	I'm writing a blog post on the topic
 	<topic>
@@ -39,11 +41,12 @@ def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
 	Search the web for atleast 10 articles\
 	"""))
 	
-def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
+def prepare_input_for_writer(step_input: StepInput) -> str:
 	topic = step_input.message
 	research_team_output = step_input.previous_step_content
 
-	return StepOutput(content=dedent(f"""\
+    # Can also return a string directly
+	return dedent(f"""\
 	I'm writing a blog post on the topic:
 	<topic>
 	{topic}
@@ -53,7 +56,7 @@ def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
 	<research_results>
 	{research_team_output}
 	<research_results>\
-	"""))
+	""")
  
  
 # Define research team for complex analysis
@@ -83,4 +86,6 @@ if __name__ == "__main__":
     content_creation_workflow.print_response(
         message="AI trends in 2024",
         markdown=True,
+        stream=True,
+        stream_intermediate_steps=True,
     )
