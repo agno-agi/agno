@@ -3,7 +3,7 @@ This is a simple example of how to use the SerperApiTools class. You can obtain 
 """
 
 from agno.agent import Agent
-from agno.tools.serperapi import SerperApiTools
+from agno.tools.serperapi import SerperTools
 
-agent = Agent(tools=[SerperApiTools(location="us")], show_tool_calls=True)
+agent = Agent(tools=[SerperTools(location="us")], show_tool_calls=True)
 agent.print_response("Whats happening in the USA?", markdown=True)

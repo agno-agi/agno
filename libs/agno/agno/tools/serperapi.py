@@ -8,7 +8,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
 
-class SerperApiTools(Toolkit):
+class SerperTools(Toolkit):
     """
     A class to interact with the Serper API for Google search functionality. Go to serper.dev for more information.
 
