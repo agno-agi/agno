@@ -886,6 +886,8 @@ class Workflow:
                     prepared_steps.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, Step):
                     prepared_steps.append(step)
+                elif isinstance(step, (Loop, Parallel)):
+                    prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
