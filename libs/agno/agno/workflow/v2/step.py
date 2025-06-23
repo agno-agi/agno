@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import inspect
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel
@@ -155,20 +155,26 @@ class Step:
             try:
                 log_debug(f"Step {self.name} attempt {attempt + 1}/{self.max_retries + 1}")
                 if self._executor_type == "function":
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
+                        self.active_executor
+                    ):
                         raise ValueError("Cannot use async function with synchronous execution")
                     if inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         final_response = None
                         try:
                             for chunk in self.active_executor(step_input):
-                                if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                if (
+                                    hasattr(chunk, "content")
+                                    and chunk.content is not None
+                                    and isinstance(chunk.content, str)
+                                ):
                                     content += chunk.content
                                 else:
                                     content += str(chunk)
                                 if isinstance(chunk, StepOutput):
                                     final_response = chunk
-                        
+
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
@@ -262,20 +268,28 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
-                    
-                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+
+                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
+                        self.active_executor
+                    ):
                         raise ValueError("Cannot use async function with synchronous execution")
-                    
+
                     if inspect.isgeneratorfunction(self.active_executor):
                         log_debug(f"Function returned iterable, streaming events")
+                        content = ""
                         try:
                             for event in self.active_executor(step_input):
-                                if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                                if (
+                                    hasattr(event, "content")
+                                    and event.content is not None
+                                    and isinstance(event.content, str)
+                                ):
                                     content += event.content
                                 else:
                                     content += str(event)
                                 if isinstance(event, StepOutput):
                                     final_response = event
+                                    break
                                 else:
                                     yield event
                             if not final_response:
@@ -331,7 +345,7 @@ class Step:
 
                 # Yield the step output
                 yield final_response
-                
+
                 # Emit StepCompletedEvent
                 yield StepCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -344,6 +358,7 @@ class Step:
                     step_response=final_response,
                 )
 
+                return
             except Exception as e:
                 self.retry_count = attempt + 1
                 logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
@@ -373,13 +388,19 @@ class Step:
                 if self._executor_type == "function":
                     import inspect
 
-                    if inspect.isgeneratorfunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+                    if inspect.isgeneratorfunction(self.active_executor) or inspect.isasyncgenfunction(
+                        self.active_executor
+                    ):
                         content = ""
                         final_response = None
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
                                 for chunk in self.active_executor(step_input):
-                                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                    if (
+                                        hasattr(chunk, "content")
+                                        and chunk.content is not None
+                                        and isinstance(chunk.content, str)
+                                    ):
                                         content += chunk.content
                                     else:
                                         content += str(chunk)
@@ -387,13 +408,17 @@ class Step:
                                         final_response = chunk
                             else:
                                 async for chunk in self.active_executor(step_input):
-                                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                    if (
+                                        hasattr(chunk, "content")
+                                        and chunk.content is not None
+                                        and isinstance(chunk.content, str)
+                                    ):
                                         content += chunk.content
                                     else:
                                         content += str(chunk)
                                     if isinstance(chunk, StepOutput):
                                         final_response = chunk
-                        
+
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
@@ -402,14 +427,15 @@ class Step:
                                 final_response = result
                             else:
                                 final_response = StepOutput(content=str(result))
-                        
+
                         if final_response is not None:
                             response = final_response
                         else:
                             response = StepOutput(content=content)
                     else:
                         if inspect.iscoroutinefunction(self.active_executor):
-                            result = await self.active_executor(step_input)  # type: ignore
+                            # type: ignore
+                            result = await self.active_executor(step_input)
                         else:
                             result = self.active_executor(step_input)  # type: ignore
 
@@ -492,14 +518,20 @@ class Step:
 
                     # Check if the function is an async generator
                     if inspect.isasyncgenfunction(self.active_executor):
+                        content = ""
                         # It's an async generator - iterate over it
                         async for event in self.active_executor(step_input):
-                            if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                            if (
+                                hasattr(event, "content")
+                                and event.content is not None
+                                and isinstance(event.content, str)
+                            ):
                                 content += event.content
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
                                 final_response = event
+                                break
                             else:
                                 yield event
                         if not final_response:
@@ -512,14 +544,20 @@ class Step:
                         else:
                             final_response = StepOutput(content=str(result))
                     elif inspect.isgeneratorfunction(self.active_executor):
+                        content = ""
                         # It's a regular generator function - iterate over it
                         for event in self.active_executor(step_input):
-                            if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                            if (
+                                hasattr(event, "content")
+                                and event.content is not None
+                                and isinstance(event.content, str)
+                            ):
                                 content += event.content
                             else:
                                 content += str(event)
                             if isinstance(event, StepOutput):
                                 final_response = event
+                                break
                             else:
                                 yield event
                         if not final_response:
@@ -564,7 +602,7 @@ class Step:
 
                 # Yield the final response
                 yield final_response
-                
+
                 # Emit StepCompletedEvent
                 # if workflow_run_response:
                 yield StepCompletedEvent(
@@ -577,6 +615,7 @@ class Step:
                     content=final_response.content,
                     step_response=final_response,
                 )
+                return
 
             except Exception as e:
                 self.retry_count = attempt + 1

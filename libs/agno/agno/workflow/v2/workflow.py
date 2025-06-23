@@ -148,7 +148,7 @@ class Workflow:
             return 1  # Callable function counts as 1 step
         else:
             return len(self.steps)
-        
+
     def _execute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
     ) -> WorkflowRunResponse:
@@ -186,7 +186,9 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
+                    log_debug(
+                        f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
+                    )
                     step_input = StepInput(
                         message=execution_input.message,
                         message_data=execution_input.message_data,
@@ -223,6 +225,7 @@ class Workflow:
 
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
@@ -282,7 +285,9 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
+                    log_debug(
+                        f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
+                    )
 
                     # Create StepInput for this step
                     step_input = StepInput(
@@ -293,7 +298,7 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
-                
+
                     # Execute step with streaming and yield all events
                     for event in step.execute_stream(
                         step_input,
@@ -313,6 +318,10 @@ class Workflow:
                             output_videos.extend(event.videos or [])
                             shared_audio.extend(event.audio or [])
                             output_audio.extend(event.audio or [])
+
+                            # Only yield StepOutput for generator functions, not for agents/teams
+                            if step.executor_type == "function":
+                                yield event
                         else:
                             # Yield other internal events
                             yield event
@@ -411,7 +420,9 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
+                    log_debug(
+                        f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
+                    )
                     step_input = StepInput(
                         message=execution_input.message,
                         message_data=execution_input.message_data,
@@ -514,7 +525,9 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
+                    log_debug(
+                        f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
+                    )
 
                     # Create StepInput for this step
                     step_input = StepInput(
@@ -545,6 +558,10 @@ class Workflow:
                             output_videos.extend(event.videos or [])
                             shared_audio.extend(event.audio or [])
                             output_audio.extend(event.audio or [])
+
+                            # Only yield StepOutput for generator functions, not for agents/teams
+                            if step.executor_type == "function":
+                                yield event
                         else:
                             # Yield other internal events
                             yield event
@@ -674,7 +691,7 @@ class Workflow:
 
         # Load or create session
         self.load_session()
-        
+
         # Prepare steps
         self._prepare_steps()
 
@@ -803,24 +820,27 @@ class Workflow:
             )
         else:
             return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response)
-        
+
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         prepared_steps = []
-        for step in self.steps:
-            if isinstance(step, Callable):
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
-            elif isinstance(step, Agent):
-                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
-            elif isinstance(step, Team):
-                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, Step):
-                prepared_steps.append(step)
-            else:
-                raise ValueError(f"Invalid step type: {type(step).__name__}")
-        
-        self.steps = prepared_steps
-        
+        if not isinstance(self.steps, Callable):
+            for step in self.steps:
+                if isinstance(step, Callable):
+                    prepared_steps.append(
+                        Step(name=step.__name__, description="User-defined callable step", executor=step)
+                    )
+                elif isinstance(step, Agent):
+                    prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+                elif isinstance(step, Team):
+                    prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+                elif isinstance(step, Step):
+                    prepared_steps.append(step)
+                else:
+                    raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+            self.steps = prepared_steps
+
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
         workflow_data = {}
@@ -1299,6 +1319,9 @@ class Workflow:
                     else:
                         if isinstance(response, str):
                             response_str = response
+                        elif isinstance(response, StepOutput):
+                            # Handle StepOutput objects yielded directly from generator functions
+                            response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
 
@@ -1726,6 +1749,9 @@ class Workflow:
                     else:
                         if isinstance(response, str):
                             response_str = response
+                        elif isinstance(response, StepOutput):
+                            # Handle StepOutput objects yielded directly from generator functions
+                            response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
 

@@ -1,4 +1,5 @@
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
@@ -28,22 +29,27 @@ writer_agent = Agent(
     instructions="Write a blog post on the topic",
 )
 
+
 def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
-	topic = step_input.message
-	return StepOutput(content=dedent(f"""\
+    topic = step_input.message
+    return StepOutput(
+        content=dedent(f"""\
 	I'm writing a blog post on the topic
 	<topic>
 	{topic}
 	</topic>
 	
 	Search the web for atleast 10 articles\
-	"""))
-	
-def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
-	topic = step_input.message
-	research_team_output = step_input.previous_step_content
+	""")
+    )
 
-	return StepOutput(content=dedent(f"""\
+
+def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
+    topic = step_input.message
+    research_team_output = step_input.previous_step_content
+
+    return StepOutput(
+        content=dedent(f"""\
 	I'm writing a blog post on the topic:
 	<topic>
 	{topic}
@@ -53,9 +59,10 @@ def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
 	<research_results>
 	{research_team_output}
 	<research_results>\
-	"""))
- 
- 
+	""")
+    )
+
+
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
@@ -75,10 +82,12 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        steps=[prepare_input_for_web_search, 
-               research_team,
-               prepare_input_for_writer,
-               writer_agent],
+        steps=[
+            prepare_input_for_web_search,
+            research_team,
+            prepare_input_for_writer,
+            writer_agent,
+        ],
     )
     content_creation_workflow.print_response(
         message="AI trends in 2024",

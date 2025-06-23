@@ -1,6 +1,9 @@
 from textwrap import dedent
+from typing import Iterator, Union
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -28,37 +31,47 @@ writer_agent = Agent(
     instructions="Write a blog post on the topic",
 )
 
-def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
-	topic = step_input.message
-  
-    # Can return a StepOutput object
-	return StepOutput(content=dedent(f"""\
-	I'm writing a blog post on the topic
-	<topic>
-	{topic}
-	</topic>
-	
-	Search the web for atleast 10 articles\
-	"""))
-	
-def prepare_input_for_writer(step_input: StepInput) -> str:
-	topic = step_input.message
-	research_team_output = step_input.previous_step_content
 
-    # Can also return a string directly
-	return dedent(f"""\
-	I'm writing a blog post on the topic:
-	<topic>
-	{topic}
-	</topic>
-    
-	Here is information from the web:
-	<research_results>
-	{research_team_output}
-	<research_results>\
-	""")
- 
- 
+def prepare_input_for_web_search(step_input: StepInput) -> Iterator[StepOutput]:
+    """Generator function that yields StepOutput"""
+    topic = step_input.message
+
+    # Create proper StepOutput content
+    content = dedent(f"""\
+        I'm writing a blog post on the topic
+        <topic>
+        {topic}
+        </topic>
+        
+        Search the web for atleast 10 articles\
+        """)
+
+    # Yield a StepOutput as the final result
+    yield StepOutput(content=content)
+
+
+def prepare_input_for_writer(step_input: StepInput) -> Iterator[StepOutput]:
+    """Generator function that yields StepOutput"""
+    topic = step_input.message
+    research_team_output = step_input.previous_step_content
+
+    # Create proper StepOutput content
+    content = dedent(f"""\
+        I'm writing a blog post on the topic:
+        <topic>
+        {topic}
+        </topic>
+        
+        Here is information from the web:
+        <research_results>
+        {research_team_output}
+        </research_results>\
+        """)
+
+    # Yield a StepOutput as the final result
+    yield StepOutput(content=content)
+
+
 # Define research team for complex analysis
 research_team = Team(
     name="Research Team",
@@ -78,10 +91,12 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
-        steps=[prepare_input_for_web_search, 
-               research_team,
-               prepare_input_for_writer,
-               writer_agent],
+        steps=[
+            prepare_input_for_web_search,
+            research_team,
+            prepare_input_for_writer,
+            writer_agent,
+        ],
     )
     content_creation_workflow.print_response(
         message="AI trends in 2024",
