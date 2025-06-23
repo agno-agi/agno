@@ -150,7 +150,7 @@ class LinearTools(Toolkit):
             raise
 
     def create_issue(
-        self, title: str, description: str, team_id: str, project_id: str, assignee_id: str
+        self, title: str, description: str, team_id: str, project_id: Optional[str] = None, assignee_id: Optional[str] = None
     ) -> Optional[str]:
         """
         Create a new issue within a specific project and team.
@@ -159,6 +159,8 @@ class LinearTools(Toolkit):
             title (str): The title of the new issue.
             description (str): The description of the new issue.
             team_id (str): The unique identifier of the team in which to create the issue.
+            project_id (Optional[str]): The ID of the project (optional).
+            assignee_id (Optional[str]): The ID of the assignee (optional).
 
         Returns:
             str or None: A string containing the created issue's details like issue id and issue title.
@@ -187,9 +189,12 @@ class LinearTools(Toolkit):
             "title": title,
             "description": description,
             "teamId": team_id,
-            "projectId": project_id,
-            "assigneeId": assignee_id,
         }
+        if project_id is not None:
+            variables["projectId"] = project_id
+        if assignee_id is not None:
+            variables["assigneeId"] = assignee_id
+    
         try:
             response = self._execute_query(query, variables)
             log_info(f"Response: {response}")
