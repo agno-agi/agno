@@ -1114,16 +1114,16 @@ class Workflow:
 
                 if show_step_details and workflow_response.step_responses:
                     for i, step_output in enumerate(workflow_response.step_responses):
-                        # Handle both single StepOutput and List[StepOutput] (from parallel steps)
+                        # Handle both single StepOutput and List[StepOutput] (from loop/parallel steps)
                         if isinstance(step_output, list):
-                            # This is a parallel step with multiple outputs
-                            for j, parallel_step_output in enumerate(step_output):
-                                if parallel_step_output.content:
+                            # This is a loop or parallel step with multiple outputs
+                            for j, sub_step_output in enumerate(step_output):
+                                if sub_step_output.content:
                                     step_panel = create_panel(
-                                        content=Markdown(parallel_step_output.content)
+                                        content=Markdown(sub_step_output.content)
                                         if markdown
-                                        else parallel_step_output.content,
-                                        title=f"Step {i + 1}.{j + 1}: {parallel_step_output.step_name} (Parallel - Completed)",
+                                        else sub_step_output.content,
+                                        title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
                                         border_style="green",
                                     )
                                     console.print(step_panel)
@@ -1581,16 +1581,16 @@ class Workflow:
                 # Show individual step responses if available
                 if show_step_details and workflow_response.step_responses:
                     for i, step_output in enumerate(workflow_response.step_responses):
-                        # Handle both single StepOutput and List[StepOutput] (from parallel steps)
+                        # Handle both single StepOutput and List[StepOutput] (from loop/parallel steps)
                         if isinstance(step_output, list):
-                            # This is a parallel step with multiple outputs
-                            for j, parallel_step_output in enumerate(step_output):
-                                if parallel_step_output.content:
+                            # This is a loop or parallel step with multiple outputs
+                            for j, sub_step_output in enumerate(step_output):
+                                if sub_step_output.content:
                                     step_panel = create_panel(
-                                        content=Markdown(parallel_step_output.content)
+                                        content=Markdown(sub_step_output.content)
                                         if markdown
-                                        else parallel_step_output.content,
-                                        title=f"Step {i + 1}.{j + 1}: {parallel_step_output.step_name} (Parallel - Completed)",
+                                        else sub_step_output.content,
+                                        title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
                                         border_style="green",
                                     )
                                     console.print(step_panel)
