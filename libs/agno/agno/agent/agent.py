@@ -1096,7 +1096,7 @@ class Agent:
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                 )
                 if stream and self.is_streamable:
-                    return generator_wrapper(
+                    return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -1108,12 +1108,12 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
+                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
+                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     async def _arun(
@@ -1762,7 +1762,7 @@ class Agent:
                     time.sleep(delay)
             except KeyboardInterrupt:
                 if stream and self.is_streamable:
-                    return generator_wrapper(
+                    return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -1777,11 +1777,11 @@ class Agent:
             )
 
             if stream and self.is_streamable:
-                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
+                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
+                return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
     def _continue_run(

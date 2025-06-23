@@ -76,11 +76,11 @@ class DiscordClient:
                 elif self.team:
                     self.team.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
                     response = await self.team.arun(
-                        message_text,
+                        message=message_text,
                         user_id=message_user,
-                        session_id=thread.id,
+                        session_id=str(thread.id),
                         images=[Image(url=message_image)] if message_image else None,
-                        videos=[Video(url=message_video)] if message_video else None,
+                        videos=[Video(content=message_video)] if message_video else None,
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         files=[File(url=message_audio)] if message_file else None,
                     )
