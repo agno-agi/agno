@@ -4413,12 +4413,6 @@ class Team:
                     run_response,
                 )
 
-    def _generator_wrapper(self, event: TeamRunResponseEvent) -> Iterator[TeamRunResponseEvent]:
-        yield event
-
-    async def _async_generator_wrapper(self, event: TeamRunResponseEvent) -> AsyncIterator[TeamRunResponseEvent]:
-        yield event
-
     def _create_run_response(
         self,
         session_id: str,

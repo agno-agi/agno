@@ -1710,7 +1710,7 @@ class Agent:
             log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
             # Prepare run messages
-            self.run_messages: RunMessages = self.get_continue_run_messages(
+            self.run_messages = self.get_continue_run_messages(
                 messages=messages,
             )
 
