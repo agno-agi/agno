@@ -149,9 +149,13 @@ def get_paused_content(run_response: RunResponse) -> str:
     return paused_content
 
 
-def generator_wrapper(event: Union[RunResponseEvent, TeamRunResponseEvent]) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+def generator_wrapper(
+    event: Union[RunResponseEvent, TeamRunResponseEvent],
+) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
     yield event
 
 
-async def async_generator_wrapper(event: Union[RunResponseEvent, TeamRunResponseEvent]) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+async def async_generator_wrapper(
+    event: Union[RunResponseEvent, TeamRunResponseEvent],
+) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
     yield event
