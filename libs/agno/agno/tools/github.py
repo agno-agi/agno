@@ -7,6 +7,8 @@ from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from github.GithubObject import NotSet
+
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
@@ -423,7 +425,7 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull request changes: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
+    def create_issue(self, repo_name: str, title: str, body: Optional[str] = NotSet) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -664,8 +666,8 @@ class GithubTools(Toolkit):
         self,
         repo_name: str,
         issue_number: int,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
+        title: Optional[str] = NotSet,
+        body: Optional[str] = NotSet,
     ) -> str:
         """Edit the title or body of an issue.
 
@@ -1291,7 +1293,7 @@ class GithubTools(Toolkit):
         path: str,
         content: str,
         message: str,
-        branch: Optional[str] = None,
+        branch: Optional[str] = NotSet,
     ) -> str:
         """Create a new file in a repository.
 
@@ -1328,7 +1330,7 @@ class GithubTools(Toolkit):
             }
 
             return json.dumps(file_info, indent=2)
-        except GithubException as e:
+        except (GithubException, AssertionError) as e:
             logger.error(f"Error creating file: {e}")
             return json.dumps({"error": str(e)})
 
