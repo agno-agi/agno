@@ -535,7 +535,7 @@ class MongoDb(VectorDb):
     ) -> List[Document]:
         """Search for documents using vector similarity."""
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit=limit)
+            return self.hybrid_search(query, limit=limit, filters=filters)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -677,6 +677,7 @@ class MongoDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
@@ -701,6 +702,15 @@ class MongoDb(VectorDb):
         collection = self._get_collection()
 
         k = self.hybrid_rank_constant
+        
+        mongo_filters = {}
+        if filters:
+            for key, value in filters.items():
+                # If the key doesn't already include a dot notation for meta_data
+                if not key.startswith("meta_data.") and "." not in key:
+                    mongo_filters[f"meta_data.{key}"] = value
+                else:
+                    mongo_filters[key] = value
 
         pipeline = [
             # Vector Search Branch
@@ -806,6 +816,10 @@ class MongoDb(VectorDb):
             {"$sort": {"score": -1}},
             {"$limit": limit},
         ]
+        
+        # Apply filters if provided
+        if mongo_filters:
+            pipeline.append({"$match": mongo_filters})
 
         try:
             results = list(collection.aggregate(pipeline))

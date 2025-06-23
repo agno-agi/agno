@@ -6486,6 +6486,9 @@ class Team:
 
         session_id = session_id or self.session_id
 
+        # Ensure storage mode is set to "team" before reading
+        self._set_storage_mode()
+
         # -*- Read from storage
         self.read_from_storage(session_id=session_id)  # type: ignore
         # -*- Rename session
