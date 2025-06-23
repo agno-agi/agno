@@ -1324,7 +1324,7 @@ class GithubTools(Toolkit):
                 "url": result["content"].html_url,
                 "commit": {
                     "sha": result["commit"].sha,
-                    "message": result["commit"].commit.message,
+                    "message": result["commit"].commit.message if result["commit"].commit else result["commit"]._rawData["message"],
                     "url": result["commit"].html_url,
                 },
             }
