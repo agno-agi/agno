@@ -75,10 +75,12 @@ from agno.utils.log import (
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
+    async_generator_wrapper,
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
     format_tool_calls,
+    generator_wrapper,
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -872,7 +874,7 @@ class Team:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
-                    return self._generator_wrapper(
+                    return generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -889,16 +891,12 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1275,7 +1273,7 @@ class Team:
                     await asyncio.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
-                    return self._async_generator_wrapper(
+                    return async_generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -1292,14 +1290,14 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
@@ -4414,12 +4412,6 @@ class Team:
                     ),
                     run_response,
                 )
-
-    def _generator_wrapper(self, event: TeamRunResponseEvent) -> Iterator[TeamRunResponseEvent]:
-        yield event
-
-    async def _async_generator_wrapper(self, event: TeamRunResponseEvent) -> AsyncIterator[TeamRunResponseEvent]:
-        yield event
 
     def _create_run_response(
         self,

@@ -68,7 +68,7 @@ class DiscordClient:
                     response = await self.agent.arun(
                         message_text,
                         user_id=message_user,
-                        session_id=thread.id,
+                        session_id=str(thread.id),
                         images=[Image(url=message_image)] if message_image else None,
                         videos=[Video(content=message_video)] if message_video else None,
                         audio=[Audio(url=message_audio)] if message_audio else None,
@@ -76,11 +76,11 @@ class DiscordClient:
                 elif self.team:
                     self.team.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
                     response = await self.team.arun(
-                        message_text,
+                        message=message_text,
                         user_id=message_user,
-                        session_id=thread.id,
+                        session_id=str(thread.id),
                         images=[Image(url=message_image)] if message_image else None,
-                        videos=[Video(url=message_video)] if message_video else None,
+                        videos=[Video(content=message_video)] if message_video else None,
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         files=[File(url=message_audio)] if message_file else None,
                     )
@@ -91,13 +91,13 @@ class DiscordClient:
                     )
                 await self._send_discord_messages(thread=thread, message=response.content)
 
-    async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):
+    async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
         if len(message) < 1500:
             if italics:
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                await thread.send(formatted_message)
+                await thread.send(formatted_message)  # type: ignore
             else:
-                await thread.send(message)
+                await thread.send(message)  # type: ignore
             return
 
         message_batches = [message[i : i + 1500] for i in range(0, len(message), 1500)]
@@ -106,9 +106,9 @@ class DiscordClient:
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
             if italics:
                 formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                await thread.send(formatted_batch)
+                await thread.send(formatted_batch)  # type: ignore
             else:
-                await thread.send(batch_message)
+                await thread.send(batch_message)  # type: ignore
 
     def run(self):
         try:
