@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import inspect
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from pydantic import BaseModel
@@ -154,15 +155,41 @@ class Step:
             try:
                 log_debug(f"Step {self.name} attempt {attempt + 1}/{self.max_retries + 1}")
                 if self._executor_type == "function":
-                    # Execute function directly with StepInput
-                    result = self.active_executor(step_input)  # type: ignore
+                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+                        raise ValueError("Cannot use async function with synchronous execution")
+                    if inspect.isgeneratorfunction(self.active_executor):
+                        content = ""
+                        final_response = None
+                        try:
+                            for chunk in self.active_executor(step_input):
+                                if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                    content += chunk.content
+                                else:
+                                    content += str(chunk)
+                                if isinstance(chunk, StepOutput):
+                                    final_response = chunk
+                        
+                        except StopIteration as e:
+                            if hasattr(e, "value") and isinstance(e.value, StepOutput):
+                                final_response = e.value
+                        except TypeError:
+                            if isinstance(result, StepOutput):
+                                final_response = result
+                            else:
+                                final_response = StepOutput(content=str(result))
+                        if final_response is not None:
+                            response = final_response
+                        else:
+                            response = StepOutput(content=content)
+                    else:
+                        # Execute function directly with StepInput
+                        result = self.active_executor(step_input)  # type: ignore
 
-                    # If function returns StepOutput, use it directly
-                    if isinstance(result, StepOutput):
-                        return result
-
-                    # Otherwise, wrap in StepOutput
-                    response = StepOutput(content=str(result))
+                        # If function returns StepOutput, use it directly
+                        if isinstance(result, StepOutput):
+                            response = result
+                        else:
+                            response = StepOutput(content=str(result))
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(step_input.message, step_input.message_data)
@@ -187,12 +214,11 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._create_step_output(response)
+                step_output = self._process_step_output(response)
 
                 log_debug(f"Step {self.name} completed successfully on attempt {attempt + 1}")
                 log_debug(f"Step Execute End: {self.name}", center=True, symbol="*")
 
-                logger.info(f"Step {self.name} completed successfully")
                 return step_output
 
             except Exception as e:
@@ -236,19 +262,24 @@ class Step:
 
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
-                    # Handle custom function streaming
-                    result = self.active_executor(step_input)  # type: ignore
-
-                    if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, StepOutput)):
+                    
+                    if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+                        raise ValueError("Cannot use async function with synchronous execution")
+                    
+                    if inspect.isgeneratorfunction(self.active_executor):
                         log_debug(f"Function returned iterable, streaming events")
                         try:
-                            for event in result:
+                            for event in self.active_executor(step_input):
+                                if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                                    content += event.content
+                                else:
+                                    content += str(event)
                                 if isinstance(event, StepOutput):
                                     final_response = event
-                                    log_debug(f"Received final StepOutput from function")
                                 else:
-                                    log_debug(f"Yielding event from function: {type(event).__name__}")
                                     yield event
+                            if not final_response:
+                                final_response = StepOutput(content=content)
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
@@ -258,6 +289,7 @@ class Step:
                             else:
                                 final_response = StepOutput(content=str(result))
                     else:
+                        result = self.active_executor(step_input)  # type: ignore
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
@@ -287,7 +319,7 @@ class Step:
                         for event in response_stream:
                             log_debug(f"Received event from agent: {type(event).__name__}")
                             yield event
-                        final_response = self._create_step_output(self.active_executor.run_response)
+                        final_response = self._process_step_output(self.active_executor.run_response)
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -298,7 +330,10 @@ class Step:
                     log_debug(f"Created empty StepOutput as fallback")
 
                 logger.info(f"Step {self.name} completed successfully with streaming")
-
+                
+                # Yield the step output
+                yield final_response
+                
                 # Emit StepCompletedEvent
                 yield StepCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -310,9 +345,6 @@ class Step:
                     content=final_response.content,
                     step_response=final_response,
                 )
-
-                yield final_response
-                return
 
             except Exception as e:
                 self.retry_count = attempt + 1
@@ -343,17 +375,52 @@ class Step:
                 if self._executor_type == "function":
                     import inspect
 
-                    if inspect.iscoroutinefunction(self.active_executor):
-                        result = await self.active_executor(step_input)  # type: ignore
+                    if inspect.isgeneratorfunction(self.active_executor) or inspect.isasyncgenfunction(self.active_executor):
+                        content = ""
+                        final_response = None
+                        try:
+                            if inspect.isgeneratorfunction(self.active_executor):
+                                for chunk in self.active_executor(step_input):
+                                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                        content += chunk.content
+                                    else:
+                                        content += str(chunk)
+                                    if isinstance(chunk, StepOutput):
+                                        final_response = chunk
+                            else:
+                                async for chunk in self.active_executor(step_input):
+                                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                                        content += chunk.content
+                                    else:
+                                        content += str(chunk)
+                                    if isinstance(chunk, StepOutput):
+                                        final_response = chunk
+                        
+                        except StopIteration as e:
+                            if hasattr(e, "value") and isinstance(e.value, StepOutput):
+                                final_response = e.value
+                        except TypeError:
+                            if isinstance(result, StepOutput):
+                                final_response = result
+                            else:
+                                final_response = StepOutput(content=str(result))
+                        
+                        if final_response is not None:
+                            response = final_response
+                        else:
+                            response = StepOutput(content=content)
                     else:
-                        result = self.active_executor(step_input)  # type: ignore
+                        if inspect.iscoroutinefunction(self.active_executor):
+                            result = await self.active_executor(step_input)  # type: ignore
+                        else:
+                            result = self.active_executor(step_input)  # type: ignore
 
                     # If function returns StepOutput, use it directly
                     if isinstance(result, StepOutput):
-                        return result
+                        response = result
+                    else:
+                        response = StepOutput(content=str(result))
 
-                    # Otherwise, wrap in StepOutput
-                    response = StepOutput(content=str(result))
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(step_input.message, step_input.message_data)
@@ -378,7 +445,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._create_step_output(response)
+                step_output = self._process_step_output(response)
 
                 logger.info(f"Async Step {self.name} completed successfully")
                 return step_output
@@ -429,12 +496,16 @@ class Step:
                     if inspect.isasyncgenfunction(self.active_executor):
                         # It's an async generator - iterate over it
                         async for event in self.active_executor(step_input):
+                            if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                                content += event.content
+                            else:
+                                content += str(event)
                             if isinstance(event, StepOutput):
                                 final_response = event
-                                log_debug(f"Received final StepOutput from async generator")
                             else:
-                                log_debug(f"Yielding event from async generator: {type(event).__name__}")
                                 yield event
+                        if not final_response:
+                            final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
                         # It's a regular async function - await it
                         result = await self.active_executor(step_input)
@@ -445,10 +516,16 @@ class Step:
                     elif inspect.isgeneratorfunction(self.active_executor):
                         # It's a regular generator function - iterate over it
                         for event in self.active_executor(step_input):
+                            if hasattr(event, "content") and event.content is not None and isinstance(event.content, str):
+                                content += event.content
+                            else:
+                                content += str(event)
                             if isinstance(event, StepOutput):
                                 final_response = event
                             else:
                                 yield event
+                        if not final_response:
+                            final_response = StepOutput(content=content)
                     else:
                         # It's a regular function - call it directly
                         result = self.active_executor(step_input)  # type: ignore
@@ -479,7 +556,7 @@ class Step:
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
                             yield event
-                        final_response = self._create_step_output(self.active_executor.run_response)  # type: ignore
+                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -488,6 +565,10 @@ class Step:
                     final_response = StepOutput(content="")
 
                 logger.info(f"Step {self.name} completed successfully with streaming")
+                
+                # Yield the final response
+                yield final_response
+                
                 # Emit StepCompletedEvent
                 # if workflow_run_response:
                 yield StepCompletedEvent(
@@ -501,9 +582,6 @@ class Step:
                     step_response=final_response,
                 )
 
-                yield final_response
-                return
-
             except Exception as e:
                 self.retry_count = attempt + 1
                 logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
@@ -516,7 +594,6 @@ class Step:
                             content=f"Step {self.name} failed but skipped", success=False, error=str(e)
                         )
                         yield step_output
-                        return
                     else:
                         raise e
 
@@ -551,11 +628,8 @@ class Step:
         else:
             return None
 
-    def _create_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
+    def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""
-        log_debug(f"Creating StepOutput for step: {self.name}")
-        log_debug(f"Response type: {type(response).__name__}")
-
         if isinstance(response, StepOutput):
             response.step_name = self.name
             response.step_id = self.step_id

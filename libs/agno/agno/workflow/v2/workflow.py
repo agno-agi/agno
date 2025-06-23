@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
@@ -19,6 +20,7 @@ from agno.run.v2.workflow import (
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.team.team import Team
 from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.loop import Loop
@@ -146,7 +148,7 @@ class Workflow:
             return 1  # Callable function counts as 1 step
         else:
             return len(self.steps)
-
+        
     def _execute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
     ) -> WorkflowRunResponse:
@@ -184,7 +186,7 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name}")
+                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
                     step_input = StepInput(
                         message=execution_input.message,
                         message_data=execution_input.message_data,
@@ -193,7 +195,6 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
-
                     # Execute the step (non-streaming)
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
@@ -221,14 +222,16 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
-
-            # Store error response
-            if self.workflow_session:
-                self.workflow_session.add_run(workflow_run_response)
-            self.write_to_storage()
+            finally:
+                # Store error response
+                if self.workflow_session:
+                    self.workflow_session.add_run(workflow_run_response)
+                self.write_to_storage()
 
         return workflow_run_response
 
@@ -279,7 +282,7 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name}")
+                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
 
                     # Create StepInput for this step
                     step_input = StepInput(
@@ -290,7 +293,7 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
-
+                
                     # Execute step with streaming and yield all events
                     for event in step.execute_stream(
                         step_input,
@@ -408,7 +411,7 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name}")
+                    log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
                     step_input = StepInput(
                         message=execution_input.message,
                         message_data=execution_input.message_data,
@@ -511,7 +514,7 @@ class Workflow:
                 previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name}")
+                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}")
 
                     # Create StepInput for this step
                     step_input = StepInput(
@@ -671,6 +674,9 @@ class Workflow:
 
         # Load or create session
         self.load_session()
+        
+        # Prepare steps
+        self._prepare_steps()
 
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunResponse(
@@ -763,6 +769,9 @@ class Workflow:
         # Load or create session
         self.load_session()
 
+        # Prepare steps
+        self._prepare_steps()
+
         # Create workflow run response that will be updated by reference
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
@@ -794,7 +803,24 @@ class Workflow:
             )
         else:
             return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response)
-
+        
+    def _prepare_steps(self):
+        """Prepare the steps for execution"""
+        prepared_steps = []
+        for step in self.steps:
+            if isinstance(step, Callable):
+                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
+            elif isinstance(step, Agent):
+                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+            elif isinstance(step, Team):
+                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Step):
+                prepared_steps.append(step)
+            else:
+                raise ValueError(f"Invalid step type: {type(step).__name__}")
+        
+        self.steps = prepared_steps
+        
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
         workflow_data = {}
@@ -802,8 +828,8 @@ class Workflow:
         if self.steps and not isinstance(self.steps, Callable):
             workflow_data["steps"] = [
                 {
-                    "name": step.name,
-                    "description": step.description,
+                    "name": step.name if hasattr(step, "name") else step.__name__,
+                    "description": step.description if hasattr(step, "description") else "User-defined callable step",
                 }
                 for step in self.steps
             ]
@@ -1316,6 +1342,9 @@ class Workflow:
                     console.print(completion_text)
 
             except Exception as e:
+                import traceback
+
+                traceback.print_exc()
                 response_timer.stop()
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
@@ -1512,6 +1541,9 @@ class Workflow:
                     console.print(completion_text)
 
             except Exception as e:
+                import traceback
+
+                traceback.print_exc()
                 response_timer.stop()
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
@@ -1737,6 +1769,9 @@ class Workflow:
                     console.print(completion_text)
 
             except Exception as e:
+                import traceback
+
+                traceback.print_exc()
                 response_timer.stop()
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
@@ -1752,8 +1787,8 @@ class Workflow:
             "description": self.description,
             "steps": [
                 {
-                    "name": s.name,
-                    "description": s.description,
+                    "name": s.name if hasattr(s, "name") else s.__name__,
+                    "description": s.description if hasattr(s, "description") else "User-defined callable step",
                 }
                 for s in self.steps
             ],
