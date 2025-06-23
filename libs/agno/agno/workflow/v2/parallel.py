@@ -5,7 +5,12 @@ from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional,
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
-from agno.run.v2.workflow import WorkflowRunResponse, WorkflowRunResponseEvent
+from agno.run.v2.workflow import (
+    ParallelStepCompletedEvent,
+    ParallelStepStartedEvent,
+    WorkflowRunResponse,
+    WorkflowRunResponseEvent,
+)
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.loop import Loop
@@ -107,9 +112,20 @@ class Parallel:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[int] = None,
-    ) -> Iterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
+    ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
-        log_debug(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
+        logger.info(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
+
+        # Yield parallel step started event
+        yield ParallelStepStartedEvent(
+            run_id=workflow_run_response.run_id or "",
+            workflow_name=workflow_run_response.workflow_name or "",
+            workflow_id=workflow_run_response.workflow_id or "",
+            session_id=workflow_run_response.session_id or "",
+            step_name=self.name,
+            step_index=step_index,
+            parallel_step_count=len(self.steps),
+        )
 
         def execute_step_stream(step: Step):
             """Execute a single step with streaming"""
@@ -134,6 +150,8 @@ class Parallel:
                 ]
 
         all_events = []
+        step_results = []
+
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
             # Submit all tasks
             future_to_step = {
@@ -146,6 +164,12 @@ class Parallel:
                 try:
                     events = future.result()
                     all_events.extend(events)
+
+                    # Extract StepOutput from events for the final result
+                    step_outputs = [event for event in events if isinstance(event, StepOutput)]
+                    if step_outputs:
+                        step_results.extend(step_outputs)
+
                     log_debug(f"Parallel step {step.name} streaming completed")
                 except Exception as e:
                     logger.error(f"Parallel step {step.name} streaming failed: {e}")
@@ -158,9 +182,23 @@ class Parallel:
                         )
                     )
 
-        # Yield all collected events
+        # Yield all collected events (streaming content)
         for event in all_events:
-            yield event
+            # Only yield non-StepOutput events during streaming to avoid duplication
+            if not isinstance(event, StepOutput):
+                yield event
+
+        # Yield parallel step completed event with results
+        yield ParallelStepCompletedEvent(
+            run_id=workflow_run_response.run_id or "",
+            workflow_name=workflow_run_response.workflow_name or "",
+            workflow_id=workflow_run_response.workflow_id or "",
+            session_id=workflow_run_response.session_id or "",
+            step_name=self.name,
+            step_index=step_index,
+            parallel_step_count=len(self.steps),
+            step_results=step_results,
+        )
 
     async def aexecute(
         self,
@@ -217,7 +255,18 @@ class Parallel:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
-        log_debug(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
+        logger.info(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
+
+        # Yield parallel step started event
+        yield ParallelStepStartedEvent(
+            run_id=workflow_run_response.run_id or "",
+            workflow_name=workflow_run_response.workflow_name or "",
+            workflow_id=workflow_run_response.workflow_id or "",
+            session_id=workflow_run_response.session_id or "",
+            step_name=self.name,
+            step_index=step_index,
+            parallel_step_count=len(self.steps),
+        )
 
         async def execute_step_stream_async(step: Step):
             """Execute a single step with async streaming"""
@@ -241,17 +290,50 @@ class Parallel:
                     )
                 ]
 
+        all_events = []
+        step_results = []
+
         # Create tasks for all steps
         tasks = [execute_step_stream_async(step) for step in self.steps if isinstance(step, Step)]
 
         # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Process and yield all events
-        for result in results:
+        # Process results and handle exceptions
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error(f"Parallel step streaming failed: {result}")
-                yield StepOutput(content=f"Parallel step failed: {str(result)}", success=False, error=str(result))
+                step_name = self.steps[i].name if i < len(self.steps) else f"step_{i}"
+                logger.error(f"Parallel step {step_name} async streaming failed: {result}")
+                all_events.append(
+                    StepOutput(
+                        step_name=step_name,
+                        content=f"Step {step_name} failed: {str(result)}",
+                        success=False,
+                        error=str(result),
+                    )
+                )
             else:
-                for event in result:
-                    yield event
+                all_events.extend(result)
+
+                # Extract StepOutput from events for the final result
+                step_outputs = [event for event in result if isinstance(event, StepOutput)]
+                if step_outputs:
+                    step_results.extend(step_outputs)
+
+        # Yield all collected events (streaming content)
+        for event in all_events:
+            # Only yield non-StepOutput events during streaming to avoid duplication
+            if not isinstance(event, StepOutput):
+                yield event
+
+        # Yield parallel step completed event with results
+        yield ParallelStepCompletedEvent(
+            run_id=workflow_run_response.run_id or "",
+            workflow_name=workflow_run_response.workflow_name or "",
+            workflow_id=workflow_run_response.workflow_id or "",
+            session_id=workflow_run_response.session_id or "",
+            step_name=self.name,
+            step_index=step_index,
+            parallel_step_count=len(self.steps),
+            step_results=step_results,
+        )

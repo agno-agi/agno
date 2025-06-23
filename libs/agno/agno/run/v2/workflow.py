@@ -23,6 +23,9 @@ class WorkflowRunEvent(str, Enum):
     step_completed = "StepCompleted"
     step_error = "StepError"
 
+    parallel_step_started = "ParallelStepStarted"
+    parallel_step_completed = "ParallelStepCompleted"
+
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
@@ -155,6 +158,29 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
     error: Optional[str] = None
 
 
+@dataclass
+class ParallelStepStartedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when parallel step execution starts"""
+
+    event: str = WorkflowRunEvent.parallel_step_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    parallel_step_count: Optional[int] = None
+
+
+@dataclass
+class ParallelStepCompletedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when parallel step execution completes"""
+
+    event: str = WorkflowRunEvent.parallel_step_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    parallel_step_count: Optional[int] = None
+
+    # Results from all parallel steps
+    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+
+
 # Union type for all workflow run response events
 WorkflowRunResponseEvent = Union[
     WorkflowStartedEvent,
@@ -163,6 +189,8 @@ WorkflowRunResponseEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepErrorEvent,
+    ParallelStepStartedEvent,
+    ParallelStepCompletedEvent,
 ]
 
 
