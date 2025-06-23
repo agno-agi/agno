@@ -285,6 +285,7 @@ class MultiMCPTools(Toolkit):
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        allow_partial_failure: bool = False,
         **kwargs,
     ):
         """
@@ -300,6 +301,7 @@ class MultiMCPTools(Toolkit):
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
+            allow_partial_failure: If True, allows toolkit to initialize even if some MCP servers fail to connect. If False, any failure will raise an exception.
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
@@ -358,38 +360,59 @@ class MultiMCPTools(Toolkit):
                     self.server_params_list.append(SSEClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
-
+        self._successful_connections = 0
         self._client = client
+        self._initialized = False
+        self.allow_partial_failure = allow_partial_failure
 
     async def __aenter__(self) -> "MultiMCPTools":
         """Enter the async context manager."""
+        errors = []
 
         for server_params in self.server_params_list:
-            # Handle stdio connections
-            if isinstance(server_params, StdioServerParameters):
-                stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
-                read, write = stdio_transport
-                session = await self._async_exit_stack.enter_async_context(
-                    ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
-                )
-                await self.initialize(session)
-            # Handle SSE connections
-            elif isinstance(server_params, SSEClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    sse_client(**asdict(server_params))
-                )
-                read, write = client_connection
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                await self.initialize(session)
+            try:
+                # Handle stdio connections
+                if isinstance(server_params, StdioServerParameters):
+                    stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                    read, write = stdio_transport
+                    session = await self._async_exit_stack.enter_async_context(
+                        ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
+                    )
+                    await self.initialize(session)
+                    self._successful_connections += 1
 
-            # Handle Streamable HTTP connections
-            elif isinstance(server_params, StreamableHTTPClientParams):
-                client_connection = await self._async_exit_stack.enter_async_context(
-                    streamablehttp_client(**asdict(server_params))
-                )
-                read, write = client_connection[0:2]
-                session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
-                await self.initialize(session)
+                # Handle SSE connections
+                elif isinstance(server_params, SSEClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        sse_client(**asdict(server_params))
+                    )
+                    read, write = client_connection
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+                # Handle Streamable HTTP connections
+                elif isinstance(server_params, StreamableHTTPClientParams):
+                    client_connection = await self._async_exit_stack.enter_async_context(
+                        streamablehttp_client(**asdict(server_params))
+                    )
+                    read, write = client_connection[0:2]
+                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    await self.initialize(session)
+                    self._successful_connections += 1
+
+            except Exception as e:
+                logger.error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                errors.append(str(e))
+                if not self.allow_partial_failure:
+                    raise ValueError(f"MCP connection failed: {e}")
+                continue
+
+        if self._successful_connections == 0 and errors:
+            raise ValueError(f"All MCP connections failed: {errors}")
+
+        if not self._initialized and self._successful_connections > 0:
+            self._initialized = True
 
         return self
 
@@ -401,6 +424,8 @@ class MultiMCPTools(Toolkit):
     ):
         """Exit the async context manager."""
         await self._async_exit_stack.aclose()
+        self._initialized = False
+        self._successful_connections = 0
 
     async def initialize(self, session: ClientSession) -> None:
         """Initialize the MCP toolkit by getting available tools from the MCP server"""
@@ -442,7 +467,7 @@ class MultiMCPTools(Toolkit):
                 except Exception as e:
                     logger.error(f"Failed to register tool {tool.name}: {e}")
 
-            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools")
+            log_debug(f"{self.name} initialized with {len(filtered_tools)} tools from one MCP server")
             self._initialized = True
         except Exception as e:
             logger.error(f"Failed to get MCP tools: {e}")
