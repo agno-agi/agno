@@ -6,7 +6,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 
-db_url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Setup the database
 db = PostgresDb(

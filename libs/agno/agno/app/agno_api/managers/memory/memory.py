@@ -2,7 +2,7 @@ import logging
 
 from fastapi.routing import APIRouter
 
-from agno.app.agno_api.base import BaseInterface
+from agno.app.agno_api.managers.base import BaseManager
 from agno.app.agno_api.managers.memory.async_router import attach_async_routes
 from agno.app.agno_api.managers.memory.sync_router import attach_sync_routes
 from agno.memory import Memory
@@ -10,7 +10,7 @@ from agno.memory import Memory
 logger = logging.getLogger(__name__)
 
 
-class MemoryManager(BaseInterface):
+class MemoryManager(BaseManager):
     type = "memory"
 
     router: APIRouter
