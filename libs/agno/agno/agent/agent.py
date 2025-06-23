@@ -3571,6 +3571,7 @@ class Agent:
                             break
                 if callable(tool):
                     from inspect import signature
+
                     sig = signature(tool)
                     if "agent" in sig.parameters:
                         self._rebuild_tools = True

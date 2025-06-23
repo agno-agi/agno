@@ -110,7 +110,7 @@ class DiscordClient:
             else:
                 await thread.send(batch_message)  # type: ignore
 
-    def run(self):
+    def serve(self):
         try:
             token = getenv("DISCORD_BOT_TOKEN")
             if not token:

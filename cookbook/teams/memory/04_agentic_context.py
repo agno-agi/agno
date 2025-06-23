@@ -57,7 +57,7 @@ team = Team(
     show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
-    debug_mode=True
+    debug_mode=True,
 )
 
 session_id = "stock_team_session_1"
