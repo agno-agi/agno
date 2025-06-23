@@ -169,7 +169,7 @@ class Parallel:
         user_id: Optional[str] = None,
     ) -> List[StepOutput]:
         """Execute all steps in parallel using asyncio"""
-        log_debug(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
+        logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
 
         async def execute_step_async(step: Step) -> StepOutput:
             """Execute a single step asynchronously"""

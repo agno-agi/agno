@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
@@ -25,4 +27,5 @@ workflow = Workflow(
     ],
 )
 
-workflow.print_response("Write about the latest AI developments")
+if __name__ == "__main__":
+    asyncio.run(workflow.aprint_response("Write about the latest AI developments"))
