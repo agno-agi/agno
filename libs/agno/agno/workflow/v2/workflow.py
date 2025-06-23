@@ -196,13 +196,12 @@ class Workflow:
                         audio=shared_audio,
                     )
 
-                    # Check if this is a Parallel step
-                    if hasattr(step, "__class__") and step.__class__.__name__ == "Parallel":
-                        # Execute parallel steps
-                        parallel_outputs = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
+                    step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                        # Collect outputs from all parallel steps
-                        for output in parallel_outputs:
+                    # Handle both single StepOutput and List[StepOutput] (from Parallel/Loop steps)
+                    if isinstance(step_output, list):
+                        # This is a step that returns multiple outputs (Parallel, Loop, etc.)
+                        for output in step_output:
                             shared_images.extend(output.images or [])
                             output_images.extend(output.images or [])
                             shared_videos.extend(output.videos or [])
@@ -210,15 +209,13 @@ class Workflow:
                             shared_audio.extend(output.audio or [])
                             output_audio.extend(output.audio or [])
 
-                        # Use the last parallel step's content as previous content
-                        if parallel_outputs:
-                            previous_step_content = parallel_outputs[-1].content
+                        # Use the last output's content as previous content for chaining
+                        if step_output:
+                            previous_step_content = step_output[-1].content
 
-                        collected_step_outputs.append(parallel_outputs)
+                        collected_step_outputs.append(step_output)
                     else:
-                        # Execute regular step
-                        step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
-
+                        # This is a regular single step
                         previous_step_content = step_output.content
                         shared_images.extend(step_output.images or [])
                         output_images.extend(step_output.images or [])
@@ -233,16 +230,13 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    # Get the last step output (handling both single StepOutput and List[StepOutput])
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
-                        # If it's a list (parallel outputs), use the last one
+                        # If it's a list (from Parallel/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    elif hasattr(last_output, "content"):
-                        # If it's a single StepOutput
-                        workflow_run_response.content = last_output.content
                     else:
-                        workflow_run_response.content = str(last_output)
+                        # Single StepOutput
+                        workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -449,16 +443,14 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
+                    
+                    step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Check if this is a Parallel step
-                    if hasattr(step, "__class__") and step.__class__.__name__ == "Parallel":
-                        # Execute parallel steps asynchronously
-                        parallel_outputs = await step.aexecute(
-                            step_input, session_id=self.session_id, user_id=self.user_id
-                        )
 
-                        # Collect outputs from all parallel steps
-                        for output in parallel_outputs:
+                    # Handle both single StepOutput and List[StepOutput] (from Parallel/Loop steps)
+                    if isinstance(step_output, list):
+                        # This is a step that returns multiple outputs (Parallel, Loop, etc.)
+                        for output in step_output:
                             shared_images.extend(output.images or [])
                             output_images.extend(output.images or [])
                             shared_videos.extend(output.videos or [])
@@ -466,15 +458,13 @@ class Workflow:
                             shared_audio.extend(output.audio or [])
                             output_audio.extend(output.audio or [])
 
-                        # Use the last parallel step's content as previous content
-                        if parallel_outputs:
-                            previous_step_content = parallel_outputs[-1].content
+                        # Use the last output's content as previous content for chaining
+                        if step_output:
+                            previous_step_content = step_output[-1].content
 
-                        collected_step_outputs.append(parallel_outputs)
+                        collected_step_outputs.append(step_output)
                     else:
-                        # Execute regular step asynchronously
-                        step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
-
+                        # This is a regular single step
                         previous_step_content = step_output.content
                         shared_images.extend(step_output.images or [])
                         output_images.extend(step_output.images or [])
@@ -489,18 +479,13 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    # Get the last step output (handling both single StepOutput and List[StepOutput])
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
-                        # If it's a list (parallel outputs), use the last one
+                        # If it's a list (from Parallel/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    elif hasattr(last_output, "content"):
-                        # If it's a single StepOutput
-                        workflow_run_response.content = last_output.content
                     else:
-                        workflow_run_response.content = str(last_output)
-                else:
-                    workflow_run_response.content = "No steps executed"
+                        # Single StepOutput
+                        workflow_run_response.content = last_output.content
 
                 workflow_run_response.step_responses = collected_step_outputs
                 workflow_run_response.images = output_images
