@@ -2068,7 +2068,6 @@ class Agent:
             # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
-            run_response.status = RunStatus.running
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
