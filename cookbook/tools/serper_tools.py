@@ -1,5 +1,5 @@
 """
-This is a simple example of how to use the SerperApiTools class. You can obtain an API key from https://serper.dev/
+This is a simple example of how to use the SerperTools class. You can obtain an API key from https://serper.dev/
 """
 
 from agno.agent import Agent

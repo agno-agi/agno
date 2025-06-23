@@ -78,3 +78,6 @@ class SerperTools(Toolkit):
 
         except Exception as e:
             return f"Error searching for the query {query}: {e}"
+
+
+SerperApiTools = SerperTools  # Alias for backward compatibility
