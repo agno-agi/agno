@@ -202,9 +202,9 @@ class Workflow:
                     # Execute the step (non-streaming)
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Handle both single StepOutput and List[StepOutput] (from Parallel/Loop steps)
+                    # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                     if isinstance(step_output, list):
-                        # This is a step that returns multiple outputs (Parallel, Loop, etc.)
+                        # This is a step that returns multiple outputs (Loop, Condition etc.)
                         for output in step_output:
                             shared_images.extend(output.images or [])
                             output_images.extend(output.images or [])
@@ -236,7 +236,7 @@ class Workflow:
                 if collected_step_outputs:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Parallel/Loop/etc.), use the last one
+                        # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
                     else:
                         # Single StepOutput
@@ -462,9 +462,9 @@ class Workflow:
 
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Handle both single StepOutput and List[StepOutput] (from Parallel/Loop steps)
+                    # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                     if isinstance(step_output, list):
-                        # This is a step that returns multiple outputs (Parallel, Loop, etc.)
+                        # This is a step that returns multiple outputs (Loop, Condition etc.)
                         for output in step_output:
                             shared_images.extend(output.images or [])
                             output_images.extend(output.images or [])
@@ -496,7 +496,7 @@ class Workflow:
                 if collected_step_outputs:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Parallel/Loop/etc.), use the last one
+                        # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
                     else:
                         # Single StepOutput
