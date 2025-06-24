@@ -1,10 +1,6 @@
-from typing import List, Union
-
 from agno.agent.agent import Agent
 from agno.models.anthropic import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.parallel import Parallel
@@ -17,13 +13,6 @@ hackernews_agent = Agent(
     name="HackerNews Researcher",
     instructions="Research tech news and trends from Hacker News",
     tools=[HackerNewsTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
-)
-
-web_agent = Agent(
-    name="Web Researcher",
-    instructions="Research general information from the web",
-    tools=[GoogleSearchTools()],
     model=Claude(id="claude-sonnet-4-20250514"),
 )
 
@@ -67,13 +56,6 @@ research_exa_step = Step(
 )
 
 # === MULTI-STEP CONDITION STEPS ===
-# These steps will execute sequentially when the comprehensive research condition is met
-initial_web_research_step = Step(
-    name="InitialWebResearch",
-    description="Perform initial web research on the topic",
-    agent=web_agent,
-)
-
 deep_exa_analysis_step = Step(
     name="DeepExaAnalysis",
     description="Conduct deep analysis using Exa search capabilities",
@@ -99,21 +81,13 @@ write_step = Step(
     agent=content_agent,
 )
 
+
 # === CONDITION EVALUATORS ===
-
-
 def check_if_we_should_search_hn(step_input: StepInput) -> bool:
     """Check if we should search Hacker News"""
     topic = step_input.message or step_input.previous_step_content or ""
-    tech_keywords = [
-        "ai",
-        "machine learning",
-        "programming",
-        "software",
-        "tech",
-        "startup",
-        "coding",
-    ]
+    tech_keywords = ["ai", "machine learning", "programming",
+                     "software", "tech", "startup", "coding"]
     return any(keyword in topic.lower() for keyword in tech_keywords)
 
 
