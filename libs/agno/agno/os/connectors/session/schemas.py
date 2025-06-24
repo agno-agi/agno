@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel
 
 from agno.os.connectors.session.utils import get_first_user_message
-from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 
 
 class SessionSchema(BaseModel):
@@ -14,12 +14,12 @@ class SessionSchema(BaseModel):
     updated_at: Optional[datetime]
 
     @classmethod
-    def from_session(cls, session: Session) -> "SessionSchema":
+    def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         return cls(
-            session_id=session.session_id,
+            session_id=session.get("session_id", ""),
             title=get_first_user_message(session),
-            created_at=datetime.fromtimestamp(session.created_at) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at) if session.updated_at else None,
+            created_at=datetime.fromtimestamp(session.get("created_at", 0)) if session.get("created_at") else None,
+            updated_at=datetime.fromtimestamp(session.get("updated_at", 0)) if session.get("updated_at") else None,
         )
 
 

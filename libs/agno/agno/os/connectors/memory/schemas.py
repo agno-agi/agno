@@ -4,6 +4,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
+class DeleteMemoriesRequest(BaseModel):
+    memory_ids: List[str]
+
+
 class UserMemorySchema(BaseModel):
     memory_id: str
     memory: str

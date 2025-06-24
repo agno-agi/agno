@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -10,6 +10,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
+    from sqlalchemy import func, or_
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -478,7 +479,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get all sessions in the given table as raw dictionaries.
 
@@ -489,7 +490,7 @@ class PostgresDb(BaseDb):
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
 
         Returns:
-            List[Session]: List of Session objects matching the criteria.
+            Tuple[List[Dict[str, Any]], int]: List of Session objects matching the criteria and the total number of sessions.
         """
         try:
             if table is None:
@@ -504,23 +505,27 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
                 # Sorting
                 stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset(page)
+                    if page is not None:
+                        stmt = stmt.offset(page * limit)
 
                 records = sess.execute(stmt).fetchall()
                 if records is None:
-                    return []
+                    return [], 0
 
-                return [record._mapping for record in records]
+                return [record._mapping for record in records], total_count
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
-            return []
+            return [], 0
 
     def get_sessions(
         self,
@@ -883,7 +888,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """Get all memories from the database as raw dictionaries.
 
         Args:
@@ -898,7 +903,7 @@ class PostgresDb(BaseDb):
             table (Optional[Table]): The table to read from.
 
         Returns:
-            List[Dict[str, Any]]: The memories as raw dictionaries.
+            Tuple[List[Dict[str, Any]], int]: The memories as raw dictionaries and the total number of memories.
         """
         try:
             if table is None:
@@ -917,26 +922,31 @@ class PostgresDb(BaseDb):
                 if workflow_id is not None:
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
-                    stmt = stmt.where(table.c.topics.contains(topics))
+                    topic_conditions = [table.c.topics.contains([topic]) for topic in topics]
+                    stmt = stmt.where(or_(*topic_conditions))
                 if search_content is not None:
                     stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
                 # Sorting
                 stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset(page)
+                    if page is not None:
+                        stmt = stmt.offset(page * limit)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return []
+                    return [], 0
 
-                return [record._mapping for record in result]
+                return [record._mapping for record in result], total_count
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
-            return []
+            return [], 0
 
     def get_user_memories(
         self,
@@ -974,7 +984,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 table = self.get_user_memory_table()
 
-            user_memories_raw = self.get_user_memories_raw(
+            user_memories_raw, total_count = self.get_user_memories_raw(
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -1028,12 +1038,16 @@ class PostgresDb(BaseDb):
                     team_id=memory.team_id,
                     memory_id=memory.id,
                     memory=memory.memory,
+                    topics=memory.memory.get("topics", []),
+                    feedback=memory.memory.get("feedback", None),
                     last_updated=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
+                        topics=memory.memory.get("topics", []),
+                        feedback=memory.memory.get("feedback", None),
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)
@@ -1245,8 +1259,8 @@ class PostgresDb(BaseDb):
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset(page)
+                    if page is not None:
+                        stmt = stmt.offset(page * limit)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:

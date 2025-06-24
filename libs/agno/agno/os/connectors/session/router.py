@@ -11,12 +11,12 @@ from agno.os.connectors.session.schemas import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.connectors.utils import SortOrder
+from agno.os.connectors.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.db.base import BaseDb, SessionType
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
-    @router.get("/sessions", response_model=List[SessionSchema], status_code=200)
+    @router.get("/sessions", response_model=PaginatedResponse[SessionSchema], status_code=200)
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
@@ -24,8 +24,8 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         page: Optional[int] = Query(default=0, description="Page number"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
-    ) -> List[SessionSchema]:
-        sessions = db.get_sessions(
+    ) -> PaginatedResponse[SessionSchema]:
+        sessions, total_count = db.get_sessions_raw(
             session_type=session_type,
             component_id=component_id,
             limit=limit,
@@ -33,7 +33,16 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        return [SessionSchema.from_session(session) for session in sessions]
+
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=total_count,
+                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+            ),
+        )
 
     @router.get(
         "/sessions/{session_id}",
