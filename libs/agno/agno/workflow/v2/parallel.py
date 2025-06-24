@@ -94,9 +94,9 @@ class Parallel:
 
             # Add status indicator
             if output.success is False:
-                status_icon = "❌ FAILURE"
+                status_icon = "❌ FAILURE:"
             else:
-                status_icon = "✅ SUCCESS"
+                status_icon = "✅ SUCCESS:"
 
             aggregated += f"### {status_icon} {step_name}\n"
             if content.strip():
