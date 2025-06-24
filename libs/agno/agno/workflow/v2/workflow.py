@@ -1898,7 +1898,7 @@ class Workflow:
                                 response,
                                 (RunResponseContentEvent, WorkflowRunResponseEvent),
                             ) and not isinstance(
-                                response, ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent
+                                response, (ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent)
                             ):
                                 # Extract the content from the streaming event
                                 response_str = response.content
