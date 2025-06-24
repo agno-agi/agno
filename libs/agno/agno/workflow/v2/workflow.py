@@ -348,7 +348,7 @@ class Workflow:
                             output_audio.extend(event.audio or [])
 
                             # Only yield StepOutput for generator functions, not for agents/teams
-                            if step.executor_type == "function":
+                            if getattr(step, "executor_type", None) == "function":
                                 yield event
                         else:
                             # Yield other internal events
@@ -610,7 +610,7 @@ class Workflow:
                             output_audio.extend(event.audio or [])
 
                             # Only yield StepOutput for generator functions, not for agents/teams
-                            if step.executor_type == "function":
+                            if getattr(step, "executor_type", None) == "function":
                                 yield event
                         else:
                             # Yield other internal events

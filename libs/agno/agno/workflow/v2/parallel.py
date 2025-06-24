@@ -48,58 +48,129 @@ class Parallel:
         self.name = name
         self.description = description
 
+    def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
+        """Aggregate multiple step outputs into a single StepOutput"""
+        if not step_outputs:
+            return StepOutput(step_name=self.name or "Parallel", content="No parallel steps executed")
+
+        if len(step_outputs) == 1:
+            # Single result, just update the step name
+            single_result = step_outputs[0]
+            single_result.step_name = self.name or "Parallel"
+            return single_result
+
+        # Multiple results - aggregate them
+        aggregated_content = self._build_aggregated_content(step_outputs)
+
+        # Combine all media from parallel steps
+        all_images = []
+        all_videos = []
+        all_audio = []
+        has_any_failure = False
+
+        for result in step_outputs:
+            all_images.extend(result.images or [])
+            all_videos.extend(result.videos or [])
+            all_audio.extend(result.audio or [])
+            if result.success is False:
+                has_any_failure = True
+
+        return StepOutput(
+            step_name=self.name or "Parallel",
+            content=aggregated_content,
+            images=all_images if all_images else None,
+            videos=all_videos if all_videos else None,
+            audio=all_audio if all_audio else None,
+            success=not has_any_failure,
+        )
+
+    def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
+        """Build aggregated content from multiple step outputs"""
+        aggregated = "## Parallel Execution Results\n\n"
+
+        for i, output in enumerate(step_outputs):
+            step_name = output.step_name or f"Step {i + 1}"
+            content = output.content or ""
+
+            # Add status indicator
+            if output.success is False:
+                status_icon = "❌"
+            else:
+                status_icon = "✅"
+
+            aggregated += f"### {status_icon} {step_name}\n"
+            if content.strip():
+                aggregated += f"{content}\n\n"
+            else:
+                aggregated += "*(No content)*\n\n"
+
+        return aggregated.strip()
+
     def execute(
         self,
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> List[StepOutput]:
-        """Execute all steps in parallel using ThreadPoolExecutor"""
+    ) -> StepOutput:  # Changed from List[StepOutput] to StepOutput
+        """Execute all steps in parallel and return aggregated result"""
         logger.info(f"Executing {len(self.steps)} steps in parallel: {self.name}")
 
-        def execute_step(step: Step) -> StepOutput:
-            """Execute a single step"""
+        def execute_step_with_index(step_with_index):
+            """Execute a single step and preserve its original index"""
+            index, step = step_with_index
             try:
-                return step.execute(step_input, session_id=session_id, user_id=user_id)
+                result = step.execute(step_input, session_id=session_id, user_id=user_id)
+                return (index, result)
             except Exception as e:
-                logger.error(f"Parallel step {step.name} failed: {e}")
-                # Return error StepOutput instead of raising
-                return StepOutput(
-                    step_name=step.name, content=f"Step {step.name} failed: {str(e)}", success=False, error=str(e)
+                step_name = getattr(step, "name", f"step_{index}")
+                logger.error(f"Parallel step {step_name} failed: {e}")
+                return (
+                    index,
+                    StepOutput(
+                        step_name=step_name, content=f"Step {step_name} failed: {str(e)}", success=False, error=str(e)
+                    ),
                 )
 
-        results = []
+        # Use index to preserve order
+        indexed_steps = list(enumerate(self.steps))
+
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
-            # Submit all tasks
-            future_to_step = {
-                executor.submit(execute_step, step): step for step in self.steps if isinstance(step, Step)
+            # Submit all tasks with their original indices
+            future_to_index = {
+                executor.submit(execute_step_with_index, indexed_step): indexed_step[0]
+                for indexed_step in indexed_steps
             }
 
-            # Collect results as they complete
-            for future in as_completed(future_to_step):
-                step = future_to_step[future]
+            # Collect results
+            results_with_indices = []
+            for future in as_completed(future_to_index):
                 try:
-                    result = future.result()
-                    results.append(result)
-                    log_debug(f"Parallel step {step.name} completed")
+                    index, result = future.result()
+                    results_with_indices.append((index, result))
+                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    logger.info(f"Parallel step {step_name} completed")
                 except Exception as e:
-                    logger.error(f"Parallel step {step.name} failed: {e}")
-                    # Add error result
-                    results.append(
-                        StepOutput(
-                            step_name=step.name,
-                            content=f"Step {step.name} failed: {str(e)}",
-                            success=False,
-                            error=str(e),
+                    index = future_to_index[future]
+                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    logger.error(f"Parallel step {step_name} failed: {e}")
+                    results_with_indices.append(
+                        (
+                            index,
+                            StepOutput(
+                                step_name=step_name,
+                                content=f"Step {step_name} failed: {str(e)}",
+                                success=False,
+                                error=str(e),
+                            ),
                         )
                     )
 
-        # Sort results by original step order
-        step_name_to_index = {step.name: i for i, step in enumerate(self.steps) if isinstance(step, Step)}
-        results.sort(key=lambda x: step_name_to_index.get(x.step_name, 999))
+        # Sort by original index to preserve order
+        results_with_indices.sort(key=lambda x: x[0])
+        results = [result for _, result in results_with_indices]
 
-        log_debug(f"Parallel execution completed with {len(results)} results")
-        return results
+        # Aggregate all results into a single StepOutput
+        return self._aggregate_results(results)
 
     def execute_stream(
         self,
@@ -124,10 +195,12 @@ class Parallel:
             parallel_step_count=len(self.steps),
         )
 
-        def execute_step_stream(step: Step):
-            """Execute a single step with streaming"""
+        def execute_step_stream_with_index(step_with_index):
+            """Execute a single step with streaming and preserve its original index"""
+            index, step = step_with_index
             try:
                 events = []
+                # All workflow step types have execute_stream() method
                 for event in step.execute_stream(
                     step_input,
                     session_id=session_id,
@@ -137,55 +210,77 @@ class Parallel:
                     step_index=step_index,
                 ):
                     events.append(event)
-                return events
+                return (index, events)
             except Exception as e:
-                logger.error(f"Parallel step {step.name} streaming failed: {e}")
-                return [
-                    StepOutput(
-                        step_name=step.name, content=f"Step {step.name} failed: {str(e)}", success=False, error=str(e)
-                    )
-                ]
+                step_name = getattr(step, "name", f"step_{index}")
+                logger.error(f"Parallel step {step_name} streaming failed: {e}")
+                return (
+                    index,
+                    [
+                        StepOutput(
+                            step_name=step_name,
+                            content=f"Step {step_name} failed: {str(e)}",
+                            success=False,
+                            error=str(e),
+                        )
+                    ],
+                )
 
-        all_events = []
+        # Use index to preserve order
+        indexed_steps = list(enumerate(self.steps))
+        all_events_with_indices = []
         step_results = []
 
         with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
-            # Submit all tasks
-            future_to_step = {
-                executor.submit(execute_step_stream, step): step for step in self.steps if isinstance(step, Step)
+            # Submit all tasks with their original indices
+            future_to_index = {
+                executor.submit(execute_step_stream_with_index, indexed_step): indexed_step[0]
+                for indexed_step in indexed_steps
             }
 
             # Collect results as they complete
-            for future in as_completed(future_to_step):
-                step = future_to_step[future]
+            for future in as_completed(future_to_index):
                 try:
-                    events = future.result()
-                    all_events.extend(events)
+                    index, events = future.result()
+                    all_events_with_indices.append((index, events))
 
                     # Extract StepOutput from events for the final result
                     step_outputs = [event for event in events if isinstance(event, StepOutput)]
                     if step_outputs:
                         step_results.extend(step_outputs)
 
-                    log_debug(f"Parallel step {step.name} streaming completed")
+                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    logger.info(f"Parallel step {step_name} streaming completed")
                 except Exception as e:
-                    logger.error(f"Parallel step {step.name} streaming failed: {e}")
-                    all_events.append(
-                        StepOutput(
-                            step_name=step.name,
-                            content=f"Step {step.name} failed: {str(e)}",
-                            success=False,
-                            error=str(e),
-                        )
+                    index = future_to_index[future]
+                    step_name = getattr(self.steps[index], "name", f"step_{index}")
+                    logger.error(f"Parallel step {step_name} streaming failed: {e}")
+                    error_event = StepOutput(
+                        step_name=step_name,
+                        content=f"Step {step_name} failed: {str(e)}",
+                        success=False,
+                        error=str(e),
                     )
+                    all_events_with_indices.append((index, [error_event]))
+                    step_results.append(error_event)
 
-        # Yield all collected events (streaming content)
-        for event in all_events:
-            # Only yield non-StepOutput events during streaming to avoid duplication
-            if not isinstance(event, StepOutput):
-                yield event
+        # Sort events by original index to preserve order
+        all_events_with_indices.sort(key=lambda x: x[0])
 
-        # Yield parallel step completed event with results
+        # Yield all collected streaming events in order (but not final StepOutputs)
+        for _, events in all_events_with_indices:
+            for event in events:
+                # Only yield non-StepOutput events during streaming to avoid duplication
+                if not isinstance(event, StepOutput):
+                    yield event
+
+        # Create aggregated result from all step outputs
+        aggregated_result = self._aggregate_results(step_results)
+
+        # Yield the final aggregated StepOutput
+        yield aggregated_result
+
+        # Yield parallel step completed event
         yield ParallelStepCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
@@ -194,7 +289,7 @@ class Parallel:
             step_name=self.name,
             step_index=step_index,
             parallel_step_count=len(self.steps),
-            step_results=step_results,
+            step_results=[aggregated_result],  # Now single aggregated result
         )
 
     async def aexecute(
@@ -202,45 +297,67 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> List[StepOutput]:
-        """Execute all steps in parallel using asyncio"""
+    ) -> StepOutput:
+        """Execute all steps in parallel using asyncio and return aggregated result"""
         logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
 
-        async def execute_step_async(step: Step) -> StepOutput:
-            """Execute a single step asynchronously"""
+        async def execute_step_async_with_index(step_with_index):
+            """Execute a single step asynchronously and preserve its original index"""
+            index, step = step_with_index
             try:
-                return await step.aexecute(step_input, session_id=session_id, user_id=user_id)
+                result = await step.aexecute(step_input, session_id=session_id, user_id=user_id)
+                return (index, result)
             except Exception as e:
-                logger.error(f"Parallel step {step.name} failed: {e}")
-                return StepOutput(
-                    step_name=step.name, content=f"Step {step.name} failed: {str(e)}", success=False, error=str(e)
-                )
-
-        # Create tasks for all steps
-        tasks = [execute_step_async(step) for step in self.steps if isinstance(step, Step)]
-
-        # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process results and handle exceptions
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                step_name = self.steps[i].name if i < len(self.steps) else f"step_{i}"
-                logger.error(f"Parallel step {step_name} failed: {result}")
-                processed_results.append(
+                step_name = getattr(step, "name", f"step_{index}")
+                logger.error(f"Parallel step {step_name} failed: {e}")
+                return (
+                    index,
                     StepOutput(
                         step_name=step_name,
-                        content=f"Step {step_name} failed: {str(result)}",
+                        content=f"Step {step_name} failed: {str(e)}",
                         success=False,
-                        error=str(result),
+                        error=str(e),
+                    ),
+                )
+
+        # Use index to preserve order
+        indexed_steps = list(enumerate(self.steps))
+
+        # Create tasks for all steps with their indices
+        tasks = [execute_step_async_with_index(indexed_step) for indexed_step in indexed_steps]
+
+        # Execute all tasks concurrently
+        results_with_indices = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results and handle exceptions, preserving order
+        processed_results_with_indices = []
+        for i, result in enumerate(results_with_indices):
+            if isinstance(result, Exception):
+                step_name = getattr(self.steps[i], "name", f"step_{i}")
+                logger.error(f"Parallel step {step_name} failed: {result}")
+                processed_results_with_indices.append(
+                    (
+                        i,
+                        StepOutput(
+                            step_name=step_name,
+                            content=f"Step {step_name} failed: {str(result)}",
+                            success=False,
+                            error=str(result),
+                        ),
                     )
                 )
             else:
-                processed_results.append(result)
+                index, step_result = result
+                processed_results_with_indices.append((index, step_result))
+                step_name = getattr(self.steps[index], "name", f"step_{index}")
+                logger.info(f"Parallel step {step_name} completed")
 
-        log_debug(f"Parallel async execution completed with {len(processed_results)} results")
-        return processed_results
+        # Sort by original index to preserve order
+        processed_results_with_indices.sort(key=lambda x: x[0])
+        results = [result for _, result in processed_results_with_indices]
+
+        # Aggregate all results into a single StepOutput
+        return self._aggregate_results(results)
 
     async def aexecute_stream(
         self,
@@ -265,10 +382,12 @@ class Parallel:
             parallel_step_count=len(self.steps),
         )
 
-        async def execute_step_stream_async(step: Step):
-            """Execute a single step with async streaming"""
+        async def execute_step_stream_async_with_index(step_with_index):
+            """Execute a single step with async streaming and preserve its original index"""
+            index, step = step_with_index
             try:
                 events = []
+                # All workflow step types have aexecute_stream() method
                 async for event in step.aexecute_stream(
                     step_input,
                     session_id=session_id,
@@ -278,52 +397,75 @@ class Parallel:
                     step_index=step_index,
                 ):
                     events.append(event)
-                return events
+                return (index, events)
             except Exception as e:
-                logger.error(f"Parallel step {step.name} async streaming failed: {e}")
-                return [
-                    StepOutput(
-                        step_name=step.name, content=f"Step {step.name} failed: {str(e)}", success=False, error=str(e)
-                    )
-                ]
+                step_name = getattr(step, "name", f"step_{index}")
+                logger.error(f"Parallel step {step_name} async streaming failed: {e}")
+                return (
+                    index,
+                    [
+                        StepOutput(
+                            step_name=step_name,
+                            content=f"Step {step_name} failed: {str(e)}",
+                            success=False,
+                            error=str(e),
+                        )
+                    ],
+                )
 
-        all_events = []
+        # Use index to preserve order
+        indexed_steps = list(enumerate(self.steps))
+        all_events_with_indices = []
         step_results = []
 
-        # Create tasks for all steps
-        tasks = [execute_step_stream_async(step) for step in self.steps if isinstance(step, Step)]
+        # Create tasks for all steps with their indices
+        tasks = [execute_step_stream_async_with_index(indexed_step) for indexed_step in indexed_steps]
 
         # Execute all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results_with_indices = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Process results and handle exceptions
-        for i, result in enumerate(results):
+        # Process results and handle exceptions, preserving order
+        for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
-                step_name = self.steps[i].name if i < len(self.steps) else f"step_{i}"
+                step_name = getattr(self.steps[i], "name", f"step_{i}")
                 logger.error(f"Parallel step {step_name} async streaming failed: {result}")
-                all_events.append(
-                    StepOutput(
-                        step_name=step_name,
-                        content=f"Step {step_name} failed: {str(result)}",
-                        success=False,
-                        error=str(result),
-                    )
+                error_event = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(result)}",
+                    success=False,
+                    error=str(result),
                 )
+                all_events_with_indices.append((i, [error_event]))
+                step_results.append(error_event)
             else:
-                all_events.extend(result)
+                index, events = result
+                all_events_with_indices.append((index, events))
 
                 # Extract StepOutput from events for the final result
-                step_outputs = [event for event in result if isinstance(event, StepOutput)]
+                step_outputs = [event for event in events if isinstance(event, StepOutput)]
                 if step_outputs:
                     step_results.extend(step_outputs)
 
-        # Yield all collected events (streaming content)
-        for event in all_events:
-            # Only yield non-StepOutput events during streaming to avoid duplication
-            if not isinstance(event, StepOutput):
-                yield event
+                step_name = getattr(self.steps[index], "name", f"step_{index}")
+                logger.info(f"Parallel step {step_name} async streaming completed")
 
-        # Yield parallel step completed event with results
+        # Sort events by original index to preserve order
+        all_events_with_indices.sort(key=lambda x: x[0])
+
+        # Yield all collected streaming events in order (but not final StepOutputs)
+        for _, events in all_events_with_indices:
+            for event in events:
+                # Only yield non-StepOutput events during streaming to avoid duplication
+                if not isinstance(event, StepOutput):
+                    yield event
+
+        # Create aggregated result from all step outputs
+        aggregated_result = self._aggregate_results(step_results)
+
+        # Yield the final aggregated StepOutput
+        yield aggregated_result
+
+        # Yield parallel step completed event
         yield ParallelStepCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
@@ -332,5 +474,5 @@ class Parallel:
             step_name=self.name,
             step_index=step_index,
             parallel_step_count=len(self.steps),
-            step_results=step_results,
+            step_results=[aggregated_result],  # Now single aggregated result
         )
