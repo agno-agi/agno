@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.schemas import MemoryRow
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.db.schema import MemoryRow
 from agno.memory.manager import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message
@@ -359,6 +359,8 @@ class Memory:
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         user_id: Optional[str] = None,
         refresh_from_db: bool = True,
     ) -> str:
@@ -394,6 +396,8 @@ class Memory:
             messages=messages,
             existing_memories=existing_memories,
             user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
             db=self.db,
             delete_memories=self.delete_memories,
             clear_memories=self.clear_memories,
@@ -443,6 +447,8 @@ class Memory:
             messages=messages,
             existing_memories=existing_memories,
             user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
             db=self.db,
             delete_memories=self.delete_memories,
             clear_memories=self.clear_memories,

@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional
 
+from agno.db.schemas import MemoryRow
 from agno.memory.db.base import MemoryDb
-from agno.memory.db.schema import MemoryRow
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.tools.function import Function
@@ -144,6 +144,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         delete_memories: bool = True,
         clear_memories: bool = True,
     ) -> str:
@@ -162,7 +164,13 @@ class MemoryManager:
         # Update the Model (set defaults, add logit etc.)
         self.determine_tools_for_model(
             self._get_db_tools(
-                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                input_string,
+                agent_id=agent_id,
+                team_id=team_id,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
@@ -193,6 +201,8 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: MemoryDb,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         delete_memories: bool = True,
         clear_memories: bool = True,
     ) -> str:
@@ -211,7 +221,13 @@ class MemoryManager:
         # Update the Model (set defaults, add logit etc.)
         self.determine_tools_for_model(
             self._get_db_tools(
-                user_id, db, input_string, enable_delete_memory=delete_memories, enable_clear_memory=clear_memories
+                user_id,
+                db,
+                input_string,
+                agent_id=agent_id,
+                team_id=team_id,
+                enable_delete_memory=delete_memories,
+                enable_clear_memory=clear_memories,
             ),
         )
 
@@ -332,6 +348,8 @@ class MemoryManager:
         enable_update_memory: bool = True,
         enable_delete_memory: bool = True,
         enable_clear_memory: bool = True,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> List[Callable]:
         from datetime import datetime
 
@@ -354,6 +372,8 @@ class MemoryManager:
                     MemoryRow(
                         id=memory_id,
                         user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
                         memory=UserMemory(
                             memory_id=memory_id,
                             memory=memory,
@@ -383,7 +403,7 @@ class MemoryManager:
 
             try:
                 last_updated = datetime.now()
-                db.upsert_user(
+                db.upsert_user_memory(
                     MemoryRow(
                         id=memory_id,
                         user_id=user_id,
@@ -400,7 +420,7 @@ class MemoryManager:
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning("Error storing memory in db: {e}")
+                log_warning(f"Error storing memory in db: {e}")
                 return f"Error adding memory: {e}"
 
         def delete_memory(memory_id: str) -> str:

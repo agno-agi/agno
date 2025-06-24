@@ -4,7 +4,7 @@ from unittest.mock import ANY, MagicMock, patch
 import pytest
 from redis import ConnectionError
 
-from agno.memory.db import MemoryRow, RedisMemoryDb
+from agno.db.schemas import MemoryRow, RedisMemoryDb
 
 
 @pytest.fixture

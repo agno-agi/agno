@@ -17,13 +17,13 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         eval_type: Optional[EvalType] = Query(default=None, description="Eval type"),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
-        offset: Optional[int] = Query(default=0, description="Number of eval runs to skip"),
+        page: Optional[int] = Query(default=0, description="Page number"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
     ) -> List[EvalSchema]:
         eval_runs = db.get_eval_runs_raw(
             limit=limit,
-            offset=offset,
+            page=page,
             sort_by=sort_by,
             sort_order=sort_order,
             agent_id=agent_id,

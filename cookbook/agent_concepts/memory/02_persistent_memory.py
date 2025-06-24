@@ -6,7 +6,7 @@ Every time you run this, the `Memory` object will be re-initialized from the DB.
 
 from typing import List
 
-from agno.memory.db import MemoryRow
+from agno.db.schemas import MemoryRow
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.session.schema import UserMemory

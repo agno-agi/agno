@@ -5,8 +5,8 @@ from fastapi.routing import APIRouter
 
 from agno.os.connectors.memory.schemas import UserMemoryCreateSchema, UserMemorySchema
 from agno.os.connectors.utils import SortOrder
+from agno.db.schemas import MemoryRow
 from agno.memory import Memory
-from agno.memory.db.schema import MemoryRow
 
 
 def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
@@ -19,7 +19,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         topics: Optional[List[str]] = Query(default=None, description="Filter memories by topics"),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search memory content"),
         limit: Optional[int] = Query(default=20, description="Number of memories to return"),
-        offset: Optional[int] = Query(default=0, description="Number of memories to skip"),
+        page: Optional[int] = Query(default=0, description="Page number"),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> List[UserMemorySchema]:
@@ -28,7 +28,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
 
         user_memories = memory.db.get_user_memories_raw(
             limit=limit,
-            offset=offset,
+            page=page,
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,

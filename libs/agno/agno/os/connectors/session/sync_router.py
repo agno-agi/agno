@@ -21,7 +21,7 @@ def attach_sync_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
-        offset: Optional[int] = Query(default=0, description="Number of sessions to skip"),
+        page: Optional[int] = Query(default=0, description="Page number"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
     ) -> List[SessionSchema]:
@@ -29,7 +29,7 @@ def attach_sync_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             session_type=session_type,
             component_id=component_id,
             limit=limit,
-            offset=offset,
+            page=page,
             sort_by=sort_by,
             sort_order=sort_order,
         )

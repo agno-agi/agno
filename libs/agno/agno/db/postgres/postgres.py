@@ -4,8 +4,8 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.schemas import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
-from agno.memory.db.schema import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -474,7 +474,7 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -509,8 +509,8 @@ class PostgresDb(BaseDb):
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if offset is not None:
-                    stmt = stmt.offset(offset)
+                if page is not None:
+                    stmt = stmt.offset(page)
 
                 records = sess.execute(stmt).fetchall()
                 if records is None:
@@ -528,7 +528,7 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -556,7 +556,7 @@ class PostgresDb(BaseDb):
                 user_id=user_id,
                 component_id=component_id,
                 limit=limit,
-                offset=offset,
+                page=page,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 table=table,
@@ -879,7 +879,7 @@ class PostgresDb(BaseDb):
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -894,7 +894,7 @@ class PostgresDb(BaseDb):
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
-            offset (Optional[int]): The number of memories to skip.
+            page (Optional[int]): The page number.
             table (Optional[Table]): The table to read from.
 
         Returns:
@@ -925,8 +925,8 @@ class PostgresDb(BaseDb):
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if offset is not None:
-                    stmt = stmt.offset(offset)
+                if page is not None:
+                    stmt = stmt.offset(page)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
@@ -947,7 +947,7 @@ class PostgresDb(BaseDb):
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -962,7 +962,7 @@ class PostgresDb(BaseDb):
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
-            offset (Optional[int]): The number of memories to skip.
+            page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             table (Optional[Table]): The table to read from.
@@ -982,7 +982,7 @@ class PostgresDb(BaseDb):
                 topics=topics,
                 search_content=search_content,
                 limit=limit,
-                offset=offset,
+                page=page,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 table=table,
@@ -1024,6 +1024,8 @@ class PostgresDb(BaseDb):
 
                 stmt = postgresql.insert(table).values(
                     user_id=memory.user_id,
+                    agent_id=memory.agent_id,
+                    team_id=memory.team_id,
                     memory_id=memory.id,
                     memory=memory.memory,
                     last_updated=int(time.time()),
@@ -1064,6 +1066,8 @@ class PostgresDb(BaseDb):
             return MemoryRow(
                 id=user_memory_raw["memory_id"],
                 user_id=user_memory_raw["user_id"],
+                agent_id=user_memory_raw["agent_id"],
+                team_id=user_memory_raw["team_id"],
                 memory=user_memory_raw["memory"],
                 last_updated=user_memory_raw["last_updated"],
             )
@@ -1192,7 +1196,7 @@ class PostgresDb(BaseDb):
     def get_eval_runs_raw(
         self,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -1206,7 +1210,7 @@ class PostgresDb(BaseDb):
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
-            offset (Optional[int]): The number of eval runs to skip.
+            page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             table (Optional[Table]): The table to read from.
@@ -1241,8 +1245,8 @@ class PostgresDb(BaseDb):
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
-                if offset is not None:
-                    stmt = stmt.offset(offset)
+                if page is not None:
+                    stmt = stmt.offset(page)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
@@ -1257,7 +1261,7 @@ class PostgresDb(BaseDb):
     def get_eval_runs(
         self,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -1271,7 +1275,7 @@ class PostgresDb(BaseDb):
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
-            offset (Optional[int]): The number of eval runs to skip.
+            page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             table (Optional[Table]): The table to read from.
@@ -1290,7 +1294,7 @@ class PostgresDb(BaseDb):
 
             eval_runs_raw = self.get_eval_runs_raw(
                 limit=limit,
-                offset=offset,
+                page=page,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 table=table,

@@ -53,6 +53,6 @@ if __name__ == "__main__":
     - http://localhost:8001/evals/v1/evals
     - http://localhost:8001/evals/v1/evals/123
     - http://localhost:8001/evals/v1/evals?agent_id=123
-    - http://localhost:8001/evals/v1/evals?limit=10&offset=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/evals/v1/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agno_client.serve(app="eval_manager:app", reload=True)

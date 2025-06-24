@@ -618,11 +618,9 @@ class Agent:
         if self.memory is None:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
-            from copy import deepcopy
-
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
-                self.memory = deepcopy(self.memory)
+            # if isinstance(self.memory, Memory):
+            #     self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the agent's model if no model is provided
@@ -2680,9 +2678,7 @@ class Agent:
                 run_messages.messages, for_session=True
             )  # Calculate initial metrics
         else:
-            self.session_metrics += self.calculate_metrics(
-                run_messages.messages, for_session=True
-            )  # Update metrics
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # Update metrics
 
     def update_memory(
         self,
@@ -2694,7 +2690,7 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
         self.memory = cast(Memory, self.memory)
 
-        yield from self._make_memories_and_summaries(run_messages, session_id, user_id, messages)  # type: ignore
+        yield from self._make_memories_and_summaries(run_messages=run_messages, session_id=session_id, user_id=user_id)
 
     async def _aupdate_memory(
         self,
@@ -2706,7 +2702,9 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
         self.memory = cast(Memory, self.memory)
 
-        async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id, messages):  # type: ignore
+        async for event in self._amake_memories_and_summaries(
+            run_messages=run_messages, session_id=session_id, user_id=user_id
+        ):
             yield event
 
     def _handle_model_response_stream(
@@ -3128,6 +3126,7 @@ class Agent:
                         self.memory.create_user_memories,
                         message=run_messages.user_message.get_content_string(),
                         user_id=user_id,
+                        agent_id=self.agent_id,
                     )
                 )
 
@@ -3152,7 +3151,12 @@ class Agent:
 
                 if len(parsed_messages) > 0:
                     futures.append(
-                        executor.submit(self.memory.create_user_memories, messages=parsed_messages, user_id=user_id)
+                        executor.submit(
+                            self.memory.create_user_memories,
+                            messages=parsed_messages,
+                            user_id=user_id,
+                            agent_id=self.agent_id,
+                        )
                     )
                 else:
                     log_warning("Unable to add messages to memory")
@@ -3245,9 +3249,7 @@ class Agent:
             elif self.summary_manager.model is None:
                 self.summary_manager.model = self.model
             tasks.append(
-                self.agent_session.acreate_session_summary(
-                    session_id=session_id, summary_manager=self.summary_manager
-                )
+                self.agent_session.acreate_session_summary(session_id=session_id, summary_manager=self.summary_manager)
             )
 
         if tasks:
@@ -4275,7 +4277,7 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(session_id=session_id, user_id=user_id)
+        system_message = self.get_system_message(user_id=user_id)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
@@ -6913,9 +6915,7 @@ class Agent:
 
         return effective_filters
 
-    def get_previous_sessions_messages_function(
-        self, num_history_sessions: Optional[int] = 2
-    ) -> Callable:
+    def get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
         """Factory function to create a get_previous_session_messages function.
 
         Args:
@@ -6938,7 +6938,9 @@ class Agent:
             if self.memory.db is None:
                 return "Memory not available"
 
-            selected_sessions = self.memory.db.get_recent_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.memory.db.get_recent_sessions(
+                session_type=SessionType.AGENT, limit=num_history_sessions
+            )
 
             all_messages = []
             seen_message_pairs = set()

@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import Table
 
+from agno.db.schemas import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
-from agno.memory.db.schema import MemoryRow
 from agno.session import Session
 
 
@@ -96,7 +96,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
@@ -109,7 +109,7 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> List[Session]:
@@ -157,7 +157,7 @@ class BaseDb(ABC):
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
@@ -173,7 +173,7 @@ class BaseDb(ABC):
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> List[MemoryRow]:
@@ -219,7 +219,7 @@ class BaseDb(ABC):
     def get_eval_runs_raw(
         self,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
@@ -235,7 +235,7 @@ class BaseDb(ABC):
     def get_eval_runs(
         self,
         limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         table: Optional[Table] = None,
