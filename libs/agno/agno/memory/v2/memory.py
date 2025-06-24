@@ -1117,7 +1117,7 @@ class Memory:
         # Deep copy attributes
         for k, v in self.__dict__.items():
             # Reuse db
-            if k in {"db", "memory_manager", "summary_manager"}:
+            if k in {"db", "memory_manager", "summary_manager", "team_context"}:
                 setattr(copied_obj, k, v)
             else:
                 setattr(copied_obj, k, deepcopy(v, memo))

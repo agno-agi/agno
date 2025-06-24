@@ -12,4 +12,4 @@ basic_agent = Agent(
 
 discord_agent = DiscordClient(basic_agent)
 if __name__ == "__main__":
-    discord_agent.run()
+    discord_agent.serve()

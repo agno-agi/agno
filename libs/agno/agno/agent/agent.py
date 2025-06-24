@@ -614,7 +614,6 @@ class Agent:
     def reset_session_state(self) -> None:
         self.session_name = None
         self.session_state = None
-        self.team_session_state = None
         self.session_metrics = None
         self.images = None
         self.videos = None
@@ -2069,7 +2068,6 @@ class Agent:
             # We are continuing from a previous run_response in state
             self.run_response = cast(RunResponse, self.run_response)
             run_response = self.run_response
-            run_response.status = RunStatus.running
             messages = self.run_response.messages or []
             self.run_id = self.run_response.run_id
 
@@ -3552,6 +3550,34 @@ class Agent:
             if not async_mode:
                 self._raise_if_async_tools()
             agent_tools.extend(self.tools)
+
+            # If any of the tools has "agent" as parameter, set _rebuild_tools to True
+            for tool in agent_tools:
+                if isinstance(tool, Function):
+                    if "agent" in tool.parameters:
+                        self._rebuild_tools = True
+                        break
+                    if "team" in tool.parameters:
+                        self._rebuild_tools = True
+                        break
+                if isinstance(tool, Toolkit):
+                    for func in tool.functions.values():
+                        if "agent" in func.parameters:
+                            self._rebuild_tools = True
+                            break
+                        if "team" in func.parameters:
+                            self._rebuild_tools = True
+                            break
+                if callable(tool):
+                    from inspect import signature
+
+                    sig = signature(tool)
+                    if "agent" in sig.parameters:
+                        self._rebuild_tools = True
+                        break
+                    if "team" in sig.parameters:
+                        self._rebuild_tools = True
+                        break
 
         # Add tools for accessing memory
         if self.read_chat_history:

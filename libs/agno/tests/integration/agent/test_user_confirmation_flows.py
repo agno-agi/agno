@@ -161,6 +161,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
         tools=[get_the_weather],
         storage=agent_storage,
         memory=memory,
+        instructions="When you have confirmation, then just use the tool",
         telemetry=False,
         monitoring=False,
     )
@@ -168,6 +169,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
     response = await agent.arun("What is the weather in Tokyo?", session_id=session_id)
 
     assert response.is_paused
+    assert len(response.tools) == 1
     assert response.tools[0].requires_confirmation
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
