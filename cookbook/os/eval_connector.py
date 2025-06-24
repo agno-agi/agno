@@ -48,9 +48,9 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """ Run your AgentOS:
     Now you can interact with your eval runs using the API. Examples:
-    - http://localhost:8001/eval_connectors/{id}/evals
-    - http://localhost:8001/eval_connectors/{id}/evals/123
-    - http://localhost:8001/eval_connectors/{id}/evals?agent_id=123
-    - http://localhost:8001/eval_connectors/{id}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/eval/{id}/evals
+    - http://localhost:8001/eval/{id}/evals/123
+    - http://localhost:8001/eval/{id}/evals?agent_id=123
+    - http://localhost:8001/eval/{id}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agent_os.serve(app="eval_connector:app", reload=True)

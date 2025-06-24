@@ -45,9 +45,9 @@ if __name__ == "__main__":
 
     """ Run the Agno API App:
     Now you can interact with your sessions using the API. Examples:
-    - http://localhost:8001/session_connectors/{id}/sessions
-    - http://localhost:8001/session_connectors/{id}/sessions/123
-    - http://localhost:8001/session_connectors/{id}/sessions?agent_id=123
-    - http://localhost:8001/session_connectors/{id}/sessions?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/session/{id}/sessions
+    - http://localhost:8001/session/{id}/sessions/123
+    - http://localhost:8001/session/{id}/sessions?agent_id=123
+    - http://localhost:8001/session/{id}/sessions?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agent_os.serve(app="session_connector:app", reload=True)

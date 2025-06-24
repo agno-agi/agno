@@ -8,10 +8,11 @@ class BaseConnector(ABC):
     type: str
     version: str = "1.0"
     router_prefix: str = ""
-    connector_id: str = ""
+    name: str = ""
+    
 
     router: APIRouter
 
     @abstractmethod
-    def get_router(self, **kwargs) -> APIRouter:
+    def get_router(self, index: int, **kwargs) -> APIRouter:
         pass

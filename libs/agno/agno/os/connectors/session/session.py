@@ -16,12 +16,16 @@ class SessionConnector(BaseConnector):
 
     router: APIRouter
 
-    def __init__(self, db: BaseDb, connector_id: Optional[str] = None):
-        self.connector_id = connector_id or str(uuid4())
+    def __init__(self, db: BaseDb, name: Optional[str] = None):
+        self.name = name
         self.db = db
-        self.router_prefix = f"/session-connectors/{self.connector_id}"
 
-    def get_router(self) -> APIRouter:
+    def get_router(self, index: int) -> APIRouter:
+        if not self.name:
+            self.name = f"Session Connector {index}"
+        
+        self.router_prefix = f"/session/{index}"
+
         # Cannot be overridden
         self.router = APIRouter(prefix=self.router_prefix, tags=["Session"])
 

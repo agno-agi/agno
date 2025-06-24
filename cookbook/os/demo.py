@@ -84,10 +84,10 @@ agent_os = AgentOS(
     agents=[agent],
     interfaces=[Whatsapp(agent=agent)],
     apps=[
-        SessionConnector(db=db, connector_id="ses_conn"),
-        KnowledgeConnector(knowledge=knowledge_base, connector_id="kb_conn_1"),
-        KnowledgeConnector(knowledge=knowledge_base_2, connector_id="kb_conn_2"),
-        MemoryConnector(memory=memory, connector_id="mem_conn"),
+        SessionConnector(db=db, name="Session Connector"),
+        KnowledgeConnector(knowledge=knowledge_base, name="Knowledge Connector 1"),
+        KnowledgeConnector(knowledge=knowledge_base_2, name="Knowledge Connector 2"),
+        MemoryConnector(memory=memory, name="Memory Connector"),
     ],
 )
 app = agent_os.get_app()

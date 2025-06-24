@@ -26,7 +26,7 @@ def get_base_router(
             name=os.name,
             description=os.description,
             interfaces=[InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix) for interface in os.interfaces],
-            connectors=[ConnectorResponse(type=connector.type, id=connector.connector_id, version=connector.version, route=connector.router_prefix) for connector in os.connectors],
+            apps=[ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps],
         )
 
     @router.get("/agents", response_model=List[AgentResponse])

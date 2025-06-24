@@ -14,7 +14,7 @@ class InterfaceResponse(BaseModel):
 
 class ConnectorResponse(BaseModel):
     type: str
-    id: str
+    name: str
     version: str
     route: str
 
@@ -23,7 +23,7 @@ class ConfigResponse(BaseModel):
     name: str
     description: str
     interfaces: List[InterfaceResponse]
-    connectors: List[ConnectorResponse]
+    apps: List[ConnectorResponse]
 
 
 class ModelResponse(BaseModel):

@@ -54,9 +54,9 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """ Run your AgentOS:
     Now you can interact with your knowledge base using the API. Examples:
-    - http://localhost:8001/knowledge_connectors/{id}/documents
-    - http://localhost:8001/knowledge_connectors/{id}/documents/123
-    - http://localhost:8001/knowledge_connectors/{id}/documents?agent_id=123
-    - http://localhost:8001/knowledge_connectors/{id}/documents?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/knowledge/{id}/documents
+    - http://localhost:8001/knowledge/{id}/documents/123
+    - http://localhost:8001/knowledge/{id}/documents?agent_id=123
+    - http://localhost:8001/knowledge/{id}/documents?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agent_os.serve(app="knowledge_connector:app", reload=True)

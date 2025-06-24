@@ -16,12 +16,16 @@ class KnowledgeConnector(BaseConnector):
 
     router: APIRouter
 
-    def __init__(self, knowledge: KnowledgeBase, connector_id: Optional[str] = None):
-        self.connector_id = connector_id or str(uuid4())
+    def __init__(self, knowledge: KnowledgeBase, name: Optional[str] = None):
+        self.name = name
         self.knowledge = knowledge
-        self.router_prefix = f"/knowledge-connectors/{self.connector_id}"
 
-    def get_router(self) -> APIRouter:
+    def get_router(self, index: int) -> APIRouter:
+        if not self.name:
+            self.name = f"Knowledge Connector {index}"
+        
+        self.router_prefix = f"/knowledge/{index}"
+
         # Cannot be overridden
         self.router = APIRouter(prefix=self.router_prefix, tags=["Knowledge"])
 

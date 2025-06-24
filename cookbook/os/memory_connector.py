@@ -43,9 +43,9 @@ if __name__ == "__main__":
 
     """ Run your AgentOS:
     Now you can interact with your memory using the API. Examples:
-    - http://localhost:8001/memory_connector/{id}/memories
-    - http://localhost:8001/memory_connector/{id}/memories/123
-    - http://localhost:8001/memory_connector/{id}/memories?agent_id=123
-    - http://localhost:8001/memory_connector/{id}/memories?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/memory/{id}/memories
+    - http://localhost:8001/memory/{id}/memories/123
+    - http://localhost:8001/memory/{id}/memories?agent_id=123
+    - http://localhost:8001/memory/{id}/memories?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agno_client.serve(app="memory_connector:app", reload=True)

@@ -1,5 +1,5 @@
 from os import getenv
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -157,8 +157,10 @@ class AgentOS:
 
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
+        app_index_map: Dict[str, int] = {}
         for app in self.apps:
-            self.api_app.include_router(app.get_router())
+            app_index_map[app.type] = app_index_map.get(app.type, 0) + 1
+            self.api_app.include_router(app.get_router(index=app_index_map[app.type]))
             self.apps_loaded.append((app.type, app.router_prefix))
 
         self.api_app.add_middleware(
