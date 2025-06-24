@@ -1,6 +1,5 @@
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import quote
+from typing import List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -36,7 +35,7 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
-        connectors: Optional[List[BaseConnector]] = None,
+        apps: Optional[List[BaseConnector]] = None,
         settings: Optional[AgnoAPISettings] = None,
         api_app: Optional[FastAPI] = None,
         monitoring: bool = True,
@@ -52,7 +51,7 @@ class AgentOS:
         self.api_app: Optional[FastAPI] = api_app
 
         self.interfaces = interfaces or []
-        self.connectors = connectors or []
+        self.apps = apps or []
 
         self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
 
@@ -62,7 +61,7 @@ class AgentOS:
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
-        self.connectors_loaded: List[Tuple[str, str]] = []
+        self.apps_loaded: List[Tuple[str, str]] = []
 
         self.set_os_id()
 
@@ -113,7 +112,7 @@ class AgentOS:
         if monitor_env is not None:
             self.monitoring = monitor_env.lower() == "true"
 
-    def get_app(self, use_async: bool = True) -> FastAPI:
+    def get_app(self) -> FastAPI:
         if not self.api_app:
             self.api_app = FastAPI(
                 title=self.settings.title,
@@ -144,23 +143,23 @@ class AgentOS:
         self.api_app.middleware("http")(general_exception_handler)
 
         # Attach base router
-        self.api_app.include_router(get_base_router())
+        self.api_app.include_router(get_base_router(self))
 
         for interface in self.interfaces:
             if interface.type == "playground":
                 self.api_app.include_router(
                     interface.get_router(
-                        agents=self.agents, teams=self.teams, workflows=self.workflows, use_async=use_async
+                        agents=self.agents, teams=self.teams, workflows=self.workflows
                     )
                 )
             else:
-                self.api_app.include_router(interface.get_router(use_async=use_async))
+                self.api_app.include_router(interface.get_router())
 
-            self.interfaces_loaded.append((interface.type, interface.router.prefix))
+            self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
-        for connector in self.connectors:
-            self.api_app.include_router(connector.get_router(use_async=use_async))
-            self.connectors_loaded.append((connector.type, connector.router.prefix))
+        for app in self.apps:
+            self.api_app.include_router(app.get_router())
+            self.apps_loaded.append((app.type, app.router_prefix))
 
         self.api_app.add_middleware(
             CORSMiddleware,
@@ -177,7 +176,6 @@ class AgentOS:
         self,
         app: Union[str, FastAPI],
         *,
-        scheme: str = "http",
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
@@ -186,8 +184,6 @@ class AgentOS:
         import uvicorn
 
         full_host = host
-        if scheme not in host:
-            full_host = f"{scheme}://{host}"
 
         log_info(f"Starting AgentOS on {full_host}:{port}")
 
@@ -197,7 +193,7 @@ class AgentOS:
         panels = []
         for interface_type, interface_prefix in self.interfaces_loaded:
             if interface_type == "playground":
-                encoded_endpoint = quote(f"{full_host}:{port}{interface_prefix}")
+                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
                 url = f"{agno_cli_settings.playground_url}?endpoint={encoded_endpoint}"
                 panels.append(
                     Panel(
@@ -213,7 +209,7 @@ class AgentOS:
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
                 panels.append(
                     Panel(
-                        f"[bold green]Whatsapp URL:[/bold green] {encoded_endpoint}",
+                        f"[bold cyan]Whatsapp URL:[/bold cyan] {encoded_endpoint}",
                         title="Whatsapp",
                         expand=False,
                         border_style="cyan",
@@ -225,7 +221,7 @@ class AgentOS:
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
                 panels.append(
                     Panel(
-                        f"[bold green]Slack URL:[/bold green] {encoded_endpoint}",
+                        f"[bold purple]Slack URL:[/bold purple] {encoded_endpoint}",
                         title="Slack",
                         expand=False,
                         border_style="purple",
@@ -234,20 +230,24 @@ class AgentOS:
                     )
                 )
 
-        connectors_panel_text = ""
-        for connector_type, connector_prefix in self.connectors_loaded:
-            if connector_type == "knowledge":
-                connectors_panel_text += "Knowledge Connector\n"
-            if connector_type == "evals":
-                connectors_panel_text += "Evals Connector\n"
-            if connector_type == "sessions":
-                connectors_panel_text += "Sessions Manager\n"
+        apps_panel_text = ""
+        for app_type, app_prefix in self.apps_loaded:
+            encoded_endpoint = f"{full_host}:{port}{app_prefix}"
+            if app_type == "knowledge":
+                apps_panel_text += f"[bold green]Knowledge Connector:[/bold green] {encoded_endpoint}\n"
+            if app_type == "memory":
+                apps_panel_text += f"[bold green]Memory Connector:[/bold green] {encoded_endpoint}\n"
+            if app_type == "eval":
+                apps_panel_text += f"[bold green]Evals Connector:[/bold green] {encoded_endpoint}\n"
+            if app_type == "session":
+                apps_panel_text += f"[bold green]Sessions Connector:[/bold green] {encoded_endpoint}\n"
 
-        if connectors_panel_text:
+        if apps_panel_text:
+            apps_panel_text = apps_panel_text.strip()
             panels.append(
                 Panel(
-                    connectors_panel_text,
-                    title="Configured Connectors",
+                    apps_panel_text,
+                    title="Configured Apps",
                     expand=False,
                     border_style="bright_cyan",
                     box=box.HEAVY,
@@ -259,4 +259,4 @@ class AgentOS:
         for panel in panels:
             console.print(panel)
 
-        uvicorn.run(app=app, host=full_host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.os import AgentOS
-from agno.os import Playground
-from agno.os.connectors.memory.memory import MemoryConnector
+from agno.os.connectors import MemoryConnector
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -29,12 +28,11 @@ agent = Agent(
 
 # Setup the Agno API App
 agno_client = AgentOS(
-    name="Example App: Basic Agent",
-    description="Example app for basic agent with playground capabilities",
-    app_id="basic-app",
+    name="Example App: Memory Agent",
+    description="Example app for basic agent with memory capabilities",
+    os_id="memory-demo",
     agents=[agent],
-    interfaces=[Playground()],
-    managers=[MemoryConnector(memory=memory)],
+    apps=[MemoryConnector(memory=memory)],
 )
 app = agno_client.get_app()
 
@@ -43,12 +41,11 @@ if __name__ == "__main__":
     # Generate a memory
     agent.print_response("I love astronomy, specifically the science behind nebulae")
 
-    """ Run the Agno API App:
-    Now you can interact with your eval runs using the API. Examples:
-    - http://localhost:8001/memories/v1/memories
-    - http://localhost:8001/memories/v1/memories/123
-    - http://localhost:8001/memories/v1/memories?agent_id=123
-    - http://localhost:8001/memories/v1/memories?limit=10&page=0&sort_by=created_at&sort_order=desc
-
+    """ Run your AgentOS:
+    Now you can interact with your memory using the API. Examples:
+    - http://localhost:8001/memory_connector/{id}/memories
+    - http://localhost:8001/memory_connector/{id}/memories/123
+    - http://localhost:8001/memory_connector/{id}/memories?agent_id=123
+    - http://localhost:8001/memory_connector/{id}/memories?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
-    agno_client.serve(app="memory_manager:app", reload=True)
+    agno_client.serve(app="memory_connector:app", reload=True)

@@ -2,14 +2,13 @@
 
 from agno.agent import Agent
 from agno.os import AgentOS
-from agno.os import Playground
-from agno.os import EvalManager
+from agno.os.connectors import EvalConnector
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
 
 # Setup the database
-db_url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(
     db_url=db_url,
     eval_table="eval_runs",
@@ -36,23 +35,22 @@ evaluation = AccuracyEval(
 evaluation.run(print_results=True)
 
 # Setup the Agno API App
-agno_client = AgentOS(
-    name="Example App: Basic Agent",
-    description="Example app for basic agent with playground capabilities",
-    app_id="basic-app",
+agent_os = AgentOS(
+    name="Example App: Eval Agent",
+    description="Example app for basic agent with eval capabilities",
+    os_id="eval-demo",
     agents=[basic_agent],
-    interfaces=[Playground()],
-    managers=[EvalManager(db=db)],
+    apps=[EvalConnector(db=db)],
 )
-app = agno_client.get_app()
+app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """ Run the Agno API App:
+    """ Run your AgentOS:
     Now you can interact with your eval runs using the API. Examples:
-    - http://localhost:8001/evals/v1/evals
-    - http://localhost:8001/evals/v1/evals/123
-    - http://localhost:8001/evals/v1/evals?agent_id=123
-    - http://localhost:8001/evals/v1/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/eval_connectors/{id}/evals
+    - http://localhost:8001/eval_connectors/{id}/evals/123
+    - http://localhost:8001/eval_connectors/{id}/evals?agent_id=123
+    - http://localhost:8001/eval_connectors/{id}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
-    agno_client.serve(app="eval_manager:app", reload=True)
+    agent_os.serve(app="eval_connector:app", reload=True)

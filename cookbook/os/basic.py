@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
-from agno.os.interfaces.playground import Playground
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.memory import Memory
@@ -40,7 +39,7 @@ agent_os = AgentOS(
     agents=[
         basic_agent,
     ],
-    interfaces=[Playground(), Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
+    interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
 )
 app = agent_os.get_app()
 

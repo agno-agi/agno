@@ -9,7 +9,6 @@ from agno.team.team import Team
 
 class InterfaceResponse(BaseModel):
     type: str
-    id: str
     version: str
     route: str
 
