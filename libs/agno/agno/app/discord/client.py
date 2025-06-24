@@ -15,7 +15,10 @@ except (ImportError, ModuleNotFoundError):
 
 
 class DiscordClient:
-    def __init__(self, agent: Optional[Agent] = None, team: Optional[Team] = None, client: Optional[discord.Client] = None):
+    def __init__(self,
+                 agent: Optional[Agent] = None,
+                 team: Optional[Team] = None,
+                 client: Optional[discord.Client] = None):
         self.agent = agent
         self.team = team
         if client is None:
@@ -30,42 +33,45 @@ class DiscordClient:
         async def on_message(message):
             if message.author == self.client.user:
                 log_info(f"sent {message.content}")
+                return
+
+            message_image = None
+            message_video = None
+            message_audio = None
+            message_file = None
+            media_url = None
+            message_text = message.content
+            message_url = message.jump_url
+            message_user = message.author.name
+
+            if message.attachments:
+                media = message.attachments[0]
+                media_type = media.content_type
+                media_url = media.url
+                if media_type.startswith("image/"):
+                    message_image = media_url
+                elif media_type.startswith("video/"):
+                    req = requests.get(media_url)
+                    video = req.content
+                    message_video = video
+                elif media_type.startswith("application/"):
+                    req = requests.get(media_url)
+                    document = req.content
+                    message_file = document
+                elif media_type.startswith("audio/"):
+                    message_audio = media_url
+
+            log_info(f"processing message:{message_text} \n with media: {media_url} \n url:{message_url}")
+            if isinstance(message.channel, discord.Thread):
+                thread = message.channel
+            elif isinstance(message.channel, discord.channel.DMChannel):
+                thread = message.channel
+            elif isinstance(message.channel, discord.TextChannel):
+                thread = await message.create_thread(name=f"{message_user}'s thread")
             else:
-                message_image = None
-                message_video = None
-                message_audio = None
-                message_file = None
-                media_url = None
-                message_text = message.content
-                message_url = message.jump_url
-                message_user = message.author.name
+                thread = message.channel
 
-                if message.attachments:
-                    media = message.attachments[0]
-                    media_type = media.content_type
-                    media_url = media.url
-                    if media_type.startswith("image/"):
-                        message_image = media_url
-                    elif media_type.startswith("video/"):
-                        req = requests.get(media_url)
-                        video = req.content
-                        message_video = video
-                    elif media_type.startswith("application/"):
-                        req = requests.get(media_url)
-                        document = req.content
-                        message_file = document
-                    elif media_type.startswith("audio/"):
-                        message_audio = media_url
-
-                log_info(f"processing message:{message_text} \n with media: {media_url} \n url:{message_url}")
-
-                if isinstance(message.channel, discord.Thread):
-                    thread = message.channel
-                else:
-                    thread = await message.create_thread(name=f"{message_user}'s thread")
-
-                await thread.typing()
-
+            with thread.typing():
                 if self.agent:
                     self.agent.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
                     response = await self.agent.arun(
