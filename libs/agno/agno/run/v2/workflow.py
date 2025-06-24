@@ -162,7 +162,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
     """Event sent when parallel step execution starts"""
 
-    event: str = WorkflowRunEvent.parallel_step_started.value
+    event: str = WorkflowRunEvent.parallel_execution_started.value
     step_name: Optional[str] = None
     step_index: Optional[int] = None
     parallel_step_count: Optional[int] = None
@@ -172,7 +172,7 @@ class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     """Event sent when parallel step execution completes"""
 
-    event: str = WorkflowRunEvent.parallel_step_completed.value
+    event: str = WorkflowRunEvent.parallel_execution_completed.value
     step_name: Optional[str] = None
     step_index: Optional[int] = None
     parallel_step_count: Optional[int] = None

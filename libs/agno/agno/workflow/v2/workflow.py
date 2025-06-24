@@ -11,8 +11,8 @@ from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
-    ParallelStepCompletedEvent,
-    ParallelStepStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
     StepCompletedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
@@ -1346,7 +1346,7 @@ class Workflow:
                             console.print(final_step_panel)
                             step_started_printed = True
 
-                    elif isinstance(response, ParallelStepStartedEvent):
+                    elif isinstance(response, ParallelExecutionCompletedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
                         current_step_index = response.step_index or 0
                         current_step_content = ""
@@ -1356,7 +1356,7 @@ class Workflow:
                         )
                         live_log.update(status)
 
-                    elif isinstance(response, ParallelStepCompletedEvent):
+                    elif isinstance(response, ParallelExecutionCompletedEvent):
                         step_name = response.step_name or "Parallel Steps"
                         step_index = response.step_index or 0
 
@@ -1829,7 +1829,7 @@ class Workflow:
                         )
                         live_log.update(status)
 
-                    elif isinstance(response, ParallelStepCompletedEvent):
+                    elif isinstance(response, ParallelExecutionCompletedEvent):
                         step_name = response.step_name or "Parallel Steps"
                         step_index = response.step_index or 0
 
