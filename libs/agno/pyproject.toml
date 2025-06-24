@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.3"
+version = "1.6.4"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -330,6 +330,7 @@ module = [
   "cohere.*",
   "crawl4ai.*",
   "daytona_sdk.*",
+  "discord.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
