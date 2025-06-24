@@ -348,6 +348,7 @@ def create_team_tool_call_completed_event(
 def create_run_response_content_event(
     from_run_response: RunResponse,
     content: Optional[Any] = None,
+    content_type: Optional[str] = None,
     thinking: Optional[str] = None,
     redacted_thinking: Optional[str] = None,
     citations: Optional[Citations] = None,
@@ -355,6 +356,7 @@ def create_run_response_content_event(
     image: Optional[ImageArtifact] = None,
 ) -> RunResponseContentEvent:
     thinking_combined = (thinking or "") + (redacted_thinking or "")
+
     return RunResponseContentEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
@@ -362,6 +364,7 @@ def create_run_response_content_event(
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
+        content_type=content_type or "str",
         thinking=thinking_combined,
         citations=citations,
         response_audio=response_audio,
