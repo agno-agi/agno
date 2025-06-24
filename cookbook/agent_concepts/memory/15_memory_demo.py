@@ -27,7 +27,7 @@ memory_agent = Agent(
     memory=memory,
     # Give the Agent the ability to update memories
     enable_agentic_memory=True,
-    # OR - Run the MemoryManager after each response
+    # OR - Run the MemoryConnector after each response
     enable_user_memories=True,
     # Store the chat history in the database
     storage=storage,

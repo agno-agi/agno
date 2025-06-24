@@ -271,7 +271,7 @@ class Team:
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
 
     # Optional app ID. Indicates this team is part of an app.
-    app_id: Optional[str] = None
+    os_id: Optional[str] = None
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
@@ -954,9 +954,6 @@ class Team:
         # 6. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 8. Log Team Run
-        self._log_team_run(session_id=session_id, user_id=user_id)
-
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
         return run_response
@@ -1021,9 +1018,6 @@ class Team:
 
         # 4. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
-
-        # 5. Log Team Run
-        self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
@@ -6253,8 +6247,6 @@ class Team:
         self.session_name = session_name
         # -*- Save to storage
         self.write_to_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
-        # -*- Log Agent session
-        self._log_team_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
@@ -6444,8 +6436,6 @@ class Team:
                 self.write_to_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
                 if self.team_session is None:
                     raise Exception("Failed to create new TeamSession in storage")
-                log_debug(f"-*- Created TeamSession: {self.team_session.session_id}")
-                self._log_team_session(session_id=self.session_id, user_id=self.user_id)  # type: ignore
         return self.session_id
 
     def get_messages_for_session(
@@ -6462,10 +6452,10 @@ class Team:
 
         if self.memory is None:
             return []
-        
+
         if isinstance(self.memory, Memory):
             return self.memory.get_messages_from_last_n_runs(session_id=_session_id,
-                                                             
+
                 # Only filter by team_id if this is part of a team
                 team_id=self.team_id if self.team_session_id is not None else None,)
         else:
@@ -7069,75 +7059,6 @@ class Team:
             created_at=int(time()),
         )
 
-    def _log_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        if not self.telemetry and not self.monitoring:
-            return
-
-        from agno.api.team import TeamRunCreate, create_team_run
-
-        try:
-            run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session(
-                session_id=session_id, user_id=user_id
-            )
-
-            create_team_run(
-                run=TeamRunCreate(
-                    run_id=self.run_id,  # type: ignore
-                    run_data=run_data,
-                    team_session_id=team_session.team_session_id,
-                    session_id=team_session.session_id,
-                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create team event: {e}")
-
-    async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        if not self.telemetry and not self.monitoring:
-            return
-
-        from agno.api.team import TeamRunCreate, acreate_team_run
-
-        try:
-            run_data = self._create_run_data()
-            team_session: TeamSession = self.team_session or self._get_team_session(
-                session_id=session_id, user_id=user_id
-            )
-
-            await acreate_team_run(
-                run=TeamRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=team_session.session_id,
-                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create team event: {e}")
-
-    def _log_team_session(self, session_id: str, user_id: Optional[str] = None):
-        if not (self.telemetry or self.monitoring):
-            return
-
-        from agno.api.team import TeamSessionCreate, upsert_team_session
-
-        try:
-            team_session: TeamSession = self.team_session or self._get_team_session(
-                session_id=session_id, user_id=user_id
-            )
-            upsert_team_session(
-                session=TeamSessionCreate(
-                    session_id=team_session.session_id,
-                    team_data=team_session.to_dict() if self.monitoring else team_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create team monitor: {e}")
-
     def _get_agentic_or_user_search_filters(
         self, filters: Optional[Dict[str, Any]], effective_filters: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
@@ -7162,150 +7083,3 @@ class Team:
 
         log_info(f"Filters used by Agent: {search_filters}")
         return search_filters
-
-    def register_team(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.team import TeamCreate, create_team
-
-        try:
-            create_team(
-                team=TeamCreate(
-                    team_id=self.team_id,
-                    name=self.name,
-                    config=self.to_platform_dict(),
-                    parent_team_id=self.parent_team_id,
-                    app_id=self.app_id,
-                    workflow_id=self.workflow_id,
-                ),
-            )
-
-        except Exception as e:
-            log_debug(f"Could not create team on platform: {e}")
-
-    async def _aregister_team(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.team import TeamCreate, acreate_team
-
-        try:
-            await acreate_team(
-                team=TeamCreate(
-                    team_id=self.team_id,
-                    name=self.name,
-                    config=self.to_platform_dict(),
-                    parent_team_id=self.parent_team_id,
-                    app_id=self.app_id,
-                    workflow_id=self.workflow_id,
-                ),
-            )
-        except Exception as e:
-            log_debug(f"Could not create team on platform: {e}")
-
-    def to_platform_dict(self) -> Dict[str, Any]:
-        model = None
-        if self.model is not None:
-            model = {
-                "name": self.model.__class__.__name__,
-                "model": self.model.id,
-                "provider": self.model.provider,
-            }
-        tools: List[Dict[str, Any]] = []
-        if self.tools is not None:
-            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
-                team_model = self.model
-                if team_model is not None:
-                    self.session_id = cast(str, self.session_id)
-                    self.determine_tools_for_model(model=team_model, session_id=self.session_id)
-
-            if self._tools_for_model is not None:
-                for tool in self._tools_for_model:
-                    if isinstance(tool, dict) and tool.get("type") == "function":
-                        tools.append(tool["function"])
-        payload = {
-            "members": [
-                {
-                    **(
-                        member.get_agent_config_dict()
-                        if isinstance(member, Agent)
-                        else member.to_platform_dict()
-                        if isinstance(member, Team)
-                        else {}
-                    ),
-                    "agent_id": member.agent_id if hasattr(member, "agent_id") else None,
-                    "team_id": member.team_id if hasattr(member, "team_id") else None,
-                    "members": (
-                        [
-                            {
-                                **(
-                                    sub_member.get_agent_config_dict()
-                                    if isinstance(sub_member, Agent)
-                                    else sub_member.to_platform_dict()
-                                    if isinstance(sub_member, Team)
-                                    else {}
-                                ),
-                                "agent_id": sub_member.agent_id if hasattr(sub_member, "agent_id") else None,
-                                "team_id": sub_member.team_id if hasattr(sub_member, "team_id") else None,
-                            }
-                            for sub_member in member.members
-                            if sub_member is not None
-                        ]
-                        if isinstance(member, Team) and hasattr(member, "members")
-                        else []
-                    ),
-                }
-                for member in self.members
-                if member is not None
-            ],
-            "mode": self.mode,
-            "model": model,
-            "tools": tools,
-            "name": self.name,
-            "instructions": self.instructions,
-            "description": self.description,
-            "storage": {
-                "name": self.storage.__class__.__name__,
-            }
-            if self.storage is not None
-            else None,
-            # "tools": [tool.to_dict() for tool in self.tools] if self.tools is not None else None,
-            "memory": (
-                {
-                    "name": self.memory.__class__.__name__,
-                    "model": (
-                        {
-                            "name": self.memory.model.__class__.__name__,
-                            "model": self.memory.model.id,
-                            "provider": self.memory.model.provider,
-                        }
-                        if hasattr(self.memory, "model") and self.memory.model is not None
-                        else (
-                            {
-                                "name": self.model.__class__.__name__,
-                                "model": self.model.id,
-                                "provider": self.model.provider,
-                            }
-                            if self.model is not None
-                            else None
-                        )
-                    ),
-                    "db": (
-                        {
-                            "name": self.memory.db.__class__.__name__,
-                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
-                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
-                        }
-                        if hasattr(self.memory, "db") and self.memory.db is not None
-                        else None
-                    ),
-                }
-                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
-                else None
-            ),
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload

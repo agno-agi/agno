@@ -83,7 +83,7 @@ class MemoryManager:
 
         # -*- Return a system message for the memory manager
         system_prompt_lines = [
-            "You are a MemoryManager that is responsible for manging key information about the user. "
+            "You are a MemoryConnector that is responsible for manging key information about the user. "
             "You will be provided with a criteria for memories to capture in the <memories_to_capture> section and a list of existing memories in the <existing_memories> section.",
             "",
             "## When to add or update memories",
@@ -151,7 +151,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryManager Start", center=True)
+        log_debug("MemoryConnector Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -183,7 +183,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryManager End", center=True)
+        log_debug("MemoryConnector End", center=True)
 
         return response.content or "No response from model"
 
@@ -200,7 +200,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryManager Start", center=True)
+        log_debug("MemoryConnector Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -232,7 +232,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryManager End", center=True)
+        log_debug("MemoryConnector End", center=True)
 
         return response.content or "No response from model"
 
@@ -249,7 +249,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryManager Start", center=True)
+        log_debug("MemoryConnector Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -275,7 +275,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryManager End", center=True)
+        log_debug("MemoryConnector End", center=True)
 
         return response.content or "No response from model"
 
@@ -292,7 +292,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryManager Start", center=True)
+        log_debug("MemoryConnector Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -318,7 +318,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryManager End", center=True)
+        log_debug("MemoryConnector End", center=True)
 
         return response.content or "No response from model"
 

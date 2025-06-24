@@ -305,7 +305,7 @@ class Agent:
     team_id: Optional[str] = None
 
     # Optional app ID. Indicates this agent is part of an app.
-    app_id: Optional[str] = None
+    os_id: Optional[str] = None
 
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
@@ -736,9 +736,6 @@ class Agent:
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
@@ -814,9 +811,6 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1798,9 +1792,6 @@ class Agent:
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
-
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
@@ -1874,9 +1865,6 @@ class Agent:
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2281,9 +2269,6 @@ class Agent:
         # Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
-
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
         # Save output to file if save_response_to_file is set
@@ -2319,9 +2304,6 @@ class Agent:
 
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -3795,7 +3777,6 @@ class Agent:
                 if self.agent_session is None:
                     raise Exception("Failed to create new AgentSession in storage")
                 log_debug(f"-*- Created AgentSession: {self.agent_session.session_id}")
-                self._log_agent_session(user_id=self.user_id, session_id=self.session_id)  # type: ignore
         return self.session_id
 
     def new_session(self) -> None:
@@ -4956,8 +4937,6 @@ class Agent:
         self.name = name
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
-        # -*- Log Agent session
-        self._log_agent_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
     def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
         """Rename the current session and save to storage"""
@@ -4973,8 +4952,6 @@ class Agent:
         self.session_name = session_name
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
-        # -*- Log Agent session
-        self._log_agent_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
     def generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
@@ -5022,8 +4999,6 @@ class Agent:
         self.session_name = generated_session_name
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=self.session_id)  # type: ignore
-        # -*- Log Agent Session
-        self._log_agent_session(user_id=self.user_id, session_id=self.session_id)  # type: ignore
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -5911,164 +5886,6 @@ class Agent:
             )
         )
         return "Successfully added to knowledge base"
-
-    ###########################################################################
-    # Api functions
-    ###########################################################################
-
-    def _log_agent_session(self, session_id: str, user_id: Optional[str] = None):
-        if not (self.telemetry or self.monitoring):
-            return
-
-        from agno.api.agent import AgentSessionCreate, create_agent_session
-
-        try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session(
-                session_id=session_id, user_id=user_id
-            )
-            create_agent_session(
-                session=AgentSessionCreate(
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create agent monitor: {e}")
-
-    def _create_run_data(self) -> Dict[str, Any]:
-        """Create and return the run data dictionary."""
-        run_response_format = "text"
-        self.run_response = cast(RunResponse, self.run_response)
-        if self.response_model is not None:
-            run_response_format = "json"
-        elif self.markdown:
-            run_response_format = "markdown"
-
-        functions = {}
-        if self._functions_for_model is not None:
-            functions = {
-                f_name: func.to_dict()
-                for f_name, func in self._functions_for_model.items()
-                if isinstance(func, Function)
-            }
-
-        run_data: Dict[str, Any] = {
-            "functions": functions,
-            "metrics": self.run_response.metrics,
-        }
-
-        if self.monitoring:
-            run_data.update(
-                {
-                    "run_input": self.run_input,
-                    "run_response": self.run_response.to_dict(),
-                    "run_response_format": run_response_format,
-                }
-            )
-
-        return run_data
-
-    def register_agent(self) -> None:
-        """Register this agent with Agno's platform."""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, create_agent
-
-        try:
-            # Ensure we have a valid session_id
-            if not self.session_id:
-                self.session_id = str(uuid4())
-
-            create_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_warning(f"Could not create Agent: {e}")
-
-    async def _aregister_agent(self) -> None:
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, acreate_agent
-
-        try:
-            await acreate_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-
-    def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_monitoring()
-
-        if not self.telemetry and not self.monitoring:
-            return
-
-        from agno.api.agent import AgentRunCreate, create_agent_run
-
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session(
-                session_id=session_id, user_id=user_id
-            )
-
-            create_agent_run(
-                run=AgentRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_session_id=agent_session.team_session_id,
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
-
-    async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_monitoring()
-
-        if not self.telemetry and not self.monitoring:
-            return
-
-        from agno.api.agent import AgentRunCreate, acreate_agent_run
-
-        try:
-            run_data = self._create_run_data()
-            agent_session: AgentSession = self.agent_session or self.get_agent_session(
-                session_id=session_id, user_id=user_id
-            )
-
-            await acreate_agent_run(
-                run=AgentRunCreate(
-                    run_id=self.run_id,
-                    run_data=run_data,
-                    session_id=agent_session.session_id,
-                    agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
-                    team_session_id=agent_session.team_session_id,
-                ),
-                monitor=self.monitoring,
-            )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
 
     ###########################################################################
     # Print Response
