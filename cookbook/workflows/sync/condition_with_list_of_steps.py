@@ -121,7 +121,7 @@ if __name__ == "__main__":
                     name="ComprehensiveResearchCondition",
                     description="Check if comprehensive multi-step research is needed",
                     evaluator=check_if_comprehensive_research_needed,
-                    steps=[  # Multiple steps that execute sequentially
+                    steps=[  # Multiple steps
                         deep_exa_analysis_step,
                         trend_analysis_step,
                         fact_verification_step,
