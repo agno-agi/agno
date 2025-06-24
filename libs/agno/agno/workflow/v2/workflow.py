@@ -11,6 +11,8 @@ from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
+    ConditionExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
     ParallelExecutionCompletedEvent,
     ParallelExecutionStartedEvent,
     StepCompletedEvent,
@@ -1371,6 +1373,33 @@ class Workflow:
                                         "step_index": step_index,
                                         "content": step_result.content,
                                         "event": "ParallelStepResult",
+                                    }
+                                )
+
+                    elif isinstance(response, ConditionExecutionStartedEvent):
+                        current_step_name = response.step_name or "Condition"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        condition_text = "met" if response.condition_result else "not met"
+                        status.update(f"Starting condition: {current_step_name} (condition {condition_text})...")
+                        live_log.update(status)
+
+                    elif isinstance(response, ConditionExecutionCompletedEvent):
+                        step_name = response.step_name or "Condition"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed condition: {step_name}")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_name}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "ConditionStepResult",
                                     }
                                 )
 
