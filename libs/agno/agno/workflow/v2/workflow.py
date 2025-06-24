@@ -13,6 +13,10 @@ from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
+    LoopExecutionCompletedEvent,
+    LoopExecutionStartedEvent,
+    LoopIterationCompletedEvent,
+    LoopIterationStartedEvent,
     ParallelExecutionCompletedEvent,
     ParallelExecutionStartedEvent,
     StepCompletedEvent,
@@ -201,7 +205,7 @@ class Workflow:
                         videos=shared_videos,
                         audio=shared_audio,
                     )
-                    # Execute the step (non-streaming)
+
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
                     # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
@@ -503,6 +507,8 @@ class Workflow:
                     else:
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
+                else:
+                    workflow_run_response.content = "No steps executed"
 
                 workflow_run_response.step_responses = collected_step_outputs
                 workflow_run_response.images = output_images
@@ -887,6 +893,8 @@ class Workflow:
                 elif isinstance(step, Team):
                     prepared_steps.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, (Step, Loop, Parallel, Condition)):
+                    prepared_steps.append(step)
+                elif isinstance(step, (Loop, Parallel)):
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -1347,6 +1355,65 @@ class Workflow:
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
+
+                    elif isinstance(response, LoopExecutionStartedEvent):
+                        current_step_name = response.step_name or "Loop"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        status.update(
+                            f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)..."
+                        )
+                        live_log.update(status)
+
+                    elif isinstance(response, LoopIterationStartedEvent):
+                        status.update(
+                            f"Loop iteration {response.iteration}/{response.max_iterations}: {response.step_name}..."
+                        )
+                        live_log.update(status)
+
+                    elif isinstance(response, LoopIterationCompletedEvent):
+                        status.update(
+                            f"Completed iteration {response.iteration}/{response.max_iterations}: {response.step_name}"
+                        )
+
+                        # Add iteration results to step_responses
+                        if response.iteration_results:
+                            for i, result in enumerate(response.iteration_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{response.step_name}.{response.iteration}.{i + 1}: {result.step_name}",
+                                        "step_index": response.step_index,
+                                        "content": result.content,
+                                        "event": "LoopIterationResult",
+                                    }
+                                )
+
+                    elif isinstance(response, LoopExecutionCompletedEvent):
+                        step_name = response.step_name or "Loop"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed loop: {step_name} ({response.total_iterations} iterations)")
+                        live_log.update(status, refresh=True)
+
+                        # Print loop summary
+                        if show_step_details:
+                            summary_content = f"**Loop Summary:**\n\n"
+                            summary_content += (
+                                f"- Total iterations: {response.total_iterations}/{response.max_iterations}\n"
+                            )
+                            summary_content += (
+                                f"- Total steps executed: {sum(len(iteration) for iteration in response.all_results)}\n"
+                            )
+
+                            loop_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Loop {step_name} (Completed)",
+                                border_style="yellow",
+                            )
+                            console.print(loop_summary_panel)
+
+                        step_started_printed = True
 
                     elif isinstance(response, ParallelExecutionStartedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
@@ -1847,6 +1914,65 @@ class Workflow:
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
+
+                    elif isinstance(response, LoopExecutionStartedEvent):
+                        current_step_name = response.step_name or "Loop"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        status.update(
+                            f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)..."
+                        )
+                        live_log.update(status)
+
+                    elif isinstance(response, LoopIterationStartedEvent):
+                        status.update(
+                            f"Loop iteration {response.iteration}/{response.max_iterations}: {response.step_name}..."
+                        )
+                        live_log.update(status)
+
+                    elif isinstance(response, LoopIterationCompletedEvent):
+                        status.update(
+                            f"Completed iteration {response.iteration}/{response.max_iterations}: {response.step_name}"
+                        )
+
+                        # Add iteration results to step_responses
+                        if response.iteration_results:
+                            for i, result in enumerate(response.iteration_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{response.step_name}.{response.iteration}.{i + 1}: {result.step_name}",
+                                        "step_index": response.step_index,
+                                        "content": result.content,
+                                        "event": "LoopIterationResult",
+                                    }
+                                )
+
+                    elif isinstance(response, LoopExecutionCompletedEvent):
+                        step_name = response.step_name or "Loop"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed loop: {step_name} ({response.total_iterations} iterations)")
+                        live_log.update(status, refresh=True)
+
+                        # Print loop summary
+                        if show_step_details:
+                            summary_content = f"**Loop Summary:**\n\n"
+                            summary_content += (
+                                f"- Total iterations: {response.total_iterations}/{response.max_iterations}\n"
+                            )
+                            summary_content += (
+                                f"- Total steps executed: {sum(len(iteration) for iteration in response.all_results)}\n"
+                            )
+
+                            loop_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Loop {step_name} (Completed)",
+                                border_style="yellow",
+                            )
+                            console.print(loop_summary_panel)
+
+                        step_started_printed = True
 
                     elif isinstance(response, ParallelExecutionStartedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
