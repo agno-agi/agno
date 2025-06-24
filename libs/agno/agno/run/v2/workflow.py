@@ -23,8 +23,8 @@ class WorkflowRunEvent(str, Enum):
     step_completed = "StepCompleted"
     step_error = "StepError"
 
-    parallel_step_started = "ParallelStepStarted"
-    parallel_step_completed = "ParallelStepCompleted"
+    parallel_step_started = "ParallelExecutionStarted"
+    parallel_step_completed = "ParallelExecutionCompleted"
 
 
 @dataclass
