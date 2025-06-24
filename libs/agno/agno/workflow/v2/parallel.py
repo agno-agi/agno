@@ -6,8 +6,8 @@ from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional,
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import (
-    ParallelStepCompletedEvent,
-    ParallelStepStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
@@ -185,7 +185,7 @@ class Parallel:
         logger.info(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
 
         # Yield parallel step started event
-        yield ParallelStepStartedEvent(
+        yield ParallelExecutionStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
@@ -281,7 +281,7 @@ class Parallel:
         yield aggregated_result
 
         # Yield parallel step completed event
-        yield ParallelStepCompletedEvent(
+        yield ParallelExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
@@ -372,7 +372,7 @@ class Parallel:
         logger.info(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
 
         # Yield parallel step started event
-        yield ParallelStepStartedEvent(
+        yield ParallelExecutionStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
@@ -466,7 +466,7 @@ class Parallel:
         yield aggregated_result
 
         # Yield parallel step completed event
-        yield ParallelStepCompletedEvent(
+        yield ParallelExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",

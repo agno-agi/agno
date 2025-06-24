@@ -23,8 +23,8 @@ class WorkflowRunEvent(str, Enum):
     step_completed = "StepCompleted"
     step_error = "StepError"
 
-    parallel_step_started = "ParallelExecutionStarted"
-    parallel_step_completed = "ParallelExecutionCompleted"
+    parallel_execution_started = "ParallelExecutionStarted"
+    parallel_execution_completed = "ParallelExecutionCompleted"
 
 
 @dataclass
@@ -159,7 +159,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ParallelStepStartedEvent(BaseWorkflowRunResponseEvent):
+class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
     """Event sent when parallel step execution starts"""
 
     event: str = WorkflowRunEvent.parallel_step_started.value
@@ -169,7 +169,7 @@ class ParallelStepStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ParallelStepCompletedEvent(BaseWorkflowRunResponseEvent):
+class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     """Event sent when parallel step execution completes"""
 
     event: str = WorkflowRunEvent.parallel_step_completed.value
@@ -189,8 +189,8 @@ WorkflowRunResponseEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepErrorEvent,
-    ParallelStepStartedEvent,
-    ParallelStepCompletedEvent,
+    ParallelExecutionStartedEvent,
+    ParallelExecutionCompletedEvent,
 ]
 
 
