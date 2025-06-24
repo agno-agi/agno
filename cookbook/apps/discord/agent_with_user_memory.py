@@ -50,4 +50,4 @@ personal_agent = Agent(
 )
 discord_agent = DiscordClient(personal_agent)
 if __name__ == "__main__":
-    discord_agent.run()
+    discord_agent.serve()

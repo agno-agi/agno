@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from agno.tools.serperapi import SerperApiTools
+from agno.tools.serper import SerperTools
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +16,7 @@ def clear_env(monkeypatch):
 @pytest.fixture
 def api_tools():
     """SerperApiTools with a known API key, custom location, and fewer results for testing."""
-    return SerperApiTools(api_key="test_key", location="us", num_results=5)
+    return SerperTools(api_key="test_key", location="us", num_results=5)
 
 
 @pytest.fixture
@@ -31,20 +31,20 @@ def test_init_without_api_key_and_env(monkeypatch):
     """If no api_key argument and no SERPER_API_KEY in env, api_key should be None."""
     # Ensure environment has no key
     monkeypatch.delenv("SERPER_API_KEY", raising=False)
-    tools = SerperApiTools()
+    tools = SerperTools()
     assert tools.api_key is None
 
 
 def test_init_with_env_var(monkeypatch):
     """If SERPER_API_KEY is set in the environment, it is picked up."""
     monkeypatch.setenv("SERPER_API_KEY", "env_key")
-    tools = SerperApiTools(api_key=None)
+    tools = SerperTools(api_key=None)
     assert tools.api_key == "env_key"
 
 
 def test_search_google_no_api_key():
     """Calling search_google without any API key returns an error message."""
-    tools = SerperApiTools(api_key=None)
+    tools = SerperTools(api_key=None)
     assert tools.search_google("anything") == "Please provide an API key"
 
 
