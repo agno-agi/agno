@@ -18,12 +18,18 @@ class ConnectorResponse(BaseModel):
     version: str
     route: str
 
+class AppsResponse(BaseModel):
+    session: List[ConnectorResponse]
+    knowledge: List[ConnectorResponse]
+    memory: List[ConnectorResponse]
+    eval: List[ConnectorResponse]
+
 class ConfigResponse(BaseModel):
     os_id: str
     name: str
     description: str
     interfaces: List[InterfaceResponse]
-    apps: List[ConnectorResponse]
+    apps: AppsResponse
 
 
 class ModelResponse(BaseModel):
