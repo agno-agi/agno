@@ -1,6 +1,5 @@
 import asyncio
 import inspect
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
 
@@ -13,6 +12,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponseEvent,
 )
 from agno.utils.log import log_debug, logger
+from agno.workflow.v2.loop import Loop
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -46,6 +46,58 @@ class Condition:
 
     name: Optional[str] = None
     description: Optional[str] = None
+
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.v2.parallel import Parallel
+        from agno.workflow.v2.step import Step
+
+        prepared_steps = []
+        for step in self.steps:
+            if isinstance(step, Callable):
+                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
+            elif isinstance(step, Agent):
+                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+            elif isinstance(step, Team):
+                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, (Step, Loop, Parallel, Condition)):
+                prepared_steps.append(step)
+            else:
+                raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+        self.steps = prepared_steps
+
+    def _update_step_input_from_outputs(
+        self, step_input: StepInput, step_outputs: Union[StepOutput, List[StepOutput]]
+    ) -> StepInput:
+        """Helper to update step input from step outputs - mirrors Loop logic"""
+        current_images = step_input.images or []
+        current_videos = step_input.videos or []
+        current_audio = step_input.audio or []
+
+        if isinstance(step_outputs, list):
+            all_images = sum([out.images or [] for out in step_outputs], [])
+            all_videos = sum([out.videos or [] for out in step_outputs], [])
+            all_audio = sum([out.audio or [] for out in step_outputs], [])
+            # Use the last output's content for chaining
+            previous_step_content = step_outputs[-1].content if step_outputs else None
+        else:
+            # Single output
+            all_images = step_outputs.images or []
+            all_videos = step_outputs.videos or []
+            all_audio = step_outputs.audio or []
+            previous_step_content = step_outputs.content
+
+        return StepInput(
+            message=step_input.message,
+            message_data=step_input.message_data,
+            previous_step_content=previous_step_content,
+            images=current_images + all_images,
+            videos=current_videos + all_videos,
+            audio=current_audio + all_audio,
+        )
 
     def _evaluate_condition(self, step_input: StepInput) -> Union[bool, List[Step]]:
         """Evaluate the condition and return either a boolean or list of steps to execute"""
@@ -104,76 +156,13 @@ class Condition:
         else:
             return []
 
-    def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
-        """Build aggregated content from multiple step outputs"""
-        if not step_outputs:
-            return "Condition was not met - no steps executed."
-
-        aggregated = "## Condition Execution Results\n\n"
-
-        for i, output in enumerate(step_outputs):
-            step_name = output.step_name or f"Step {i + 1}"
-            content = output.content or ""
-
-            # Add status indicator
-            if output.success is False:
-                status_icon = "❌ FAILURE:"
-            else:
-                status_icon = "✅ SUCCESS:"
-
-            aggregated += f"### {status_icon} {step_name}\n"
-            if content.strip():
-                aggregated += f"{content}\n\n"
-            else:
-                aggregated += "*(No content)*\n\n"
-
-        return aggregated.strip()
-
-    def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
-        """Aggregate multiple step outputs into a single result"""
-        if not step_outputs:
-            return StepOutput(
-                step_name=self.name or "Condition",
-                content="Condition was not met - no steps executed.",
-                success=True,
-                images=[],
-                videos=[],
-                audio=[],
-            )
-
-        # Aggregate content
-        aggregated_content = self._build_aggregated_content(step_outputs)
-
-        # Aggregate media
-        all_images = []
-        all_videos = []
-        all_audio = []
-
-        for output in step_outputs:
-            if output.images:
-                all_images.extend(output.images)
-            if output.videos:
-                all_videos.extend(output.videos)
-            if output.audio:
-                all_audio.extend(output.audio)
-
-        # Check if any step failed
-        has_failures = any(output.success is False for output in step_outputs)
-
-        return StepOutput(
-            step_name=self.name or "Condition",
-            content=aggregated_content,
-            success=not has_failures,
-            images=all_images,
-            videos=all_videos,
-            audio=all_audio,
-        )
-
     def execute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> StepOutput:
-        """Execute the condition and its steps"""
+    ) -> List[StepOutput]:
+        """Execute the condition and its steps with sequential chaining like Loop"""
         logger.info(f"Executing condition: {self.name}")
+
+        self._prepare_steps()
 
         # Evaluate the condition
         condition_result = self._evaluate_condition(step_input)
@@ -182,36 +171,40 @@ class Condition:
         logger.info(f"Condition {self.name} evaluated to: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
-            return StepOutput(
-                step_name=self.name or "Condition",
-                content="Condition was not met - no steps executed.",
-                success=True,
-                images=[],
-                videos=[],
-                audio=[],
-            )
+            return []
 
-        # Execute the steps
-        step_outputs = []
+        all_results = []
+        current_step_input = step_input
+
         for i, step in enumerate(steps_to_execute):
             try:
-                result = step.execute(step_input, session_id=session_id, user_id=user_id)
-                step_outputs.append(result)
+                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
+
+                # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
+                if isinstance(step_output, list):
+                    all_results.extend(step_output)
+                else:
+                    all_results.append(step_output)
+
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} completed")
+
+                # Update step input for next step - mirrors Loop logic
+                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} failed: {e}")
-                step_outputs.append(
-                    StepOutput(
-                        step_name=step_name,
-                        content=f"Step {step_name} failed: {str(e)}",
-                        success=False,
-                        error=str(e),
-                    )
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
                 )
+                all_results.append(error_output)
+                break
 
-        return self._aggregate_results(step_outputs)
+        return all_results
 
     def execute_stream(
         self,
@@ -222,8 +215,10 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
-        """Execute the condition with streaming support"""
+        """Execute the condition with streaming support - mirrors Loop logic"""
         logger.info(f"Streaming condition: {self.name}")
+
+        self._prepare_steps()
 
         # Evaluate the condition
         condition_result = self._evaluate_condition(step_input)
@@ -241,17 +236,7 @@ class Condition:
         )
 
         if not steps_to_execute:
-            result = StepOutput(
-                step_name=self.name or "Condition",
-                content="Condition was not met - no steps executed.",
-                success=True,
-                images=[],
-                videos=[],
-                audio=[],
-            )
-            yield result
-
-            # Yield condition completed event
+            # Yield condition completed event for empty case
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -261,17 +246,19 @@ class Condition:
                 step_index=step_index,
                 condition_result=False,
                 executed_steps=0,
-                step_results=[result],
+                step_results=[],
             )
             return
 
-        # Execute the steps with streaming
-        step_outputs = []
+        all_results = []
+        current_step_input = step_input
+
         for i, step in enumerate(steps_to_execute):
             try:
-                # Stream each step
+                step_outputs_for_step = []
+                # Stream step execution
                 for event in step.execute_stream(
-                    step_input,
+                    current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
@@ -279,14 +266,26 @@ class Condition:
                     step_index=step_index,
                 ):
                     if isinstance(event, StepOutput):
-                        step_outputs.append(event)
+                        step_outputs_for_step.append(event)
+                        all_results.append(event)
                     else:
-                        # Only yield events with content attribute to avoid errors
-                        if hasattr(event, "content"):
-                            yield event
+                        # Yield other events (streaming content, step events, etc.)
+                        yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} streaming completed")
+
+                # Update step input for next step using all outputs from this step
+                if step_outputs_for_step:
+                    if len(step_outputs_for_step) == 1:
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step[0]
+                        )
+                    else:
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step
+                        )
+
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} streaming failed: {e}")
@@ -296,11 +295,8 @@ class Condition:
                     success=False,
                     error=str(e),
                 )
-                step_outputs.append(error_output)
-
-        # Create aggregated result
-        aggregated_result = self._aggregate_results(step_outputs)
-        yield aggregated_result
+                all_results.append(error_output)
+                break
 
         # Yield condition completed event
         yield ConditionExecutionCompletedEvent(
@@ -312,14 +308,16 @@ class Condition:
             step_index=step_index,
             condition_result=True,
             executed_steps=len(steps_to_execute),
-            step_results=[aggregated_result],
+            step_results=all_results,  # Now returns all individual step results
         )
 
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> StepOutput:
-        """Async execute the condition and its steps"""
+    ) -> List[StepOutput]:  # Changed to List[StepOutput]
+        """Async execute the condition and its steps with sequential chaining"""
         logger.info(f"Async executing condition: {self.name}")
+
+        self._prepare_steps()
 
         # Evaluate the condition
         condition_result = await self._aevaluate_condition(step_input)
@@ -328,54 +326,41 @@ class Condition:
         logger.info(f"Condition {self.name} evaluated to: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
-            return StepOutput(
-                step_name=self.name or "Condition",
-                content="Condition was not met - no steps executed.",
-                success=True,
-                images=[],
-                videos=[],
-                audio=[],
-            )
+            return []  # Return empty list
 
-        # Execute the steps concurrently
-        async def execute_step_async(step, index):
+        # Chain steps sequentially like Loop does
+        all_results = []
+        current_step_input = step_input
+
+        for i, step in enumerate(steps_to_execute):
             try:
-                result = await step.aexecute(step_input, session_id=session_id, user_id=user_id)
-                step_name = getattr(step, "name", f"step_{index}")
+                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
+
+                # Handle both single StepOutput and List[StepOutput]
+                if isinstance(step_output, list):
+                    all_results.extend(step_output)
+                else:
+                    all_results.append(step_output)
+
+                step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async completed")
-                return result
+
+                # Update step input for next step
+                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+
             except Exception as e:
-                step_name = getattr(step, "name", f"step_{index}")
+                step_name = getattr(step, "name", f"step_{i}")
                 logger.error(f"Condition step {step_name} async failed: {e}")
-                return StepOutput(
+                error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
                     success=False,
                     error=str(e),
                 )
+                all_results.append(error_output)
+                break  # Stop on first error
 
-        # Execute all steps concurrently
-        tasks = [execute_step_async(step, i) for i, step in enumerate(steps_to_execute)]
-        step_outputs = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Handle any exceptions that were returned
-        processed_outputs = []
-        for i, output in enumerate(step_outputs):
-            if isinstance(output, Exception):
-                step_name = getattr(steps_to_execute[i], "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async failed: {output}")
-                processed_outputs.append(
-                    StepOutput(
-                        step_name=step_name,
-                        content=f"Step {step_name} failed: {str(output)}",
-                        success=False,
-                        error=str(output),
-                    )
-                )
-            else:
-                processed_outputs.append(output)
-
-        return self._aggregate_results(processed_outputs)
+        return all_results
 
     async def aexecute_stream(
         self,
@@ -386,8 +371,10 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
-        """Async execute the condition with streaming support"""
+        """Async execute the condition with streaming support - mirrors Loop logic"""
         logger.info(f"Async streaming condition: {self.name}")
+
+        self._prepare_steps()
 
         # Evaluate the condition
         condition_result = await self._aevaluate_condition(step_input)
@@ -405,17 +392,7 @@ class Condition:
         )
 
         if not steps_to_execute:
-            result = StepOutput(
-                step_name=self.name or "Condition",
-                content="Condition was not met - no steps executed.",
-                success=True,
-                images=[],
-                videos=[],
-                audio=[],
-            )
-            yield result
-
-            # Yield condition completed event
+            # Yield condition completed event for empty case
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -425,86 +402,59 @@ class Condition:
                 step_index=step_index,
                 condition_result=False,
                 executed_steps=0,
-                step_results=[result],
+                step_results=[],
             )
             return
 
-        # Execute the steps with async streaming
-        async def execute_step_stream_async(step, index):
+        # Chain steps sequentially like Loop does
+        all_results = []
+        current_step_input = step_input
+
+        for i, step in enumerate(steps_to_execute):
             try:
-                events = []
+                step_outputs_for_step = []
+
+                # Stream step execution - mirroring Loop logic
                 async for event in step.aexecute_stream(
-                    step_input,
+                    current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                 ):
-                    events.append(event)
-                return (index, events)
-            except Exception as e:
-                step_name = getattr(step, "name", f"step_{index}")
-                logger.error(f"Condition step {step_name} async streaming failed: {e}")
-                return (
-                    index,
-                    [
-                        StepOutput(
-                            step_name=step_name,
-                            content=f"Step {step_name} failed: {str(e)}",
-                            success=False,
-                            error=str(e),
-                        )
-                    ],
-                )
+                    if isinstance(event, StepOutput):
+                        step_outputs_for_step.append(event)
+                        all_results.append(event)
+                    else:
+                        # Yield other events (streaming content, step events, etc.)
+                        yield event
 
-        # Execute all steps concurrently
-        tasks = [execute_step_stream_async(step, i) for i, step in enumerate(steps_to_execute)]
-        results_with_indices = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process results and handle exceptions, preserving order
-        all_events_with_indices = []
-        step_results = []
-        for i, result in enumerate(results_with_indices):
-            if isinstance(result, Exception):
-                step_name = getattr(steps_to_execute[i], "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async streaming failed: {result}")
-                error_event = StepOutput(
-                    step_name=step_name,
-                    content=f"Step {step_name} failed: {str(result)}",
-                    success=False,
-                    error=str(result),
-                )
-                all_events_with_indices.append((i, [error_event]))
-                step_results.append(error_event)
-            else:
-                index, events = result
-                all_events_with_indices.append((index, events))
-
-                # Extract StepOutput from events for the final result
-                step_outputs = [event for event in events if isinstance(event, StepOutput)]
-                if step_outputs:
-                    step_results.extend(step_outputs)
-
-                step_name = getattr(steps_to_execute[index], "name", f"step_{index}")
+                step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async streaming completed")
 
-        # Sort events by original index to preserve order
-        all_events_with_indices.sort(key=lambda x: x[0])
+                # Update step input for next step using all outputs from this step
+                if step_outputs_for_step:
+                    if len(step_outputs_for_step) == 1:
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step[0]
+                        )
+                    else:
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step
+                        )
 
-        # Yield all collected streaming events in order (but not final StepOutputs)
-        for _, events in all_events_with_indices:
-            for event in events:
-                # Only yield non-StepOutput events during streaming to avoid duplication
-                # and only yield events with content attribute to avoid errors
-                if not isinstance(event, StepOutput) and hasattr(event, "content"):
-                    yield event
-
-        # Create aggregated result from all step outputs
-        aggregated_result = self._aggregate_results(step_results)
-
-        # Yield the final aggregated StepOutput
-        yield aggregated_result
+            except Exception as e:
+                step_name = getattr(step, "name", f"step_{i}")
+                logger.error(f"Condition step {step_name} async streaming failed: {e}")
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+                all_results.append(error_output)
+                break  # Stop on first error
 
         # Yield condition completed event
         yield ConditionExecutionCompletedEvent(
@@ -516,5 +466,5 @@ class Condition:
             step_index=step_index,
             condition_result=True,
             executed_steps=len(steps_to_execute),
-            step_results=[aggregated_result],
+            step_results=all_results,  # Now returns all individual step results
         )

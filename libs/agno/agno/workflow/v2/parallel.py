@@ -48,6 +48,29 @@ class Parallel:
         self.name = name
         self.description = description
 
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.v2.condition import Condition
+        from agno.workflow.v2.loop import Loop
+        from agno.workflow.v2.step import Step
+
+        prepared_steps = []
+        for step in self.steps:
+            if isinstance(step, Callable):
+                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
+            elif isinstance(step, Agent):
+                prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+            elif isinstance(step, Team):
+                prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, (Step, Loop, Parallel, Condition)):
+                prepared_steps.append(step)
+            else:
+                raise ValueError(f"Invalid step type: {type(step).__name__}")
+
+        self.steps = prepared_steps
+
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
         if not step_outputs:
@@ -111,9 +134,11 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> StepOutput:  # Changed from List[StepOutput] to StepOutput
+    ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         logger.info(f"Executing {len(self.steps)} steps in parallel: {self.name}")
+
+        self._prepare_steps()
 
         def execute_step_with_index(step_with_index):
             """Execute a single step and preserve its original index"""
@@ -169,8 +194,16 @@ class Parallel:
         results_with_indices.sort(key=lambda x: x[0])
         results = [result for _, result in results_with_indices]
 
+        # Flatten results - handle steps that return List[StepOutput] (like Condition/Loop)
+        flattened_results = []
+        for result in results:
+            if isinstance(result, list):
+                flattened_results.extend(result)
+            else:
+                flattened_results.append(result)
+
         # Aggregate all results into a single StepOutput
-        return self._aggregate_results(results)
+        return self._aggregate_results(flattened_results)
 
     def execute_stream(
         self,
@@ -183,6 +216,8 @@ class Parallel:
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         logger.info(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
+
+        self._prepare_steps()
 
         # Yield parallel step started event
         yield ParallelExecutionStartedEvent(
@@ -274,8 +309,16 @@ class Parallel:
                 if not isinstance(event, StepOutput):
                     yield event
 
+        # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
+        flattened_step_results = []
+        for result in step_results:
+            if isinstance(result, list):
+                flattened_step_results.extend(result)
+            else:
+                flattened_step_results.append(result)
+
         # Create aggregated result from all step outputs
-        aggregated_result = self._aggregate_results(step_results)
+        aggregated_result = self._aggregate_results(flattened_step_results)
 
         # Yield the final aggregated StepOutput
         yield aggregated_result
@@ -300,6 +343,8 @@ class Parallel:
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
+
+        self._prepare_steps()
 
         async def execute_step_async_with_index(step_with_index):
             """Execute a single step asynchronously and preserve its original index"""
@@ -356,8 +401,16 @@ class Parallel:
         processed_results_with_indices.sort(key=lambda x: x[0])
         results = [result for _, result in processed_results_with_indices]
 
+        # Flatten results - handle steps that return List[StepOutput] (like Condition/Loop)
+        flattened_results = []
+        for result in results:
+            if isinstance(result, list):
+                flattened_results.extend(result)
+            else:
+                flattened_results.append(result)
+
         # Aggregate all results into a single StepOutput
-        return self._aggregate_results(results)
+        return self._aggregate_results(flattened_results)
 
     async def aexecute_stream(
         self,
@@ -370,6 +423,8 @@ class Parallel:
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         logger.info(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
+
+        self._prepare_steps()
 
         # Yield parallel step started event
         yield ParallelExecutionStartedEvent(
@@ -459,8 +514,16 @@ class Parallel:
                 if not isinstance(event, StepOutput):
                     yield event
 
+        # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
+        flattened_step_results = []
+        for result in step_results:
+            if isinstance(result, list):
+                flattened_step_results.extend(result)
+            else:
+                flattened_step_results.append(result)
+
         # Create aggregated result from all step outputs
-        aggregated_result = self._aggregate_results(step_results)
+        aggregated_result = self._aggregate_results(flattened_step_results)
 
         # Yield the final aggregated StepOutput
         yield aggregated_result
