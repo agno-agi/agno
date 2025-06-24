@@ -15,11 +15,14 @@ except (ImportError, ModuleNotFoundError):
 
 
 class DiscordClient:
-    def __init__(self, agent: Optional[Agent] = None, team: Optional[Team] = None):
+    def __init__(self, agent: Optional[Agent] = None, team: Optional[Team] = None, client: Optional[discord.Client] = None):
         self.agent = agent
         self.team = team
-        self.intents = discord.Intents.all()
-        self.client = discord.Client(intents=self.intents)
+        if client is None:
+            self.intents = discord.Intents.all()
+            self.client = discord.Client(intents=self.intents)
+        else:
+            self.client = client
         self._setup_events()
 
     def _setup_events(self):
