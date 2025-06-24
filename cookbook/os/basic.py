@@ -1,11 +1,9 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.os import AgentOS
-from agno.os.interfaces.slack import Slack
-from agno.os.interfaces.whatsapp import Whatsapp
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
-
+from agno.os import AgentOS
+from agno.os.interfaces import Slack, Whatsapp
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

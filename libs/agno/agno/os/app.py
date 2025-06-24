@@ -11,15 +11,15 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
-from agno.os.interfaces.base import BaseInterface
-from agno.os.connectors.base import BaseConnector
-from agno.os.router import get_base_router
-from agno.os.settings import AgnoAPISettings
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
+from agno.os.connectors.base import BaseConnector
+from agno.os.interfaces.base import BaseInterface
+from agno.os.router import get_base_router
+from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_warning
 from agno.workflow.workflow import Workflow
 
 
@@ -148,9 +148,7 @@ class AgentOS:
         for interface in self.interfaces:
             if interface.type == "playground":
                 self.api_app.include_router(
-                    interface.get_router(
-                        agents=self.agents, teams=self.teams, workflows=self.workflows
-                    )
+                    interface.get_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
                 )
             else:
                 self.api_app.include_router(interface.get_router())
@@ -237,12 +235,14 @@ class AgentOS:
             encoded_endpoint = f"{full_host}:{port}{app_prefix}"
             if app_type == "knowledge":
                 apps_panel_text += f"[bold green]Knowledge Connector:[/bold green] {encoded_endpoint}\n"
-            if app_type == "memory":
+            elif app_type == "memory":
                 apps_panel_text += f"[bold green]Memory Connector:[/bold green] {encoded_endpoint}\n"
-            if app_type == "eval":
+            elif app_type == "eval":
                 apps_panel_text += f"[bold green]Evals Connector:[/bold green] {encoded_endpoint}\n"
-            if app_type == "session":
+            elif app_type == "session":
                 apps_panel_text += f"[bold green]Sessions Connector:[/bold green] {encoded_endpoint}\n"
+            else:
+                log_warning(f"Unknown app type: {app_type}")
 
         if apps_panel_text:
             apps_panel_text = apps_panel_text.strip()
