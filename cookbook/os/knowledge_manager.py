@@ -1,6 +1,6 @@
 from agno.agent import Agent
 from agno.os import AgentOS
-from agno.os.connectors import KnowledgeConnector
+from agno.os.managers import KnowledgeManager
 from agno.document import Document
 from agno.document.local_document_store import LocalDocumentStore
 from agno.knowledge.knowledge_base import KnowledgeBase
@@ -47,7 +47,7 @@ agent_os = AgentOS(
     agents=[
         basic_agent,
     ],
-    apps=[KnowledgeConnector(knowledge=knowledge_base)],
+    apps=[KnowledgeManager(knowledge=knowledge_base)],
 )
 app = agent_os.get_app()
 

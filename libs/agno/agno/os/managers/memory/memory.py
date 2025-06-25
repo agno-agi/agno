@@ -4,16 +4,16 @@ from uuid import uuid4
 
 from fastapi.routing import APIRouter
 
-from agno.os.connectors.base import BaseConnector
-from agno.os.connectors.memory.router import attach_routes
+from agno.os.managers.base import BaseManager
+from agno.os.managers.memory.router import attach_routes
 from agno.memory import Memory
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryConnector(BaseConnector):
+class MemoryManager(BaseManager):
     type = "memory"
-    
+
     router: APIRouter
 
     def __init__(self, memory: Memory, name: Optional[str] = None):
@@ -22,8 +22,8 @@ class MemoryConnector(BaseConnector):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Memory Connector {index}"
-        
+            self.name = f"Memory Manager {index}"
+
         self.router_prefix = f"/memory/{index}"
 
         # Cannot be overridden

@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel
 
-from agno.os.connectors.session.utils import get_first_user_message
+from agno.os.managers.session.utils import get_first_user_message
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 

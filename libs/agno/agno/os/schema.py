@@ -13,17 +13,17 @@ class InterfaceResponse(BaseModel):
     version: str
     route: str
 
-class ConnectorResponse(BaseModel):
+class ManagerResponse(BaseModel):
     type: str
     name: str
     version: str
     route: str
 
 class AppsResponse(BaseModel):
-    session: List[ConnectorResponse]
-    knowledge: List[ConnectorResponse]
-    memory: List[ConnectorResponse]
-    eval: List[ConnectorResponse]
+    session: List[ManagerResponse]
+    knowledge: List[ManagerResponse]
+    memory: List[ManagerResponse]
+    eval: List[ManagerResponse]
 
 class ConfigResponse(BaseModel):
     os_id: str
@@ -51,7 +51,7 @@ class AgentResponse(BaseModel):
 
     @classmethod
     def from_agent(self, agent: Agent) -> "AgentResponse":
-        
+
         agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
         formatted_tools = format_tools(agent_tools)
 
@@ -67,7 +67,7 @@ class AgentResponse(BaseModel):
             model_provider = model_id
         else:
             model_provider = ""
-                
+
         memory_dict: Optional[Dict[str, Any]] = None
         if agent.memory and agent.memory.db:
             memory_dict = {"name": "Memory"}
@@ -112,7 +112,7 @@ class TeamResponse(BaseModel):
 
     @classmethod
     def from_team(self, team: Team) -> "TeamResponse":
-        
+
         team.determine_tools_for_model(
             model=team.model,
             session_id=str(uuid4()),

@@ -1,8 +1,8 @@
-"""Simple example creating a session and using the AgentOS with a SessionConnector to expose it"""
+"""Simple example creating a session and using the AgentOS with a SessionManager to expose it"""
 
 from agno.agent import Agent
 from agno.os import AgentOS
-from agno.os.connectors import SessionConnector
+from agno.os.managers import SessionManager
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -34,7 +34,7 @@ agent_os = AgentOS(
     description="Example app for basic agent with session capabilities",
     os_id="session-demo",
     agents=[basic_agent],
-    apps=[SessionConnector(db=db)],
+    apps=[SessionManager(db=db)],
 )
 app = agent_os.get_app()
 

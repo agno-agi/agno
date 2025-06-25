@@ -4,14 +4,14 @@ from uuid import uuid4
 
 from fastapi.routing import APIRouter
 
-from agno.os.connectors.base import BaseConnector
-from agno.os.connectors.knowledge.router import attach_routes
+from agno.os.managers.base import BaseManager
+from agno.os.managers.knowledge.router import attach_routes
 from agno.knowledge.knowledge_base import KnowledgeBase
 
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeConnector(BaseConnector):
+class KnowledgeManager(BaseManager):
     type = "knowledge"
 
     router: APIRouter
@@ -22,8 +22,8 @@ class KnowledgeConnector(BaseConnector):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Knowledge Connector {index}"
-        
+            self.name = f"Knowledge Manager {index}"
+
         self.router_prefix = f"/knowledge/{index}"
 
         # Cannot be overridden

@@ -14,7 +14,7 @@ from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
-from agno.os.connectors.base import BaseConnector
+from agno.os.managers.base import BaseManager
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
@@ -35,7 +35,7 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
-        apps: Optional[List[BaseConnector]] = None,
+        apps: Optional[List[BaseManager]] = None,
         settings: Optional[AgnoAPISettings] = None,
         api_app: Optional[FastAPI] = None,
         monitoring: bool = True,
@@ -234,13 +234,13 @@ class AgentOS:
         for app_type, app_prefix in self.apps_loaded:
             encoded_endpoint = f"{full_host}:{port}{app_prefix}"
             if app_type == "knowledge":
-                apps_panel_text += f"[bold green]Knowledge Connector:[/bold green] {encoded_endpoint}\n"
+                apps_panel_text += f"[bold green]Knowledge Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "memory":
-                apps_panel_text += f"[bold green]Memory Connector:[/bold green] {encoded_endpoint}\n"
+                apps_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "eval":
-                apps_panel_text += f"[bold green]Evals Connector:[/bold green] {encoded_endpoint}\n"
+                apps_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "session":
-                apps_panel_text += f"[bold green]Sessions Connector:[/bold green] {encoded_endpoint}\n"
+                apps_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
             else:
                 log_warning(f"Unknown app type: {app_type}")
 

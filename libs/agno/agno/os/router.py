@@ -13,7 +13,7 @@ from agno.os.schema import (
     ConfigResponse,
     AgentResponse,
     InterfaceResponse,
-    ConnectorResponse,
+    ManagerResponse,
     TeamResponse,
     WorkflowResponse
 )
@@ -97,17 +97,17 @@ def get_base_router(
     @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
     async def config() -> ConfigResponse:
         app_response = AppsResponse(
-                session=[ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "session"],
-                knowledge=[ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "knowledge"],
-                memory=[ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "memory"],
-                eval=[ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "eval"],
+                session=[ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "session"],
+                knowledge=[ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "knowledge"],
+                memory=[ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "memory"],
+                eval=[ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix) for app in os.apps if app.type == "eval"],
             )
-        
+
         app_response.session = app_response.session or None
         app_response.knowledge = app_response.knowledge or None
         app_response.memory = app_response.memory or None
         app_response.eval = app_response.eval or None
-        
+
         return ConfigResponse(
             os_id=os.os_id,
             name=os.name,
@@ -116,7 +116,7 @@ def get_base_router(
             apps=app_response,
         )
 
-    @router.get("/agents", 
+    @router.get("/agents",
                 response_model=List[AgentResponse],
                 response_model_exclude_none=True)
     async def get_agents():
@@ -128,7 +128,7 @@ def get_base_router(
             for agent in os.agents
         ]
 
-    @router.get("/teams", 
+    @router.get("/teams",
                 response_model=List[TeamResponse],
                 response_model_exclude_none=True)
     async def get_teams():
@@ -140,7 +140,7 @@ def get_base_router(
             for team in os.teams
         ]
 
-    @router.get("/workflows", 
+    @router.get("/workflows",
                 response_model=List[WorkflowResponse],
                 response_model_exclude_none=True)
     async def get_workflows():
@@ -155,8 +155,8 @@ def get_base_router(
             )
             for workflow in os.workflows
         ]
-        
-    
+
+
     @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
         agent_id: str,
@@ -254,8 +254,8 @@ def get_base_router(
                 ),
             )
             return run_response.to_dict()
-        
-        
+
+
     @router.post("/agents/{agent_id}/runs/{run_id}/continue")
     async def continue_agent_run(
         agent_id: str,
@@ -316,4 +316,3 @@ def get_base_router(
     return router
 
 
-    

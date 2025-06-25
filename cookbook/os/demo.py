@@ -1,4 +1,4 @@
-"""Simple example creating a session and using the AgentOS with a SessionConnector to expose it"""
+"""Simple example creating a session and using the AgentOS with a SessionManager to expose it"""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
@@ -8,7 +8,7 @@ from agno.knowledge.knowledge_base import KnowledgeBase
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.connectors import KnowledgeConnector, MemoryConnector, SessionConnector
+from agno.os.managers import KnowledgeManager, MemoryManager, SessionManager
 from agno.os.interfaces import Whatsapp
 from agno.vectordb.pgvector.pgvector import PgVector
 
@@ -86,10 +86,10 @@ agent_os = AgentOS(
     agents=[agent],
     interfaces=[Whatsapp(agent=agent)],
     apps=[
-        SessionConnector(db=db, name="Session Connector"),
-        KnowledgeConnector(knowledge=knowledge_base, name="Knowledge Connector 1"),
-        KnowledgeConnector(knowledge=knowledge_base_2, name="Knowledge Connector 2"),
-        MemoryConnector(memory=memory, name="Memory Connector"),
+        SessionManager(db=db, name="Session Manager"),
+        KnowledgeManager(knowledge=knowledge_base, name="Knowledge Manager 1"),
+        KnowledgeManager(knowledge=knowledge_base_2, name="Knowledge Manager 2"),
+        MemoryManager(memory=memory, name="Memory Manager"),
     ],
 )
 app = agent_os.get_app()

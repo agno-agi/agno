@@ -1,8 +1,8 @@
-"""Simple example creating a session and using the AgentOS with a SessionConnector to expose it"""
+"""Simple example creating a session and using the AgentOS with a SessionManager to expose it"""
 
 from agno.agent import Agent
 from agno.os import AgentOS
-from agno.os.connectors import EvalConnector
+from agno.os.managers import EvalManager
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
@@ -40,7 +40,7 @@ agent_os = AgentOS(
     description="Example app for basic agent with eval capabilities",
     os_id="eval-demo",
     agents=[basic_agent],
-    apps=[EvalConnector(db=db)],
+    apps=[EvalManager(db=db)],
 )
 app = agent_os.get_app()
 

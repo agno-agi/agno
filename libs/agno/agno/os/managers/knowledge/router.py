@@ -2,7 +2,7 @@ from typing import List
 
 from fastapi import APIRouter
 
-from agno.os.connectors.knowledge.schemas import DocumentSchema
+from agno.os.managers.knowledge.schemas import DocumentSchema
 from agno.knowledge.knowledge_base import Document, KnowledgeBase
 
 
