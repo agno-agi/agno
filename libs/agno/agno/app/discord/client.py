@@ -14,6 +14,32 @@ try:
 except (ImportError, ModuleNotFoundError):
     print("`discord.py` not installed. Please install using `pip install discord.py`")
 
+import discord
+from discord.ext import commands
+
+
+class HITLView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        self.value = None
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.primary)
+    async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.value = True
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.value = False
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        log_warning(f"Agent Timeout Error")
+
 
 class DiscordClient:
     def __init__(self,
@@ -98,12 +124,20 @@ class DiscordClient:
 
                 await self._handle_response_in_thread(response, thread)
 
-    async def _handle_hitl(self, response: RunResponse, thread: discord.channel):
-        return
+    async def _handle_hitl(self, response: RunResponse, thread: discord.Thread):
+        for tool in response.tools_requiring_confirmation:
+            view = HITLView()
+            await thread.send(f"Tool requiring confirmation: {tool.tool_name}", view=view)
+            await view.wait()
+            tool.confirmed = view.value if view.value is not None else False
 
-    async def _handle_response_in_thread(self, response: RunResponse, thread: discord.channel):
+        return await self.agent.acontinue_run(
+            run_response=response,
+        )
+
+    async def _handle_response_in_thread(self, response: RunResponse, thread: discord.TextChannel):
         if response.is_paused:
-            await self._handle_hitl(response, thread)
+            response = await self._handle_hitl(response, thread)
 
         if response.reasoning_content:
             await self._send_discord_messages(
@@ -112,7 +146,8 @@ class DiscordClient:
 
         await self._send_discord_messages(thread=thread, message=response.content)
 
-    async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
+    async def _send_discord_messages(self, thread: discord.channel, message: str,
+                                     italics: bool = False):  # type: ignore
         if len(message) < 1500:
             if italics:
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
@@ -121,7 +156,7 @@ class DiscordClient:
                 await thread.send(message)  # type: ignore
             return
 
-        message_batches = [message[i : i + 1500] for i in range(0, len(message), 1500)]
+        message_batches = [message[i: i + 1500] for i in range(0, len(message), 1500)]
 
         for i, batch in enumerate(message_batches, 1):
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
