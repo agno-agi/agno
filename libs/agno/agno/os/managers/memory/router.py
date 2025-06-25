@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional
 
 from fastapi import HTTPException, Path, Query
@@ -69,7 +70,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                 page=page,
                 limit=limit,
                 total_count=total_count,
-                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+                total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,
             ),
         )
 

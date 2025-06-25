@@ -1,12 +1,14 @@
 import json
+import math
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Query, UploadFile
 
 from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.knowledge.knowledge import Knowledge
 from agno.os.managers.knowledge.schemas import DocumentResponseSchema
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.utils.log import log_info
 
 
@@ -57,24 +59,35 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         # Return immediately with the ID
         return {"document_id": document_id, "status": "processing"}
 
-    @router.get("/documents", response_model=List[DocumentResponseSchema], status_code=200)
-    def get_documents() -> List[DocumentResponseSchema]:
-        documents = knowledge.get_documents()
-        result = []
-        for document in documents:
-            # Convert DocumentV2 to DocumentResponseSchema
-            response_doc = DocumentResponseSchema(
-                id=document.id,  # Generate a unique ID
-                name=document.name,
-                description=document.description,
-                type=document.content.type if document.content else None,
-                size=str(len(document.content.content)) if document.content else "0",
-                linked_to=knowledge.name,
-                metadata=document.metadata,
-                access_count=0,
-            )
-            result.append(response_doc)
-        return result
+    @router.get("/documents", response_model=PaginatedResponse[DocumentResponseSchema], status_code=200)
+    def get_documents(
+        limit: Optional[int] = Query(default=20, description="Number of documents to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+    ) -> PaginatedResponse[DocumentResponseSchema]:
+        documents, count = knowledge.get_documents(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
+
+        return PaginatedResponse(
+            data=[
+                DocumentResponseSchema(
+                    id=document.id,
+                    name=document.name,
+                    description=document.description,
+                    type=document.content.type if document.content else None,
+                    size=str(len(document.content.content)) if document.content else "0",
+                    metadata=document.metadata,
+                    linked_to=knowledge.name,
+                )
+                for document in documents
+            ],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=count,
+                total_pages=math.ceil(count / limit) if limit is not None and limit > 0 else 0,
+            ),
+        )
 
     @router.get("/documents/{document_id}", response_model=DocumentResponseSchema, status_code=200)
     def get_document_by_id(document_id: str) -> DocumentResponseSchema:
@@ -95,7 +108,12 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         return document
 
-    @router.delete("/documents/{document_id}", response_model=DocumentResponseSchema, status_code=200)
+    @router.delete(
+        "/documents/{document_id}",
+        response_model=DocumentResponseSchema,
+        status_code=200,
+        response_model_exclude_none=True,
+    )
     def delete_document_by_id(document_id: str) -> DocumentResponseSchema:
         knowledge.remove_document(document_id=document_id)
         log_info(f"Deleting document by id: {document_id}")

@@ -16,6 +16,7 @@ class Document:
     embedding: Optional[List[float]] = None
     usage: Optional[Dict[str, Any]] = None
     reranking_score: Optional[float] = None
+    source_id: Optional[str] = None
 
     def embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder"""

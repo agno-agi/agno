@@ -2,7 +2,7 @@ import asyncio
 import json
 from io import BytesIO
 from pathlib import Path
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
 from agno.document.base import Document
@@ -15,18 +15,18 @@ class JSONReader(Reader):
 
     chunk: bool = False
 
-    def read(self, path: Union[Path, IO[Any]]) -> List[Document]:
+    def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
             if isinstance(path, Path):
                 if not path.exists():
                     raise FileNotFoundError(f"Could not find file: {path}")
                 log_info(f"Reading: {path}")
-                json_name = path.name.split(".")[0]
+                json_name = name or path.name.split(".")[0]
                 json_contents = json.loads(path.read_text("utf-8"))
 
             elif isinstance(path, BytesIO):
                 log_info(f"Reading uploaded file: {path.name}")
-                json_name = path.name.split(".")[0]
+                json_name = name or path.name.split(".")[0]
                 path.seek(0)
                 json_contents = json.load(path)
 
@@ -54,7 +54,7 @@ class JSONReader(Reader):
         except Exception:
             raise
 
-    async def async_read(self, path: Union[Path, IO[Any]]) -> List[Document]:
+    async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Asynchronously read JSON files.
 
         Args:
@@ -63,4 +63,4 @@ class JSONReader(Reader):
         Returns:
             List[Document]: List of documents from the JSON file
         """
-        return await asyncio.to_thread(self.read, path)
+        return await asyncio.to_thread(self.read, path, name)

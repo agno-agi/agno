@@ -1157,12 +1157,44 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt).fetchone()
             return KnowledgeRow.model_validate(result._mapping)
 
-    def get_knowledge_documents(self) -> List[KnowledgeRow]:
+    def get_knowledge_documents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge documents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge documents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[KnowledgeRow]: The knowledge documents.
+        """
         table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = select(table)
+
+            # Apply sorting
+            if sort_by is not None:
+                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+
+            # Get total count before applying limit and pagination
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            total_count = sess.execute(count_stmt).scalar()
+
+            # Apply pagination after count
+            if limit is not None:
+                stmt = stmt.limit(limit)
+                if page is not None:
+                    stmt = stmt.offset((page - 1) * limit)
+
             result = sess.execute(stmt).fetchall()
-            return [KnowledgeRow.model_validate(record._mapping) for record in result]
+            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
     def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
         """Upsert a knowledge document in the database.

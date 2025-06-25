@@ -86,6 +86,8 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": String, "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 LEARNING_TABLE_SCHEMA = {}

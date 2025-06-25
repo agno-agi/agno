@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document import Document
 from agno.document.local_document_store import LocalDocumentStore
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.interfaces.playground import Playground
 from agno.os.managers import KnowledgeManager
 from agno.vectordb.pgvector import PgVector
 
@@ -26,14 +26,13 @@ document_db = PostgresDb(
     db_url=db_url,
     knowledge_table="knowledge_documents",
 )
-
 # Create knowledge base
 knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
+    vector_store=vector_store,
     document_store=document_store,
     documents_db=document_db,
-    vector_store=vector_store,
 )
 
 basic_agent = Agent(
@@ -44,23 +43,21 @@ basic_agent = Agent(
     markdown=True,
 )
 
-agent_os = AgentOS(
-    name="Example App: Knowledge Agent",
-    description="Example app for basic agent with knowledge capabilities",
-    os_id="knowledge-demo",
+agno_client = AgentOS(
+    name="Example App: Basic Agent",
+    description="Example app for basic agent with playground capabilities",
+    os_id="basic-os-with-knowledge",
     agents=[
         basic_agent,
     ],
-    apps=[KnowledgeManager(knowledge=knowledge)],
+    interfaces=[
+        Playground(),
+    ],
+    apps=[
+        KnowledgeManager(knowledge=knowledge),
+    ],
 )
-app = agent_os.get_app()
+app = agno_client.get_app()
 
 if __name__ == "__main__":
-    """ Run your AgentOS:
-    Now you can interact with your knowledge base using the API. Examples:
-    - http://localhost:8001/knowledge/{id}/documents
-    - http://localhost:8001/knowledge/{id}/documents/123
-    - http://localhost:8001/knowledge/{id}/documents?agent_id=123
-    - http://localhost:8001/knowledge/{id}/documents?limit=10&page=0&sort_by=created_at&sort_order=desc
-    """
-    agent_os.serve(app="knowledge_manager:app", reload=True)
+    agno_client.serve(app="with_knowledge:app", reload=True)
