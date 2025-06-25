@@ -200,7 +200,10 @@ class Step:
                             response = StepOutput(content=str(result))
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(step_input.message, step_input.message_data)
+                    message = self._prepare_message(
+                        step_input.message, step_input.message_data, step_input.previous_step_content
+                    )
+                    
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
@@ -312,7 +315,10 @@ class Step:
                             final_response = StepOutput(content=str(result))
                         log_debug("Function returned non-iterable, created StepOutput")
                 else:
-                    message = self._prepare_message(step_input.message, step_input.message_data)
+                    # For agents and teams, prepare message with context
+                    message = self._prepare_message(
+                        step_input.message, step_input.message_data, step_input.previous_step_content
+                    )
 
                     if self._executor_type in ["agent", "team"]:
                         images = (
@@ -449,7 +455,9 @@ class Step:
 
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(step_input.message, step_input.message_data)
+                    message = self._prepare_message(
+                        step_input.message, step_input.message_data, step_input.previous_step_content
+                    )
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
@@ -572,7 +580,11 @@ class Step:
                         else:
                             final_response = StepOutput(content=str(result))
                 else:
-                    message = self._prepare_message(step_input.message, step_input.message_data)
+                    # For agents and teams, prepare message with context
+                    message = self._prepare_message(
+                        step_input.message, step_input.message_data, step_input.previous_step_content
+                    )
+
                     if self._executor_type in ["agent", "team"]:
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
@@ -649,17 +661,35 @@ class Step:
         return data_str
 
     def _prepare_message(
-        self, message: Optional[str], message_data: Optional[Union[BaseModel, Dict[str, Any]]]
+        self,
+        message: Optional[str],
+        message_data: Optional[Union[BaseModel, Dict[str, Any]]],
+        previous_step_content: Optional[str] = None,
     ) -> Optional[str]:
-        """Prepare the primary input by combining message and message_data"""
+        """Prepare the primary input by combining message, message_data, and previous step content"""
 
         # Convert message_data to string if provided
         data_str = self._parse_message_data(message_data)
-        # Combine message and data
-        if message and data_str:
-            return f"{message}\n\n--- Structured Data ---\n{data_str}"
-        elif message:
-            return message
+
+        # Build the final message by combining all components
+        parts = []
+
+        # Add the main message
+        if message:
+            parts.append(message)
+
+        # Add previous step content if available
+        if previous_step_content:
+            parts.append(f"--- Previous Step Output ---\n{previous_step_content}")
+
+        # Add structured data if available
+        if data_str:
+            parts.append(f"--- Structured Data ---\n{data_str}")
+
+        if parts:
+            return "\n\n".join(parts)
+        elif previous_step_content:
+            return f"Process the following previous step output:\n{previous_step_content}"
         elif data_str:
             return f"Process the following data:\n{data_str}"
         else:

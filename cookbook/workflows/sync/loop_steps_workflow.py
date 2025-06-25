@@ -42,18 +42,16 @@ content_step = Step(
 )
 
 # End condition function
-
-
 def research_evaluator(outputs: List[StepOutput]) -> bool:
     """
     Evaluate if research results are sufficient
     Returns True to break the loop, False to continue
     """
-    # Check if we have good research results
+    # Check if any outputs are present
     if not outputs:
         return False
 
-    # Simple check - if any output contains substantial content, we're good
+    # Check if any output contains substantial content
     for output in outputs:
         if output.content and len(output.content) > 200:
             print(
