@@ -7,7 +7,7 @@ from agno.agent.agent import Agent
 from agno.media import Audio, File, Image, Video
 from agno.run.response import RunResponse
 from agno.team.team import Team
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_warning
 
 try:
     import discord
