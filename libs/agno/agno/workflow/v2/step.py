@@ -152,6 +152,10 @@ class Step:
 
         log_debug(f"Executor type: {self._executor_type}")
 
+        # Set backward compatibility field
+        if step_input.previous_steps_outputs:
+            step_input.previous_step_content = step_input.get_last_step_content()
+
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
@@ -201,8 +205,12 @@ class Step:
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
-                        step_input.message, step_input.message_data, step_input.previous_step_content
+                        step_input.message,
+                        step_input.message_data,
+                        step_input.previous_steps_outputs,
                     )
+
+                    print("-> input msg", message)
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
@@ -663,9 +671,9 @@ class Step:
         self,
         message: Optional[str],
         message_data: Optional[Union[BaseModel, Dict[str, Any]]],
-        previous_step_content: Optional[str] = None,
+        previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
     ) -> Optional[str]:
-        """Prepare the primary input by combining message, message_data, and previous step content"""
+        """Prepare the primary input by combining message, message_data, and previous step outputs"""
 
         # Convert message_data to string if provided
         data_str = self._parse_message_data(message_data)
@@ -677,9 +685,12 @@ class Step:
         if message:
             parts.append(message)
 
-        # Add previous step content if available
-        if previous_step_content:
-            parts.append(f"--- Previous Step Output ---\n{previous_step_content}")
+        # For agents/teams, use the last previous step content (backward compatibility)
+        if previous_steps_outputs and self._executor_type in ["agent", "team"]:
+            # Get the last step output content
+            last_output = list(previous_steps_outputs.values())[-1] if previous_steps_outputs else None
+            if last_output and last_output.content:
+                parts.append(f"--- Previous Step Output ---\n{last_output.content}")
 
         # Add structured data if available
         if data_str:
@@ -687,8 +698,11 @@ class Step:
 
         if parts:
             return "\n\n".join(parts)
-        elif previous_step_content:
-            return f"Process the following previous step output:\n{previous_step_content}"
+        elif previous_steps_outputs and self._executor_type in ["agent", "team"]:
+            # Fallback: use last step content for agents/teams
+            last_output = list(previous_steps_outputs.values())[-1] if previous_steps_outputs else None
+            if last_output and last_output.content:
+                return f"Process the following previous step output:\n{last_output.content}"
         elif data_str:
             return f"Process the following data:\n{data_str}"
         else:
