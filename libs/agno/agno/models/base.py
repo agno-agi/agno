@@ -1544,6 +1544,7 @@ class Model(ABC):
 
                             if fc.function.show_result:
                                 yield ModelResponse(content=item.content)
+                                continue
 
                         # Yield the event itself to bubble it up
                         yield item
@@ -1564,6 +1565,7 @@ class Model(ABC):
 
                             if fc.function.show_result:
                                 yield ModelResponse(content=item.content)
+                                continue
 
                         # Yield the event itself to bubble it up
                         yield item

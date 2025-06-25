@@ -278,7 +278,7 @@ class OpenAIChat(Model):
                     message_dict["content"].extend(audio_to_message(audio=message.audio))
 
         if message.audio_output is not None:
-            message_dict["content"] = None
+            message_dict["content"] = ""
             message_dict["audio"] = {"id": message.audio_output.id}
 
         if message.videos is not None and len(message.videos) > 0:
@@ -304,7 +304,7 @@ class OpenAIChat(Model):
 
         # Manually add the content field even if it is None
         if message.content is None:
-            message_dict["content"] = None
+            message_dict["content"] = ""
         return message_dict
 
     def invoke(
@@ -323,7 +323,6 @@ class OpenAIChat(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
-
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,

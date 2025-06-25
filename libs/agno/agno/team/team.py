@@ -75,10 +75,12 @@ from agno.utils.log import (
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
+    async_generator_wrapper,
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
     format_tool_calls,
+    generator_wrapper,
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -267,7 +269,7 @@ class Team:
     # Store the events from the Team
     store_events: bool = False
     # List of events to skip from the Team
-    events_to_skip: Optional[List[str]] = None
+    events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
 
     # Optional app ID. Indicates this team is part of an app.
     app_id: Optional[str] = None
@@ -347,7 +349,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[str]] = None,
+        events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
         show_members_responses: bool = False,
@@ -433,10 +435,13 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
-        self.events_to_skip = events_to_skip or [
-            RunEvent.run_response_content.value,
-            TeamRunEvent.run_response_content.value,
-        ]
+
+        self.events_to_skip = events_to_skip
+        if self.events_to_skip is None:
+            self.events_to_skip = [
+                RunEvent.run_response_content,
+                TeamRunEvent.run_response_content,
+            ]
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
@@ -598,7 +603,8 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            self.memory = deepcopy(self.memory)
+            if isinstance(self.memory, Memory):
+                self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
@@ -868,7 +874,7 @@ class Team:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
-                    return self._generator_wrapper(
+                    return generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -885,16 +891,12 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1271,7 +1273,7 @@ class Team:
                     await asyncio.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream and self.is_streamable:
-                    return self._async_generator_wrapper(
+                    return async_generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -1288,14 +1290,14 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise last_exception
         else:
             if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
@@ -2118,7 +2120,8 @@ class Team:
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
-        if self.store_events and event.event not in (self.events_to_skip or []):
+        events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
+        if self.store_events and event.event not in events_to_skip:
             if run_response.events is None:
                 run_response.events = []
             run_response.events.append(event)
@@ -4409,12 +4412,6 @@ class Team:
                     ),
                     run_response,
                 )
-
-    def _generator_wrapper(self, event: TeamRunResponseEvent) -> Iterator[TeamRunResponseEvent]:
-        yield event
-
-    async def _async_generator_wrapper(self, event: TeamRunResponseEvent) -> AsyncIterator[TeamRunResponseEvent]:
-        yield event
 
     def _create_run_response(
         self,
