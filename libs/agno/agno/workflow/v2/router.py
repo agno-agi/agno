@@ -97,7 +97,6 @@ class Router:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,
