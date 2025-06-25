@@ -6,7 +6,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Create a knowledge base with the PDFs from the data/pdfs directory
 knowledge_base = PDFKnowledgeBase(
-    path="tmp/",
+    path="tmp/cv_2.pdf",
     vector_db=PgVector(
         table_name="pdf_documents",
         # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
@@ -24,4 +24,4 @@ agent = Agent(
 )
 
 # Ask the agent about the knowledge base
-agent.print_response("Who is the best engineering candidate?", markdown=True)
+agent.print_response("Recommend a candidate for the role of Software Engineer?", markdown=True)

@@ -81,6 +81,11 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
     "description": {"type": String, "nullable": False},
+    "metadata": {"type": JSON, "nullable": True},
+    "type": {"type": String, "nullable": True},
+    "size": {"type": BigInteger, "nullable": True},
+    "linked_to": {"type": String, "nullable": True},
+    "access_count": {"type": BigInteger, "nullable": True},
 }
 
 LEARNING_TABLE_SCHEMA = {}
@@ -102,6 +107,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
+        "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
 

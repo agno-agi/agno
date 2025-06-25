@@ -6,7 +6,7 @@ from fastapi.routing import APIRouter
 
 from agno.os.managers.base import BaseManager
 from agno.os.managers.knowledge.router import attach_routes
-from agno.knowledge.knowledge_base import KnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class KnowledgeManager(BaseManager):
 
     router: APIRouter
 
-    def __init__(self, knowledge: KnowledgeBase, name: Optional[str] = None):
+    def __init__(self, knowledge: Knowledge, name: Optional[str] = None):
         self.name = name
         self.knowledge = knowledge
 

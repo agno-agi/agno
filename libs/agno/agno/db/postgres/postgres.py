@@ -5,6 +5,8 @@ from uuid import uuid4
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.knowledge import KnowledgeRow
+
 from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1130,17 +1132,60 @@ class PostgresDb(BaseDb):
 
     # -- Knowledge methods --
 
+    def get_knowledge_table(self) -> Table:
+        """Get or create the knowledge table."""
+        if not hasattr(self, "knowledge_table"):
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge table was not provided on initialization")
+            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
+            self.knowledge_table = self.get_or_create_table(
+                table_name=self.knowledge_table_name, table_type="knowledge_documents", db_schema=self.db_schema
+            )
+        return self.knowledge_table
+
     def delete_knowledge_document(self, knowledge_id: str):
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = table.delete().where(table.c.id == knowledge_id)
+            sess.execute(stmt)
+            sess.commit()
         return
 
-    def get_knowledge_document(self, knowledge_id: str):
-        return
+    def get_knowledge_document(self, knowledge_id: str) -> Optional[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.id == knowledge_id)
+            result = sess.execute(stmt).fetchone()
+            return KnowledgeRow.model_validate(result._mapping)
 
-    def get_knowledge_documents(self, knowledge_id: str):
-        return
+    def get_knowledge_documents(self) -> List[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table)
+            result = sess.execute(stmt).fetchall()
+            return [KnowledgeRow.model_validate(record._mapping) for record in result]
+        
 
-    def upsert_knowledge_document(self, knowledge_id: str):
-        return
+    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+        """Upsert a knowledge document in the database.
+
+        Args:
+            knowledge_document (KnowledgeRow): The knowledge document to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
+        """
+        try:
+            table = self.get_knowledge_table()
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(knowledge_row.model_dump())
+                sess.execute(stmt)
+                sess.commit()
+            return
+        except Exception as e:
+            log_error(f"Error upserting knowledge document: {e}")
+            return None
+        
 
     # -- Eval methods --
 

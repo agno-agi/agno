@@ -3,7 +3,7 @@ from agno.os import AgentOS
 from agno.os.managers import KnowledgeManager
 from agno.document import Document
 from agno.document.local_document_store import LocalDocumentStore
-from agno.knowledge.knowledge_base import KnowledgeBase
+from agno.knowledge.knowledge import KnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 

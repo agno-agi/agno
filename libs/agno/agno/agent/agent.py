@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory, UserMemory
 from agno.models.base import Model
@@ -146,7 +147,7 @@ class Agent:
     num_history_runs: int = 3
 
     # --- Agent Knowledge ---
-    knowledge: Optional[AgentKnowledge] = None
+    knowledge: Optional[Union[AgentKnowledge, Knowledge]] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
@@ -4713,7 +4714,7 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                getattr(self.knowledge, "vector_db", None) is None
+                (getattr(self.knowledge, "vector_db", None) or getattr(self.knowledge, "vector_store", None)) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None

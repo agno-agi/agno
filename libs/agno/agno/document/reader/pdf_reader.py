@@ -94,9 +94,11 @@ class BasePDFReader(Reader):
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
-    def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
+    def read(self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
-            if isinstance(pdf, str):
+            if name:
+                doc_name = name
+            elif isinstance(pdf, str):
                 doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
                 doc_name = pdf.name.split(".")[0]

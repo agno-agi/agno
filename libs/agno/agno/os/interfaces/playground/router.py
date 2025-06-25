@@ -8,9 +8,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
+from agno.os.utils import get_agent_by_id, process_audio, process_image, process_video
+
 from agno.os.operator import (
-    format_tools,
-    get_agent_by_id,
     get_session_title,
     get_session_title_from_team_session,
     get_session_title_from_workflow_session,
@@ -18,15 +18,12 @@ from agno.os.operator import (
     get_workflow_by_id,
 )
 from agno.os.interfaces.playground.schemas import (
-    AgentGetResponse,
-    AgentModel,
+
     AgentRenameRequest,
     AgentSessionsResponse,
     MemoryResponse,
-    TeamGetResponse,
     TeamRenameRequest,
     TeamSessionResponse,
-    WorkflowGetResponse,
     WorkflowRenameRequest,
     WorkflowRunRequest,
     WorkflowSessionResponse,
@@ -204,13 +201,13 @@ def attach_routes(
         else:
             return []
 
-    @router.get("/workflows/{workflow_id}", response_model=WorkflowGetResponse)
+    @router.get("/workflows/{workflow_id}", response_model=WorkflowsGetResponse)
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowGetResponse(
+        return WorkflowsGetResponse(
             workflow_id=workflow.workflow_id,
             name=workflow.name,
             description=workflow.description,
