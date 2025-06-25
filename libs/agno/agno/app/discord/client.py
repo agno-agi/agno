@@ -5,6 +5,7 @@ import requests
 
 from agno.agent.agent import Agent
 from agno.media import Audio, File, Image, Video
+from agno.run.response import RunResponse
 from agno.team.team import Team
 from agno.utils.log import log_info
 
@@ -69,12 +70,13 @@ class DiscordClient:
             elif isinstance(message.channel, discord.TextChannel):
                 thread = await message.create_thread(name=f"{message_user}'s thread")
             else:
-                thread = message.channel
+                log_info(f"received {message.content} but not in a supported channel")
+                return
 
-            with thread.typing():
+            async with thread.typing():
                 if self.agent:
                     self.agent.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
-                    response = await self.agent.arun(
+                    response: RunResponse = await self.agent.arun(
                         message_text,
                         user_id=message_user,
                         session_id=str(thread.id),
@@ -84,7 +86,7 @@ class DiscordClient:
                     )
                 elif self.team:
                     self.team.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
-                    response = await self.team.arun(
+                    response: RunResponse = await self.team.arun(
                         message=message_text,
                         user_id=message_user,
                         session_id=str(thread.id),
@@ -94,11 +96,21 @@ class DiscordClient:
                         files=[File(url=message_audio)] if message_file else None,
                     )
 
-                if response.reasoning_content:
-                    await self._send_discord_messages(
-                        thread=thread, message=f"Reasoning: \n{response.reasoning_content}", italics=True
-                    )
-                await self._send_discord_messages(thread=thread, message=response.content)
+                await self._handle_response_in_thread(response, thread)
+
+    async def _handle_hitl(self, response: RunResponse, thread: discord.channel):
+        return
+
+    async def _handle_response_in_thread(self, response: RunResponse, thread: discord.channel):
+        if response.is_paused:
+            await self._handle_hitl(response, thread)
+
+        if response.reasoning_content:
+            await self._send_discord_messages(
+                thread=thread, message=f"Reasoning: \n{response.reasoning_content}", italics=True
+            )
+
+        await self._send_discord_messages(thread=thread, message=response.content)
 
     async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
         if len(message) < 1500:
