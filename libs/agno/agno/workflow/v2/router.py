@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -68,7 +68,10 @@ class Router:
         self.choices = prepared_steps
 
     def _update_step_input_from_outputs(
-        self, step_input: StepInput, step_outputs: Union[StepOutput, List[StepOutput]]
+        self,
+        step_input: StepInput,
+        step_outputs: Union[StepOutput, List[StepOutput]],
+        router_step_outputs: Optional[Dict[str, StepOutput]] = None,
     ) -> StepInput:
         """Helper to update step input from step outputs - mirrors Loop logic"""
         current_images = step_input.images or []
@@ -79,19 +82,25 @@ class Router:
             all_images = sum([out.images or [] for out in step_outputs], [])
             all_videos = sum([out.videos or [] for out in step_outputs], [])
             all_audio = sum([out.audio or [] for out in step_outputs], [])
-            # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
-            # Single output
             all_images = step_outputs.images or []
             all_videos = step_outputs.videos or []
             all_audio = step_outputs.audio or []
             previous_step_content = step_outputs.content
 
+        updated_previous_steps_outputs = {}
+        if step_input.previous_steps_outputs:
+            updated_previous_steps_outputs.update(step_input.previous_steps_outputs)
+        if router_step_outputs:
+            updated_previous_steps_outputs.update(router_step_outputs)
+
         return StepInput(
             message=step_input.message,
             message_data=step_input.message_data,
             previous_step_content=previous_step_content,
+            previous_steps_outputs=updated_previous_steps_outputs,
+            workflow_input_message=step_input.workflow_input_message,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
@@ -150,22 +159,26 @@ class Router:
 
         all_results = []
         current_step_input = step_input
+        router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
             try:
                 step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
 
-                # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
+                # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        router_step_outputs[step_name] = step_output[-1]
                 else:
                     all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    router_step_outputs[step_name] = step_output
 
-                step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} completed")
-
-                # Update step input for next step - mirrors Loop logic
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, router_step_outputs
+                )
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -226,6 +239,7 @@ class Router:
 
         all_results = []
         current_step_input = step_input
+        router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
             try:
@@ -249,15 +263,17 @@ class Router:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Router step {step_name} streaming completed")
 
-                # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
+                        router_step_outputs[step_name] = step_outputs_for_step[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step[0]
+                            current_step_input, step_outputs_for_step[0], router_step_outputs
                         )
                     else:
+                        # Use last output
+                        router_step_outputs[step_name] = step_outputs_for_step[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step
+                            current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
             except Exception as e:
@@ -285,6 +301,9 @@ class Router:
             step_results=all_results,
         )
 
+        for result in all_results:
+            yield result
+
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
@@ -304,22 +323,28 @@ class Router:
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
+        router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
             try:
                 step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
-
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        router_step_outputs[step_name] = step_output[-1]
                 else:
                     all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    router_step_outputs[step_name] = step_output
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Router step {step_name} async completed")
 
-                # Update step input for next step
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, router_step_outputs
+                )
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -381,6 +406,7 @@ class Router:
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
+        router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
             try:
@@ -405,15 +431,17 @@ class Router:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Router step {step_name} async streaming completed")
 
-                # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
+                        router_step_outputs[step_name] = step_outputs_for_step[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step[0]
+                            current_step_input, step_outputs_for_step[0], router_step_outputs
                         )
                     else:
+                        # Use last output
+                        router_step_outputs[step_name] = step_outputs_for_step[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step
+                            current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
             except Exception as e:
@@ -440,3 +468,6 @@ class Router:
             executed_steps=len(steps_to_execute),
             step_results=all_results,
         )
+
+        for result in all_results:
+            yield result

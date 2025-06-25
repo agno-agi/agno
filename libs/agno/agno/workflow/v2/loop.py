@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -81,7 +81,10 @@ class Loop:
         self.steps = prepared_steps
 
     def _update_step_input_from_outputs(
-        self, step_input: StepInput, step_outputs: Union[StepOutput, List[StepOutput]]
+        self,
+        step_input: StepInput,
+        step_outputs: Union[StepOutput, List[StepOutput]],
+        loop_step_outputs: Optional[Dict[str, StepOutput]] = None,
     ) -> StepInput:
         """Helper to update step input from step outputs (handles both single and multiple outputs)"""
         current_images = step_input.images or []
@@ -102,10 +105,18 @@ class Loop:
             all_audio = step_outputs.audio or []
             previous_step_content = step_outputs.content
 
+        updated_previous_steps_outputs = {}
+        if step_input.previous_steps_outputs:
+            updated_previous_steps_outputs.update(step_input.previous_steps_outputs)
+        if loop_step_outputs:
+            updated_previous_steps_outputs.update(loop_step_outputs)
+
         return StepInput(
             message=step_input.message,
             message_data=step_input.message_data,
             previous_step_content=previous_step_content,
+            previous_steps_outputs=updated_previous_steps_outputs,
+            workflow_input_message=step_input.workflow_input_message,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
@@ -132,20 +143,28 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            loop_step_outputs = {}  # Track outputs within this loop iteration
 
-            for step in self.steps:
+            for i, step in enumerate(self.steps):
                 step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
                     # This is a step that returns multiple outputs (Loop, Condition etc.)
                     iteration_results.extend(step_output)
+                    if step_output:  # Add last output to loop tracking
+                        step_name = getattr(step, "name", f"step_{i + 1}")
+                        loop_step_outputs[step_name] = step_output[-1]
                 else:
                     # Single StepOutput
                     iteration_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i + 1}")
+                    loop_step_outputs[step_name] = step_output
 
                 # Update step input for next step
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, loop_step_outputs
+                )
 
             all_results.append(iteration_results)
             iteration += 1
@@ -218,6 +237,7 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            loop_step_outputs = {}
 
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
@@ -237,15 +257,19 @@ class Loop:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
-                # Update step input for next step using all outputs from this step
+                # Update loop_step_outputs with this step's output
                 if step_outputs_for_iteration:
+                    step_name = getattr(step, "name", f"step_{i + 1}")
                     if len(step_outputs_for_iteration) == 1:
+                        loop_step_outputs[step_name] = step_outputs_for_iteration[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_iteration[0]
+                            current_step_input, step_outputs_for_iteration[0], loop_step_outputs
                         )
                     else:
+                        # Use last output
+                        loop_step_outputs[step_name] = step_outputs_for_iteration[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_iteration
+                            current_step_input, step_outputs_for_iteration, loop_step_outputs
                         )
 
             all_results.append(iteration_results)
@@ -293,6 +317,10 @@ class Loop:
             all_results=all_results,
         )
 
+        for iteration_results in all_results:
+            for step_output in iteration_results:
+                yield step_output
+
     async def aexecute(
         self,
         step_input: StepInput,
@@ -314,20 +342,28 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            loop_step_outputs = {}  # Track outputs within this loop iteration
 
-            for step in self.steps:
+            for i, step in enumerate(self.steps):
                 step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
                     # This is a step that returns multiple outputs (Loop, Condition etc.)
                     iteration_results.extend(step_output)
+                    if step_output:  # Add last output to loop tracking
+                        step_name = getattr(step, "name", f"step_{i + 1}")
+                        loop_step_outputs[step_name] = step_output[-1]
                 else:
                     # Single StepOutput
                     iteration_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i + 1}")
+                    loop_step_outputs[step_name] = step_output
 
                 # Update step input for next step
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, loop_step_outputs
+                )
 
             all_results.append(iteration_results)
             iteration += 1
@@ -402,6 +438,7 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
@@ -422,15 +459,19 @@ class Loop:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
-                # Update step input for next step using all outputs from this step
+                # Update loop_step_outputs with this step's output
                 if step_outputs_for_iteration:
+                    step_name = getattr(step, "name", f"step_{i + 1}")
                     if len(step_outputs_for_iteration) == 1:
+                        loop_step_outputs[step_name] = step_outputs_for_iteration[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_iteration[0]
+                            current_step_input, step_outputs_for_iteration[0], loop_step_outputs
                         )
                     else:
+                        # Use last output
+                        loop_step_outputs[step_name] = step_outputs_for_iteration[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_iteration
+                            current_step_input, step_outputs_for_iteration, loop_step_outputs
                         )
 
             all_results.append(iteration_results)
@@ -480,3 +521,7 @@ class Loop:
             max_iterations=self.max_iterations,
             all_results=all_results,
         )
+
+        for iteration_results in all_results:
+            for step_output in iteration_results:
+                yield step_output

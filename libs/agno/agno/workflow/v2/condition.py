@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -68,7 +68,10 @@ class Condition:
         self.steps = prepared_steps
 
     def _update_step_input_from_outputs(
-        self, step_input: StepInput, step_outputs: Union[StepOutput, List[StepOutput]]
+        self,
+        step_input: StepInput,
+        step_outputs: Union[StepOutput, List[StepOutput]],
+        condition_step_outputs: Optional[Dict[str, StepOutput]] = None,
     ) -> StepInput:
         """Helper to update step input from step outputs - mirrors Loop logic"""
         current_images = step_input.images or []
@@ -88,10 +91,18 @@ class Condition:
             all_audio = step_outputs.audio or []
             previous_step_content = step_outputs.content
 
+        updated_previous_steps_outputs = {}
+        if step_input.previous_steps_outputs:
+            updated_previous_steps_outputs.update(step_input.previous_steps_outputs)
+        if condition_step_outputs:
+            updated_previous_steps_outputs.update(condition_step_outputs)
+
         return StepInput(
             message=step_input.message,
             message_data=step_input.message_data,
             previous_step_content=previous_step_content,
+            previous_steps_outputs=updated_previous_steps_outputs,
+            workflow_input_message=step_input.workflow_input_message,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
@@ -150,6 +161,7 @@ class Condition:
 
         all_results = []
         current_step_input = step_input
+        condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
@@ -158,14 +170,20 @@ class Condition:
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        condition_step_outputs[step_name] = step_output[-1]
                 else:
                     all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    condition_step_outputs[step_name] = step_output
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} completed")
 
-                # Update step input for next step - mirrors Loop logic
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, condition_step_outputs
+                )
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -228,6 +246,7 @@ class Condition:
 
         all_results = []
         current_step_input = step_input
+        condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
@@ -251,15 +270,17 @@ class Condition:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} streaming completed")
 
-                # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
+                        condition_step_outputs[step_name] = step_outputs_for_step[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step[0]
+                            current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
+                        # Use last output
+                        condition_step_outputs[step_name] = step_outputs_for_step[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step
+                            current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
             except Exception as e:
@@ -287,6 +308,9 @@ class Condition:
             step_results=all_results,
         )
 
+        for result in all_results:
+            yield result
+
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
@@ -306,6 +330,7 @@ class Condition:
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
+        condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
@@ -314,14 +339,20 @@ class Condition:
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        condition_step_outputs[step_name] = step_output[-1]
                 else:
                     all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    condition_step_outputs[step_name] = step_output
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async completed")
 
-                # Update step input for next step
-                current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, condition_step_outputs
+                )
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -385,6 +416,7 @@ class Condition:
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
+        condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
@@ -409,15 +441,17 @@ class Condition:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async streaming completed")
 
-                # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
+                        condition_step_outputs[step_name] = step_outputs_for_step[0]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step[0]
+                            current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
+                        # Use last output
+                        condition_step_outputs[step_name] = step_outputs_for_step[-1]
                         current_step_input = self._update_step_input_from_outputs(
-                            current_step_input, step_outputs_for_step
+                            current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
             except Exception as e:
@@ -444,3 +478,6 @@ class Condition:
             executed_steps=len(self.steps),
             step_results=all_results,
         )
+
+        for result in all_results:
+            yield result

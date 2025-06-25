@@ -209,6 +209,8 @@ class Step:
                         step_input.previous_steps_outputs,
                     )
 
+                    print(f"--> Step {self.name} prepared message: {message}")
+
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
                         images = (
@@ -328,6 +330,8 @@ class Step:
                         step_input.message_data,
                         step_input.previous_steps_outputs,
                     )
+
+                    print(f"--> Step {self.name} prepared message: {message}")
 
                     if self._executor_type in ["agent", "team"]:
                         images = (
