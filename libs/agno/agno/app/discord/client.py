@@ -14,8 +14,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     print("`discord.py` not installed. Please install using `pip install discord.py`")
 
-import discord
-
 
 class HITLView(discord.ui.View):
     def __init__(self):
@@ -97,7 +95,7 @@ class DiscordClient:
             else:
                 log_info(f"received {message.content} but not in a supported channel")
                 return
-
+            response: RunResponse = None
             async with thread.typing():
                 if self.agent:
                     self.agent.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
