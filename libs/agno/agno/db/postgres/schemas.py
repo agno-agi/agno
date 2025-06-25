@@ -83,6 +83,30 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "description": {"type": String, "nullable": False},
 }
 
+METRICS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "input_audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "output_audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "cached_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "cache_write_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "prompt_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "completion_tokens": {"type": BigInteger, "nullable": False, "default": 0},
+    "prompt_tokens_details": {"type": JSON, "nullable": False, "default": {}},
+    "completion_tokens_details": {"type": JSON, "nullable": False, "default": {}},
+    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "time_to_first_token": {"type": BigInteger, "nullable": False},
+    "time": {"type": BigInteger, "nullable": False},
+    "day": {"type": BigInteger, "nullable": False, "unique": True},
+    "month": {"type": BigInteger, "nullable": False, "unique": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": False},
+}
+
 LEARNING_TABLE_SCHEMA = {}
 
 
@@ -98,10 +122,11 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     schemas = {
         "agent_sessions": AGENT_SESSION_TABLE_SCHEMA,
-        "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
-        "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
+        "metrics": METRICS_TABLE_SCHEMA,
+        "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
+        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
         "learnings": {},
     }
 

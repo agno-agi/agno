@@ -6,6 +6,7 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.os.connectors.metrics.schemas import AggregatedMetrics
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -31,6 +32,7 @@ class PostgresDb(BaseDb):
         team_session_table: Optional[str] = None,
         workflow_session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
+        metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
@@ -50,6 +52,7 @@ class PostgresDb(BaseDb):
             team_session_table (Optional[str]): Name of the table to store Team sessions.
             workflow_session_table (Optional[str]): Name of the table to store Workflow sessions.
             user_memory_table (Optional[str]): Name of the table to store user memories.
+            metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
 
@@ -62,11 +65,10 @@ class PostgresDb(BaseDb):
             team_session_table=team_session_table,
             workflow_session_table=workflow_session_table,
             user_memory_table=user_memory_table,
+            metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
         )
-
-        self.agent_session_table: Optional[Table] = None
 
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
@@ -1127,6 +1129,27 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
             return False
+
+    # -- Metrics methods --
+
+    def get_metrics_table(self) -> Table:
+        """Get or create the metrics table."""
+        if not hasattr(self, "metrics_table"):
+            if self.metrics_table_name is None:
+                raise ValueError("Metrics table was not provided on initialization")
+            log_info(f"Getting metrics table: {self.metrics_table_name}")
+            self.metrics_table = self.get_or_create_table(
+                table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+            )
+        return self.metrics_table
+
+    def get_metrics(self) -> List[AggregatedMetrics]:
+        """Get all metrics from the database."""
+        return []
+
+    def upsert_metrics(self) -> Optional[AggregatedMetrics]:
+        """Upsert a metrics in the database."""
+        return None
 
     # -- Knowledge methods --
 
