@@ -12,7 +12,11 @@ from agno.run.v2.workflow import (
     WorkflowRunResponseEvent,
 )
 from agno.utils.log import log_debug, logger
+from agno.workflow.v2.condition import Condition
+from agno.workflow.v2.loop import Loop
+from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
+from agno.workflow.v2.steps import Steps
 from agno.workflow.v2.types import StepInput, StepOutput
 
 WorkflowSteps = List[
@@ -41,7 +45,7 @@ class Parallel:
 
     def __init__(
         self,
-        *steps: Union[Step, "Steps", "Loop", "Parallel", "Condition"],
+        *steps: WorkflowSteps,
         name: Optional[str] = None,
         description: Optional[str] = None,
     ):
@@ -65,7 +69,7 @@ class Parallel:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Loop, Parallel, Condition)):
+            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
