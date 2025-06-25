@@ -1,7 +1,6 @@
-import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -14,6 +13,7 @@ from agno.run.v2.workflow import (
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.loop import Loop
 from agno.workflow.v2.step import Step
+from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.types import StepInput, StepOutput
 
 WorkflowSteps = List[
@@ -36,11 +36,11 @@ class Router:
     """A router that dynamically selects which step(s) to execute based on input"""
 
     # Router function that returns the step(s) to execute
-    router: Union[
+    selector: Union[
         Callable[[StepInput], Union[Step, List[Step]]],
         Callable[[StepInput], Awaitable[Union[Step, List[Step]]]],
     ]
-    steps: WorkflowSteps  # Available steps that can be selected
+    choices: WorkflowSteps  # Available steps that can be selected
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -53,19 +53,19 @@ class Router:
         from agno.workflow.v2.step import Step
 
         prepared_steps = []
-        for step in self.steps:
+        for step in self.choices:
             if isinstance(step, Callable):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Loop, Parallel, "Condition", Router)):
+            elif isinstance(step, (Step, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-        self.steps = prepared_steps
+        self.choices = prepared_steps
 
     def _update_step_input_from_outputs(
         self, step_input: StepInput, step_outputs: Union[StepOutput, List[StepOutput]]
@@ -99,8 +99,8 @@ class Router:
 
     def _route_steps(self, step_input: StepInput) -> List[Step]:
         """Route to the appropriate steps based on input"""
-        if callable(self.router):
-            result = self.router(step_input)
+        if callable(self.selector):
+            result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):
@@ -115,11 +115,11 @@ class Router:
 
     async def _aroute_steps(self, step_input: StepInput) -> List[Step]:
         """Async version of step routing"""
-        if callable(self.router):
-            if inspect.iscoroutinefunction(self.router):
-                result = await self.router(step_input)
+        if callable(self.selector):
+            if inspect.iscoroutinefunction(self.selector):
+                result = await self.selector(step_input)
             else:
-                result = self.router(step_input)
+                result = self.selector(step_input)
 
             # Handle the result based on its type
             if isinstance(result, Step):

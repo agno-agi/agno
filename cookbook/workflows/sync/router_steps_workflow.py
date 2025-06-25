@@ -88,8 +88,8 @@ workflow = Workflow(
     steps=[
         Router(
             name="research_strategy_selector",
-            router=research_router,
-            steps=[research_hackernews, research_web],
+            selector=research_router,
+            choices=[research_hackernews, research_web],
             description="Intelligently selects research method based on topic",
         ),
         publish_content,
