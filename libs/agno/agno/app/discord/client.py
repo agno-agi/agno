@@ -11,6 +11,8 @@ from agno.utils.log import log_info, log_warning
 
 try:
     import discord
+    from discord.ext import commands
+
 except (ImportError, ModuleNotFoundError):
     print("`discord.py` not installed. Please install using `pip install discord.py`")
 
@@ -35,7 +37,7 @@ class HITLView(discord.ui.View):
         self.stop()
 
     async def on_timeout(self):
-        log_warning("View Timeout Error")
+        log_warning(f"Agent Timeout Error")
 
 
 class DiscordClient:
@@ -95,7 +97,7 @@ class DiscordClient:
             else:
                 log_info(f"received {message.content} but not in a supported channel")
                 return
-            response: RunResponse = None
+
             async with thread.typing():
                 if self.agent:
                     self.agent.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
