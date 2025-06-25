@@ -11,7 +11,7 @@ class LinearTools(Toolkit):
     def __init__(
         self,
         get_user_details: bool = True,
-        get_team_details: bool = True,
+        get_teams_details: bool = True,
         get_issue_details: bool = True,
         create_issue: bool = True,
         update_issue: bool = True,
@@ -32,8 +32,8 @@ class LinearTools(Toolkit):
         tools: List[Any] = []
         if get_user_details:
             tools.append(self.get_user_details)
-        if get_team_details:
-            tools.append(self.get_team_details)
+        if get_teams_details:
+            tools.append(self.get_teams_details)
         if get_issue_details:
             tools.append(self.get_issue_details)
         if create_issue:
