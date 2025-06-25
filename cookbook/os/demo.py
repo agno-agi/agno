@@ -2,9 +2,9 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.base import Document
+from agno.document.document_v2 import DocumentV2
 from agno.document.local_document_store import LocalDocumentStore
-from agno.knowledge.knowledge import KnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -37,25 +37,37 @@ vector_store = PgVector(
 )
 
 # Create knowledge base
-knowledge_base = KnowledgeBase(
+knowledge1 = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
     document_store=document_store,
+    vector_store=vector_store,
 )
 
-knowledge_base_2 = KnowledgeBase(
+knowledge2 = Knowledge(
     name="My Knowledge Base 2",
     description="A simple knowledge base 2",
     document_store=document_store,
+    vector_store=vector_store,
 )
 
 
 # Add a document
-doc_1 = Document(content="Hello worlds", name="greetings")
-knowledge_base.add_document(doc_1)
+knowledge1.add_documents(
+    DocumentV2(
+        name="CV1",
+        paths=["tmp/cv_1.pdf"],
+        metadata={"user_tag": "Engineering candidates"},
+    )
+) 
 
-doc_2 = Document(content="Hello worlds 2", name="greetings 2")
-knowledge_base_2.add_document(doc_2)
+knowledge2.add_documents(
+    DocumentV2(
+        name="CV1",
+        paths=["tmp/cv_2.pdf"],
+        metadata={"user_tag": "Engineering candidates"},
+    )
+) 
 
 # Setup the agent
 agent = Agent(
@@ -64,7 +76,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
     enable_user_memories=True,
-    knowledge=knowledge_base,
+    knowledge=knowledge1,
     markdown=True,
 )
 
@@ -74,7 +86,7 @@ agent_2 = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
     enable_user_memories=True,
-    knowledge=knowledge_base,
+    knowledge=knowledge2,
     markdown=True,
 )
 
@@ -87,8 +99,8 @@ agent_os = AgentOS(
     interfaces=[Whatsapp(agent=agent)],
     apps=[
         SessionManager(db=db, name="Session Manager"),
-        KnowledgeManager(knowledge=knowledge_base, name="Knowledge Manager 1"),
-        KnowledgeManager(knowledge=knowledge_base_2, name="Knowledge Manager 2"),
+        KnowledgeManager(knowledge=knowledge1, name="Knowledge Manager 1"),
+        KnowledgeManager(knowledge=knowledge2, name="Knowledge Manager 2"),
         MemoryManager(memory=memory, name="Memory Manager"),
     ],
 )
