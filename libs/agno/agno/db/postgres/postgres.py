@@ -6,6 +6,7 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.os.connectors.metrics.schemas import AggregatedMetrics
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -1141,6 +1142,14 @@ class PostgresDb(BaseDb):
                 table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
             )
         return self.metrics_table
+
+    def get_metrics(self) -> List[AggregatedMetrics]:
+        """Get all metrics from the database."""
+        return []
+
+    def upsert_metrics(self) -> Optional[AggregatedMetrics]:
+        """Upsert a metrics in the database."""
+        return None
 
     # -- Knowledge methods --
 
