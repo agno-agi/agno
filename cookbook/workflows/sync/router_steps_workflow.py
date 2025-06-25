@@ -87,7 +87,7 @@ workflow = Workflow(
     description="Automatically selects the best research method based on topic, then publishes content",
     steps=[
         Router(
-            name="research_strategy_selector",
+            name="research_strategy_router",
             selector=research_router,
             choices=[research_hackernews, research_web],
             description="Intelligently selects research method based on topic",
