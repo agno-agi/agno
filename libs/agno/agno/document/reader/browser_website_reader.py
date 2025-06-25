@@ -10,24 +10,15 @@ from agno.document.reader.base import Reader
 from agno.utils.log import log_debug, logger
 
 try:
-    from playwright.async_api import async_playwright, Browser, BrowserContext, Page
-    from playwright.sync_api import (
-        sync_playwright,
-        Browser as SyncBrowser,
-        BrowserContext as SyncBrowserContext,
-        Page as SyncPage,
-    )
+    from playwright.async_api import async_playwright
+    from playwright.sync_api import sync_playwright
 except ImportError:
-    raise ImportError(
-        "The `playwright` package is not installed. Please install it via `pip install playwright`."
-    )
+    raise ImportError("The `playwright` package is not installed. Please install it via `pip install playwright`.")
 
 try:
     from bs4 import BeautifulSoup, Tag
 except ImportError:
-    raise ImportError(
-        "The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`."
-    )
+    raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
 
 
 @dataclass
@@ -79,9 +70,7 @@ class BrowserWebsiteReader(Reader):
 
         # Validate browser type
         if self.browser_type not in ["chromium", "firefox", "webkit"]:
-            raise ValueError(
-                f"Unsupported browser type: {self.browser_type}. Use 'chromium', 'firefox', or 'webkit'"
-            )
+            raise ValueError(f"Unsupported browser type: {self.browser_type}. Use 'chromium', 'firefox', or 'webkit'")
 
         # Validate wait_for_load_state
         if self.wait_for_load_state not in ["networkidle", "load", "domcontentloaded"]:
@@ -108,10 +97,7 @@ class BrowserWebsiteReader(Reader):
         def match(tag: Tag) -> bool:
             if tag.name in ["article", "main"]:
                 return True
-            if any(
-                cls in ["content", "main-content", "post-content"]
-                for cls in tag.get("class", [])
-            ):
+            if any(cls in ["content", "main-content", "post-content"] for cls in tag.get("class", [])):
                 return True
             return False
 
@@ -120,8 +106,7 @@ class BrowserWebsiteReader(Reader):
             return element.get_text(strip=True, separator=" ")
 
         if soup.find("div") and not any(
-            soup.find(class_=class_name)
-            for class_name in ["content", "main-content", "post-content"]
+            soup.find(class_=class_name) for class_name in ["content", "main-content", "post-content"]
         ):
             return ""
 
@@ -227,9 +212,7 @@ class BrowserWebsiteReader(Reader):
                                 full_url = urljoin(current_url, href)
                                 parsed_url = urlparse(full_url)
 
-                                if parsed_url.netloc.endswith(
-                                    primary_domain
-                                ) and not any(
+                                if parsed_url.netloc.endswith(primary_domain) and not any(
                                     parsed_url.path.endswith(ext)
                                     for ext in [
                                         ".pdf",
@@ -242,19 +225,14 @@ class BrowserWebsiteReader(Reader):
                                 ):
                                     if (
                                         full_url not in self._visited
-                                        and (full_url, current_depth + 1)
-                                        not in self._urls_to_crawl
+                                        and (full_url, current_depth + 1) not in self._urls_to_crawl
                                     ):
-                                        self._urls_to_crawl.append(
-                                            (full_url, current_depth + 1)
-                                        )
+                                        self._urls_to_crawl.append((full_url, current_depth + 1))
 
                     except Exception as e:
                         logger.warning(f"Failed to crawl {current_url}: {e}")
                         if current_url == url and not crawler_result:
-                            raise RuntimeError(
-                                f"Failed to crawl starting URL {url}: {str(e)}"
-                            ) from e
+                            raise RuntimeError(f"Failed to crawl starting URL {url}: {str(e)}") from e
 
             finally:
                 browser.close()
@@ -312,9 +290,7 @@ class BrowserWebsiteReader(Reader):
                     await self.async_delay()
 
                     try:
-                        log_debug(
-                            f"Crawling asynchronously with browser: {current_url}"
-                        )
+                        log_debug(f"Crawling asynchronously with browser: {current_url}")
 
                         # Navigate to the page
                         await page.goto(current_url)
@@ -344,9 +320,7 @@ class BrowserWebsiteReader(Reader):
                                 full_url = urljoin(current_url, href)
                                 parsed_url = urlparse(full_url)
 
-                                if parsed_url.netloc.endswith(
-                                    primary_domain
-                                ) and not any(
+                                if parsed_url.netloc.endswith(primary_domain) and not any(
                                     parsed_url.path.endswith(ext)
                                     for ext in [
                                         ".pdf",
@@ -359,29 +333,20 @@ class BrowserWebsiteReader(Reader):
                                 ):
                                     if (
                                         full_url not in self._visited
-                                        and (full_url, current_depth + 1)
-                                        not in self._urls_to_crawl
+                                        and (full_url, current_depth + 1) not in self._urls_to_crawl
                                     ):
-                                        self._urls_to_crawl.append(
-                                            (full_url, current_depth + 1)
-                                        )
+                                        self._urls_to_crawl.append((full_url, current_depth + 1))
 
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to crawl asynchronously {current_url}: {e}"
-                        )
+                        logger.warning(f"Failed to crawl asynchronously {current_url}: {e}")
                         if current_url == url and not crawler_result:
-                            raise RuntimeError(
-                                f"Failed to crawl starting URL {url} asynchronously: {str(e)}"
-                            ) from e
+                            raise RuntimeError(f"Failed to crawl starting URL {url} asynchronously: {str(e)}") from e
 
             finally:
                 await browser.close()
 
         if not crawler_result:
-            raise RuntimeError(
-                f"Failed to extract any content from {url} asynchronously"
-            )
+            raise RuntimeError(f"Failed to extract any content from {url} asynchronously")
 
         return crawler_result
 
@@ -482,7 +447,5 @@ class BrowserWebsiteReader(Reader):
 
             return documents
         except Exception as e:
-            logger.error(
-                f"Error reading website asynchronously with browser {url}: {e}"
-            )
+            logger.error(f"Error reading website asynchronously with browser {url}: {e}")
             raise

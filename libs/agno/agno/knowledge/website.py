@@ -4,8 +4,8 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from pydantic import model_validator
 
 from agno.document import Document
-from agno.document.reader.website_reader import WebsiteReader
 from agno.document.reader.browser_website_reader import BrowserWebsiteReader
+from agno.document.reader.website_reader import WebsiteReader
 from agno.knowledge.agent import AgentKnowledge
 from agno.utils.log import log_debug, log_info, logger
 
@@ -13,9 +13,7 @@ from agno.utils.log import log_debug, log_info, logger
 class WebsiteKnowledgeBase(AgentKnowledge):
     urls: List[str] = []
     reader: Optional[Union[WebsiteReader, BrowserWebsiteReader]] = None
-    reader_type: str = (
-        "http"  # "http" for WebsiteReader, "browser" for BrowserWebsiteReader
-    )
+    reader_type: str = "http"  # "http" for WebsiteReader, "browser" for BrowserWebsiteReader
 
     # Common parameters for both readers
     max_depth: int = 3
@@ -25,9 +23,7 @@ class WebsiteKnowledgeBase(AgentKnowledge):
     browser_type: str = "chromium"  # chromium, firefox, webkit
     headless: bool = True
     user_agent: Optional[str] = None
-    proxy: Optional[Union[str, Dict[str, str]]] = (
-        None  # String for http proxy, Dict for browser proxy
-    )
+    proxy: Optional[Union[str, Dict[str, str]]] = None  # String for http proxy, Dict for browser proxy
     timeout: int = 10  # seconds for http, will be converted to ms for browser
     wait_for_load_state: str = "domcontentloaded"
     viewport_size: Optional[Dict[str, int]] = None
@@ -145,9 +141,7 @@ class WebsiteKnowledgeBase(AgentKnowledge):
                     # Filter out documents which already exist in the vector db
                     if not recreate:
                         document_list = [
-                            document
-                            for document in document_list
-                            if not self.vector_db.doc_exists(document)
+                            document for document in document_list if not self.vector_db.doc_exists(document)
                         ]
                         if not document_list:
                             continue
@@ -192,9 +186,7 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         log_debug("Creating collection asynchronously")
         await vector_db.async_create()
 
-        log_info(
-            f"Loading knowledge base asynchronously using {self.reader_type} reader"
-        )
+        log_info(f"Loading knowledge base asynchronously using {self.reader_type} reader")
         num_documents = 0
 
         urls_to_read = self.urls.copy()
@@ -228,17 +220,11 @@ class WebsiteKnowledgeBase(AgentKnowledge):
         for document_list in all_document_lists:
             if document_list:
                 if upsert and vector_db.upsert_available():
-                    await vector_db.async_upsert(
-                        documents=document_list, filters=filters
-                    )
+                    await vector_db.async_upsert(documents=document_list, filters=filters)
                 else:
-                    await vector_db.async_insert(
-                        documents=document_list, filters=filters
-                    )
+                    await vector_db.async_insert(documents=document_list, filters=filters)
                 num_documents += len(document_list)
-                log_info(
-                    f"Loaded {num_documents} documents to knowledge base asynchronously"
-                )
+                log_info(f"Loaded {num_documents} documents to knowledge base asynchronously")
 
         if self.optimize_on is not None and num_documents > self.optimize_on:
             log_debug("Optimizing Vector DB")
