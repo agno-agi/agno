@@ -41,6 +41,7 @@ content_step = Step(
     description="Create content based on research findings",
 )
 
+
 # End condition function
 def research_evaluator(outputs: List[StepOutput]) -> bool:
     """

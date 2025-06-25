@@ -86,8 +86,15 @@ write_step = Step(
 def check_if_we_should_search_hn(step_input: StepInput) -> bool:
     """Check if we should search Hacker News"""
     topic = step_input.message or step_input.previous_step_content or ""
-    tech_keywords = ["ai", "machine learning", "programming",
-                     "software", "tech", "startup", "coding"]
+    tech_keywords = [
+        "ai",
+        "machine learning",
+        "programming",
+        "software",
+        "tech",
+        "startup",
+        "coding",
+    ]
     return any(keyword in topic.lower() for keyword in tech_keywords)
 
 

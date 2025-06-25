@@ -203,7 +203,6 @@ class Step:
                     message = self._prepare_message(
                         step_input.message, step_input.message_data, step_input.previous_step_content
                     )
-                    
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:

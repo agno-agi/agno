@@ -3,7 +3,7 @@ from typing import List
 from agno.agent.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.condition import Condition
+from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput
 from agno.workflow.v2.workflow import Workflow
@@ -46,10 +46,11 @@ publish_content = Step(
 )
 
 
-def condition_checker(step_input: StepInput) -> List[Step]:
+# Now returns Step(s) to execute
+def research_router(step_input: StepInput) -> List[Step]:
     """
     Decide which research method to use based on the input topic.
-    Returns a list containing the single step to execute.
+    Returns a list containing the step(s) to execute.
     """
     # Use the original workflow message if this is the first step
     topic = step_input.previous_step_content or step_input.message or ""
@@ -81,23 +82,21 @@ def condition_checker(step_input: StepInput) -> List[Step]:
         return [research_web]
 
 
-# Create the workflow
 workflow = Workflow(
     name="Intelligent Research Workflow",
     description="Automatically selects the best research method based on topic, then publishes content",
     steps=[
-        Condition(
+        Router(
             name="research_strategy_selector",
-            evaluator=condition_checker,
+            router=research_router,
             steps=[research_hackernews, research_web],
             description="Intelligently selects research method based on topic",
-        ),  # This will execute either HN or web research
-        publish_content,  # This always runs after research
+        ),
+        publish_content,
     ],
 )
 
-# Example usage
 if __name__ == "__main__":
     tech_result = workflow.print_response(
-        "Latest developments in artificial intelligence and machine learning",
+        "Latest developments in artificial intelligence and machine learning"
     )

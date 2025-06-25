@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
@@ -5,8 +6,8 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, List, Opti
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import (
-    ConditionExecutionCompletedEvent,
-    ConditionExecutionStartedEvent,
+    RouterExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
@@ -31,16 +32,15 @@ WorkflowSteps = List[
 
 
 @dataclass
-class Condition:
-    """A condition that executes a step (or list of steps) if the condition is met"""
+class Router:
+    """A router that dynamically selects which step(s) to execute based on input"""
 
-    # Evaluator should only return boolean
-    evaluator: Union[
-        Callable[[StepInput], bool],
-        Callable[[StepInput], Awaitable[bool]],
-        bool,
+    # Router function that returns the step(s) to execute
+    router: Union[
+        Callable[[StepInput], Union[Step, List[Step]]],
+        Callable[[StepInput], Awaitable[Union[Step, List[Step]]]],
     ]
-    steps: WorkflowSteps
+    steps: WorkflowSteps  # Available steps that can be selected
 
     name: Optional[str] = None
     description: Optional[str] = None
@@ -60,7 +60,7 @@ class Condition:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Loop, Parallel, Condition)):
+            elif isinstance(step, (Step, Loop, Parallel, "Condition", Router)):
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -97,61 +97,61 @@ class Condition:
             audio=current_audio + all_audio,
         )
 
-    def _evaluate_condition(self, step_input: StepInput) -> bool:
-        """Evaluate the condition and return boolean result"""
-        if isinstance(self.evaluator, bool):
-            return self.evaluator
+    def _route_steps(self, step_input: StepInput) -> List[Step]:
+        """Route to the appropriate steps based on input"""
+        if callable(self.router):
+            result = self.router(step_input)
 
-        if callable(self.evaluator):
-            result = self.evaluator(step_input)
-
-            if isinstance(result, bool):
+            # Handle the result based on its type
+            if isinstance(result, Step):
+                return [result]
+            elif isinstance(result, list):
                 return result
             else:
-                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
-                return False
+                logger.warning(f"Router function returned unexpected type: {type(result)}")
+                return []
 
-        return False
+        return []
 
-    async def _aevaluate_condition(self, step_input: StepInput) -> bool:
-        """Async version of condition evaluation"""
-        if isinstance(self.evaluator, bool):
-            return self.evaluator
-
-        if callable(self.evaluator):
-            if inspect.iscoroutinefunction(self.evaluator):
-                result = await self.evaluator(step_input)
+    async def _aroute_steps(self, step_input: StepInput) -> List[Step]:
+        """Async version of step routing"""
+        if callable(self.router):
+            if inspect.iscoroutinefunction(self.router):
+                result = await self.router(step_input)
             else:
-                result = self.evaluator(step_input)
+                result = self.router(step_input)
 
-            if isinstance(result, bool):
+            # Handle the result based on its type
+            if isinstance(result, Step):
+                return [result]
+            elif isinstance(result, list):
                 return result
             else:
-                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
-                return False
+                logger.warning(f"Router function returned unexpected type: {type(result)}")
+                return []
 
-        return False
+        return []
 
     def execute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
-        """Execute the condition and its steps with sequential chaining if condition is true"""
-        logger.info(f"Executing condition: {self.name}")
+        """Execute the router and its selected steps with sequential chaining"""
+        logger.info(f"Executing router: {self.name}")
 
         self._prepare_steps()
 
-        # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input)
+        # Route to appropriate steps
+        steps_to_execute = self._route_steps(step_input)
 
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
+        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
-        if not condition_result:
+        if not steps_to_execute:
             return []
 
         all_results = []
         current_step_input = step_input
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
 
@@ -162,14 +162,14 @@ class Condition:
                     all_results.append(step_output)
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} completed")
+                logger.info(f"Router step {step_name} completed")
 
                 # Update step input for next step - mirrors Loop logic
                 current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} failed: {e}")
+                logger.error(f"Router step {step_name} failed: {e}")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -190,37 +190,35 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
-        """Execute the condition with streaming support - mirrors Loop logic"""
-        logger.info(f"Streaming condition: {self.name}")
+        """Execute the router with streaming support"""
+        logger.info(f"Streaming router: {self.name}")
 
         self._prepare_steps()
 
-        # Evaluate the condition
-        condition_result = self._evaluate_condition(step_input)
+        # Route to appropriate steps
+        steps_to_execute = self._route_steps(step_input)
 
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
-
-        # Yield condition started event
-        yield ConditionExecutionStartedEvent(
+        # Yield router started event
+        yield RouterExecutionStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
             session_id=workflow_run_response.session_id or "",
             step_name=self.name,
             step_index=step_index,
-            condition_result=condition_result,
+            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
         )
 
-        if not condition_result:
-            # Yield condition completed event for empty case
-            yield ConditionExecutionCompletedEvent(
+        if not steps_to_execute:
+            # Yield router completed event for empty case
+            yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
                 workflow_id=workflow_run_response.workflow_id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=False,
+                selected_steps=[],
                 executed_steps=0,
                 step_results=[],
             )
@@ -229,7 +227,7 @@ class Condition:
         all_results = []
         current_step_input = step_input
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_outputs_for_step = []
                 # Stream step execution
@@ -249,7 +247,7 @@ class Condition:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} streaming completed")
+                logger.info(f"Router step {step_name} streaming completed")
 
                 # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
@@ -264,7 +262,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} streaming failed: {e}")
+                logger.error(f"Router step {step_name} streaming failed: {e}")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -274,40 +272,40 @@ class Condition:
                 all_results.append(error_output)
                 break
 
-        # Yield condition completed event
-        yield ConditionExecutionCompletedEvent(
+        # Yield router completed event
+        yield RouterExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
             session_id=workflow_run_response.session_id or "",
             step_name=self.name,
             step_index=step_index,
-            condition_result=True,
-            executed_steps=len(self.steps),
+            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+            executed_steps=len(steps_to_execute),
             step_results=all_results,
         )
 
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
-        """Async execute the condition and its steps with sequential chaining"""
-        logger.info(f"Async executing condition: {self.name}")
+        """Async execute the router and its selected steps with sequential chaining"""
+        logger.info(f"Async executing router: {self.name}")
 
         self._prepare_steps()
 
-        # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input)
+        # Route to appropriate steps
+        steps_to_execute = await self._aroute_steps(step_input)
 
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
+        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
-        if not condition_result:
+        if not steps_to_execute:
             return []
 
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
 
@@ -318,14 +316,14 @@ class Condition:
                     all_results.append(step_output)
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} async completed")
+                logger.info(f"Router step {step_name} async completed")
 
                 # Update step input for next step
                 current_step_input = self._update_step_input_from_outputs(current_step_input, step_output)
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async failed: {e}")
+                logger.error(f"Router step {step_name} async failed: {e}")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -333,7 +331,7 @@ class Condition:
                     error=str(e),
                 )
                 all_results.append(error_output)
-                break
+                break  # Stop on first error
 
         return all_results
 
@@ -346,37 +344,35 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
-        """Async execute the condition with streaming support - mirrors Loop logic"""
-        logger.info(f"Async streaming condition: {self.name}")
+        """Async execute the router with streaming support"""
+        logger.info(f"Async streaming router: {self.name}")
 
         self._prepare_steps()
 
-        # Evaluate the condition
-        condition_result = await self._aevaluate_condition(step_input)
+        # Route to appropriate steps
+        steps_to_execute = await self._aroute_steps(step_input)
 
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
-
-        # Yield condition started event
-        yield ConditionExecutionStartedEvent(
+        # Yield router started event
+        yield RouterExecutionStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
             session_id=workflow_run_response.session_id or "",
             step_name=self.name,
             step_index=step_index,
-            condition_result=condition_result,
+            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
         )
 
-        if not condition_result:
-            # Yield condition completed event for empty case
-            yield ConditionExecutionCompletedEvent(
+        if not steps_to_execute:
+            # Yield router completed event for empty case
+            yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
                 workflow_id=workflow_run_response.workflow_id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=False,
+                selected_steps=[],
                 executed_steps=0,
                 step_results=[],
             )
@@ -386,7 +382,7 @@ class Condition:
         all_results = []
         current_step_input = step_input
 
-        for i, step in enumerate(self.steps):
+        for i, step in enumerate(steps_to_execute):
             try:
                 step_outputs_for_step = []
 
@@ -407,7 +403,7 @@ class Condition:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} async streaming completed")
+                logger.info(f"Router step {step_name} async streaming completed")
 
                 # Update step input for next step using all outputs from this step
                 if step_outputs_for_step:
@@ -422,7 +418,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async streaming failed: {e}")
+                logger.error(f"Router step {step_name} async streaming failed: {e}")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -430,17 +426,17 @@ class Condition:
                     error=str(e),
                 )
                 all_results.append(error_output)
-                break
+                break  # Stop on first error
 
-        # Yield condition completed event
-        yield ConditionExecutionCompletedEvent(
+        # Yield router completed event
+        yield RouterExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name or "",
             workflow_id=workflow_run_response.workflow_id or "",
             session_id=workflow_run_response.session_id or "",
             step_name=self.name,
             step_index=step_index,
-            condition_result=True,
-            executed_steps=len(self.steps),
+            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+            executed_steps=len(steps_to_execute),
             step_results=all_results,
         )

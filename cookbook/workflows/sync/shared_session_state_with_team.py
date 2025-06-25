@@ -178,6 +178,7 @@ project_workflow = Workflow(
 
 # === HELPER FUNCTION TO DISPLAY CURRENT STATE ===
 
+
 def print_current_steps(workflow):
     """Helper function to display current workflow state"""
     if (
