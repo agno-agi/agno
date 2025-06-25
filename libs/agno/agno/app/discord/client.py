@@ -15,7 +15,6 @@ except (ImportError, ModuleNotFoundError):
     print("`discord.py` not installed. Please install using `pip install discord.py`")
 
 import discord
-from discord.ext import commands
 
 
 class HITLView(discord.ui.View):
@@ -38,7 +37,7 @@ class HITLView(discord.ui.View):
         self.stop()
 
     async def on_timeout(self):
-        log_warning(f"Agent Timeout Error")
+        log_warning("View Timeout Error")
 
 
 class DiscordClient:
