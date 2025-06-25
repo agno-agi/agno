@@ -112,10 +112,10 @@ class LinearTools(Toolkit):
             logger.error(f"Error fetching authenticated user details: {e}")
             raise
 
-    def get_team_details(self) -> Optional[str]:
+    def get_teams_details(self) -> Optional[str]:
         """
-        Fetch authenticated team details.
-        It will return the team unique IDs, from the viewer object in the GraphQL response.
+        Fetch the list of authenticated teams.
+        It will return the unique ID and team name for each team, from the viewer object in the GraphQL response.
 
         Returns:
             str or None: A dictionary containing team details like team name, id.
