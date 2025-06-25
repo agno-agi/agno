@@ -102,7 +102,7 @@ class Condition:
             message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
-            workflow_input_message=step_input.workflow_input_message,
+            workflow_message=step_input.workflow_message,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,

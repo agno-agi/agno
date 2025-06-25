@@ -45,7 +45,7 @@ class StepInput:
     message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None
     previous_step_content: Optional[Any] = None
     previous_steps_outputs: Optional[Dict[str, "StepOutput"]] = None
-    workflow_input_message: Optional[str] = None  # Original workflow input message
+    workflow_message: Optional[str] = None  # Original workflow message
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -110,7 +110,7 @@ class StepInput:
             "message": self.message,
             "message_data": message_data_dict,
             "previous_steps_outputs": previous_steps_dict,
-            "workflow_input_message": self.workflow_input_message,
+            "workflow_message": self.workflow_message,
             "previous_step_content": previous_step_content_str,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,

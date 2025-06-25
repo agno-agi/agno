@@ -139,7 +139,6 @@ class Workflow:
                     # TODO: Handle properly steps inside other primitives
 
                     # Propagate to step executors (agents/teams)
-                    # Fixed: removed underscore
                     if hasattr(step, "active_executor") and step.active_executor:
                         executor = step.active_executor
                         if hasattr(executor, "debug_mode"):
@@ -173,7 +172,7 @@ class Workflow:
             message_data=execution_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=previous_steps_outputs,
-            workflow_input_message=execution_input.message,
+            workflow_message=execution_input.message,
             images=shared_images or [],
             videos=shared_videos or [],
             audio=shared_audio or [],
