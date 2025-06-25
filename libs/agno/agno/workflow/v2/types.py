@@ -91,7 +91,6 @@ class StepInput:
         elif isinstance(self.message_data, dict):
             message_data_dict = self.message_data
 
-        # Handle previous_step_content for backward compatibility
         if isinstance(self.previous_step_content, BaseModel):
             previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
         elif isinstance(self.previous_step_content, dict):

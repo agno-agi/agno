@@ -139,7 +139,8 @@ class Workflow:
                     # TODO: Handle properly steps inside other primitives
 
                     # Propagate to step executors (agents/teams)
-                    if hasattr(step, "active_executor") and step.active_executor:  # Fixed: removed underscore
+                    # Fixed: removed underscore
+                    if hasattr(step, "active_executor") and step.active_executor:
                         executor = step.active_executor
                         if hasattr(executor, "debug_mode"):
                             executor.debug_mode = True
@@ -177,42 +178,6 @@ class Workflow:
             videos=shared_videos or [],
             audio=shared_audio or [],
         )
-
-    def _update_step_input_from_output(
-        self, step_input: StepInput, step_output: Union[StepOutput, List[StepOutput]], step_name: str
-    ) -> StepInput:
-        """Helper method to update StepInput with new step output"""
-
-        # Initialize previous_steps_outputs if not exists
-        if step_input.previous_steps_outputs is None:
-            step_input.previous_steps_outputs = {}
-
-        # Handle both single and multiple outputs
-        if isinstance(step_output, list):
-            # For multiple outputs (from Loop, Condition, etc.), store the last one
-            if step_output:
-                step_input.previous_steps_outputs[step_name] = step_output[-1]
-                step_input.previous_step_content = step_output[-1].content
-
-            # Collect media from all outputs
-            all_images = sum([out.images or [] for out in step_output], [])
-            all_videos = sum([out.videos or [] for out in step_output], [])
-            all_audio = sum([out.audio or [] for out in step_output], [])
-        else:
-            # Single output
-            step_input.previous_steps_outputs[step_name] = step_output
-            step_input.previous_step_content = step_output.content
-
-            all_images = step_output.images or []
-            all_videos = step_output.videos or []
-            all_audio = step_output.audio or []
-
-        # Update shared media
-        step_input.images = (step_input.images or []) + all_images
-        step_input.videos = (step_input.videos or []) + all_videos
-        step_input.audio = (step_input.audio or []) + all_audio
-
-        return step_input
 
     def _get_step_count(self) -> int:
         """Get the number of steps in the workflow"""
@@ -283,23 +248,19 @@ class Workflow:
                         # Single output
                         previous_steps_outputs[step_name] = step_output
 
-                    # Update step_input for media accumulation
-                    step_input = self._update_step_input_from_output(step_input, step_output, step_name)
-
-                    # print('--> step input', step_input)
-
                     # Update shared media for next step
-                    shared_images = step_input.images
-                    shared_videos = step_input.videos
-                    shared_audio = step_input.audio
-
-                    # Update output collections
                     if isinstance(step_output, list):
                         for output in step_output:
+                            shared_images.extend(output.images or [])
+                            shared_videos.extend(output.videos or [])
+                            shared_audio.extend(output.audio or [])
                             output_images.extend(output.images or [])
                             output_videos.extend(output.videos or [])
                             output_audio.extend(output.audio or [])
                     else:
+                        shared_images.extend(step_output.images or [])
+                        shared_videos.extend(step_output.videos or [])
+                        shared_audio.extend(step_output.audio or [])
                         output_images.extend(step_output.images or [])
                         output_videos.extend(step_output.videos or [])
                         output_audio.extend(step_output.audio or [])
@@ -377,8 +338,9 @@ class Workflow:
 
         else:
             try:
-                # Track outputs from each step for chaining
+                # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
+                previous_steps_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -386,21 +348,18 @@ class Workflow:
                 output_videos = []
                 shared_audio = execution_input.audio or []
                 output_audio = []
-                previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(
-                        f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
-                    )
+                    step_name = getattr(step, "name", f"step_{i + 1}")
+                    log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
-                    # Create StepInput for this step
-                    step_input = StepInput(
-                        message=execution_input.message,
-                        message_data=execution_input.message_data,
-                        previous_step_content=previous_step_content,
-                        images=shared_images,
-                        videos=shared_videos,
-                        audio=shared_audio,
+                    # Create enhanced StepInput
+                    step_input = self._create_step_input(
+                        execution_input=execution_input,
+                        previous_steps_outputs=previous_steps_outputs,
+                        shared_images=shared_images,
+                        shared_videos=shared_videos,
+                        shared_audio=shared_audio,
                     )
 
                     # Execute step with streaming and yield all events
@@ -413,15 +372,19 @@ class Workflow:
                         step_index=i,
                     ):
                         if isinstance(event, StepOutput):
-                            collected_step_outputs.append(event)
+                            step_output = event
+                            collected_step_outputs.append(step_output)
 
-                            previous_step_content = event.content
-                            shared_images.extend(event.images or [])
-                            output_images.extend(event.images or [])
-                            shared_videos.extend(event.videos or [])
-                            output_videos.extend(event.videos or [])
-                            shared_audio.extend(event.audio or [])
-                            output_audio.extend(event.audio or [])
+                            # Update the workflow-level previous_steps_outputs dictionary
+                            previous_steps_outputs[step_name] = step_output
+
+                            # Update shared media for next step
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
 
                             # Only yield StepOutput for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
@@ -433,9 +396,17 @@ class Workflow:
                     self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
-                workflow_run_response.content = collected_step_outputs[
-                    -1
-                ].content  # Final workflow response output is the last step's output
+                if collected_step_outputs:
+                    last_output = collected_step_outputs[-1]
+                    if isinstance(last_output, list) and last_output:
+                        # If it's a list (from Condition/Loop/etc.), use the last one
+                        workflow_run_response.content = last_output[-1].content
+                    else:
+                        # Single StepOutput
+                        workflow_run_response.content = last_output.content
+                else:
+                    workflow_run_response.content = "No steps executed"
+
                 workflow_run_response.step_responses = collected_step_outputs
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
@@ -512,8 +483,9 @@ class Workflow:
 
         else:
             try:
-                # Track outputs from each step for chaining
+                # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
+                previous_steps_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -521,50 +493,49 @@ class Workflow:
                 output_videos = []
                 shared_audio = execution_input.audio or []
                 output_audio = []
-                previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(
-                        f"Async Executing step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
-                    )
-                    step_input = StepInput(
-                        message=execution_input.message,
-                        message_data=execution_input.message_data,
-                        previous_step_content=previous_step_content,
-                        images=shared_images,
-                        videos=shared_videos,
-                        audio=shared_audio,
+                    step_name = getattr(step, "name", f"step_{i + 1}")
+                    log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
+
+                    # Create enhanced StepInput
+                    step_input = self._create_step_input(
+                        execution_input=execution_input,
+                        previous_steps_outputs=previous_steps_outputs,
+                        shared_images=shared_images,
+                        shared_videos=shared_videos,
+                        shared_audio=shared_audio,
                     )
 
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
+                    # Update the workflow-level previous_steps_outputs dictionary
                     if isinstance(step_output, list):
-                        # This is a step that returns multiple outputs (Loop, Condition etc.)
+                        # For multiple outputs (from Loop, Condition, etc.), store the last one
+                        if step_output:
+                            previous_steps_outputs[step_name] = step_output[-1]
+                    else:
+                        # Single output
+                        previous_steps_outputs[step_name] = step_output
+
+                    # Update shared media for next step
+                    if isinstance(step_output, list):
                         for output in step_output:
                             shared_images.extend(output.images or [])
-                            output_images.extend(output.images or [])
                             shared_videos.extend(output.videos or [])
-                            output_videos.extend(output.videos or [])
                             shared_audio.extend(output.audio or [])
+                            output_images.extend(output.images or [])
+                            output_videos.extend(output.videos or [])
                             output_audio.extend(output.audio or [])
-
-                        # Use the last output's content as previous content for chaining
-                        if step_output:
-                            previous_step_content = step_output[-1].content
-
-                        collected_step_outputs.append(step_output)
                     else:
-                        # This is a regular single step
-                        previous_step_content = step_output.content
                         shared_images.extend(step_output.images or [])
-                        output_images.extend(step_output.images or [])
                         shared_videos.extend(step_output.videos or [])
-                        output_videos.extend(step_output.videos or [])
                         shared_audio.extend(step_output.audio or [])
+                        output_images.extend(step_output.images or [])
+                        output_videos.extend(step_output.videos or [])
                         output_audio.extend(step_output.audio or [])
 
-                        collected_step_outputs.append(step_output)
+                    collected_step_outputs.append(step_output)
 
                     self._collect_workflow_session_state_from_agents_and_teams()
 
@@ -641,8 +612,9 @@ class Workflow:
 
         else:
             try:
-                # Track outputs from each step for chaining
+                # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
+                previous_steps_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -650,21 +622,18 @@ class Workflow:
                 output_videos = []
                 shared_audio = execution_input.audio or []
                 output_audio = []
-                previous_step_content = None
 
                 for i, step in enumerate(self.steps):
-                    log_debug(
-                        f"Streaming step {i + 1}/{self._get_step_count()}: {step.name if hasattr(step, 'name') else step.__name__}"
-                    )
+                    step_name = getattr(step, "name", f"step_{i + 1}")
+                    log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
-                    # Create StepInput for this step
-                    step_input = StepInput(
-                        message=execution_input.message,
-                        message_data=execution_input.message_data,
-                        previous_step_content=previous_step_content,
-                        images=shared_images,
-                        videos=shared_videos,
-                        audio=shared_audio,
+                    # Create enhanced StepInput
+                    step_input = self._create_step_input(
+                        execution_input=execution_input,
+                        previous_steps_outputs=previous_steps_outputs,
+                        shared_images=shared_images,
+                        shared_videos=shared_videos,
+                        shared_audio=shared_audio,
                     )
 
                     # Execute step with streaming and yield all events
@@ -677,15 +646,19 @@ class Workflow:
                         step_index=i,
                     ):
                         if isinstance(event, StepOutput):
-                            collected_step_outputs.append(event)
+                            step_output = event
+                            collected_step_outputs.append(step_output)
 
-                            previous_step_content = event.content
-                            shared_images.extend(event.images or [])
-                            output_images.extend(event.images or [])
-                            shared_videos.extend(event.videos or [])
-                            output_videos.extend(event.videos or [])
-                            shared_audio.extend(event.audio or [])
-                            output_audio.extend(event.audio or [])
+                            # Update the workflow-level previous_steps_outputs dictionary
+                            previous_steps_outputs[step_name] = step_output
+
+                            # Update shared media for next step
+                            shared_images.extend(step_output.images or [])
+                            shared_videos.extend(step_output.videos or [])
+                            shared_audio.extend(step_output.audio or [])
+                            output_images.extend(step_output.images or [])
+                            output_videos.extend(step_output.videos or [])
+                            output_audio.extend(step_output.audio or [])
 
                             # Only yield StepOutput for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
@@ -697,9 +670,17 @@ class Workflow:
                     self._collect_workflow_session_state_from_agents_and_teams()
 
                 # Update the workflow_run_response with completion data
-                workflow_run_response.content = collected_step_outputs[
-                    -1
-                ].content  # Final workflow response output is the last step's output
+                if collected_step_outputs:
+                    last_output = collected_step_outputs[-1]
+                    if isinstance(last_output, list) and last_output:
+                        # If it's a list (from Condition/Loop/etc.), use the last one
+                        workflow_run_response.content = last_output[-1].content
+                    else:
+                        # Single StepOutput
+                        workflow_run_response.content = last_output.content
+                else:
+                    workflow_run_response.content = "No steps executed"
+
                 workflow_run_response.step_responses = collected_step_outputs
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
