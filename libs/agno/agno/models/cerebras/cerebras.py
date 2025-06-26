@@ -192,7 +192,7 @@ class Cerebras(Model):
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with params: {request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
         return request_params
 
     def invoke(

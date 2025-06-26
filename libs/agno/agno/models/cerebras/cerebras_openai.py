@@ -55,7 +55,7 @@ class CerebrasOpenAI(OpenAILike):
             request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
         if request_params:
-            log_debug(f"Calling {self.provider} with params: {request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
         return request_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:

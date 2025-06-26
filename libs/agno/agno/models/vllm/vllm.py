@@ -73,5 +73,5 @@ class vLLM(OpenAILike):
             request_kwargs["extra_body"] = {**existing_body, **vllm_body}
 
         if request_kwargs:
-            log_debug(f"Calling {self.provider} with params: {request_kwargs}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}")
         return request_kwargs
