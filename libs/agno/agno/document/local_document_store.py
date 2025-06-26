@@ -1,28 +1,29 @@
 import json
 from hashlib import md5
 from pathlib import Path
-from typing import Optional, Generator, Tuple, Dict
-from hashlib import md5
+from typing import Dict, Generator, Optional, Tuple
 
 from agno.document.base import Document
-from agno.document.document_v2 import DocumentV2
 from agno.document.document_store import DocumentStore
+from agno.document.document_v2 import DocumentV2
 from agno.utils.log import log_debug, log_error, log_info
+
 
 class LocalDocumentStore(DocumentStore):
     """
     Simple local filesystem implementation of DocumentStore.
     Documents are stored as JSON files in the specified directory.
     """
-    
-    def __init__(self, name: str, description: str, storage_path: str, 
-                 read_from_store: bool = False, copy_to_store: bool = False):
+
+    def __init__(
+        self, name: str, description: str, storage_path: str, read_from_store: bool = False, copy_to_store: bool = False
+    ):
         self.name = name
         self.description = description
         self.storage_path = storage_path
         self.read_from_store = read_from_store
         self.copy_to_store = copy_to_store
-        
+
         # Initialize storage path
         if self.storage_path is None:
             raise ValueError("storage_path is required")
@@ -67,7 +68,7 @@ class LocalDocumentStore(DocumentStore):
     def get_all_documents(self) -> Generator[Tuple[bytes, Dict], None, None]:
         """Get all documents from the store."""
         for file_path in self._storage_path.glob("**/*"):
-            if file_path.is_file() and file_path.suffix == '.pdf':
+            if file_path.is_file() and file_path.suffix == ".pdf":
                 pdf_bytes = file_path.read_bytes()
                 metadata = {
                     "name": file_path.name,

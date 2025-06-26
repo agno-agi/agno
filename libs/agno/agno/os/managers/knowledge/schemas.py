@@ -1,6 +1,8 @@
-from pydantic import BaseModel
 from typing import Optional
+
 from fastapi import UploadFile
+from pydantic import BaseModel
+
 
 class DocumentResponseSchema(BaseModel):
     id: str

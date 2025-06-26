@@ -1,15 +1,14 @@
-from typing import List
-from fastapi import APIRouter, Form, File, UploadFile, BackgroundTasks
 import json
+from typing import List, Optional
 from uuid import uuid4
 
-from agno.document.document_v2 import DocumentV2, DocumentContent
-from agno.os.managers.knowledge.schemas import DocumentResponseSchema
-from agno.knowledge.knowledge import Knowledge
-from agno.utils.log import log_info
-from typing import Optional
+from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 
+from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.knowledge.knowledge import Knowledge
+from agno.os.managers.knowledge.schemas import DocumentResponseSchema
+from agno.utils.log import log_info
+
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     @router.post("/documents")
@@ -19,14 +18,14 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         description: Optional[str] = Form(None),
         urls: Optional[str] = Form(None),
         metadata: Optional[str] = Form(None, description="JSON string of metadata dict or list of dicts"),
-        file: Optional[UploadFile] = File(None)
+        file: Optional[UploadFile] = File(None),
     ):
         # Generate ID immediately
         document_id = str(uuid4())
-        
+
         # Read the content once and store it
         content_bytes = await file.read()
-        
+
         parsed_urls = None
         if urls and urls.strip():
             try:
@@ -49,12 +48,9 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             description=description,
             urls=parsed_urls,
             metadata=parsed_metadata,
-            content=DocumentContent(
-                content=content_bytes,
-                type=file.content_type
-            )
+            content=DocumentContent(content=content_bytes, type=file.content_type),
         )
-        
+
         # Add the processing task to background tasks
         background_tasks.add_task(process_document, knowledge, document_id, document)
 
@@ -75,7 +71,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 size=str(len(document.content.content)) if document.content else "0",
                 linked_to=knowledge.name,
                 metadata=document.metadata,
-                access_count=0
+                access_count=0,
             )
             result.append(response_doc)
         return result
@@ -86,7 +82,6 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         document = knowledge.get_document(document_id=document_id)
 
-
         document = DocumentResponseSchema(
             id=document_id,
             name=document.name,
@@ -95,11 +90,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             size=str(len(document.content.content)) if document.content else "0",
             linked_to=knowledge.name,
             metadata=document.metadata,
-            access_count=0
+            access_count=0,
         )
 
         return document
-
 
     @router.delete("/documents/{document_id}", response_model=DocumentResponseSchema, status_code=200)
     def delete_document_by_id(document_id: str) -> DocumentResponseSchema:
@@ -109,7 +103,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         return DocumentResponseSchema(
             id=document_id,
         )
-    
+
     @router.delete("/documents/", status_code=200)
     def delete_all_documents():
         log_info(f"Deleting all documents")
@@ -121,20 +115,13 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         try:
             # Try to get the document from the database
             document = knowledge.get_document(document_id)
-            return {
-                "document_id": document_id,
-                "status": "completed",
-                "document": document
-            }
+            return {"document_id": document_id, "status": "completed", "document": document}
         except Exception as e:
             # Document not found or still processing
-            return {
-                "document_id": document_id,
-                "status": "processing",
-                "message": "Document is still being processed"
-            }
+            return {"document_id": document_id, "status": "processing", "message": "Document is still being processed"}
 
     return router
+
 
 def process_document(knowledge: Knowledge, document_id: str, document: DocumentV2):
     """Background task to process the document"""

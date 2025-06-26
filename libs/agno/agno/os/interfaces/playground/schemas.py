@@ -7,7 +7,6 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.memory import Memory
-from agno.os.operator import format_tools
 from agno.team import Team
 
 

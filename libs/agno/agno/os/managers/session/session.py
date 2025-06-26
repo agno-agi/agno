@@ -5,8 +5,8 @@ from uuid import uuid4
 from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
-from agno.os.connectors.base import BaseConnector
-from agno.os.connectors.session.router import attach_routes
+from agno.os.managers.base import BaseManager
+from agno.os.managers.session.router import attach_routes
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class SessionManager(BaseManager):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Session Connector {index}"
+            self.name = f"Session Manager {index}"
 
         self.router_prefix = f"/session/{index}"
 

@@ -6,7 +6,6 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
-
 from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1166,7 +1165,6 @@ class PostgresDb(BaseDb):
             stmt = select(table)
             result = sess.execute(stmt).fetchall()
             return [KnowledgeRow.model_validate(record._mapping) for record in result]
-        
 
     def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
         """Upsert a knowledge document in the database.
@@ -1187,7 +1185,6 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting knowledge document: {e}")
             return None
-        
 
     # -- Eval methods --
 

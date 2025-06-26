@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from agno.document.base import Document
 
+
 class DocumentStore(ABC):
     """
     Base class for document store.

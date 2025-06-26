@@ -450,7 +450,6 @@ class Agent:
 
         self.extra_data = extra_data
 
-
         self.tools = tools
         self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit

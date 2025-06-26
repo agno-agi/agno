@@ -3,7 +3,7 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
-from agno.os.connectors.session.schemas import (
+from agno.os.managers.session.schemas import (
     AgentSessionDetailSchema,
     RunSchema,
     SessionSchema,
@@ -12,7 +12,7 @@ from agno.os.connectors.session.schemas import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.connectors.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:

@@ -1,15 +1,17 @@
 from dataclasses import dataclass
-from typing import List, Union, Optional
+from typing import List, Optional, Union
+
 from agno.document.reader import Reader
 
 
 @dataclass
-class DocumentContent():
+class DocumentContent:
     content: Union[str, bytes]
     type: str
 
+
 @dataclass
-class DocumentV2(): # We will rename this to Document
+class DocumentV2:  # We will rename this to Document
     name: str
     id: Optional[str] = None
     description: Optional[str] = None

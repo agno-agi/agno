@@ -1,6 +1,8 @@
 import json
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
+
+from fastapi import UploadFile
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -14,7 +16,7 @@ class InterfaceResponse(BaseModel):
     route: str
 
 
-class ConnectorResponse(BaseModel):
+class ManagerResponse(BaseModel):
     type: str
     name: str
     version: str

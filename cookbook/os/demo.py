@@ -2,14 +2,14 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.base import Document
+from agno.document.document_v2 import DocumentV2
 from agno.document.local_document_store import LocalDocumentStore
-from agno.knowledge.knowledge_base import KnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.connectors import KnowledgeConnector, MemoryConnector, SessionConnector
 from agno.os.interfaces import Whatsapp
+from agno.os.managers import KnowledgeManager, MemoryManager, SessionManager
 from agno.vectordb.pgvector.pgvector import PgVector
 
 # Setup the database
@@ -59,7 +59,7 @@ knowledge1.add_documents(
         paths=["tmp/cv_1.pdf"],
         metadata={"user_tag": "Engineering candidates"},
     )
-) 
+)
 
 knowledge2.add_documents(
     DocumentV2(
@@ -67,7 +67,7 @@ knowledge2.add_documents(
         paths=["tmp/cv_2.pdf"],
         metadata={"user_tag": "Engineering candidates"},
     )
-) 
+)
 
 # Setup the agent
 agent = Agent(

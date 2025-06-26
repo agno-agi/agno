@@ -1,6 +1,10 @@
-from typing import List
+import json
+from typing import AsyncGenerator, List, Optional, cast
+from uuid import uuid4
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.params import Form
+from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
@@ -9,8 +13,8 @@ from agno.os.schema import (
     AgentResponse,
     AppsResponse,
     ConfigResponse,
-    ConnectorResponse,
     InterfaceResponse,
+    ManagerResponse,
     TeamResponse,
     WorkflowResponse,
 )
@@ -52,6 +56,7 @@ async def agent_response_streamer(
         )
         yield error_response.to_json()
 
+
 async def agent_continue_response_streamer(
     agent: Agent,
     run_id: Optional[str] = None,
@@ -81,8 +86,6 @@ async def agent_continue_response_streamer(
         return
 
 
-
-
 def get_base_router(
     os: "AgentOS",
 ) -> APIRouter:
@@ -96,22 +99,22 @@ def get_base_router(
     async def config() -> ConfigResponse:
         app_response = AppsResponse(
             session=[
-                ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
                 for app in os.apps
                 if app.type == "session"
             ],
             knowledge=[
-                ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
                 for app in os.apps
                 if app.type == "knowledge"
             ],
             memory=[
-                ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
                 for app in os.apps
                 if app.type == "memory"
             ],
             eval=[
-                ConnectorResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
                 for app in os.apps
                 if app.type == "eval"
             ],
@@ -133,27 +136,21 @@ def get_base_router(
             apps=app_response,
         )
 
-    @router.get("/agents",
-                response_model=List[AgentResponse],
-                response_model_exclude_none=True)
+    @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
     async def get_agents():
         if os.agents is None:
             return []
 
         return [AgentResponse.from_agent(agent) for agent in os.agents]
 
-    @router.get("/teams",
-                response_model=List[TeamResponse],
-                response_model_exclude_none=True)
+    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
     async def get_teams():
         if os.teams is None:
             return []
 
         return [TeamResponse.from_team(team) for team in os.teams]
 
-    @router.get("/workflows",
-                response_model=List[WorkflowResponse],
-                response_model_exclude_none=True)
+    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
     async def get_workflows():
         if os.workflows is None:
             return []
@@ -166,7 +163,6 @@ def get_base_router(
             )
             for workflow in os.workflows
         ]
-
 
     @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -225,7 +221,13 @@ def get_base_router(
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {e}")
                         continue
-                elif file.content_type in ["application/pdf", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain", "application/json"]:
+                elif file.content_type in [
+                    "application/pdf",
+                    "text/csv",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/plain",
+                    "application/json",
+                ]:
                     # Process document files
                     try:
                         file_content = await file.read()
@@ -266,7 +268,6 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-
     @router.post("/agents/{agent_id}/runs/{run_id}/continue")
     async def continue_agent_run(
         agent_id: str,
@@ -287,7 +288,9 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
-            log_warning(f"Continuing run without session_id. This might lead to unexpected behavior if session context is important.")
+            log_warning(
+                f"Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None
@@ -322,6 +325,5 @@ def get_base_router(
                 ),
             )
             return run_response_obj.to_dict()
-
 
     return router

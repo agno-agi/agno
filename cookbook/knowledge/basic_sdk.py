@@ -1,18 +1,16 @@
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
 from agno.agent import Agent
 from agno.document.document_v2 import DocumentV2
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-
+from agno.vectordb.pgvector import PgVector
 
 # Create Knowledge Instance
 knowledge = Knowledge(
-    name="Basic SDK Knowledge Base", 
+    name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
     vector_store=PgVector(
-        table_name="vectors",
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    )
+        table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    ),
 )
 
 # Add files to the knowledge base
@@ -22,7 +20,7 @@ knowledge.add_documents(
         paths=["tmp/cv_1.pdf", "tmp/cv_2.pdf"],
         metadata={"user_tag": "Engineering candidates"},
     )
-) 
+)
 
 
 agent = Agent(
@@ -34,4 +32,7 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response("Make a recommendation for a candidate for the role of Software Engineer? Search the knowledge base for the answer.", markdown=True)
+agent.print_response(
+    "Make a recommendation for a candidate for the role of Software Engineer? Search the knowledge base for the answer.",
+    markdown=True,
+)

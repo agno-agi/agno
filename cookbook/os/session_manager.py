@@ -5,11 +5,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-<<<<<<< Updated upstream:cookbook/os/session_manager.py
 from agno.os.managers.session import SessionManager
-=======
-from agno.os.connectors import SessionConnector
->>>>>>> Stashed changes:cookbook/os/session_connector.py
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

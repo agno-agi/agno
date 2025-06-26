@@ -14,8 +14,8 @@ from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
-from agno.os.managers.base import BaseManager
 from agno.os.interfaces.base import BaseInterface
+from agno.os.managers.base import BaseManager
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team

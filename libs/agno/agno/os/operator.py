@@ -9,16 +9,6 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
-    if agent_id is None or agents is None:
-        return None
-
-    for agent in agents:
-        if agent.agent_id == agent_id:
-            return agent
-    return None
-
-
 def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
     if session is None:
         return "Unnamed session"
