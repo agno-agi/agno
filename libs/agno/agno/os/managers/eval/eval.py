@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from fastapi.routing import APIRouter
 
-from agno.os.managers.base import BaseManager
-from agno.os.managers.eval.router import attach_routes
 from agno.db.base import BaseDb
+from agno.os.connectors.base import BaseConnector
+from agno.os.connectors.eval.router import attach_routes
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class EvalManager(BaseManager):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Eval Manager {index}"
+            self.name = f"Eval Connector {index}"
 
         self.router_prefix = f"/eval/{index}"
 

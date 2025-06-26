@@ -4,7 +4,7 @@ from agno.document.local_document_store import LocalDocumentStore
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers import KnowledgeManager
+from agno.os.connectors import KnowledgeConnector
 from agno.vectordb.pgvector import PgVector
 from agno.db.postgres.postgres import PostgresDb
 

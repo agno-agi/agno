@@ -8,15 +8,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent, RunResponse
-from agno.os.utils import get_agent_by_id, process_audio, process_image, process_video
-
-from agno.os.operator import (
-    get_session_title,
-    get_session_title_from_team_session,
-    get_session_title_from_workflow_session,
-    get_team_by_id,
-    get_workflow_by_id,
-)
+from agno.media import Audio, Image, Video
+from agno.media import File as FileMedia
+from agno.memory import Memory
 from agno.os.interfaces.playground.schemas import (
 
     AgentRenameRequest,
@@ -29,10 +23,16 @@ from agno.os.interfaces.playground.schemas import (
     WorkflowSessionResponse,
     WorkflowsGetResponse,
 )
+from agno.os.operator import (
+    format_tools,
+    get_agent_by_id,
+    get_session_title,
+    get_session_title_from_team_session,
+    get_session_title_from_workflow_session,
+    get_team_by_id,
+    get_workflow_by_id,
+)
 from agno.os.utils import process_audio, process_document, process_image, process_video
-from agno.media import Audio, Image, Video
-from agno.media import File as FileMedia
-from agno.memory import Memory
 from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -85,6 +85,245 @@ def attach_routes(
 ) -> APIRouter:
     if agents is None and workflows is None and teams is None:
         raise ValueError("Either agents, teams or workflows must be provided.")
+
+    @router.post("/agents/{agent_id}/runs")
+    async def create_agent_run(
+        agent_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        monitor: bool = Form(False),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        files: Optional[List[UploadFile]] = File(None),
+    ):
+        logger.debug(f"AgentRunRequest: {message} {session_id} {user_id} {agent_id}")
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is not None and session_id != "":
+            logger.debug(f"Continuing session: {session_id}")
+        else:
+            logger.debug("Creating new session")
+            session_id = str(uuid4())
+
+        if monitor:
+            agent.monitoring = True
+        else:
+            agent.monitoring = False
+
+        base64_images: List[Image] = []
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
+        input_files: List[FileMedia] = []
+
+        if files:
+            for file in files:
+                logger.info(f"Processing file: {file.content_type}")
+                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                    try:
+                        base64_image = process_image(file)
+                        base64_images.append(base64_image)
+                    except Exception as e:
+                        logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
+                        continue
+                else:
+                    # Process document files
+                    if file.content_type == "application/pdf":
+                        from agno.document.reader.pdf_reader import PDFReader
+
+                        contents = await file.read()
+
+                        # If agent has knowledge base, load the document into it
+                        if agent.knowledge is not None:
+                            pdf_file = BytesIO(contents)
+                            pdf_file.name = file.filename
+                            file_content = PDFReader().read(pdf_file)
+                            agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input (similar to cookbook examples)
+                            input_files.append(FileMedia(content=contents))
+
+                    elif file.content_type == "text/csv":
+                        from agno.document.reader.csv_reader import CSVReader
+
+                        contents = await file.read()
+
+                        # If agent has knowledge base, load the document into it
+                        if agent.knowledge is not None:
+                            csv_file = BytesIO(contents)
+                            csv_file.name = file.filename
+                            file_content = CSVReader().read(csv_file)
+                            agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
+                    elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                        from agno.document.reader.docx_reader import DocxReader
+
+                        contents = await file.read()
+
+                        # If agent has knowledge base, load the document into it
+                        if agent.knowledge is not None:
+                            docx_file = BytesIO(contents)
+                            docx_file.name = file.filename
+                            file_content = DocxReader().read(docx_file)
+                            agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
+                    elif file.content_type == "text/plain":
+                        from agno.document.reader.text_reader import TextReader
+
+                        contents = await file.read()
+
+                        # If agent has knowledge base, load the document into it
+                        if agent.knowledge is not None:
+                            text_file = BytesIO(contents)
+                            text_file.name = file.filename
+                            file_content = TextReader().read(text_file)
+                            agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
+                    elif file.content_type == "application/json":
+                        from agno.document.reader.json_reader import JSONReader
+
+                        contents = await file.read()
+
+                        # If agent has knowledge base, load the document into it
+                        if agent.knowledge is not None:
+                            json_file = BytesIO(contents)
+                            json_file.name = file.filename
+                            file_content = JSONReader().read(json_file)
+                            agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+                    else:
+                        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        if stream and agent.is_streamable:
+            return StreamingResponse(
+                chat_response_streamer(
+                    agent,
+                    message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response = cast(
+                RunResponse,
+                await agent.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
+                    stream=False,
+                ),
+            )
+            return run_response.to_dict()
+
+    @router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    async def continue_agent_run(
+        agent_id: str,
+        run_id: str,
+        tools: str = Form(...),  # JSON string of tools
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        logger.debug(
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
+        )
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is None or session_id == "":
+            logger.warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+        else:
+            logger.debug(f"Continuing run within session: {session_id}")
+
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if tools_data:
+            try:
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if stream and agent.is_streamable:
+            return StreamingResponse(
+                agent_acontinue_run_streamer(
+                    agent,
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response_obj = cast(
+                RunResponse,
+                await agent.acontinue_run(
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                ),
+            )
+            return run_response_obj.to_dict()
 
     @router.get("/agents/{agent_id}/sessions")
     async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):

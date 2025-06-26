@@ -68,16 +68,5 @@ def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Call
     return formatted_tools
 
 
-
 def format_team_tools(team_tools: List[Function]):
     return [tool.to_dict() for tool in team_tools]
-
-
-def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
-    if agent_id is None or agents is None:
-        return None
-
-    for agent in agents:
-        if agent.agent_id == agent_id:
-            return agent
-    return None

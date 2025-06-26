@@ -5,7 +5,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers import EvalManager
+from agno.os.connectors import EvalConnector
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

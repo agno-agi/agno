@@ -3,7 +3,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers import MemoryManager
+from agno.os.connectors import MemoryConnector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

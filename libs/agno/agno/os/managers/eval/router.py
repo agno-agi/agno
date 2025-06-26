@@ -2,10 +2,10 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from agno.os.managers.eval.schemas import EvalSchema
-from agno.os.managers.utils import SortOrder
 from agno.db.base import BaseDb
 from agno.eval.schemas import EvalType
+from agno.os.connectors.eval.schemas import EvalSchema
+from agno.os.connectors.utils import SortOrder
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
