@@ -232,7 +232,7 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
     @abstractmethod

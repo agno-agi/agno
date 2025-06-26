@@ -1274,7 +1274,7 @@ class PostgresDb(BaseDb):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """Get all eval runs from the database as raw dictionaries.
 
         Args:
@@ -1309,6 +1309,11 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.model_id == model_id)
                 if eval_type is not None:
                     stmt = stmt.where(table.c.eval_type == eval_type)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
                 # Sorting
                 stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
@@ -1319,13 +1324,13 @@ class PostgresDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return []
+                    return [], 0
 
-                return [row._mapping for row in result]
+                return [row._mapping for row in result], total_count
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
-            return []
+            return [], 0
 
     def get_eval_runs(
         self,
@@ -1361,7 +1366,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 table = self.get_eval_table()
 
-            eval_runs_raw = self.get_eval_runs_raw(
+            eval_runs_raw, total_count = self.get_eval_runs_raw(
                 limit=limit,
                 page=page,
                 sort_by=sort_by,

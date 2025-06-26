@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -21,18 +21,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[EvalSchema]:
-        # Get total count without pagination
-        total_eval_runs = db.get_eval_runs_raw(
-            agent_id=agent_id,
-            team_id=team_id,
-            workflow_id=workflow_id,
-            model_id=model_id,
-            eval_type=eval_type,
-        )
-        total_count = len(total_eval_runs)
-        
-        # Get paginated results
-        eval_runs = db.get_eval_runs_raw(
+        eval_runs, total_count = db.get_eval_runs_raw(
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -43,7 +32,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             model_id=model_id,
             eval_type=eval_type,
         )
-        
+
         return PaginatedResponse(
             data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],
             meta=PaginationInfo(
