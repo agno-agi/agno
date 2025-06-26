@@ -1,10 +1,12 @@
+import asyncio
 from typing import Iterator  # noqa
-from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
+from pydantic import BaseModel
 
 
 class StockAnalysis(BaseModel):
@@ -47,19 +49,26 @@ company_info_agent = Agent(
 )
 
 
+class StockReport(BaseModel):
+    symbol: str
+    company_name: str
+    analysis: str
+
+
 team = Team(
     name="Stock Research Team",
-    mode="route",
+    mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[stock_searcher, company_info_agent],
+    response_model=StockReport,
     markdown=True,
     show_members_responses=True,
 )
 
-response = team.run("What is the current stock price of NVDA?")
-assert isinstance(response.content, StockAnalysis)
-pprint_run_response(response)
+team.print_response(
+    "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
+)
 
-response = team.run("What is in the news about NVDA?")
-assert isinstance(response.content, CompanyAnalysis)
-pprint_run_response(response)
+# Or async
+# asyncio.run(team.aprint_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True))
+assert isinstance(team.run_response.content, StockReport)

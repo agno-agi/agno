@@ -209,6 +209,7 @@ class OpenAIChat(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
