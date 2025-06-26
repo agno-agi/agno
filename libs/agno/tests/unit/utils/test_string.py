@@ -265,3 +265,57 @@ def test_parse_json_with_prefix_suffix_noise():
     assert result is not None
     assert len(result.reasoning_steps) == 1
     assert result.reasoning_steps[0].title == "Only Step"
+
+
+def test_parse_preserves_field_name_case():
+    """Test that field names with mixed case are preserved correctly"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+        camelCase: str
+        UPPER_CASE: str
+
+    content = '{"Supplier_name": "test supplier", "newData": "some data", "camelCase": "camel value", "UPPER_CASE": "upper value"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == "test supplier"
+    assert result.newData == "some data"
+    assert result.camelCase == "camel value"
+    assert result.UPPER_CASE == "upper value"
+
+
+def test_parse_preserves_field_name_case_with_cleanup_path():
+    """Test that field names with mixed case are preserved when going through the cleanup path"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = '{"Supplier_name": "test \\"quoted\\" supplier", "newData": "some \\"quoted\\" data"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_preserves_field_name_case_with_markdown():
+    """Test that field names with mixed case are preserved when parsing from markdown blocks with special formatting"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = """```json
+    {
+        "Supplier_name": "test "quoted" supplier",
+        "newData": "some "quoted" data"
+    }
+    ```"""
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
