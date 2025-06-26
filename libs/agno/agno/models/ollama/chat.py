@@ -84,7 +84,7 @@ class Ollama(Model):
 
         return AsyncOllamaClient(**self._get_client_params())
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -109,6 +109,9 @@ class Ollama(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -173,7 +176,7 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        request_kwargs = self.get_request_kwargs(tools=tools)
+        request_kwargs = self.get_request_params(tools=tools)
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             log_debug("Using structured outputs")
             format_schema = response_format.model_json_schema()
@@ -231,7 +234,7 @@ class Ollama(Model):
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(tools=tools),
+            **self.get_request_params(tools=tools),
         )  # type: ignore
 
     async def ainvoke_stream(
@@ -248,7 +251,7 @@ class Ollama(Model):
             model=self.id.strip(),
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(tools=tools),
+            **self.get_request_params(tools=tools),
         )
         async for chunk in async_stream:  # type: ignore
             yield chunk

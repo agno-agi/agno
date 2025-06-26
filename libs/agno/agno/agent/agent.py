@@ -660,10 +660,6 @@ class Agent:
             self._formatter = SafeFormatter()
 
     @property
-    def is_streamable(self) -> bool:
-        return self.response_model is None
-
-    @property
     def has_team(self) -> bool:
         return self.team is not None and len(self.team) > 0
 
@@ -672,6 +668,20 @@ class Agent:
         if self.run_response is not None and self.run_response.is_paused:
             return True
         return False
+
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response
+
+    def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        if not self.tools:
+            self.tools = []
+        self.tools.append(tool)
+        self._rebuild_tools = True
+
+    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+        self.tools = tools
+        self._rebuild_tools = True
 
     def _run(
         self,
@@ -763,6 +773,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -771,9 +784,6 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -849,6 +859,9 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
@@ -980,7 +993,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -989,11 +1002,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1063,7 +1071,7 @@ class Agent:
 
                 self.run_messages = run_messages
 
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1099,7 +1107,7 @@ class Agent:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                 )
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1111,12 +1119,12 @@ class Agent:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1209,6 +1217,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -1217,9 +1228,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1297,6 +1305,9 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
@@ -1388,7 +1399,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1397,11 +1408,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1472,7 +1478,7 @@ class Agent:
                 self.run_messages = run_messages
 
                 # Pass the new run_response to _arun
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._arun_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1507,7 +1513,7 @@ class Agent:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                 )
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1520,11 +1526,11 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
 
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1647,7 +1653,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1688,11 +1694,6 @@ class Agent:
         if self.context is not None:
             self.resolve_run_context()
 
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
-
         # Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
@@ -1731,7 +1732,7 @@ class Agent:
             run_response.status = RunStatus.running
 
             try:
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=self.run_messages,
@@ -1765,7 +1766,7 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1780,11 +1781,11 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
 
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1855,6 +1856,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -1863,9 +1867,6 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         run_response.status = RunStatus.running
 
@@ -1939,6 +1940,9 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
@@ -2040,7 +2044,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -2079,11 +2083,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2133,7 +2132,7 @@ class Agent:
             run_response.status = RunStatus.running
 
             try:
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._acontinue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -2166,7 +2165,7 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -2180,11 +2179,11 @@ class Agent:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -2254,6 +2253,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -2262,9 +2264,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2344,6 +2343,9 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
@@ -2414,7 +2416,7 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: RunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -2424,7 +2426,8 @@ class Agent:
                     # Update RunResponse
                     if structured_output is not None:
                         run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2988,6 +2991,11 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -2995,6 +3003,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
@@ -3048,6 +3057,11 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -3055,6 +3069,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -3112,10 +3127,20 @@ class Agent:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                content_type = "str"
+
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    model_response.content = (model_response.content or "") + model_response_event.content
-                    run_response.content = model_response.content
+                    if self.should_parse_structured_output:
+                        model_response.content = model_response_event.content
+                        content_type = self.response_model.__name__  # type: ignore
+                        run_response.content = model_response.content
+                        run_response.content_type = content_type
+                        self._convert_response_to_structured_format(model_response)
+                    else:
+                        model_response.content = (model_response.content or "") + model_response_event.content
+                        run_response.content = model_response.content
+                        run_response.content_type = "str"
 
                 if model_response_event.thinking is not None:
                     model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
@@ -3133,8 +3158,17 @@ class Agent:
                     # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
-                # Only yield if we have content or thinking to show
-                if (
+                # Only yield if we have content to show
+                if content_type != "str":
+                    yield self._handle_event(
+                        create_run_response_content_event(
+                            from_run_response=run_response,
+                            content=model_response.content,
+                            content_type=content_type,
+                        ),
+                        run_response,
+                    )
+                elif (
                     model_response_event.content is not None
                     or model_response_event.thinking is not None
                     or model_response_event.redacted_thinking is not None
@@ -5053,7 +5087,7 @@ class Agent:
                 if member_agent_info not in self.team_data["members"]:
                     self.team_data["members"].append(member_agent_info)
 
-            if self.stream and member_agent.is_streamable:
+            if self.stream:
                 member_agent_run_response_stream = member_agent.run(member_agent_task, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     yield member_agent_run_response_chunk.content  # type: ignore
@@ -6682,8 +6716,17 @@ class Agent:
                             live_log.update(Group(*panels))
                             break
                         if resp.event == RunEvent.run_response_content:
-                            if hasattr(resp, "content") and isinstance(resp.content, str):
-                                _response_content += resp.content
+                            if hasattr(resp, "content"):
+                                if isinstance(resp.content, str):
+                                    _response_content += resp.content
+                                elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                                    try:
+                                        _response_content += JSON(  # type: ignore
+                                            resp.content.model_dump_json(exclude_none=True), indent=2
+                                        )
+                                    except Exception as e:
+                                        log_warning(f"Failed to convert response to JSON: {e}")
+
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
@@ -7108,6 +7151,11 @@ class Agent:
                         if resp.event == RunEvent.run_response_content:
                             if isinstance(resp.content, str):
                                 _response_content += resp.content
+                            elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                                try:
+                                    _response_content += JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                                except Exception as e:
+                                    log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
                                 _response_thinking += resp.thinking
 
