@@ -29,8 +29,7 @@ def temp_db_path(tmp_path):
 @pytest.fixture
 def workflow_storage(temp_db_path):
     """Create a SqliteStorage instance for workflow v2."""
-    storage = SqliteStorage(table_name="workflow_v2",
-                            db_file=temp_db_path, mode="workflow_v2")
+    storage = SqliteStorage(table_name="workflow_v2", db_file=temp_db_path, mode="workflow_v2")
     storage.create()
     return storage
 
@@ -106,8 +105,7 @@ class TestSequenceOfStepsIntegration:
         """Test sync sequence with real agents (non-streaming) - matches cookbook example."""
         # Create steps similar to cookbook
         research_step = Step(name="Research Step", agent=hackernews_agent)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         # Create workflow like cookbook
         workflow = Workflow(
@@ -131,8 +129,7 @@ class TestSequenceOfStepsIntegration:
     def test_sync_sequence_with_agents_streaming(self, hackernews_agent, content_planner, workflow_storage):
         """Test sync sequence with real agents (streaming)."""
         research_step = Step(name="Research Step", agent=hackernews_agent)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -145,8 +142,7 @@ class TestSequenceOfStepsIntegration:
 
         # Verify we get events and final completion
         assert len(events) > 0
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         # Verify actual content was generated
         assert len(completed_events[0].content) > 50
@@ -155,8 +151,7 @@ class TestSequenceOfStepsIntegration:
         """Test sync sequence with real team (non-streaming) - matches cookbook example."""
         # Create steps with team like cookbook
         research_step = Step(name="Research Step", team=research_team)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -175,8 +170,7 @@ class TestSequenceOfStepsIntegration:
     def test_sync_sequence_with_team_streaming(self, research_team, content_planner, workflow_storage):
         """Test sync sequence with real team (streaming)."""
         research_step = Step(name="Research Step", team=research_team)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -187,8 +181,7 @@ class TestSequenceOfStepsIntegration:
         events = list(workflow.run(message="AI trends in 2024", stream=True))
 
         assert len(events) > 0
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert len(completed_events[0].content) > 50
 
@@ -196,8 +189,7 @@ class TestSequenceOfStepsIntegration:
     async def test_async_sequence_with_agents_non_streaming(self, hackernews_agent, content_planner, workflow_storage):
         """Test async sequence with real agents (non-streaming)."""
         research_step = Step(name="Research Step", agent=hackernews_agent)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -216,8 +208,7 @@ class TestSequenceOfStepsIntegration:
     async def test_async_sequence_with_agents_streaming(self, hackernews_agent, content_planner, workflow_storage):
         """Test async sequence with real agents (streaming)."""
         research_step = Step(name="Research Step", agent=hackernews_agent)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -231,8 +222,7 @@ class TestSequenceOfStepsIntegration:
 
         assert len(events) > 0
         # Check that we get meaningful events
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         if completed_events:
             assert len(completed_events[0].content) > 50
 
@@ -240,8 +230,7 @@ class TestSequenceOfStepsIntegration:
     async def test_async_sequence_with_team_non_streaming(self, research_team, content_planner, workflow_storage):
         """Test async sequence with real team (non-streaming)."""
         research_step = Step(name="Research Step", team=research_team)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -260,8 +249,7 @@ class TestSequenceOfStepsIntegration:
     async def test_async_sequence_with_team_streaming(self, research_team, content_planner, workflow_storage):
         """Test async sequence with real team (streaming)."""
         research_step = Step(name="Research Step", team=research_team)
-        content_planning_step = Step(
-            name="Content Planning Step", agent=content_planner)
+        content_planning_step = Step(name="Content Planning Step", agent=content_planner)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -281,10 +269,8 @@ class TestSequenceOfStepsWithFunctions:
 
     def test_sync_sequence_with_functions_non_streaming(self, workflow_storage):
         """Test sync sequence with function executors (non-streaming)."""
-        research_step = Step(name="Research Step",
-                             executor=research_function_step)
-        content_planning_step = Step(
-            name="Content Planning Step", executor=content_planning_function_step)
+        research_step = Step(name="Research Step", executor=research_function_step)
+        content_planning_step = Step(name="Content Planning Step", executor=content_planning_function_step)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -301,10 +287,8 @@ class TestSequenceOfStepsWithFunctions:
 
     def test_sync_sequence_with_functions_streaming(self, workflow_storage):
         """Test sync sequence with function executors (streaming)."""
-        research_step = Step(name="Research Step",
-                             executor=research_function_step)
-        content_planning_step = Step(
-            name="Content Planning Step", executor=content_planning_function_step)
+        research_step = Step(name="Research Step", executor=research_function_step)
+        content_planning_step = Step(name="Content Planning Step", executor=content_planning_function_step)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -315,8 +299,7 @@ class TestSequenceOfStepsWithFunctions:
         events = list(workflow.run(message="AI trends in 2024", stream=True))
 
         assert len(events) > 0
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
 
         # Check final content
@@ -342,10 +325,8 @@ class TestSequenceOfStepsWithFunctions:
                 content=f"Async Content Plan:\n\nBased on: {research_content}\n\nWeek 1: AI deep dive\nWeek 2: Cloud trends"
             )
 
-        research_step = Step(name="Research Step",
-                             executor=async_research_step)
-        content_planning_step = Step(
-            name="Content Planning Step", executor=async_content_planning_step)
+        research_step = Step(name="Research Step", executor=async_research_step)
+        content_planning_step = Step(name="Content Planning Step", executor=async_content_planning_step)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -374,10 +355,8 @@ class TestSequenceOfStepsWithFunctions:
             prev_content = step_input.previous_step_content or ""
             return StepOutput(content=f"Content plan based on:\n{prev_content}\nWeek 1: AI focus")
 
-        research_step = Step(name="Research Step",
-                             executor=async_research_step)
-        content_planning_step = Step(
-            name="Content Planning Step", executor=async_content_planning_step)
+        research_step = Step(name="Research Step", executor=async_research_step)
+        content_planning_step = Step(name="Content Planning Step", executor=async_content_planning_step)
 
         workflow = Workflow(
             name="Content Creation Workflow",
@@ -390,4 +369,3 @@ class TestSequenceOfStepsWithFunctions:
             events.append(event)
 
         assert len(events) > 0
-
