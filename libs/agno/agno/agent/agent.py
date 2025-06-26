@@ -669,7 +669,7 @@ class Agent:
             self.tools = []
         self.tools.append(tool)
         self._rebuild_tools = True
-    
+
     def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = tools
         self._rebuild_tools = True
