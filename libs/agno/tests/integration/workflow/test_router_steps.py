@@ -15,11 +15,7 @@ from agno.workflow.v2.workflow import Workflow
 @pytest.fixture
 def workflow_storage(tmp_path):
     """Create a SqliteStorage instance for workflow v2."""
-    storage = SqliteStorage(
-        table_name="workflow_v2",
-        db_file=str(tmp_path / "test_workflow_v2.db"),
-        mode="workflow_v2"
-    )
+    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
     storage.create()
     return storage
 
@@ -41,14 +37,8 @@ class TestRouter:
 
     def test_basic_routing(self, workflow_storage):
         """Test basic routing based on input."""
-        tech_step = Step(
-            name="tech",
-            executor=lambda x: StepOutput(content="Tech content")
-        )
-        general_step = Step(
-            name="general",
-            executor=lambda x: StepOutput(content="General content")
-        )
+        tech_step = Step(name="tech", executor=lambda x: StepOutput(content="Tech content"))
+        general_step = Step(name="general", executor=lambda x: StepOutput(content="General content"))
 
         def route_selector(step_input: StepInput):
             """Select between tech and general steps."""
@@ -64,9 +54,9 @@ class TestRouter:
                     name="router",
                     selector=route_selector,
                     choices=[tech_step, general_step],
-                    description="Basic routing"
+                    description="Basic routing",
                 )
-            ]
+            ],
         )
 
         tech_response = workflow.run(message="tech topic")
@@ -77,14 +67,8 @@ class TestRouter:
 
     def test_streaming(self, workflow_storage):
         """Test router with streaming."""
-        stream_step = Step(
-            name="stream",
-            executor=lambda x: StepOutput(content="Stream content")
-        )
-        alt_step = Step(
-            name="alt",
-            executor=lambda x: StepOutput(content="Alt content")
-        )
+        stream_step = Step(name="stream", executor=lambda x: StepOutput(content="Stream content"))
+        alt_step = Step(name="alt", executor=lambda x: StepOutput(content="Alt content"))
 
         def route_selector(step_input: StepInput):
             return [stream_step]
@@ -97,24 +81,20 @@ class TestRouter:
                     name="router",
                     selector=route_selector,
                     choices=[stream_step, alt_step],
-                    description="Stream routing"
+                    description="Stream routing",
                 )
-            ]
+            ],
         )
 
         events = list(workflow.run(message="test", stream=True))
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert "Stream content" in completed_events[0].content
 
     def test_agent_routing(self, workflow_storage, mock_agent):
         """Test routing to agent steps."""
         agent_step = Step(name="agent_step", agent=mock_agent)
-        function_step = Step(
-            name="function_step",
-            executor=lambda x: StepOutput(content="Function output")
-        )
+        function_step = Step(name="function_step", executor=lambda x: StepOutput(content="Function output"))
 
         def route_selector(step_input: StepInput):
             return [agent_step]
@@ -127,9 +107,9 @@ class TestRouter:
                     name="router",
                     selector=route_selector,
                     choices=[agent_step, function_step],
-                    description="Agent routing"
+                    description="Agent routing",
                 )
-            ]
+            ],
         )
 
         response = workflow.run(message="test")
@@ -137,10 +117,7 @@ class TestRouter:
 
     def test_mixed_routing(self, workflow_storage, mock_agent, mock_team):
         """Test routing to mix of function, agent, and team."""
-        function_step = Step(
-            name="function",
-            executor=lambda x: StepOutput(content="Function output")
-        )
+        function_step = Step(name="function", executor=lambda x: StepOutput(content="Function output"))
         agent_step = Step(name="agent", agent=mock_agent)
         team_step = Step(name="team", team=mock_team)
 
@@ -159,9 +136,9 @@ class TestRouter:
                     name="router",
                     selector=route_selector,
                     choices=[function_step, agent_step, team_step],
-                    description="Mixed routing"
+                    description="Mixed routing",
                 )
-            ]
+            ],
         )
 
         # Test function route
@@ -178,18 +155,9 @@ class TestRouter:
 
     def test_multiple_step_routing(self, workflow_storage):
         """Test routing to multiple steps."""
-        research_step = Step(
-            name="research",
-            executor=lambda x: StepOutput(content="Research output")
-        )
-        analysis_step = Step(
-            name="analysis",
-            executor=lambda x: StepOutput(content="Analysis output")
-        )
-        summary_step = Step(
-            name="summary",
-            executor=lambda x: StepOutput(content="Summary output")
-        )
+        research_step = Step(name="research", executor=lambda x: StepOutput(content="Research output"))
+        analysis_step = Step(name="analysis", executor=lambda x: StepOutput(content="Analysis output"))
+        summary_step = Step(name="summary", executor=lambda x: StepOutput(content="Summary output"))
 
         def route_selector(step_input: StepInput):
             if "research" in step_input.message:
@@ -204,9 +172,9 @@ class TestRouter:
                     name="router",
                     selector=route_selector,
                     choices=[research_step, analysis_step, summary_step],
-                    description="Multiple step routing"
+                    description="Multiple step routing",
                 )
-            ]
+            ],
         )
 
         response = workflow.run(message="test research")
