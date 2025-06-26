@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.watsonx import format_images_for_message
 
 try:
@@ -91,7 +91,7 @@ class WatsonX(Model):
 
         return self.model_client
 
-    def _get_request_params(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -122,6 +122,9 @@ class WatsonX(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with params: {request_params}")
         return request_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
@@ -162,7 +165,7 @@ class WatsonX(Model):
             client = self.get_client()
 
             formatted_messages = [self._format_message(m) for m in messages]
-            request_params = self._get_request_params(
+            request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
@@ -188,7 +191,7 @@ class WatsonX(Model):
             client = self.get_client()
             formatted_messages = [self._format_message(m) for m in messages]
 
-            request_params = self._get_request_params(
+            request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
@@ -212,7 +215,7 @@ class WatsonX(Model):
             client = self.get_client()
             formatted_messages = [self._format_message(m) for m in messages]
 
-            request_params = self._get_request_params(
+            request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
@@ -237,7 +240,7 @@ class WatsonX(Model):
             formatted_messages = [self._format_message(m) for m in messages]
 
             # Get parameters for chat
-            request_params = self._get_request_params(
+            request_params = self.get_request_params(
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 

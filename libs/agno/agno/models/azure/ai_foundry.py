@@ -10,7 +10,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 from agno.utils.models.ai_foundry import format_message
 
 try:
@@ -72,7 +72,7 @@ class AzureAIFoundry(Model):
     client: Optional[ChatCompletionsClient] = None
     async_client: Optional[AsyncChatCompletionsClient] = None
 
-    def _get_request_kwargs(
+    def get_request_params(
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -121,6 +121,9 @@ class AzureAIFoundry(Model):
         request_params = {k: v for k, v in base_params.items() if v is not None}
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with params: {request_params}")
         return request_params
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -187,7 +190,7 @@ class AzureAIFoundry(Model):
         try:
             return self.get_client().complete(
                 messages=[format_message(m) for m in messages],
-                **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -216,7 +219,7 @@ class AzureAIFoundry(Model):
             async with self.get_async_client() as client:
                 return await client.complete(
                     messages=[format_message(m) for m in messages],
-                    **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
                 )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -244,7 +247,7 @@ class AzureAIFoundry(Model):
             yield from self.get_client().complete(
                 messages=[format_message(m) for m in messages],
                 stream=True,
-                **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
         except HttpResponseError as e:
             log_error(f"Azure AI API error: {e}")
@@ -273,7 +276,7 @@ class AzureAIFoundry(Model):
                 stream = await client.complete(
                     messages=[format_message(m) for m in messages],
                     stream=True,
-                    **self._get_request_kwargs(tools=tools, response_format=response_format, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
                 )
                 async for chunk in stream:  # type: ignore
                     yield chunk

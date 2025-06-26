@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     import litellm
@@ -105,7 +105,7 @@ class LiteLLM(Model):
 
         return formatted_messages
 
-    def get_request_kwargs(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def get_request_params(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -133,6 +133,8 @@ class LiteLLM(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with params: {request_params}")
         return request_params
 
     def invoke(
@@ -143,7 +145,7 @@ class LiteLLM(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_kwargs(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         return self.get_client().completion(**completion_kwargs)
 
@@ -155,7 +157,7 @@ class LiteLLM(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[Mapping[str, Any]]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_kwargs(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
         return self.get_client().completion(**completion_kwargs)
@@ -168,7 +170,7 @@ class LiteLLM(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Mapping[str, Any]:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_kwargs(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         return await self.get_client().acompletion(**completion_kwargs)
 
@@ -180,7 +182,7 @@ class LiteLLM(Model):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> AsyncIterator[Any]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.get_request_kwargs(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
 

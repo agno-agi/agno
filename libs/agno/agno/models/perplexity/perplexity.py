@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 try:
     from openai.types.chat.chat_completion import ChatCompletion
@@ -48,7 +48,7 @@ class Perplexity(OpenAILike):
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -75,6 +75,9 @@ class Perplexity(OpenAILike):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with params: {request_params}")
         return request_params
 
     def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion], **kwargs) -> ModelResponse:
