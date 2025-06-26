@@ -16,7 +16,9 @@ class AggregatedMetrics(BaseModel):
     users_count: int
     created_at: int
     updated_at: int
-    tokens_metrics: Dict[str, Any]
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
     model_metrics: Dict[str, Any]
     time: int
     day: int
@@ -34,8 +36,10 @@ class AggregatedMetrics(BaseModel):
             team_sessions_count=metrics_dict["team_sessions_count"],
             workflow_sessions_count=metrics_dict["workflow_sessions_count"],
             users_count=metrics_dict["users_count"],
+            input_tokens=metrics_dict["input_tokens"],
+            output_tokens=metrics_dict["output_tokens"],
+            total_tokens=metrics_dict["total_tokens"],
             model_metrics=metrics_dict["model_metrics"],
-            tokens_metrics=metrics_dict["tokens_metrics"],
             time=metrics_dict["time"],
             day=metrics_dict["day"],
             month=metrics_dict["month"],
