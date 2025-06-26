@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any, Dict
 
 from fastapi import APIRouter
 
@@ -13,3 +14,8 @@ class BaseInterface(ABC):
     @abstractmethod
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
         pass
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "type": self.type,
+        }

@@ -160,7 +160,6 @@ class BaseAPIApp(ABC):
         **kwargs,
     ):
         self.set_app_id()
-        self.register_app_on_platform()
 
         if self.agent:
             self.agent.register_agent()
@@ -169,40 +168,3 @@ class BaseAPIApp(ABC):
         log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
-
-    def register_app_on_platform(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        try:
-            log_debug(f"Creating app on Platform: {self.name}, {self.app_id}")
-            create_app(app=AppCreate(name=self.name, app_id=self.app_id, config=self.to_dict()))
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-        log_debug(f"Agent app created: {self.name}, {self.app_id}")
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload = {
-            "agents": [
-                {
-                    **self.agent.get_agent_config_dict(),
-                    "agent_id": self.agent.agent_id,
-                    "team_id": self.agent.team_id,
-                }
-            ]
-            if self.agent
-            else None,
-            "teams": [
-                {
-                    **self.team.to_platform_dict(),
-                    "team_id": self.team.team_id,
-                }
-            ]
-            if self.team
-            else None,
-            "type": self.type,
-            "description": self.description,
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload

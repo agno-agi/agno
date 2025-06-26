@@ -130,12 +130,13 @@ class Function(BaseModel):
         )
 
     @classmethod
-    def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
+    def from_callable(cls, c: Callable, name: Optional[str] = None, description: Optional[str] = None, strict: bool = False) -> "Function":
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
         function_name = name or c.__name__
+        function_description = description or get_entrypoint_docstring(entrypoint=c)
         parameters = {"type": "object", "properties": {}, "required": []}
         try:
             sig = signature(c)
@@ -195,7 +196,7 @@ class Function(BaseModel):
 
         return cls(
             name=function_name,
-            description=get_entrypoint_docstring(entrypoint=c),
+            description=function_description,
             parameters=parameters,
             entrypoint=entrypoint,
         )

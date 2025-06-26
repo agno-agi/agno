@@ -76,7 +76,6 @@ class Knowledge:
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
-        pass
 
     def load(self):
         log_info("Loading documents from knowledge base")

@@ -602,14 +602,12 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
-                self.memory = deepcopy(self.memory)
+            # self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
+        if self.memory.model is None and self.model is not None:
+            self.memory.set_model(self.model)
 
         # Initialize formatter
         if self._formatter is None:
@@ -748,7 +746,7 @@ class Team:
 
         # Read existing session from storage
         if self.context is not None:
-            self._resolve_run_context()
+            self.resolve_run_context()
 
         if self.response_model is not None and self.parse_response and stream is True:
             # Disable stream if response_model is set
@@ -1137,7 +1135,7 @@ class Team:
 
         # Read existing session from storage
         if self.context is not None:
-            self._resolve_run_context()
+            await self.aresolve_run_context()
 
         if self.response_model is not None and self.parse_response and stream is True:
             # Disable stream if response_model is set
@@ -4353,28 +4351,51 @@ class Team:
             rr.created_at = created_at
         return rr
 
-    def _resolve_run_context(self) -> None:
+    
+    def resolve_run_context(self) -> None:
         from inspect import signature
 
         log_debug("Resolving context")
-        if self.context is not None:
-            if isinstance(self.context, dict):
-                for ctx_key, ctx_value in self.context.items():
-                    if callable(ctx_value):
-                        try:
-                            sig = signature(ctx_value)
-                            if "agent" in sig.parameters:
-                                resolved_ctx_value = ctx_value(agent=self)
-                            else:
-                                resolved_ctx_value = ctx_value()
-                            if resolved_ctx_value is not None:
-                                self.context[ctx_key] = resolved_ctx_value
-                        except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
-                    else:
-                        self.context[ctx_key] = ctx_value
+        if not isinstance(self.context, dict):
+            log_warning("Context is not a dict")
+            return
+
+        for key, value in self.context.items():
+            if callable(value):
+                try:
+                    sig = signature(value)
+                    result = value(agent=self) if "agent" in sig.parameters else value()
+                    if result is not None:
+                        self.context[key] = result
+                except Exception as e:
+                    log_warning(f"Failed to resolve context for '{key}': {e}")
             else:
-                log_warning("Context is not a dict")
+                self.context[key] = value
+
+    async def aresolve_run_context(self) -> None:
+        from inspect import iscoroutine, signature
+
+        log_debug("Resolving context (async)")
+        if not isinstance(self.context, dict):
+            log_warning("Context is not a dict")
+            return
+
+        for key, value in self.context.items():
+            if not callable(value):
+                self.context[key] = value
+                continue
+
+            try:
+                sig = signature(value)
+                result = value(agent=self) if "agent" in sig.parameters else value()
+
+                if iscoroutine(result):
+                    result = await result
+
+                self.context[key] = result
+            except Exception as e:
+                log_warning(f"Failed to resolve context for '{key}': {e}")
+
 
     def determine_tools_for_model(
         self,
@@ -7086,3 +7107,64 @@ class Team:
 
         log_info(f"Filters used by Agent: {search_filters}")
         return search_filters
+    
+    def to_dict(self) -> Dict[str, Any]:
+        
+        self.determine_tools_for_model(
+            model=self.model,
+            session_id=str(uuid4()),
+            async_mode=True,
+        )
+        team_tools = self._functions_for_model.values()
+        formatted_tools = [tool.to_dict() for tool in team_tools]
+
+        model_name = self.model.name or self.model.__class__.__name__ if self.model else None
+        model_provider = self.model.provider or self.model.__class__.__name__ if self.model else ""
+        model_id = self.model.id if self.model else None
+
+        if model_provider and model_id:
+            model_provider = f"{model_provider} {model_id}"
+        elif model_name and model_id:
+            model_provider = f"{model_name} {model_id}"
+        elif model_id:
+            model_provider = model_id
+        else:
+            model_provider = ""
+
+        memory_dict: Optional[Dict[str, Any]] = None
+        if self.memory and self.memory.db:
+            memory_dict = {"name": "Memory"}
+            if self.memory.model is not None:
+                memory_dict["model"] = {
+                    "name":self.memory.model.name,
+                    "model":self.memory.model.id,
+                    "provider":self.memory.model.provider,
+                }
+        
+        knowledge_dict: Optional[Dict[str, Any]] = None
+        if self.knowledge:
+            knowledge_dict = {"name": self.knowledge.__class__.__name__}
+            
+        return {
+            "team_id": self.team_id,
+            "name": self.name,
+            "model": {  
+                "name":model_name,
+                "model":model_id,
+                "provider":model_provider,
+            },
+            "success_criteria": self.success_criteria,
+            "instructions": self.instructions,
+            "description": self.description,
+            "tools": formatted_tools,
+            "expected_output": self.expected_output,
+            "context": json.dumps(self.context) if isinstance(self.context, dict) else self.context,
+            "enable_agentic_context": self.enable_agentic_context,
+            "mode": self.mode,
+            "memory": memory_dict,
+            "knowledge": knowledge_dict,
+            "members": [
+                member.to_dict()
+                for member in self.members
+            ],
+        }

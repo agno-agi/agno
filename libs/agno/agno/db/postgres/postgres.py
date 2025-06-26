@@ -826,7 +826,7 @@ class PostgresDb(BaseDb):
         if not hasattr(self, "user_memory_table"):
             if self.user_memory_table_name is None:
                 raise ValueError("User memory table was not provided on initialization")
-            log_info(f"Getting user memory table: {self.user_memory_table_name}")
+            log_debug(f"Getting user memory table: {self.user_memory_table_name}")
             self.user_memory_table = self.get_or_create_table(
                 table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
             )
@@ -1136,7 +1136,7 @@ class PostgresDb(BaseDb):
         if not hasattr(self, "knowledge_table"):
             if self.knowledge_table_name is None:
                 raise ValueError("Knowledge table was not provided on initialization")
-            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
+            log_debug(f"Getting knowledge table: {self.knowledge_table_name}")
             self.knowledge_table = self.get_or_create_table(
                 table_name=self.knowledge_table_name, table_type="knowledge_documents", db_schema=self.db_schema
             )
@@ -1191,7 +1191,7 @@ class PostgresDb(BaseDb):
         if not hasattr(self, "eval_table"):
             if self.eval_table_name is None:
                 raise ValueError("Eval table was not provided on initialization")
-            log_info(f"Getting eval table: {self.eval_table_name}")
+            log_debug(f"Getting eval table: {self.eval_table_name}")
             self.eval_table = self.get_or_create_table(
                 table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
             )

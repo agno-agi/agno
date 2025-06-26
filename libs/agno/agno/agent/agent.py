@@ -620,14 +620,12 @@ class Agent:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            # if isinstance(self.memory, Memory):
-            #     self.memory = deepcopy(self.memory)
+            # self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
         # Default to the agent's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
+        if self.memory.model is None and self.model is not None:
+            self.memory.set_model(self.model)
 
         if self._formatter is None:
             self._formatter = SafeFormatter()
@@ -1339,7 +1337,7 @@ class Agent:
 
         # Read existing session from storage
         if self.context is not None:
-            self.resolve_run_context()
+            await self.aresolve_run_context()
 
         if self.response_model is not None and self.parse_response and stream is True:
             # Disable stream if response_model is set
@@ -1996,7 +1994,7 @@ class Agent:
 
         # Read existing session from storage
         if self.context is not None:
-            self.resolve_run_context()
+            await self.aresolve_run_context()
 
         if self.response_model is not None and self.parse_response and stream is True:
             # Disable stream if response_model is set
@@ -7042,75 +7040,6 @@ class Agent:
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
 
-    def get_agent_config_dict(self) -> Dict[str, Any]:
-        tools: List[Dict[str, Any]] = []
-        if self.tools is not None:
-            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
-                team_model = self.model
-                session_id = self.session_id
-                if team_model and session_id is not None:
-                    self.determine_tools_for_model(model=team_model, session_id=session_id)
-
-            if self._tools_for_model is not None:
-                for tool in self._tools_for_model:
-                    if isinstance(tool, dict) and tool.get("type") == "function":
-                        tools.append(tool["function"])
-        model = None
-        if self.model is not None:
-            model = {
-                "name": str(self.model.__class__.__name__),
-                "model": str(self.model.id),
-                "provider": str(self.model.provider),
-            }
-
-        payload = {
-            "instructions": self.instructions if self.instructions is not None else [],
-            "tools": tools,
-            "memory": (
-                {
-                    "name": self.memory.__class__.__name__,
-                    "model": (
-                        {
-                            "name": self.memory.model.__class__.__name__,
-                            "model": self.memory.model.id,
-                            "provider": self.memory.model.provider,
-                        }
-                        if hasattr(self.memory, "model") and self.memory.model is not None
-                        else (
-                            {
-                                "name": self.model.__class__.__name__,
-                                "model": self.model.id,
-                                "provider": self.model.provider,
-                            }
-                            if self.model is not None
-                            else None
-                        )
-                    ),
-                    "db": (
-                        {
-                            "name": self.memory.db.__class__.__name__,
-                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
-                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
-                        }
-                        if hasattr(self.memory, "db") and self.memory.db is not None
-                        else None
-                    ),
-                }
-                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
-                else None
-            ),
-            "knowledge": {
-                "name": self.knowledge.__class__.__name__,
-            }
-            if self.knowledge is not None
-            else None,
-            "model": model,
-            "name": self.name,
-            "description": self.description,
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload
-
     async def acli_app(
         self,
         message: Optional[str] = None,
@@ -7143,3 +7072,67 @@ class Agent:
             await self.aprint_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+
+    
+    def _format_tools(self, agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Callable]]):
+        formatted_tools = []
+        if agent_tools is not None:
+            for tool in agent_tools:
+                if isinstance(tool, dict):
+                    formatted_tools.append(tool)
+                elif isinstance(tool, Toolkit):
+                    for _, f in tool.functions.items():
+                        formatted_tools.append(f.to_dict())
+                elif isinstance(tool, Function):
+                    formatted_tools.append(tool.to_dict())
+                elif callable(tool):
+                    func = Function.from_callable(tool)
+                    formatted_tools.append(func.to_dict())
+                else:
+                    log_warning(f"Unknown tool type: {type(tool)}")
+        return formatted_tools
+
+    def to_dict(self) -> Dict[str, Any]:
+        agent_tools = self.get_tools(session_id=str(uuid4()), async_mode=True)
+        formatted_tools = self._format_tools(agent_tools)
+
+        model_name = self.model.name or self.model.__class__.__name__ if self.model else None
+        model_provider = self.model.provider or self.model.__class__.__name__ if self.model else ""
+        model_id = self.model.id if self.model else None
+
+        if model_provider and model_id:
+            model_provider = f"{model_provider} {model_id}"
+        elif model_name and model_id:
+            model_provider = f"{model_name} {model_id}"
+        elif model_id:
+            model_provider = model_id
+        else:
+            model_provider = ""
+                
+        memory_dict: Optional[Dict[str, Any]] = None
+        if self.memory and self.memory.db:
+            memory_dict = {"name": "Memory"}
+            if self.memory.model is not None:
+                memory_dict["model"] = {
+                    "name":self.memory.model.name,
+                    "model":self.memory.model.id,
+                    "provider":self.memory.model.provider,
+                }
+        knowledge_dict: Optional[Dict[str, Any]] = None
+        if self.knowledge:
+            knowledge_dict = {"name": self.knowledge.__class__.__name__}
+                
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "description": self.description,
+            "instructions": self.instructions,
+            "model": {
+                "name":model_name,
+                "model":model_id,
+                "provider":model_provider,
+            },
+            "tools": formatted_tools,
+            "memory": memory_dict,
+            "knowledge": knowledge_dict,
+        }

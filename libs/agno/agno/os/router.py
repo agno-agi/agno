@@ -13,6 +13,12 @@ from agno.os.schema import (
     AgentResponse,
     AppsResponse,
     ConfigResponse,
+    ManagerResponse,
+    AgentResponse,
+    ConsolePrompt,
+    ConsolePromptResponse,
+    ConsolePromptToolResponse,
+    ConsoleResponse,
     InterfaceResponse,
     ManagerResponse,
     TeamResponse,
@@ -91,11 +97,14 @@ def get_base_router(
 ) -> APIRouter:
     router = APIRouter(tags=["Built-In"])
 
-    @router.get("/status")
+    @router.get("/status", description="Get the status of the running AgentOS")
     async def status():
         return {"status": "available"}
 
-    @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
+    @router.get("/config",
+                description="Get the configuration/spec of the running AgentOS",
+                response_model=ConfigResponse,
+                response_model_exclude_none=True)
     async def config() -> ConfigResponse:
         app_response = AppsResponse(
             session=[
@@ -124,6 +133,8 @@ def get_base_router(
         app_response.knowledge = app_response.knowledge or None
         app_response.memory = app_response.memory or None
         app_response.eval = app_response.eval or None
+        
+        console = os.console
 
         return ConfigResponse(
             os_id=os.os_id,
@@ -134,23 +145,33 @@ def get_base_router(
                 for interface in os.interfaces
             ],
             apps=app_response,
+            console=ConsoleResponse(available_tags=console.available_tags) if console else None,
         )
 
-    @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
+    @router.get("/agents",
+                description="Get the list of agents available in the AgentOS",
+                response_model=List[AgentResponse],
+                response_model_exclude_none=True)
     async def get_agents():
         if os.agents is None:
             return []
 
         return [AgentResponse.from_agent(agent) for agent in os.agents]
 
-    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
+    @router.get("/teams",
+                description="Get the list of teams available in the AgentOS",
+                response_model=List[TeamResponse],
+                response_model_exclude_none=True)
     async def get_teams():
         if os.teams is None:
             return []
 
         return [TeamResponse.from_team(team) for team in os.teams]
 
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
+    @router.get("/workflows",
+                description="Get the list of workflows available in the AgentOS",
+                response_model=List[WorkflowResponse],
+                response_model_exclude_none=True)
     async def get_workflows():
         if os.workflows is None:
             return []
@@ -164,11 +185,13 @@ def get_base_router(
             for workflow in os.workflows
         ]
 
-    @router.post("/agents/{agent_id}/runs")
+
+    @router.post("/agents/{agent_id}/runs",
+                 description="Create a run for an agent")
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
-        stream: bool = Form(True),
+        stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -178,7 +201,7 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
-            log_debug(f"Creating new session")
+            log_debug("Creating new session")
             session_id = str(uuid4())
 
         base64_images: List[Image] = []
@@ -268,7 +291,9 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-    @router.post("/agents/{agent_id}/runs/{run_id}/continue")
+
+    @router.post("/agents/{agent_id}/runs/{run_id}/continue",
+                 description="Continue a run for an agent")
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
@@ -325,5 +350,24 @@ def get_base_router(
                 ),
             )
             return run_response_obj.to_dict()
+
+    return router
+
+
+def get_console_router(
+    console: "Console",
+) -> APIRouter:
+    router = APIRouter(prefix="/console", tags=["Console"])
+
+    @router.post("/prompt",
+                 description="Send a prompt to the console",
+                 response_model=ConsolePromptResponse,
+                 response_model_exclude_none=True)
+    async def prompt(prompt: ConsolePrompt):
+        response = await console.execute(prompt.message)
+        return ConsolePromptResponse(
+            content=response.content,
+            tools=[ConsolePromptToolResponse(name=tool.tool_name, args=tool.tool_args) for tool in response.tools]
+        )
 
     return router

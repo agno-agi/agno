@@ -158,6 +158,7 @@ class Memory:
         self.debug_mode = debug_mode
 
     def set_model(self, model: Model) -> None:
+        self.model = model
         if self.memory_manager is None:
             self.memory_manager = MemoryManager(model=deepcopy(model))
         if self.memory_manager.model is None:
@@ -411,6 +412,8 @@ class Memory:
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         user_id: Optional[str] = None,
         refresh_from_db: bool = True,
     ) -> str:

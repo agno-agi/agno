@@ -747,3 +747,10 @@ class Workflow:
 
         # For other types, return as is
         return field_value
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "workflow_id": self.workflow_id,
+            "name": self.name,
+            "description": self.description,
+        }
