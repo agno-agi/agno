@@ -28,8 +28,7 @@ def content_step_function(step_input: StepInput) -> StepOutput:
 @pytest.fixture
 def workflow_storage(tmp_path):
     """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(
-        tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
+    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
     storage.create()
     return storage
 

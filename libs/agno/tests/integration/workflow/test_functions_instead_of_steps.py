@@ -44,8 +44,7 @@ def content_agent():
 @pytest.fixture
 def workflow_storage(tmp_path):
     """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(
-        tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
+    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
     storage.create()
     return storage
 
@@ -325,12 +324,13 @@ class TestCustomExecutionFunctions:
 
     def test_custom_execution_return_types(self, workflow_storage):
         """Test custom execution function with different return types."""
+
         def dict_return_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
             """Custom execution that returns a dictionary."""
             result = {
                 "status": "success",
                 "message": execution_input.message,
-                "analysis": "Complete analysis performed"
+                "analysis": "Complete analysis performed",
             }
             return str(result)  # Convert dict to string explicitly
 
