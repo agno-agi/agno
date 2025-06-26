@@ -6,14 +6,16 @@ from agno.os.connectors import SessionConnector
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
+from agno.os.connectors.metrics.metrics import MetricsConnector
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(
     db_url=db_url,
-    agent_session_table="agent_sessions",
-    team_session_table="team_sessions",
-    workflow_session_table="workflow_sessions",
+    agent_session_table="agent_sessions2",
+    team_session_table="team_sessions2",
+    workflow_session_table="workflow_sessions2",
+    metrics_table="metrics",
 )
 
 # Setup the memory
@@ -23,6 +25,7 @@ memory = Memory(db=db)
 basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
+    session_id="123",
     memory=memory,
     enable_user_memories=True,
     markdown=True,
@@ -34,7 +37,7 @@ agent_os = AgentOS(
     description="Example app for basic agent with session capabilities",
     os_id="session-demo",
     agents=[basic_agent],
-    apps=[SessionConnector(db=db)],
+    apps=[SessionConnector(db=db), MetricsConnector(db=db)],
 )
 app = agent_os.get_app()
 

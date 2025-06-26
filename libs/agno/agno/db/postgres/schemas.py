@@ -95,7 +95,7 @@ METRICS_TABLE_SCHEMA = {
     "metrics": {"type": JSON, "nullable": False, "default": {}},
     "time": {"type": BigInteger, "nullable": False},
     "day": {"type": BigInteger, "nullable": False, "unique": True},
-    "month": {"type": BigInteger, "nullable": False, "unique": True},
+    "month": {"type": BigInteger, "nullable": False},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": False},
     "completed": {"type": Boolean, "nullable": False, "default": False},

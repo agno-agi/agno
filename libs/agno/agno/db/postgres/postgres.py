@@ -169,7 +169,7 @@ class PostgresDb(BaseDb):
 
             log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
 
-            columns, indexes = [], []
+            columns, indexes, unique_constraints = [], [], []
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
                 column_kwargs = {}
@@ -180,6 +180,9 @@ class PostgresDb(BaseDb):
                     column_kwargs["nullable"] = col_config["nullable"]
                 if col_config.get("index", False):
                     indexes.append(col_name)
+                if col_config.get("unique", False):
+                    column_kwargs["unique"] = True
+                    unique_constraints.append(col_name)
 
                 columns.append(Column(*column_args, **column_kwargs))
 
@@ -1144,12 +1147,218 @@ class PostgresDb(BaseDb):
         return self.metrics_table
 
     def get_metrics(self) -> List[AggregatedMetrics]:
-        """Get all metrics from the database."""
-        return []
+        """Get all metrics from the database, ensuring one record per day."""
+        try:
+            table = self.get_metrics_table()
+            
+            with self.Session() as sess, sess.begin():
+                # Group by day to ensure only one record per day, taking the most recent
+                stmt = select(table).distinct(table.c.day).order_by(table.c.day.desc(), table.c.updated_at.desc())
+                result = sess.execute(stmt).fetchall()
+                
+                if not result:
+                    return []
+                
+                # Track seen days to ensure no duplicates
+                seen_days = set()
+                metrics = []
+                
+                for row in result:
+                    row_dict = row._mapping
+                    day = row_dict["day"]
+                    
+                    # Skip if we've already processed this day
+                    if day in seen_days:
+                        log_debug(f"Skipping duplicate metrics for day {day}")
+                        continue
+                    
+                    seen_days.add(day)
+                    
+                    # Extract metrics from JSON field and flatten for AggregatedMetrics
+                    metrics_json = row_dict.get("metrics", {})
+                    metric = AggregatedMetrics(
+                        id=row_dict["id"],
+                        agent_runs_count=row_dict["agent_runs_count"],
+                        team_runs_count=row_dict["team_runs_count"],
+                        workflow_runs_count=row_dict["workflow_runs_count"],
+                        agent_sessions_count=row_dict["agent_sessions_count"],
+                        team_sessions_count=row_dict["team_sessions_count"],
+                        workflow_sessions_count=row_dict["workflow_sessions_count"],
+                        users_count=row_dict["users_count"],
+                        created_at=row_dict["created_at"],
+                        updated_at=row_dict["updated_at"],
+                        input_tokens=metrics_json.get("input_tokens", 0),
+                        output_tokens=metrics_json.get("output_tokens", 0),
+                        total_tokens=metrics_json.get("total_tokens", 0),
+                        model_metrics=metrics_json.get("model_metrics", {}),
+                        time=row_dict["time"],
+                        day=row_dict["day"],
+                        month=row_dict["month"],
+                        completed=row_dict["completed"],
+                    )
+                    metrics.append(metric)
+                
+                log_debug(f"Retrieved {len(metrics)} daily metrics records")
+                return metrics
+                
+        except Exception as e:
+            log_error(f"Exception getting metrics: {e}")
+            return []
 
     def upsert_metrics(self) -> Optional[AggregatedMetrics]:
-        """Upsert a metrics in the database."""
-        return None
+        """Upsert metrics in the database."""
+        try:
+            table = self.get_metrics_table()
+            
+            # Count agent sessions and runs
+            agent_sessions_count = 0
+            agent_runs_count = 0
+            if self.agent_session_table_name:
+                try:
+                    agent_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.AGENT)
+                    agent_sessions_count = len(agent_sessions_raw)
+                    
+                    # Count runs in agent sessions
+                    for session in agent_sessions_raw:
+                        runs = session.get("runs")
+                        if runs and isinstance(runs, list):
+                            agent_runs_count += len(runs)
+                except Exception as e:
+                    log_debug(f"Could not count agent sessions/runs: {e}")
+            
+            # Count team sessions and runs  
+            team_sessions_count = 0
+            team_runs_count = 0
+            if self.team_session_table_name:
+                try:
+                    team_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.TEAM)
+                    team_sessions_count = len(team_sessions_raw)
+                    
+                    # Count runs in team sessions
+                    for session in team_sessions_raw:
+                        runs = session.get("runs")
+                        if runs and isinstance(runs, list):
+                            team_runs_count += len(runs)
+                except Exception as e:
+                    log_debug(f"Could not count team sessions/runs: {e}")
+                    
+            # Count workflow sessions and runs
+            workflow_sessions_count = 0
+            workflow_runs_count = 0
+            if self.workflow_session_table_name:
+                try:
+                    workflow_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.WORKFLOW)
+                    workflow_sessions_count = len(workflow_sessions_raw)
+                    
+                    # Count runs in workflow sessions
+                    for session in workflow_sessions_raw:
+                        runs = session.get("runs")
+                        if runs and isinstance(runs, list):
+                            workflow_runs_count += len(runs)
+                except Exception as e:
+                    log_debug(f"Could not count workflow sessions/runs: {e}")
+            users_count = 0
+            if self.agent_session_table_name:
+                try:
+                    agent_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.AGENT)
+                    users_count = len(set([session.get("user_id") for session in agent_sessions_raw]))
+                except Exception as e:
+                    log_debug(f"Could not count users: {e}")
+            # Calculate current day for aggregation
+            current_time = int(time.time())
+            current_day = current_time // (24 * 60 * 60)  # Days since epoch
+            current_month = current_day // 30  # Rough month calculation
+            
+            # Create deterministic ID based on day to ensure same row is updated
+            day_based_id = f"metrics_day_{current_day}"
+            
+            # Check if record exists for current day
+            existing_record = None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.day == current_day)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    existing_record = result._mapping
+            
+            # Prepare metrics data (tokens and model metrics go in the JSON field)
+            metrics_data = {
+                "input_tokens": 0,
+                "output_tokens": 0, 
+                "total_tokens": 0,
+                "model_metrics": {}
+            }
+            
+            with self.Session() as sess, sess.begin():
+                if existing_record:
+                    # Update existing record
+                    stmt = table.update().where(table.c.day == current_day).values(
+                        agent_sessions_count=agent_sessions_count,
+                        team_sessions_count=team_sessions_count,
+                        workflow_sessions_count=workflow_sessions_count,
+                        agent_runs_count=agent_runs_count,
+                        team_runs_count=team_runs_count,
+                        workflow_runs_count=workflow_runs_count,
+                        metrics=metrics_data,
+                        updated_at=current_time,
+                        completed=True,
+                    ).returning(table)
+                    log_debug(f"Updating existing metrics record for day {current_day}")
+                else:
+                    # Insert new record
+                    stmt = postgresql.insert(table).values(
+                        id=day_based_id,
+                        agent_sessions_count=agent_sessions_count,
+                        team_sessions_count=team_sessions_count,
+                        workflow_sessions_count=workflow_sessions_count,
+                        agent_runs_count=agent_runs_count,
+                        team_runs_count=team_runs_count,
+                        workflow_runs_count=workflow_runs_count,
+                        users_count=users_count,
+                        metrics=metrics_data,
+                        time=current_time,
+                        day=current_day,
+                        month=current_month,
+                        created_at=current_time,
+                        updated_at=current_time,
+                        completed=True,
+                    ).returning(table)
+                    log_debug(f"Creating new metrics record for day {current_day}")
+                
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                sess.commit()
+                
+            # Convert to AggregatedMetrics object
+            if row:
+                row_dict = row._mapping
+                # Extract metrics from JSON field and flatten for AggregatedMetrics
+                metrics_json = row_dict.get("metrics", {})
+                return AggregatedMetrics(
+                    id=row_dict["id"],
+                    agent_runs_count=row_dict["agent_runs_count"],
+                    team_runs_count=row_dict["team_runs_count"],
+                    workflow_runs_count=row_dict["workflow_runs_count"],
+                    agent_sessions_count=row_dict["agent_sessions_count"],
+                    team_sessions_count=row_dict["team_sessions_count"],
+                    workflow_sessions_count=row_dict["workflow_sessions_count"],
+                    users_count=row_dict["users_count"],
+                    created_at=row_dict["created_at"],
+                    updated_at=row_dict["updated_at"],
+                    input_tokens=metrics_json.get("input_tokens", 0),
+                    output_tokens=metrics_json.get("output_tokens", 0),
+                    total_tokens=metrics_json.get("total_tokens", 0),
+                    model_metrics=metrics_json.get("model_metrics", {}),
+                    time=row_dict["time"],
+                    day=row_dict["day"],
+                    month=row_dict["month"],
+                    completed=row_dict["completed"],
+                )
+            
+            return None
+            
+        except Exception as e:
+            log_error(f"Exception upserting metrics: {e}")
+            return None
 
     # -- Knowledge methods --
 
