@@ -83,14 +83,7 @@ class TestConditionSteps:
         workflow = Workflow(
             name="Basic Condition False",
             storage=workflow_storage,
-            steps=[
-                research_step,
-                Condition(
-                    name="stats_check",
-                    evaluator=has_statistics,
-                    steps=[fact_check_step]
-                )
-            ],
+            steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
         )
 
         # Using a message without statistics
@@ -99,7 +92,7 @@ class TestConditionSteps:
 
         # The step_responses will be empty due to the error
         assert len(response.step_responses) == 0
-    
+
     def test_parallel_with_conditions(self, workflow_storage):
         """Test parallel containing multiple conditions."""
         workflow = Workflow(
@@ -108,25 +101,17 @@ class TestConditionSteps:
             steps=[
                 research_step,  # Add a step before parallel to ensure proper chaining
                 Parallel(
-                    Condition(
-                        name="tech_check",
-                        evaluator=is_tech_topic,
-                        steps=[analysis_step]
-                    ),
-                    Condition(
-                        name="stats_check",
-                        evaluator=has_statistics,
-                        steps=[fact_check_step]
-                    ),
-                    name="parallel_conditions"
-                )
-            ]
+                    Condition(name="tech_check", evaluator=is_tech_topic, steps=[analysis_step]),
+                    Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step]),
+                    name="parallel_conditions",
+                ),
+            ],
         )
 
         response = workflow.run(message="AI market shows 40% growth")
         assert isinstance(response, WorkflowRunResponse)
         assert len(response.step_responses) == 2  # research_step + parallel
-        
+
         # Check the parallel output structure
         parallel_output = response.step_responses[1]
         assert parallel_output.success is True
