@@ -38,4 +38,8 @@ structured_output_agent = Agent(
     response_model=MovieScript,
 )
 
-structured_output_agent.print_response("New York", stream=True, stream_intermediate_steps=True)
+async def main():
+    await structured_output_agent.aprint_response("New York", stream=True, stream_intermediate_steps=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())

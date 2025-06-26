@@ -941,6 +941,7 @@ class Model(ABC):
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
                 )
+                yield model_response
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -1213,8 +1214,12 @@ class Model(ABC):
                 ):
                     # We only capture content events
                     if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                        # Capture output
-                        function_call_output += item.content or ""
+                        
+                        if item.content is not None and isinstance(item.content, BaseModel):
+                            function_call_output += item.content.model_dump_json()
+                        else:
+                            # Capture output
+                            function_call_output += item.content or ""
 
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
@@ -1560,8 +1565,11 @@ class Model(ABC):
                     ):
                         # We only capture content events
                         if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                            # Capture output
-                            function_call_output += item.content or ""
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
 
                             if fc.function.show_result:
                                 yield ModelResponse(content=item.content)
@@ -1581,8 +1589,11 @@ class Model(ABC):
                     ):
                         # We only capture content events
                         if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                            # Capture output
-                            function_call_output += item.content or ""
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
 
                             if fc.function.show_result:
                                 yield ModelResponse(content=item.content)

@@ -622,9 +622,6 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-    @property
-    def is_streamable(self) -> bool:
-        return self.response_model is None
 
     @overload
     def run(
@@ -741,7 +738,7 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -750,11 +747,6 @@ class Team:
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._set_default_model()
@@ -844,7 +836,7 @@ class Team:
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._run_stream(
                         run_response=self.run_response,
                         run_messages=run_messages,
@@ -873,7 +865,7 @@ class Team:
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -890,12 +882,12 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
@@ -954,12 +946,12 @@ class Team:
             user_id=user_id,
         )
         deque(response_iterator, maxlen=0)
-
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
-        # 6. Parse team response model
+        
+        # 5. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
+
+        # 6. Save session to storage
+        self.write_to_storage(session_id=session_id, user_id=user_id)
 
         # 8. Log Team Run
         self._log_team_run(session_id=session_id, user_id=user_id)
@@ -1023,6 +1015,9 @@ class Team:
             session_id=session_id,
             user_id=user_id,
         )
+        
+        # 5. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(
@@ -1032,10 +1027,10 @@ class Team:
                 run_response,
             )
 
-        # 4. Save session to storage
+        # 6. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 5. Log Team Run
+        # 7. Log Team Run
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1148,7 +1143,7 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1157,11 +1152,6 @@ class Team:
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._set_default_model()
@@ -1272,7 +1262,7 @@ class Team:
                 if attempt < num_attempts - 1:
                     await asyncio.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1289,14 +1279,14 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
@@ -1359,13 +1349,13 @@ class Team:
         ):
             pass
 
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
         # 6. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 7. Log Team Run
+        # 7. Save session to storage
+        self.write_to_storage(session_id=session_id, user_id=user_id)
+
+        # 8. Log Team Run
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1430,15 +1420,18 @@ class Team:
         ):
             yield event
 
+        # 5. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
         if stream_intermediate_steps:
             yield self._handle_event(
                 create_team_run_response_completed_event(from_run_response=run_response), run_response
             )
 
-        # 5. Save session to storage
+        # 6. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 6. Log Team Run
+        # 7. Log Team Run
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1649,6 +1642,10 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
+        
+        stream_model_response = True
+        if self.response_model is not None and self.parse_response:
+            stream_model_response = False
 
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
@@ -1658,6 +1655,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
@@ -1805,13 +1803,17 @@ class Team:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                content_type = "str"
+                
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if not full_model_response.content:
+                    if self.response_model is not None and self.parse_response:
                         full_model_response.content = model_response_event.content
+                        content_type = self.response_model.__name__
+                        self._convert_response_to_structured_format(full_model_response)
                     else:
-                        full_model_response.content += model_response_event.content
+                        full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
                 # Process thinking
@@ -1857,18 +1859,28 @@ class Team:
 
                 # Only yield the chunk
                 if should_yield:
-                    yield self._handle_event(
-                        create_team_run_response_content_event(
-                            from_run_response=run_response,
-                            content=model_response_event.content,
-                            thinking=model_response_event.thinking,
-                            redacted_thinking=model_response_event.redacted_thinking,
-                            response_audio=full_model_response.audio,
-                            citations=model_response_event.citations,
-                            image=model_response_event.image,
-                        ),
-                        run_response,
-                    )
+                    if content_type == "str":
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=model_response_event.content,
+                                thinking=model_response_event.thinking,
+                                redacted_thinking=model_response_event.redacted_thinking,
+                                response_audio=full_model_response.audio,
+                                citations=model_response_event.citations,
+                                image=model_response_event.image,
+                            ),
+                            run_response,
+                        )
+                    else:
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=full_model_response.content,
+                                content_type=content_type,
+                            ),
+                            run_response,
+                        )
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_started.value:
@@ -2159,9 +2171,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             self._print_response_stream(
@@ -2509,6 +2518,7 @@ class Team:
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
+        from rich.json import JSON
 
         from agno.utils.response import format_tool_calls
 
@@ -2586,6 +2596,14 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(
+                                    resp.content.model_dump_json(exclude_none=True), indent=2
+                                )
+                            except Exception as e:
+                                print(_response_content)
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -2754,7 +2772,7 @@ class Team:
                         panels.append(team_tool_calls_panel)
 
                 # Add the team response panel at the end
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(
@@ -3020,9 +3038,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             await self._aprint_response_stream(
@@ -3367,6 +3382,7 @@ class Team:
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
+        from rich.json import JSON
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -3442,6 +3458,13 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(
+                                    resp.content.model_dump_json(exclude_none=True), indent=2
+                                )
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -3547,7 +3570,7 @@ class Team:
                     )
                     panels.append(tool_calls_panel)
 
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(

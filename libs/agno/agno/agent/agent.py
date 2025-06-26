@@ -753,6 +753,9 @@ class Agent:
 
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
+        
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
 
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
@@ -762,9 +765,6 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1199,6 +1199,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -1207,9 +1210,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1844,6 +1844,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+        
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -1853,8 +1856,6 @@ class Agent:
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         run_response.status = RunStatus.running
 
@@ -2246,6 +2247,9 @@ class Agent:
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+        
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -2255,8 +2259,6 @@ class Agent:
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -3048,6 +3050,10 @@ class Agent:
             "reasoning_time_taken": 0.0,
         }
         model_response = ModelResponse(content="")
+        
+        stream_model_response = True
+        if self.response_model is not None and self.parse_response:
+            stream_model_response = False
 
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -3056,6 +3062,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore

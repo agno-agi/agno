@@ -68,6 +68,7 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
+        content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         thinking=from_run_response.thinking,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
@@ -88,6 +89,7 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
+        content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
         thinking=from_run_response.thinking,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
@@ -376,6 +378,7 @@ def create_run_response_content_event(
 def create_team_run_response_content_event(
     from_run_response: TeamRunResponse,
     content: Optional[Any] = None,
+    content_type: Optional[str] = None,
     thinking: Optional[str] = None,
     redacted_thinking: Optional[str] = None,
     citations: Optional[Citations] = None,
@@ -390,6 +393,7 @@ def create_team_run_response_content_event(
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
+        content_type=content_type or "str",
         thinking=thinking_combined,
         citations=citations,
         response_audio=response_audio,
