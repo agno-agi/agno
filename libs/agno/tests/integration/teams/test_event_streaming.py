@@ -337,11 +337,11 @@ def test_intermediate_steps_with_memory(team_storage, memory):
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
-    
+
 
 def test_intermediate_steps_with_structured_output(team_storage):
     """Test that the agent streams events."""
-    
+
     class Person(BaseModel):
         name: str
         description: str
@@ -374,17 +374,16 @@ def test_intermediate_steps_with_structured_output(team_storage):
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.run_response_content]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
-    
+
     assert events[TeamRunEvent.run_response_content][0].content is not None
     assert events[TeamRunEvent.run_response_content][0].content_type == "Person"
     assert events[TeamRunEvent.run_response_content][0].content.name == "Elon Musk"
     assert len(events[TeamRunEvent.run_response_content][0].content.description) > 1
-    
+
     assert events[TeamRunEvent.run_completed][0].content is not None
     assert events[TeamRunEvent.run_completed][0].content_type == "Person"
     assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
-
 
 
 def test_intermediate_steps_with_member_agents():

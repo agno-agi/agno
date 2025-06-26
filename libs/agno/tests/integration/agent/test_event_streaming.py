@@ -354,8 +354,10 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1
 
+
 def test_intermediate_steps_with_structured_output(agent_storage):
     """Test that the agent streams events."""
+
     class Person(BaseModel):
         name: str
         description: str
@@ -386,12 +388,12 @@ def test_intermediate_steps_with_structured_output(agent_storage):
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.run_response_content]) == 1
     assert len(events[RunEvent.run_completed]) == 1
-    
+
     assert events[RunEvent.run_response_content][0].content is not None
     assert events[RunEvent.run_response_content][0].content_type == "Person"
     assert events[RunEvent.run_response_content][0].content.name == "Elon Musk"
     assert len(events[RunEvent.run_response_content][0].content.description) > 1
-    
+
     assert events[RunEvent.run_completed][0].content is not None
     assert events[RunEvent.run_completed][0].content_type == "Person"
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"

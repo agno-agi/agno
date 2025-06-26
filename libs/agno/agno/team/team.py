@@ -622,7 +622,6 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-
     @overload
     def run(
         self,
@@ -946,7 +945,7 @@ class Team:
             user_id=user_id,
         )
         deque(response_iterator, maxlen=0)
-        
+
         # 5. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
@@ -1015,7 +1014,7 @@ class Team:
             session_id=session_id,
             user_id=user_id,
         )
-        
+
         # 5. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
@@ -1642,7 +1641,7 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
-        
+
         stream_model_response = True
         if self.response_model is not None and self.parse_response:
             stream_model_response = False
@@ -1669,7 +1668,6 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-            run_response.content_type = full_model_response.content_type
         if full_model_response.thinking is not None:
             run_response.thinking = full_model_response.thinking
         if full_model_response.audio is not None:
@@ -1721,7 +1719,7 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
-        
+
         stream_model_response = True
         if self.response_model is not None and self.parse_response:
             stream_model_response = False
@@ -1755,7 +1753,6 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-            run_response.content_type = full_model_response.content_type
         if full_model_response.thinking is not None:
             run_response.thinking = full_model_response.thinking
         if full_model_response.audio is not None:
@@ -1812,13 +1809,14 @@ class Team:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 content_type = "str"
-                
+
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
                     if self.response_model is not None and self.parse_response:
                         full_model_response.content = model_response_event.content
                         content_type = self.response_model.__name__
+                        run_response.content_type = content_type
                         self._convert_response_to_structured_format(full_model_response)
                     else:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
@@ -1977,7 +1975,7 @@ class Team:
                             run_response,
                         )
 
-    def _convert_response_to_structured_format(self, run_response: TeamRunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[TeamRunResponse, RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -1987,7 +1985,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2005,7 +2004,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self._member_response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self._member_response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2522,11 +2522,11 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
-        from rich.json import JSON
 
         from agno.utils.response import format_tool_calls
 
@@ -2606,9 +2606,7 @@ class Team:
                             _response_content += resp.content
                         elif self.response_model is not None and isinstance(resp.content, BaseModel):
                             try:
-                                _response_content = JSON(
-                                    resp.content.model_dump_json(exclude_none=True), indent=2
-                                )
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                             except Exception as e:
                                 print(_response_content)
                                 log_warning(f"Failed to convert response to JSON: {e}")
@@ -3386,11 +3384,11 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
         from rich.text import Text
-        from rich.json import JSON
 
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
@@ -3468,9 +3466,7 @@ class Team:
                             _response_content += resp.content
                         elif self.response_model is not None and isinstance(resp.content, BaseModel):
                             try:
-                                _response_content = JSON(
-                                    resp.content.model_dump_json(exclude_none=True), indent=2
-                                )
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                             except Exception as e:
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:

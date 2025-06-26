@@ -2,10 +2,8 @@ import asyncio
 from typing import Dict, List
 
 from agno.agent import Agent
-from pydantic import BaseModel, Field
-
 from agno.models.openai.chat import OpenAIChat
-
+from pydantic import BaseModel, Field
 
 
 class MovieScript(BaseModel):
@@ -38,8 +36,12 @@ structured_output_agent = Agent(
     response_model=MovieScript,
 )
 
+
 async def main():
-    await structured_output_agent.aprint_response("New York", stream=True, stream_intermediate_steps=True)
+    await structured_output_agent.aprint_response(
+        "New York", stream=True, stream_intermediate_steps=True
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

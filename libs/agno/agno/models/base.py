@@ -1214,7 +1214,6 @@ class Model(ABC):
                 ):
                     # We only capture content events
                     if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                        
                         if item.content is not None and isinstance(item.content, BaseModel):
                             function_call_output += item.content.model_dump_json()
                         else:

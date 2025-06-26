@@ -1,11 +1,12 @@
 import asyncio
 from typing import Iterator  # noqa
-from pydantic import BaseModel
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
+from pydantic import BaseModel
 
 
 class StockAnalysis(BaseModel):
@@ -64,7 +65,9 @@ team = Team(
     show_members_responses=True,
 )
 
-team.print_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True)
+team.print_response(
+    "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
+)
 
 # Or async
 # asyncio.run(team.aprint_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True))

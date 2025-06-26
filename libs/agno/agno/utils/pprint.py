@@ -64,7 +64,7 @@ def pprint_run_response(
                 ):
                     if isinstance(resp.content, BaseModel):
                         try:
-                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)
+                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:
@@ -135,7 +135,7 @@ async def apprint_run_response(
                 ):
                     if isinstance(resp.content, BaseModel):
                         try:
-                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)
+                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:

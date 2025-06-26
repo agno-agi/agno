@@ -753,7 +753,7 @@ class Agent:
 
         # 5. Calculate session metrics
         self._set_session_metrics(run_messages)
-        
+
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
@@ -843,7 +843,7 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-        
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
@@ -852,7 +852,6 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-        
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1290,7 +1289,7 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-        
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
@@ -1299,7 +1298,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-        
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1846,7 +1844,7 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-        
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -1855,7 +1853,6 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-
 
         run_response.status = RunStatus.running
 
@@ -1941,7 +1938,7 @@ class Agent:
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
-        
+
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
     async def acontinue_run(
@@ -2249,7 +2246,7 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-        
+
         # 6. Save session to storage
         self.write_to_storage(user_id=user_id, session_id=session_id)
 
@@ -2258,7 +2255,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2340,7 +2336,7 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
-        
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
@@ -2349,7 +2345,6 @@ class Agent:
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
-        
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2412,7 +2407,7 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: RunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -2422,7 +2417,8 @@ class Agent:
                     # Update RunResponse
                     if structured_output is not None:
                         run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2985,7 +2981,7 @@ class Agent:
             "reasoning_time_taken": 0.0,
         }
         model_response = ModelResponse(content="")
-        
+
         stream_model_response = True
         if self.response_model is not None and self.parse_response:
             stream_model_response = False
@@ -3050,7 +3046,7 @@ class Agent:
             "reasoning_time_taken": 0.0,
         }
         model_response = ModelResponse(content="")
-        
+
         stream_model_response = True
         if self.response_model is not None and self.parse_response:
             stream_model_response = False
@@ -3121,7 +3117,7 @@ class Agent:
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
                 content_type = "str"
-                
+
                 # Process content and thinking
                 if model_response_event.content is not None:
                     if self.response_model is not None and self.parse_response:
@@ -6684,12 +6680,12 @@ class Agent:
                                     _response_content += resp.content
                                 elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                     try:
-                                        _response_content += JSON(
+                                        _response_content += JSON(  # type: ignore
                                             resp.content.model_dump_json(exclude_none=True), indent=2
                                         )
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
-                                
+
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
@@ -7116,9 +7112,7 @@ class Agent:
                                 _response_content += resp.content
                             elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                 try:
-                                    _response_content += JSON(
-                                        resp.content.model_dump_json(exclude_none=True), indent=2
-                                    )
+                                    _response_content += JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                                 except Exception as e:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
