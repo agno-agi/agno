@@ -3006,7 +3006,6 @@ class Agent:
                 model_response_event=model_response_event,
                 stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
-                stream_model_response=stream_model_response,
             )
 
         # Determine reasoning completed
@@ -3129,7 +3128,7 @@ class Agent:
                 if model_response_event.content is not None:
                     if self.should_parse_structured_output:
                         model_response.content = model_response_event.content
-                        content_type = self.response_model.__name__
+                        content_type = self.response_model.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                         self._convert_response_to_structured_format(model_response)
