@@ -84,7 +84,7 @@ class ModelResponse:
 
     role: Optional[str] = None
 
-    content: Optional[str] = None
+    content: Optional[Any] = None
     parsed: Optional[Any] = None
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None
