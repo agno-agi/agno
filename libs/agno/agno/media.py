@@ -319,6 +319,7 @@ class File(BaseModel):
     mime_type: Optional[str] = None
     # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
     external: Optional[Any] = None
+    format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
 
     @model_validator(mode="before")
     @classmethod

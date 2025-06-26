@@ -234,8 +234,26 @@ class AwsBedrock(Model):
                                 }
                             }
                         )
-                if message.files is not None and len(message.files) > 0:
-                    log_warning("File input is currently unsupported.")
+
+                if message.files:
+                    for i, file in enumerate(message.files):
+                        if not file.content or not file.format:
+                            raise ValueError("File content and format are required.")
+
+                        if file.format not in ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]:
+                            raise ValueError(f"Unsupported file format: {file.format}")
+
+                        formatted_message["content"].append(
+                            {
+                                "document": {
+                                    "format": file.format,
+                                    "name": f"file_{i}",
+                                    "source": {
+                                        "bytes": file.content,
+                                    },
+                                }
+                            }
+                        )
 
                 formatted_messages.append(formatted_message)
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
