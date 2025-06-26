@@ -403,25 +403,26 @@ class Cerebras(Model):
         # Get the first choice (assuming single response)
         if response_delta.choices is not None:
             choice: ChatChunkResponseChoice = response_delta.choices[0]
-            delta: ChatChunkResponseChoiceDelta = choice.delta
+            choice_delta: ChatChunkResponseChoiceDelta = choice.delta
 
-            # Add content
-            if delta.content:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls:
-                model_response.tool_calls = [
-                    {
-                        "id": tool_call.id,
-                        "type": tool_call.type,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in delta.tool_calls
-                ]
+                # Add tool calls
+                if choice_delta.tool_calls:
+                    model_response.tool_calls = [
+                        {
+                            "id": tool_call.id,
+                            "type": tool_call.type,
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
+                        }
+                        for tool_call in choice_delta.tool_calls
+                    ]
 
         # Add usage metrics
         if response_delta.usage:

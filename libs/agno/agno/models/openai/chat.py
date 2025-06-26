@@ -368,6 +368,8 @@ class OpenAIChat(Model):
             ) from e
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
 
     async def ainvoke(
         self,
@@ -679,39 +681,40 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+            choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
-            # Add audio if present
-            if hasattr(delta, "audio") and delta.audio is not None:
-                try:
-                    if isinstance(delta.audio, dict):
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.get("id"),
-                            content=delta.audio.get("data"),
-                            expires_at=delta.audio.get("expires_at"),
-                            transcript=delta.audio.get("transcript"),
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                    else:
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.id,
-                            content=delta.audio.data,
-                            expires_at=delta.audio.expires_at,
-                            transcript=delta.audio.transcript,
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                except Exception as e:
-                    log_warning(f"Error processing audio: {e}")
+                # Add audio if present
+                if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
+                    try:
+                        if isinstance(choice_delta.audio, dict):
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.get("id"),
+                                content=choice_delta.audio.get("data"),
+                                expires_at=choice_delta.audio.get("expires_at"),
+                                transcript=choice_delta.audio.get("transcript"),
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                        else:
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.id,
+                                content=choice_delta.audio.data,
+                                expires_at=choice_delta.audio.expires_at,
+                                transcript=choice_delta.audio.transcript,
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                    except Exception as e:
+                        log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
         if response_delta.usage is not None:

@@ -345,15 +345,16 @@ class WatsonX(Model):
         model_response = ModelResponse()
 
         if response_delta.get("choices") and len(response_delta["choices"]) > 0:
-            delta: Dict[str, Any] = response_delta["choices"][0]["delta"]
+            choice_delta: Dict[str, Any] = response_delta["choices"][0].get("delta")
 
-            # Add content
-            if delta.get("content") is not None:
-                model_response.content = delta["content"]
+            if choice_delta:
+                # Add content
+                if choice_delta.get("content") is not None:
+                    model_response.content = choice_delta["content"]
 
-            # Add tool calls
-            if delta.get("tool_calls") is not None:
-                model_response.tool_calls = delta["tool_calls"]
+                # Add tool calls
+                if choice_delta.get("tool_calls") is not None:
+                    model_response.tool_calls = choice_delta["tool_calls"]
 
         # Add usage metrics if present
         if response_delta.get("usage") is not None:

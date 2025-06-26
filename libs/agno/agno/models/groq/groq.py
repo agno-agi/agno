@@ -463,15 +463,16 @@ class Groq(Model):
         model_response = ModelResponse()
 
         if len(response.choices) > 0:
-            delta: ChoiceDelta = response.choices[0].delta
+            choice_delta: ChoiceDelta = response.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:

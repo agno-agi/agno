@@ -140,15 +140,16 @@ class Perplexity(OpenAILike):
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+            choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
         # Add citations if present
         if hasattr(response_delta, "citations") and response_delta.citations is not None:

@@ -392,15 +392,16 @@ class AzureAIFoundry(Model):
 
         try:
             if response_delta.choices and len(response_delta.choices) > 0:
-                delta = response_delta.choices[0].delta
+                choice_delta = response_delta.choices[0].delta
 
-                # Add content
-                if delta.content is not None:
-                    model_response.content = delta.content
+                if choice_delta:
+                    # Add content
+                    if choice_delta.content is not None:
+                        model_response.content = choice_delta.content
 
-                # Add tool calls if present
-                if delta.tool_calls and len(delta.tool_calls) > 0:
-                    model_response.tool_calls = delta.tool_calls  # type: ignore
+                    # Add tool calls if present
+                    if choice_delta.tool_calls and len(choice_delta.tool_calls) > 0:
+                        model_response.tool_calls = choice_delta.tool_calls  # type: ignore
             # Add usage metrics if present
             if response_delta.usage is not None:
                 model_response.response_usage = {

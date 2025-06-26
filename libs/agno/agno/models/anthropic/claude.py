@@ -347,7 +347,7 @@ class Claude(Model):
                 return await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.request_kwargs,
+                    **self.get_request_params(),
                 )
             else:
                 return await self.get_async_client().messages.create(

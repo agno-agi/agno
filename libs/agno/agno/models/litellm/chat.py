@@ -226,33 +226,34 @@ class LiteLLM(Model):
         model_response = ModelResponse()
 
         if hasattr(response_delta, "choices") and len(response_delta.choices) > 0:
-            delta = response_delta.choices[0].delta
+            choice_delta = response_delta.choices[0].delta
 
-            if hasattr(delta, "content") and delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                if hasattr(choice_delta, "content") and choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                processed_tool_calls = []
-                for i, tool_call in enumerate(delta.tool_calls):
-                    # Create a basic structure with index
-                    tool_call_dict = {"index": i, "type": "function"}
+                if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
+                    processed_tool_calls = []
+                    for i, tool_call in enumerate(choice_delta.tool_calls):
+                        # Create a basic structure with index
+                        tool_call_dict = {"index": i, "type": "function"}
 
-                    # Extract ID if available
-                    if hasattr(tool_call, "id") and tool_call.id is not None:
-                        tool_call_dict["id"] = tool_call.id
+                        # Extract ID if available
+                        if hasattr(tool_call, "id") and tool_call.id is not None:
+                            tool_call_dict["id"] = tool_call.id
 
-                    # Extract function data
-                    function_data = {}
-                    if hasattr(tool_call, "function"):
-                        if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
-                            function_data["name"] = tool_call.function.name
-                        if hasattr(tool_call.function, "arguments") and tool_call.function.arguments is not None:
-                            function_data["arguments"] = tool_call.function.arguments
+                        # Extract function data
+                        function_data = {}
+                        if hasattr(tool_call, "function"):
+                            if hasattr(tool_call.function, "name") and tool_call.function.name is not None:
+                                function_data["name"] = tool_call.function.name
+                            if hasattr(tool_call.function, "arguments") and tool_call.function.arguments is not None:
+                                function_data["arguments"] = tool_call.function.arguments
 
-                    tool_call_dict["function"] = function_data
-                    processed_tool_calls.append(tool_call_dict)
+                        tool_call_dict["function"] = function_data
+                        processed_tool_calls.append(tool_call_dict)
 
-                model_response.tool_calls = processed_tool_calls
+                    model_response.tool_calls = processed_tool_calls
 
         return model_response
 
