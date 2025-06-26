@@ -320,6 +320,7 @@ class File(BaseModel):
     # External file object (e.g. GeminiFile, must be a valid object as expected by the model you are using)
     external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
+    name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
 
     @model_validator(mode="before")
     @classmethod

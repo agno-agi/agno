@@ -236,7 +236,7 @@ class AwsBedrock(Model):
                         )
 
                 if message.files:
-                    for i, file in enumerate(message.files):
+                    for file in message.files:
                         if not file.content or not file.format:
                             raise ValueError("File content and format are required.")
 
@@ -247,7 +247,7 @@ class AwsBedrock(Model):
                             {
                                 "document": {
                                     "format": file.format,
-                                    "name": f"file_{i}",
+                                    "name": file.name,
                                     "source": {
                                         "bytes": file.content,
                                     },
