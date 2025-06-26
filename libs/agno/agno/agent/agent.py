@@ -664,6 +664,10 @@ class Agent:
             return True
         return False
 
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response
+
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
             self.tools = []
@@ -1685,11 +1689,6 @@ class Agent:
         if self.context is not None:
             self.resolve_run_context()
 
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
-
         # Prepare arguments for the model
         self.set_default_model()
         response_format = self._get_response_format()
@@ -2079,11 +2078,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2993,7 +2987,8 @@ class Agent:
         model_response = ModelResponse(content="")
 
         stream_model_response = True
-        if self.response_model is not None and self.parse_response:
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
         for model_response_event in self.model.response_stream(
@@ -3011,6 +3006,7 @@ class Agent:
                 model_response_event=model_response_event,
                 stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                stream_model_response=stream_model_response,
             )
 
         # Determine reasoning completed
@@ -3058,7 +3054,8 @@ class Agent:
         model_response = ModelResponse(content="")
 
         stream_model_response = True
-        if self.response_model is not None and self.parse_response:
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
         model_response_stream = self.model.aresponse_stream(
@@ -3130,7 +3127,7 @@ class Agent:
 
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if self.response_model is not None and self.parse_response:
+                    if self.should_parse_structured_output:
                         model_response.content = model_response_event.content
                         content_type = self.response_model.__name__
                         run_response.content = model_response.content

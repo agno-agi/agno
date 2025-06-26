@@ -480,6 +480,10 @@ class Team:
 
         self._memory_deepcopy_done: bool = False
 
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response
+
     def _set_team_id(self) -> str:
         if self.team_id is None:
             self.team_id = str(uuid4())
@@ -1653,7 +1657,8 @@ class Team:
         }
 
         stream_model_response = True
-        if self.response_model is not None and self.parse_response:
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
         full_model_response = ModelResponse()
@@ -1731,7 +1736,8 @@ class Team:
         }
 
         stream_model_response = True
-        if self.response_model is not None and self.parse_response:
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
         full_model_response = ModelResponse()
@@ -1823,7 +1829,7 @@ class Team:
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if self.response_model is not None and self.parse_response:
+                    if self.should_parse_structured_output:
                         full_model_response.content = model_response_event.content
                         content_type = self.response_model.__name__
                         run_response.content_type = content_type
