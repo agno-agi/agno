@@ -64,5 +64,8 @@ team = Team(
     show_members_responses=True,
 )
 
-asyncio.run(team.aprint_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True))
+team.print_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True)
+
+# Or async
+# asyncio.run(team.aprint_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True))
 assert isinstance(team.run_response.content, StockReport)

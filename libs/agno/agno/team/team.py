@@ -1669,6 +1669,7 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
+            run_response.content_type = full_model_response.content_type
         if full_model_response.thinking is not None:
             run_response.thinking = full_model_response.thinking
         if full_model_response.audio is not None:
@@ -1720,6 +1721,11 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
+        
+        stream_model_response = True
+        if self.response_model is not None and self.parse_response:
+            stream_model_response = False
+
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -1728,6 +1734,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
             for chunk in self._handle_model_response_chunk(
@@ -1748,6 +1755,7 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
+            run_response.content_type = full_model_response.content_type
         if full_model_response.thinking is not None:
             run_response.thinking = full_model_response.thinking
         if full_model_response.audio is not None:

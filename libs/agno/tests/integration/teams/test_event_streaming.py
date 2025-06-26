@@ -341,6 +341,7 @@ def test_intermediate_steps_with_memory(team_storage, memory):
 
 def test_intermediate_steps_with_structured_output(team_storage):
     """Test that the agent streams events."""
+    
     class Person(BaseModel):
         name: str
         description: str
@@ -351,9 +352,9 @@ def test_intermediate_steps_with_structured_output(team_storage):
         members=[],
         storage=team_storage,
         response_model=Person,
+        instructions="You have no members, answer directly",
         telemetry=False,
         monitoring=False,
-        debug_mode=True,
     )
 
     response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
