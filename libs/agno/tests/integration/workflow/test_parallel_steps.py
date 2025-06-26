@@ -6,6 +6,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
@@ -13,7 +14,6 @@ from agno.workflow.v2 import Workflow
 from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
-from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
 
 
 @pytest.fixture
@@ -26,8 +26,7 @@ def temp_db_path(tmp_path):
 @pytest.fixture
 def workflow_storage(temp_db_path):
     """Create a SqliteStorage instance for workflow v2."""
-    storage = SqliteStorage(table_name="workflow_v2",
-                            db_file=temp_db_path, mode="workflow_v2")
+    storage = SqliteStorage(table_name="workflow_v2", db_file=temp_db_path, mode="workflow_v2")
     storage.create()
     return storage
 
@@ -109,11 +108,12 @@ def review_article_step(step_input: StepInput) -> StepOutput:
 class TestParallelStepsIntegration:
     """Integration tests for Parallel steps with real agents."""
 
-    def test_basic_parallel_workflow_non_streaming(self, workflow_storage, researcher_agent, writer_agent, reviewer_agent):
+    def test_basic_parallel_workflow_non_streaming(
+        self, workflow_storage, researcher_agent, writer_agent, reviewer_agent
+    ):
         """Test basic parallel workflow without streaming."""
         # Create individual steps
-        research_hn_step = Step(
-            name="Research HackerNews", agent=researcher_agent)
+        research_hn_step = Step(name="Research HackerNews", agent=researcher_agent)
         research_web_step = Step(name="Research Web", agent=researcher_agent)
         write_step = Step(name="Write Article", agent=writer_agent)
         review_step = Step(name="Review Article", agent=reviewer_agent)
@@ -122,15 +122,13 @@ class TestParallelStepsIntegration:
             name="Content Creation Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(research_hn_step, research_web_step,
-                         name="Research Phase"),
+                Parallel(research_hn_step, research_web_step, name="Research Phase"),
                 write_step,
                 review_step,
             ],
         )
 
-        response = workflow.run(
-            message="Write about the latest AI developments")
+        response = workflow.run(message="Write about the latest AI developments")
 
         assert isinstance(response, WorkflowRunResponse)
         assert response.content is not None
@@ -150,8 +148,7 @@ class TestParallelStepsIntegration:
     def test_basic_parallel_workflow_streaming(self, workflow_storage, researcher_agent, writer_agent, reviewer_agent):
         """Test basic parallel workflow with streaming."""
         # Create individual steps
-        research_hn_step = Step(
-            name="Research HackerNews", agent=researcher_agent)
+        research_hn_step = Step(name="Research HackerNews", agent=researcher_agent)
         research_web_step = Step(name="Research Web", agent=researcher_agent)
         write_step = Step(name="Write Article", agent=writer_agent)
         review_step = Step(name="Review Article", agent=reviewer_agent)
@@ -160,8 +157,7 @@ class TestParallelStepsIntegration:
             name="Content Creation Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(research_hn_step, research_web_step,
-                         name="Research Phase"),
+                Parallel(research_hn_step, research_web_step, name="Research Phase"),
                 write_step,
                 review_step,
             ],
@@ -176,19 +172,16 @@ class TestParallelStepsIntegration:
         assert len(events) > 0
 
         # Check for final completion event
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert len(completed_events[0].content) > 100
-        assert "AI" in completed_events[0].content or "artificial intelligence" in completed_events[0].content.lower(
-        )
+        assert "AI" in completed_events[0].content or "artificial intelligence" in completed_events[0].content.lower()
 
     @pytest.mark.asyncio
     async def test_async_parallel_workflow(self, workflow_storage, researcher_agent, writer_agent, reviewer_agent):
         """Test async parallel workflow execution."""
         # Create individual steps
-        research_hn_step = Step(
-            name="Research HackerNews", agent=researcher_agent)
+        research_hn_step = Step(name="Research HackerNews", agent=researcher_agent)
         research_web_step = Step(name="Research Web", agent=researcher_agent)
         write_step = Step(name="Write Article", agent=writer_agent)
 
@@ -196,8 +189,7 @@ class TestParallelStepsIntegration:
             name="Async Content Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(research_hn_step, research_web_step,
-                         name="Research Phase"),
+                Parallel(research_hn_step, research_web_step, name="Research Phase"),
                 write_step,
             ],
         )
@@ -217,8 +209,7 @@ class TestParallelStepsIntegration:
     async def test_async_parallel_workflow_streaming(self, workflow_storage, researcher_agent, writer_agent):
         """Test async parallel workflow with streaming."""
         # Create individual steps
-        research_hn_step = Step(
-            name="Research HackerNews", agent=researcher_agent)
+        research_hn_step = Step(name="Research HackerNews", agent=researcher_agent)
         research_web_step = Step(name="Research Web", agent=researcher_agent)
         write_step = Step(name="Write Article", agent=writer_agent)
 
@@ -226,8 +217,7 @@ class TestParallelStepsIntegration:
             name="Async Streaming Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(research_hn_step, research_web_step,
-                         name="Research Phase"),
+                Parallel(research_hn_step, research_web_step, name="Research Phase"),
                 write_step,
             ],
         )
@@ -239,8 +229,7 @@ class TestParallelStepsIntegration:
 
         # Verify streaming and parallel execution
         assert len(events) > 0
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert len(completed_events[0].content) > 50
 
@@ -254,11 +243,7 @@ class TestParallelStepsWithFunctions:
             name="Function-based Content Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_hackernews_step,
-                    research_web_step,
-                    name="Research Phase"
-                ),
+                Parallel(research_hackernews_step, research_web_step, name="Research Phase"),
                 write_article_step,
                 review_article_step,
             ],
@@ -291,11 +276,7 @@ class TestParallelStepsWithFunctions:
             name="Function-based Streaming Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_hackernews_step,
-                    research_web_step,
-                    name="Research Phase"
-                ),
+                Parallel(research_hackernews_step, research_web_step, name="Research Phase"),
                 write_article_step,
             ],
         )
@@ -309,8 +290,7 @@ class TestParallelStepsWithFunctions:
         assert len(events) > 0
 
         # Check for final completion event
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert "Article:" in completed_events[0].content
 
@@ -321,11 +301,7 @@ class TestParallelStepsWithFunctions:
             name="Async Function Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_hackernews_step,
-                    research_web_step,
-                    name="Research Phase"
-                ),
+                Parallel(research_hackernews_step, research_web_step, name="Research Phase"),
                 write_article_step,
             ],
         )
@@ -348,11 +324,7 @@ class TestParallelStepsWithFunctions:
             name="Async Function Streaming Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_hackernews_step,
-                    research_web_step,
-                    name="Research Phase"
-                ),
+                Parallel(research_hackernews_step, research_web_step, name="Research Phase"),
                 write_article_step,
             ],
         )
@@ -364,13 +336,13 @@ class TestParallelStepsWithFunctions:
 
         # Verify streaming and parallel execution
         assert len(events) > 0
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert "Article:" in completed_events[0].content
 
     def test_nested_parallel_steps(self, workflow_storage):
         """Test workflow with nested parallel steps."""
+
         def research_step_1(step_input: StepInput) -> StepOutput:
             return StepOutput(content="Research 1: Found data about AI trends")
 
@@ -387,16 +359,8 @@ class TestParallelStepsWithFunctions:
             name="Nested Parallel Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_step_1,
-                    research_step_2,
-                    name="Research Phase"
-                ),
-                Parallel(
-                    analysis_step_1,
-                    analysis_step_2,
-                    name="Analysis Phase"
-                ),
+                Parallel(research_step_1, research_step_2, name="Research Phase"),
+                Parallel(analysis_step_1, analysis_step_2, name="Analysis Phase"),
                 write_article_step,
             ],
         )
@@ -423,10 +387,7 @@ class TestParallelStepsWithFunctions:
     def test_parallel_with_mixed_step_types(self, workflow_storage):
         """Test parallel execution with mixed step types (functions and Step objects)."""
         # Create a Step object
-        research_step_obj = Step(
-            name="Research Step Object",
-            executor=research_hackernews_step
-        )
+        research_step_obj = Step(name="Research Step Object", executor=research_hackernews_step)
 
         workflow = Workflow(
             name="Mixed Parallel Pipeline",
@@ -435,7 +396,7 @@ class TestParallelStepsWithFunctions:
                 Parallel(
                     research_step_obj,  # Step object
                     research_web_step,  # Function
-                    name="Mixed Research Phase"
+                    name="Mixed Research Phase",
                 ),
                 write_article_step,
             ],
@@ -457,6 +418,7 @@ class TestParallelStepsWithFunctions:
 
     def test_nested_parallel_streaming(self, workflow_storage):
         """Test nested parallel steps with streaming."""
+
         def research_step_1(step_input: StepInput) -> StepOutput:
             return StepOutput(content="Research 1: Found data about AI trends")
 
@@ -473,16 +435,8 @@ class TestParallelStepsWithFunctions:
             name="Nested Parallel Streaming Pipeline",
             storage=workflow_storage,
             steps=[
-                Parallel(
-                    research_step_1,
-                    research_step_2,
-                    name="Research Phase"
-                ),
-                Parallel(
-                    analysis_step_1,
-                    analysis_step_2,
-                    name="Analysis Phase"
-                ),
+                Parallel(research_step_1, research_step_2, name="Research Phase"),
+                Parallel(analysis_step_1, analysis_step_2, name="Analysis Phase"),
                 write_article_step,
             ],
         )
@@ -496,7 +450,6 @@ class TestParallelStepsWithFunctions:
         assert len(events) > 0
 
         # Check for final completion event
-        completed_events = [e for e in events if isinstance(
-            e, WorkflowCompletedEvent)]
+        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
         assert len(completed_events) == 1
         assert "Article:" in completed_events[0].content
