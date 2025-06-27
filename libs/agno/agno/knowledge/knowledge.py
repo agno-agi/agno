@@ -143,6 +143,14 @@ class Knowledge:
                 else:
                     log_info(f"No reader found for path: {path}")
     
+            if not document.size and document.content:
+                document.size = len(document.content.content)
+            if not document.size:
+                try:
+                    document.size = path.stat().st_size
+                except (OSError, IOError) as e:
+                    log_warning(f"Could not get file size for {path}: {e}")
+                    document.size = 0
             self._add_to_documents_db(document)
 
             for read_document in read_documents:
@@ -211,7 +219,7 @@ class Knowledge:
         self._add_to_documents_db(document)
 
     def _load_from_content(self, document: DocumentV2):
-        log_info("Adding document from content")
+        log_info(f"Adding document from content: {document.size}")
 
         if document.content:
             if "pdf" in document.content.type:
@@ -319,17 +327,17 @@ class Knowledge:
         self._load_document(document)
 
 
-    def add_documents(self, documents: List[DocumentV2]) -> None:
-        """
-        Implementation of add_documents that handles both overloads.
-        """
-        if isinstance(documents, list):
-            log_debug(f"Adding {len(documents)} documents")
-            for document in documents:
-                self.add_document(document)
+    # def add_documents(self, documents: List[DocumentV2]) -> None:
+    #     """
+    #     Implementation of add_documents that handles both overloads.
+    #     """
+    #     if isinstance(documents, list):
+    #         log_debug(f"Adding {len(documents)} documents")
+    #         for document in documents:
+    #             self.add_document(document)
 
-        elif isinstance(documents, DocumentV2):
-            self.add_document(documents)
+    #     elif isinstance(documents, DocumentV2):
+    #         self.add_document(documents)
 
     def get_document(self, document_id: str):
         if self.documents_db is None:
@@ -340,6 +348,7 @@ class Knowledge:
             name=document_row.name,
             description=document_row.description,
             metadata=document_row.metadata,
+            size=document_row.size,
         )
         return document
 
@@ -356,13 +365,15 @@ class Knowledge:
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
         )
         # Convert database rows to DocumentV2 objects
-        print(f"Count: {count}")
         result = []
         for doc_row in documents:
-            print(f"Doc row: {doc_row}")
             # Create DocumentV2 from database row
             doc = DocumentV2(
-                id=doc_row.id, name=doc_row.name, description=doc_row.description, metadata=doc_row.metadata
+                id=doc_row.id,
+                name=doc_row.name,
+                description=doc_row.description,
+                metadata=doc_row.metadata,
+                size=doc_row.size,
             )
             result.append(doc)
         return result, count
@@ -383,6 +394,7 @@ class Knowledge:
         return self.document_store.delete_all_documents()
 
     def _add_to_documents_db(self, document: DocumentV2):
+
         if self.documents_db:
             document_row = KnowledgeRow(
                 id=document.id,
@@ -390,7 +402,7 @@ class Knowledge:
                 description=document.description if document.description else "",
                 metadata=document.metadata,
                 type=document.content.type if document.content else None,
-                size=len(document.content.content) if document.content else None,
+                size=document.size if document.size else len(document.content.content) if document.content else None,
                 linked_to=self.name,
                 access_count=0,
             )
@@ -436,7 +448,9 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
+# --- Readers Setup ---
 
+    # TODO: Rework these into a map we can use for selection, but also return to API.
     def _select_reader(self, extension: str) -> Reader:
         if extension == ".pdf":
             return self.pdf_reader
@@ -535,7 +549,7 @@ class Knowledge:
         """CSV URL reader - lazy loaded and cached."""
         return CSVUrlReader()
     
-    
+# -----------------------------
     
 # -- Unused for now. Will revisit when we do async and optimizations ---
 

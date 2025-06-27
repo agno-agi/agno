@@ -23,6 +23,7 @@ class DocumentV2:  # We will rename this to Document
     topics: Optional[List[str]] = None
     config: Optional[CloudStorageConfig] = None
     reader: Optional[Reader] = None
+    size: Optional[int] = None
 
 
 # readers: List[Reader] = [

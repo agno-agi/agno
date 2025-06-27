@@ -59,6 +59,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             url=parsed_urls,
             metadata=parsed_metadata,
             content=document_content,
+            size=file.size if file else None,
         )
 
         # Add the processing task to background tasks
@@ -83,7 +84,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     name=document.name,
                     description=document.description,
                     type=document.content.type if document.content else None,
-                    size=str(len(document.content.content)) if document.content else "0",
+                    size=str(document.size) if document.size else "0",
                     metadata=document.metadata,
                     linked_to=knowledge.name,
                 )
