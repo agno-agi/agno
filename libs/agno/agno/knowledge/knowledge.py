@@ -207,15 +207,18 @@ class Knowledge:
             else:
                 log_info(f"No reader found for URL: {document.url}")
 
-        
+        file_size = 0
         if read_documents:
             for read_document in read_documents:
+                if read_document.size:
+                    file_size += read_document.size
                 read_document.source_id = document.id
                 if self.vector_store.upsert_available():
                     self.vector_store.upsert(documents=[read_document], filters=document.metadata)
                 else:
                     self.vector_store.insert(documents=[read_document], filters=document.metadata)
                 
+        document.size = file_size
         self._add_to_documents_db(document)
 
     def _load_from_content(self, document: DocumentV2):

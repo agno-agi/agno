@@ -22,24 +22,26 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         metadata: Optional[str] = Form(None, description="JSON string of metadata dict or list of dicts"),
         file: Optional[UploadFile] = File(None),
     ):
-        # Generate ID immediately
+        log_info(f"Uploading documents: {name}, {description}, {url}, {metadata}")
+        # # Generate ID immediately
         document_id = str(uuid4())
-        # Read the content once and store it
+        log_info(f"Document ID: {document_id}")
+        # # Read the content once and store it
         if file:
             content_bytes = await file.read()
-            log_info(f"Content bytes: {content_bytes}")
         else:
             content_bytes = None
 
         parsed_urls = None
         if url and url.strip():
             try:
+                log_info(f"Parsing URL: {url}")
                 parsed_urls = json.loads(url)
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a single URL string
                 parsed_urls = url if url != "string" else None
         log_info(f"Parsed URLs: {parsed_urls}")
-        # Parse metadata with proper error handling
+        # # Parse metadata with proper error handling
         parsed_metadata = None
         if metadata and metadata.strip():
             try:

@@ -61,4 +61,5 @@ class URLReader(Reader):
             id=id or doc_name,
             meta_data={"url": url},
             content=content,
+            size=len(content),
         )

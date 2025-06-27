@@ -52,7 +52,7 @@ knowledge = Knowledge(
 knowledge.add_document(
     DocumentV2(
         name="Generic URL",
-        url="https://www.agno.com/changelog",
+        url="https://community.agno.com/t/can-agno-work-with-qwen-llm/1391",
         metadata={"user_tag": "URL sources"},
     ),
 )
