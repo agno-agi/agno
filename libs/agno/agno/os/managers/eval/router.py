@@ -3,8 +3,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from agno.db.base import BaseDb
+from agno.eval import AccuracyEval
+from agno.eval.performance import PerformanceEval
 from agno.eval.schemas import EvalType
-from agno.os.managers.eval.schemas import EvalSchema
+from agno.os.managers.eval.schemas import AccuracyEvalInput, EvalSchema, PerformanceEvalInput, ReliabilityEvalInput
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
@@ -50,5 +52,64 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
         return EvalSchema.from_dict(eval_run)
+
+    @router.post("/evals/accuracy/run", response_model=EvalSchema, status_code=200)
+    async def run_accuracy_eval(accuracy_eval_input: AccuracyEvalInput) -> EvalSchema:
+        # TODO: get real agent/team
+        agent = ...
+
+        accuracy_eval = AccuracyEval(
+            db=db,
+            agent=agent,  # type: ignore
+            input=accuracy_eval_input.input,
+            expected_output=accuracy_eval_input.expected_output,
+            additional_guidelines=accuracy_eval_input.additional_guidelines,
+            num_iterations=accuracy_eval_input.num_iterations,
+            name=accuracy_eval_input.name,
+        )
+        result = accuracy_eval.run(print_results=False, print_summary=False)
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to run accuracy evaluation")
+
+        return EvalSchema.from_accuracy_result(result)
+
+    @router.post("/evals/performance/run", response_model=EvalSchema, status_code=200)
+    async def run_performance_eval(performance_eval_input: PerformanceEvalInput) -> EvalSchema:
+        # TODO: get real agent
+        agent = ...
+
+        def run_component() -> str:
+            return agent.run(performance_eval_input.input)
+
+        performance_eval = PerformanceEval(
+            db=db,
+            name=performance_eval_input.name,
+            func=run_component,
+            num_iterations=performance_eval_input.num_iterations,
+            warmup_runs=performance_eval_input.warmup_runs,
+        )
+        result = performance_eval.run(print_results=False, print_summary=False)
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to run performance evaluation")
+
+        return EvalSchema.from_performance_result(result)
+
+    @router.post("/evals/reliability/run", response_model=EvalSchema, status_code=200)
+    async def run_reliability_eval(reliability_eval_input: ReliabilityEvalInput) -> EvalSchema:
+        # TODO: get and run real agent
+        agent = ...
+        agent_response = agent.run(reliability_eval_input.input)
+
+        reliability_eval = ReliabilityEval(
+            db=db,
+            name=reliability_eval_input.name,
+            agent_response=agent_response,
+            expected_tool_calls=reliability_eval_input.expected_tool_calls,
+        )
+        result = reliability_eval.run(print_results=False, print_summary=False)
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to run reliability evaluation")
+
+        return EvalSchema.from_reliability_result(result)
 
     return router
