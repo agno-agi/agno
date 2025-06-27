@@ -1,10 +1,12 @@
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
 
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
@@ -80,3 +82,39 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
         if agent.agent_id == agent_id:
             return agent
     return None
+
+
+async def team_chat_response_streamer(
+    team: Team,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+) -> AsyncGenerator:
+    """Run the given team asynchronously and yield its response"""
+    try:
+        run_response = await team.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = TeamRunResponseErrorEvent(
+            content=str(e),
+        )
+        yield error_response.to_json()
+        return

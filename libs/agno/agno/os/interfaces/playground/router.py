@@ -1,13 +1,12 @@
 import json
 from dataclasses import asdict
-from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import AsyncGenerator, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agno.agent.agent import Agent, RunResponse
+from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory import Memory
@@ -30,7 +29,6 @@ from agno.os.operator import (
     get_workflow_by_id,
 )
 from agno.os.utils import get_agent_by_id, process_audio, process_document, process_image, process_video
-from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team

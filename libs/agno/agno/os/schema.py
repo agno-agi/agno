@@ -2,7 +2,6 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from fastapi import UploadFile
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -45,7 +44,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    agent_id: str
+    agent_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None

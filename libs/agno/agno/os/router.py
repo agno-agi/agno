@@ -1,17 +1,15 @@
 import json
+from dataclasses import asdict
 from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.params import Form
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.interfaces.playground.schemas import AgentSessionsResponse
-from agno.os.operator import get_session_title
+from agno.os.interfaces.playground.schemas import WorkflowRunRequest
 from agno.os.schema import (
     AgentResponse,
     AppsResponse,
@@ -21,9 +19,16 @@ from agno.os.schema import (
     TeamResponse,
     WorkflowResponse,
 )
-from agno.os.utils import get_agent_by_id, process_audio, process_image, process_video
+from agno.os.utils import (
+    get_agent_by_id,
+    process_audio,
+    process_document,
+    process_image,
+    process_video,
+    team_chat_response_streamer,
+)
 from agno.run.response import RunResponse, RunResponseErrorEvent
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 
 async def agent_response_streamer(
@@ -94,6 +99,8 @@ def get_base_router(
 ) -> APIRouter:
     router = APIRouter(tags=["Built-In"])
 
+    # -- Util routes ---
+
     @router.get("/status")
     async def status():
         return {"status": "available"}
@@ -139,6 +146,8 @@ def get_base_router(
             apps=app_response,
         )
 
+    # -- Agent routes ---
+
     @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
     async def get_agents():
         if os.agents is None:
@@ -146,26 +155,17 @@ def get_base_router(
 
         return [AgentResponse.from_agent(agent) for agent in os.agents]
 
-    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
-    async def get_teams():
-        if os.teams is None:
-            return []
+    @router.get("/agents/{agent_id}", response_model=AgentResponse)
+    async def get_agent(agent_id: str):
+        agent = next((agent for agent in os.agents if agent.agent_id == agent_id), None)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-        return [TeamResponse.from_team(team) for team in os.teams]
-
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
-    async def get_workflows():
-        if os.workflows is None:
-            return []
-
-        return [
-            WorkflowResponse(
-                workflow_id=str(workflow.workflow_id),
-                name=workflow.name,
-                description=workflow.description,
-            )
-            for workflow in os.workflows
-        ]
+        return AgentResponse(
+            agent_id=agent.agent_id,
+            name=agent.name,
+            description=agent.description,
+        )
 
     @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -181,7 +181,7 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
-            log_debug(f"Creating new session")
+            log_debug("Creating new session")
             session_id = str(uuid4())
 
         base64_images: List[Image] = []
@@ -271,145 +271,6 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-
-    @router.get("/agents/{agent_id}/sessions/{session_id}")
-    async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
-
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
-        session_manager = None
-        for app in os.apps:
-            if app.type == "session":
-                session_manager = app
-                break
-        
-        log_debug(f"Session manager found: {session_manager}")
-        if session_manager is None:
-            return JSONResponse(status_code=404, content="Session management not enabled.")
-
-        # Use the session manager's database to get the session
-        try:
-            from agno.db.base import SessionType
-            # Use get_session instead of read
-            agent_session = session_manager.db.get_session(
-                session_id=session_id, 
-                user_id=user_id,
-                session_type=SessionType.AGENT
-            )
-        except Exception as e:
-            return JSONResponse(status_code=500, content=f"Error reading session: {str(e)}")
-        
-        if agent_session is None:
-            return JSONResponse(status_code=404, content="Session not found.")
-
-        # Convert to dict first
-        agent_session_dict = agent_session.to_dict()
-        
-        # Check if memory exists in the dict and process runs
-        if agent_session_dict.get("memory") is not None:
-            memory = agent_session_dict["memory"]
-            runs = memory.get("runs") if isinstance(memory, dict) else None
-            
-            if runs is not None and len(runs) > 0:
-                first_run = runs[0]
-                # This is how we know it is a RunResponse or RunPaused
-                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
-                    agent_session_dict["runs"] = []
-
-                    for run in runs:
-                        first_user_message = None
-                        for msg in run.get("messages", []):
-                            if msg.get("role") == "user" and msg.get("from_history", False) is False:
-                                first_user_message = msg
-                                break
-                        # Remove the memory from the response
-                        run.pop("memory", None)
-                        agent_session_dict["runs"].append(
-                            {
-                                "message": first_user_message,
-                                "response": run,
-                            }
-                        )
-        
-        return agent_session_dict
-    
-
-    @router.get("/agents/{agent_id}/sessions")
-    async def get_all_agent_sessions(
-        agent_id: str, 
-        user_id: Optional[str] = Query(None, min_length=1),
-        limit: Optional[int] = Query(None, ge=1, le=100),
-        page: Optional[int] = Query(None, ge=1),
-        sort_by: Optional[str] = Query(None),
-        sort_order: Optional[str] = Query(None, regex="^(asc|desc)$")
-    ):
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            return JSONResponse(status_code=404, content="Agent not found.")
-
-        session_manager = None
-        for app in os.apps:
-            if app.type == "session":
-                session_manager = app
-                break
-        
-        log_debug(f"Session manager found: {session_manager}")
-        if session_manager is None:
-            return JSONResponse(status_code=404, content="Session management not enabled.")
-
-        try:
-            from agno.db.base import SessionType
-            # Use get_sessions_raw to get both sessions and total count
-            sessions_raw, total_count = session_manager.db.get_sessions_raw(
-                session_type=SessionType.AGENT,
-                user_id=user_id,
-                component_id=agent_id,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-            
-            log_debug(f"Found {total_count} total sessions, returning {len(sessions_raw)} sessions")
-            
-        except Exception as e:
-            log_error(f"Error getting sessions: {str(e)}")
-            return JSONResponse(status_code=500, content=f"Error retrieving sessions: {str(e)}")
-
-        agent_sessions: List[AgentSessionsResponse] = []
-        for session_dict in sessions_raw:
-            try:
-                # Convert dict to session object or work with dict directly
-                session_id = session_dict.get("session_id")
-                created_at = session_dict.get("created_at")
-                session_data = session_dict.get("session_data", {})
-                
-                # You might need to adjust this based on your session structure
-                title = session_dict.get("title") or f"Session {session_id}"
-                
-                agent_sessions.append(
-                    AgentSessionsResponse(
-                        title=title,
-                        session_id=session_id,
-                        session_name=session_data.get("session_name") if session_data is not None else None,
-                        created_at=created_at,
-                    )
-                )
-            except Exception as e:
-                log_error(f"Error processing session {session_dict.get('session_id', 'unknown')}: {str(e)}")
-                continue
-        
-        # Return with pagination info
-        return {
-            "sessions": agent_sessions,
-            "total_count": total_count,
-            "page": page,
-            "limit": limit,
-            "returned_count": len(agent_sessions)
-        }
-    
     @router.post("/agents/{agent_id}/runs/{run_id}/continue")
     async def continue_agent_run(
         agent_id: str,
@@ -431,7 +292,7 @@ def get_base_router(
 
         if session_id is None or session_id == "":
             log_warning(
-                f"Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
 
         # Convert tools dict to ToolExecution objects if provided
@@ -467,5 +328,192 @@ def get_base_router(
                 ),
             )
             return run_response_obj.to_dict()
+
+    # -- Team routes ---
+
+    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
+    async def get_teams():
+        if os.teams is None:
+            return []
+
+        return [TeamResponse.from_team(team) for team in os.teams]
+
+    @router.get("/teams/{team_id}", response_model=TeamResponse)
+    async def get_team(team_id: str):
+        team = next((team for team in os.teams if team.team_id == team_id), None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        return TeamResponse(
+            team_id=team.team_id,
+            name=team.name,
+            description=team.description,
+        )
+
+    @router.post("/teams/{team_id}/runs")
+    async def create_team_run(
+        team_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        monitor: bool = Form(True),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        files: Optional[List[UploadFile]] = File(None),
+    ):
+        logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
+        team = next((team for team in os.teams if team.team_id == team_id), None)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if session_id is not None and session_id != "":
+            logger.debug(f"Continuing session: {session_id}")
+        else:
+            logger.debug("Creating new session")
+            session_id = str(uuid4())
+
+        if monitor:
+            team.monitoring = True
+        else:
+            team.monitoring = False
+
+        base64_images: List[Image] = []
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
+        document_files: List[FileMedia] = []
+
+        if files:
+            for file in files:
+                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                    try:
+                        base64_image = process_image(file)
+                        base64_images.append(base64_image)
+                    except Exception as e:
+                        logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "application/pdf",
+                    "text/csv",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/plain",
+                    "application/json",
+                ]:
+                    document_file = process_document(file)
+                    if document_file is not None:
+                        document_files.append(document_file)
+                else:
+                    raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        if stream and team.is_streamable:
+            return StreamingResponse(
+                team_chat_response_streamer(
+                    team,
+                    message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response = await team.arun(
+                message=message,
+                session_id=session_id,
+                user_id=user_id,
+                images=base64_images if base64_images else None,
+                audio=base64_audios if base64_audios else None,
+                videos=base64_videos if base64_videos else None,
+                files=document_files if document_files else None,
+                stream=False,
+            )
+            return run_response.to_dict()
+
+    # -- Workflow routes ---
+
+    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
+    async def get_workflows():
+        if os.workflows is None:
+            return []
+
+        return [
+            WorkflowResponse(
+                workflow_id=str(workflow.workflow_id),
+                name=workflow.name,
+                description=workflow.description,
+            )
+            for workflow in os.workflows
+        ]
+
+    @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+    async def get_workflow(workflow_id: str):
+        workflow = next((wf for wf in os.workflows if wf.workflow_id == workflow_id), None)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        return WorkflowResponse(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+        )
+
+    @router.post("/workflows/{workflow_id}/runs")
+    async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
+        # Retrieve the workflow by ID
+        workflow = next((wf for wf in os.workflows if wf.workflow_id == workflow_id), None)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if body.session_id is not None:
+            logger.debug(f"Continuing session: {body.session_id}")
+        else:
+            logger.debug("Creating new session")
+
+        # Create a new instance of this workflow
+        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
+        new_workflow_instance.user_id = body.user_id
+        new_workflow_instance.session_name = None
+
+        # Return based on the response type
+        try:
+            if new_workflow_instance._run_return_type == "RunResponse":
+                # Return as a normal response
+                return new_workflow_instance.run(**body.input)
+            else:
+                # Return as a streaming response
+                return StreamingResponse(
+                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
+                    media_type="text/event-stream",
+                )
+        except Exception as e:
+            # Handle unexpected runtime errors
+            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     return router
