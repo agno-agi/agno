@@ -94,11 +94,7 @@ class Ollama(Model):
         Returns:
             Dict[str, Any]: The API kwargs for the model.
         """
-        base_params = {
-            "format": self.format,
-            "options": self.options,
-            "keep_alive": self.keep_alive
-        }
+        base_params = {"format": self.format, "options": self.options, "keep_alive": self.keep_alive}
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
