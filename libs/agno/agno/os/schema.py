@@ -23,7 +23,7 @@ class AppsResponse(BaseModel):
     knowledge: List[ConnectorResponse]
     memory: List[ConnectorResponse]
     eval: List[ConnectorResponse]
-
+    metrics: List[ConnectorResponse]
 class ConfigResponse(BaseModel):
     os_id: str
     name: str

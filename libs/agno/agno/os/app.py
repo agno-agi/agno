@@ -241,6 +241,8 @@ class AgentOS:
                 apps_panel_text += f"[bold green]Evals Connector:[/bold green] {encoded_endpoint}\n"
             elif app_type == "session":
                 apps_panel_text += f"[bold green]Sessions Connector:[/bold green] {encoded_endpoint}\n"
+            elif app_type == "metric":
+                apps_panel_text += f"[bold green]Metrics Connector:[/bold green] {encoded_endpoint}\n"
             else:
                 log_warning(f"Unknown app type: {app_type}")
 

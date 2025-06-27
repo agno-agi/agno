@@ -23,7 +23,7 @@ class MetricsConnector(BaseConnector):
         if not self.name:
             self.name = f"Metrics Connector {index}"
 
-        self.router_prefix = f"/metrics/{index}"
+        self.router_prefix = f"/metric/{index}"
 
         # Cannot be overridden
         self.router = APIRouter(prefix=self.router_prefix, tags=["Metrics"])
