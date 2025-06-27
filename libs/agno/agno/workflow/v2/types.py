@@ -12,25 +12,42 @@ from agno.run.team import TeamRunResponse
 class WorkflowExecutionInput:
     """Input data for a step execution"""
 
-    message: Optional[str] = None
-    message_data: Optional[Union[BaseModel, Dict[str, Any]]] = (None,)
+    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
+    def get_message_as_string(self) -> Optional[str]:
+        """Convert message to string representation"""
+        if self.message is None:
+            return None
+
+        if isinstance(self.message, str):
+            return self.message
+        elif isinstance(self.message, BaseModel):
+            return self.message.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.message, (dict, list)):
+            import json
+
+            return json.dumps(self.message, indent=2, default=str)
+        else:
+            return str(self.message)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_data_dict = {}
-        if isinstance(self.message_data, BaseModel):
-            message_data_dict = self.message_data.model_dump(exclude_none=True)
-        elif isinstance(self.message_data, dict):
-            message_data_dict = self.message_data
+        message_dict = None
+        if self.message is not None:
+            if isinstance(self.message, BaseModel):
+                message_dict = self.message.model_dump(exclude_none=True)
+            elif isinstance(self.message, (dict, list)):
+                message_dict = self.message
+            else:
+                message_dict = str(self.message)
 
         return {
-            "message": self.message,
-            "message_data": message_data_dict,
+            "message": message_dict,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
@@ -41,8 +58,8 @@ class WorkflowExecutionInput:
 class StepInput:
     """Input data for a step execution"""
 
-    message: Optional[str] = None
-    message_data: Optional[Union[BaseModel, Dict[str, Any]]] = None
+    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+
     previous_step_content: Optional[Any] = None
     previous_steps_outputs: Optional[Dict[str, "StepOutput"]] = None
     workflow_message: Optional[str] = None  # Original workflow message
@@ -51,6 +68,22 @@ class StepInput:
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
+
+    def get_message_as_string(self) -> Optional[str]:
+        """Convert message to string representation"""
+        if self.message is None:
+            return None
+
+        if isinstance(self.message, str):
+            return self.message
+        elif isinstance(self.message, BaseModel):
+            return self.message.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.message, (dict, list)):
+            import json
+
+            return json.dumps(self.message, indent=2, default=str)
+        else:
+            return str(self.message)
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
         """Get output from a specific previous step by name"""
@@ -85,12 +118,27 @@ class StepInput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_data_dict = {}
-        if isinstance(self.message_data, BaseModel):
-            message_data_dict = self.message_data.model_dump(exclude_none=True)
-        elif isinstance(self.message_data, dict):
-            message_data_dict = self.message_data
+        # Handle the unified message field
+        message_dict = None
+        if self.message is not None:
+            if isinstance(self.message, BaseModel):
+                message_dict = self.message.model_dump(exclude_none=True)
+            elif isinstance(self.message, (dict, list)):
+                message_dict = self.message
+            else:
+                message_dict = str(self.message)
 
+        # Handle workflow_message (also updated to support all types)
+        workflow_message_dict = None
+        if self.workflow_message is not None:
+            if isinstance(self.workflow_message, BaseModel):
+                workflow_message_dict = self.workflow_message.model_dump(exclude_none=True)
+            elif isinstance(self.workflow_message, (dict, list)):
+                workflow_message_dict = self.workflow_message
+            else:
+                workflow_message_dict = str(self.workflow_message)
+
+        # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
             previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
         elif isinstance(self.previous_step_content, dict):
@@ -100,17 +148,16 @@ class StepInput:
         else:
             previous_step_content_str = str(self.previous_step_content) if self.previous_step_content else None
 
-        # Convert previous_steps_outputs to serializable format
+        # Convert previous_steps_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
         if self.previous_steps_outputs:
             for step_name, output in self.previous_steps_outputs.items():
                 previous_steps_dict[step_name] = output.to_dict()
 
         return {
-            "message": self.message,
-            "message_data": message_data_dict,
+            "message": message_dict,
+            "workflow_message": workflow_message_dict,
             "previous_steps_outputs": previous_steps_dict,
-            "workflow_message": self.workflow_message,
             "previous_step_content": previous_step_content_str,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,

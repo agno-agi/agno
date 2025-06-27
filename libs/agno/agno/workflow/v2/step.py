@@ -205,7 +205,6 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.message_data,
                         step_input.previous_steps_outputs,
                     )
 
@@ -325,7 +324,6 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.message_data,
                         step_input.previous_steps_outputs,
                     )
 
@@ -469,7 +467,6 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.message_data,
                         step_input.previous_steps_outputs,
                     )
 
@@ -601,7 +598,6 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.message_data,
                         step_input.previous_steps_outputs,
                     )
 
@@ -666,55 +662,20 @@ class Step:
                     else:
                         raise e
 
-    def _parse_message_data(self, message_data: Optional[Union[BaseModel, Dict[str, Any]]]) -> Optional[str]:
-        """Parse the message data into a string"""
-        data_str = None
-        if message_data is not None:
-            if isinstance(message_data, BaseModel):
-                data_str = message_data.model_dump_json(indent=2, exclude_none=True)
-            elif isinstance(message_data, dict):
-                import json
-
-                data_str = json.dumps(message_data, indent=2, default=str)
-            else:
-                data_str = str(message_data)
-        return data_str
-
     def _prepare_message(
         self,
-        message: Optional[str],
-        message_data: Optional[Union[BaseModel, Dict[str, Any]]],
+        message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
         previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
-    ) -> Optional[str]:
-        """Prepare the primary input by combining message, message_data, and previous step outputs"""
+    ) -> Union[str, list, Dict[str, Any], BaseModel]:
+        """Prepare the primary input by combining message and previous step outputs"""
 
-        # Convert message_data to string if provided
-        data_str = self._parse_message_data(message_data)
-
-        # Build the final message by combining all components
-        parts = []
-
-        # Add the main message
-        if message:
-            parts.append(message)
-
-        # For agents/teams, use the last previous step content
         if previous_steps_outputs and self._executor_type in ["agent", "team"]:
-            # Get the last step output content
             last_output = list(previous_steps_outputs.values())[-1] if previous_steps_outputs else None
             if last_output and last_output.content:
-                parts.append(f"--- Previous Step Output ---\n{last_output.content}")
+                return last_output.content
 
-        # Add structured data if available
-        if data_str:
-            parts.append(f"--- Structured Data ---\n{data_str}")
-
-        if parts:
-            return "\n\n".join(parts)
-        elif data_str:
-            return f"Process the following data:\n{data_str}"
-        else:
-            return None
+        # If no previous step outputs, return the original message unchanged
+        return message
 
     def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""

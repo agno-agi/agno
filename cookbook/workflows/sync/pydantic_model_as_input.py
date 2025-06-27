@@ -14,13 +14,13 @@ from pydantic import BaseModel, Field
 class ResearchTopic(BaseModel):
     """Structured research topic with specific requirements"""
 
+    topic: str
     focus_areas: List[str] = Field(description="Specific areas to focus on")
     target_audience: str = Field(description="Who this research is for")
     sources_required: int = Field(description="Number of sources needed", default=5)
 
 
 # Define agents
-
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -77,6 +77,7 @@ if __name__ == "__main__":
 
     print("=== Example: Research with Structured Topic ===")
     research_topic = ResearchTopic(
+        topic="AI trends in 2024",
         focus_areas=[
             "Machine Learning",
             "Natural Language Processing",
@@ -87,7 +88,6 @@ if __name__ == "__main__":
         sources_required=8,
     )
     content_creation_workflow.print_response(
-        message="AI trends in 2024",
-        message_data=research_topic,
+        message=research_topic,
         markdown=True,
     )

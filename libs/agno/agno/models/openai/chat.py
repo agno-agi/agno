@@ -370,7 +370,6 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-
     async def ainvoke(
         self,
         messages: List[Message],

@@ -48,11 +48,11 @@ class Condition:
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
-        from agno.workflow.v2.parallel import Parallel
-        from agno.workflow.v2.step import Step
         from agno.workflow.v2.loop import Loop
-        from agno.workflow.v2.steps import Steps
+        from agno.workflow.v2.parallel import Parallel
         from agno.workflow.v2.router import Router
+        from agno.workflow.v2.step import Step
+        from agno.workflow.v2.steps import Steps
 
         prepared_steps = []
         for step in self.steps:
@@ -101,7 +101,6 @@ class Condition:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,

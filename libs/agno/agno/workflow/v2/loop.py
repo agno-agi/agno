@@ -63,9 +63,9 @@ class Loop:
         from agno.team.team import Team
         from agno.workflow.v2.condition import Condition
         from agno.workflow.v2.parallel import Parallel
+        from agno.workflow.v2.router import Router
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.steps import Steps
-        from agno.workflow.v2.router import Router
 
         prepared_steps = []
         for step in self.steps:
@@ -115,7 +115,6 @@ class Loop:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,

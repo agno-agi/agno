@@ -1,5 +1,3 @@
-
-
 import pytest
 
 from agno.agent.agent import Agent
@@ -25,4 +23,3 @@ def test_agent():
 def test_team(test_agent):
     """Create minimal test team."""
     return Team(name="TestTeam", mode="route", members=[test_agent])
-
