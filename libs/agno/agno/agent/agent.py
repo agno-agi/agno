@@ -826,6 +826,36 @@ class Agent:
         ):
             yield event
 
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                # TODO: Add stream_intermediate_steps for parser model
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=self._get_response_format(self.parser_model),
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=model_response_event,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                        reasoning_state=None,
+                    )
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -3129,9 +3159,10 @@ class Agent:
                     if self.should_parse_structured_output:
                         model_response.content = model_response_event.content
                         content_type = self.response_model.__name__  # type: ignore
+                        # Convert the model response to the structured format before assigning to run_response
+                        self._convert_response_to_structured_format(model_response)
                         run_response.content = model_response.content
                         run_response.content_type = content_type
-                        self._convert_response_to_structured_format(model_response)
                     else:
                         model_response.content = (model_response.content or "") + model_response_event.content
                         run_response.content = model_response.content
@@ -4899,6 +4930,24 @@ class Agent:
             Message(role="user", content=model_response.content),
         ]
 
+    def get_messages_for_parser_model_stream(
+        self, run_response: RunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
+        ]
+
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         if self.memory is None:
@@ -6627,7 +6676,6 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
@@ -7058,7 +7106,6 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
