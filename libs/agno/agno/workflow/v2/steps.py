@@ -20,6 +20,7 @@ WorkflowSteps = List[
         "Loop",  # noqa: F821
         "Parallel",  # noqa: F821
         "Condition",  # noqa: F821
+        "Router",  # noqa: F821
     ]
 ]
 

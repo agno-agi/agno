@@ -13,8 +13,6 @@ from agno.run.v2.workflow import (
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.v2.condition import Condition
-from agno.workflow.v2.loop import Loop
-from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
 from agno.workflow.v2.types import StepInput, StepOutput
@@ -60,6 +58,8 @@ class Parallel:
         from agno.workflow.v2.condition import Condition
         from agno.workflow.v2.loop import Loop
         from agno.workflow.v2.step import Step
+        from agno.workflow.v2.loop import Loop
+        from agno.workflow.v2.router import Router
 
         prepared_steps = []
         for step in self.steps:

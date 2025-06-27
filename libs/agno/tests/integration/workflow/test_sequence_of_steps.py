@@ -5,186 +5,160 @@ from typing import AsyncIterator
 
 import pytest
 
-from agno.agent import Agent
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
-from agno.team import Team
 from agno.workflow.v2 import Step, StepInput, StepOutput, Workflow
 
 
-# Minimal mock functions for testing
 def research_step_function(step_input: StepInput) -> StepOutput:
     """Minimal research function."""
-    topic = step_input.message or "default"
+    topic = step_input.message
     return StepOutput(content=f"Research: {topic}")
 
 
 def content_step_function(step_input: StepInput) -> StepOutput:
     """Minimal content function."""
-    prev = step_input.previous_step_content or "none"
-    return StepOutput(content=f"Content: {prev}")
+    prev = step_input.previous_step_content
+    return StepOutput(content=f"Content: Hello World | Referencing: {prev}")
 
 
-@pytest.fixture
-def workflow_storage(tmp_path):
-    """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
-    storage.create()
-    return storage
+def test_function_sequence_non_streaming(workflow_storage):
+    """Test basic function sequence."""
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
+    response = workflow.run(message="test")
 
-@pytest.fixture
-def mock_agent():
-    """Create minimal mock agent."""
-    return Agent(name="MockAgent", instructions="Mock agent for testing.")
+    assert isinstance(response, WorkflowRunResponse)
+    assert "Content: Hello World | Referencing: Research: test" in response.content
+    assert len(response.step_responses) == 2
 
+def test_function_sequence_streaming(workflow_storage):
+    """Test function sequence with streaming."""
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", executor=research_step_function),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
-@pytest.fixture
-def mock_team(mock_agent):
-    """Create minimal mock team."""
-    return Team(name="MockTeam", members=[mock_agent])
+    events = list(workflow.run(message="test", stream=True))
 
+    assert len(events) > 0
+    completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(completed_events) == 1
+    assert "Content: Hello World | Referencing: Research: test" == completed_events[0].content
 
-class TestSequenceOfSteps:
-    """Minimal sequence of steps tests."""
+def test_agent_sequence_non_streaming(workflow_storage, test_agent):
+    """Test agent sequence."""
+    test_agent.instructions = "Do research on the topic and return the results."
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", agent=test_agent),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
-    def test_function_sequence_non_streaming(self, workflow_storage):
-        """Test basic function sequence."""
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", executor=research_step_function),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    response = workflow.run(message="AI Agents")
 
-        response = workflow.run(message="test")
+    assert isinstance(response, WorkflowRunResponse)
+    assert response.content is not None
+    assert len(response.step_responses) == 2
 
-        assert isinstance(response, WorkflowRunResponse)
-        assert "Research: test" in response.content
-        assert "Content: Research: test" in response.content
-        assert len(response.step_responses) == 2
+def test_team_sequence_non_streaming(workflow_storage, test_team):
+    """Test team sequence."""
+    test_team.members[0].role = "Do research on the topic and return the results."
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", team=test_team),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
-    def test_function_sequence_streaming(self, workflow_storage):
-        """Test function sequence with streaming."""
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", executor=research_step_function),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    response = workflow.run(message="test")
 
-        events = list(workflow.run(message="test", stream=True))
+    assert isinstance(response, WorkflowRunResponse)
+    assert response.content is not None
+    assert len(response.step_responses) == 2
 
-        assert len(events) > 0
-        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
-        assert len(completed_events) == 1
-        assert "Content: Research: test" in completed_events[0].content
+@pytest.mark.asyncio
+async def test_async_function_sequence(workflow_storage):
+    """Test async function sequence."""
 
-    def test_agent_sequence_non_streaming(self, workflow_storage, mock_agent):
-        """Test agent sequence."""
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", agent=mock_agent),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    async def async_research(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)  # Minimal delay
+        return StepOutput(content=f"Async: {step_input.message}")
 
-        response = workflow.run(message="test")
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", executor=async_research),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
-        assert isinstance(response, WorkflowRunResponse)
-        assert response.content is not None
-        assert len(response.step_responses) == 2
+    response = await workflow.arun(message="test")
 
-    def test_team_sequence_non_streaming(self, workflow_storage, mock_team):
-        """Test team sequence."""
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", team=mock_team),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    assert isinstance(response, WorkflowRunResponse)
+    assert "Async: test" in response.content
+    assert "Content: Hello World | Referencing: Async: test" in response.content
 
-        response = workflow.run(message="test")
+@pytest.mark.asyncio
+async def test_async_streaming(workflow_storage):
+    """Test async streaming."""
 
-        assert isinstance(response, WorkflowRunResponse)
-        assert response.content is not None
-        assert len(response.step_responses) == 2
+    async def async_streaming_step(step_input: StepInput) -> AsyncIterator[str]:
+        yield f"Stream: {step_input.message}"
+        await asyncio.sleep(0.001)
 
-    @pytest.mark.asyncio
-    async def test_async_function_sequence(self, workflow_storage):
-        """Test async function sequence."""
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="research", executor=async_streaming_step),
+            Step(name="content", executor=content_step_function),
+        ],
+    )
 
-        async def async_research(step_input: StepInput) -> StepOutput:
-            await asyncio.sleep(0.001)  # Minimal delay
-            return StepOutput(content=f"Async: {step_input.message}")
+    events = []
+    async for event in await workflow.arun(message="test", stream=True):
+        events.append(event)
 
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", executor=async_research),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    assert len(events) > 0
+    completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(completed_events) == 1
 
-        response = await workflow.arun(message="test")
+def test_step_chaining(workflow_storage):
+    """Test that steps properly chain outputs."""
 
-        assert isinstance(response, WorkflowRunResponse)
-        assert "Async: test" in response.content
-        assert "Content: Async: test" in response.content
+    def step1(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="step1_output")
 
-    @pytest.mark.asyncio
-    async def test_async_streaming(self, workflow_storage):
-        """Test async streaming."""
+    def step2(step_input: StepInput) -> StepOutput:
+        prev = step_input.previous_step_content
+        return StepOutput(content=f"step2_received_{prev}")
 
-        async def async_streaming_step(step_input: StepInput) -> AsyncIterator[str]:
-            yield f"Stream: {step_input.message}"
-            await asyncio.sleep(0.001)
+    workflow = Workflow(
+        name="Test Workflow",
+        storage=workflow_storage,
+        steps=[
+            Step(name="step1", executor=step1),
+            Step(name="step2", executor=step2),
+        ],
+    )
 
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="research", executor=async_streaming_step),
-                Step(name="content", executor=content_step_function),
-            ],
-        )
+    response = workflow.run(message="test")
 
-        events = []
-        async for event in await workflow.arun(message="test", stream=True):
-            events.append(event)
-
-        assert len(events) > 0
-        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
-        assert len(completed_events) == 1
-
-    def test_step_chaining(self, workflow_storage):
-        """Test that steps properly chain outputs."""
-
-        def step1(step_input: StepInput) -> StepOutput:
-            return StepOutput(content="step1_output")
-
-        def step2(step_input: StepInput) -> StepOutput:
-            prev = step_input.previous_step_content
-            return StepOutput(content=f"step2_received_{prev}")
-
-        workflow = Workflow(
-            name="Test Workflow",
-            storage=workflow_storage,
-            steps=[
-                Step(name="step1", executor=step1),
-                Step(name="step2", executor=step2),
-            ],
-        )
-
-        response = workflow.run(message="test")
-
-        assert "step2_received_step1_output" in response.content
+    assert "step2_received_step1_output" in response.content

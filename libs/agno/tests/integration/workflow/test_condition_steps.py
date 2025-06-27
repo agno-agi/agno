@@ -14,14 +14,6 @@ from agno.workflow.v2 import Condition, Parallel, Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
 
-@pytest.fixture
-def workflow_storage(tmp_path):
-    """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
-    storage.create()
-    return storage
-
-
 # Helper functions
 def research_step(step_input: StepInput) -> StepOutput:
     """Research step that generates content."""
@@ -57,159 +49,155 @@ async def async_evaluator(step_input: StepInput) -> bool:
     """Async evaluator."""
     return is_tech_topic(step_input)
 
+def test_basic_condition_true(workflow_storage):
+    """Test basic condition that evaluates to True."""
+    workflow = Workflow(
+        name="Basic Condition",
+        storage=workflow_storage,
+        steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
+    )
 
-class TestConditionSteps:
-    """Test condition functionality with minimal test cases."""
+    response = workflow.run(message="Market shows 40% growth")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 2
+    # Condition output is a list
+    assert isinstance(response.step_responses[1], list)
+    # One step executed in condition
+    assert len(response.step_responses[1]) == 1
+    assert "Fact check complete" in response.step_responses[1][0].content
 
-    def test_basic_condition_true(self, workflow_storage):
-        """Test basic condition that evaluates to True."""
-        workflow = Workflow(
-            name="Basic Condition",
-            storage=workflow_storage,
-            steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
-        )
+def test_basic_condition_false(workflow_storage):
+    """Test basic condition that evaluates to False."""
+    workflow = Workflow(
+        name="Basic Condition False",
+        storage=workflow_storage,
+        steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
+    )
 
-        response = workflow.run(message="Market shows 40% growth")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 2
-        # Condition output is a list
-        assert isinstance(response.step_responses[1], list)
-        # One step executed in condition
-        assert len(response.step_responses[1]) == 1
-        assert "Fact check complete" in response.step_responses[1][0].content
+    # Using a message without statistics
+    response = workflow.run(message="General market overview")
+    assert isinstance(response, WorkflowRunResponse)
 
-    def test_basic_condition_false(self, workflow_storage):
-        """Test basic condition that evaluates to False."""
-        workflow = Workflow(
-            name="Basic Condition False",
-            storage=workflow_storage,
-            steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
-        )
+    # The step_responses will be empty due to the error
+    assert len(response.step_responses) == 0
 
-        # Using a message without statistics
-        response = workflow.run(message="General market overview")
-        assert isinstance(response, WorkflowRunResponse)
+def test_parallel_with_conditions(workflow_storage):
+    """Test parallel containing multiple conditions."""
+    workflow = Workflow(
+        name="Parallel with Conditions",
+        storage=workflow_storage,
+        steps=[
+            research_step,  # Add a step before parallel to ensure proper chaining
+            Parallel(
+                Condition(name="tech_check", evaluator=is_tech_topic, steps=[analysis_step]),
+                Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step]),
+                name="parallel_conditions",
+            ),
+        ],
+    )
 
-        # The step_responses will be empty due to the error
-        assert len(response.step_responses) == 0
+    response = workflow.run(message="AI market shows 40% growth")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 2  # research_step + parallel
 
-    def test_parallel_with_conditions(self, workflow_storage):
-        """Test parallel containing multiple conditions."""
-        workflow = Workflow(
-            name="Parallel with Conditions",
-            storage=workflow_storage,
-            steps=[
-                research_step,  # Add a step before parallel to ensure proper chaining
-                Parallel(
-                    Condition(name="tech_check", evaluator=is_tech_topic, steps=[analysis_step]),
-                    Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step]),
-                    name="parallel_conditions",
-                ),
-            ],
-        )
+    # Check the parallel output structure
+    parallel_output = response.step_responses[1]
+    assert parallel_output.success is True
+    assert "SUCCESS: analysis_step" in parallel_output.content
+    assert "SUCCESS: fact_check_step" in parallel_output.content
 
-        response = workflow.run(message="AI market shows 40% growth")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 2  # research_step + parallel
+def test_condition_streaming(workflow_storage):
+    """Test condition with streaming."""
+    workflow = Workflow(
+        name="Streaming Condition",
+        storage=workflow_storage,
+        steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
+    )
 
-        # Check the parallel output structure
-        parallel_output = response.step_responses[1]
-        assert parallel_output.success is True
-        assert "SUCCESS: analysis_step" in parallel_output.content
-        assert "SUCCESS: fact_check_step" in parallel_output.content
+    events = list(workflow.run(message="AI trends", stream=True))
 
-    def test_condition_streaming(self, workflow_storage):
-        """Test condition with streaming."""
-        workflow = Workflow(
-            name="Streaming Condition",
-            storage=workflow_storage,
-            steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
-        )
+    # Verify event types
+    condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
+    condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
 
-        events = list(workflow.run(message="AI trends", stream=True))
+    assert len(condition_started) == 1
+    assert len(condition_completed) == 1
+    assert len(workflow_completed) == 1
+    assert condition_started[0].condition_result is True
 
-        # Verify event types
-        condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
-        condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
-        workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+def test_condition_error_handling(workflow_storage):
+    """Test condition error handling."""
 
-        assert len(condition_started) == 1
-        assert len(condition_completed) == 1
-        assert len(workflow_completed) == 1
-        assert condition_started[0].condition_result is True
+    def failing_evaluator(_: StepInput) -> bool:
+        raise ValueError("Evaluator failed")
 
-    def test_condition_error_handling(self, workflow_storage):
-        """Test condition error handling."""
+    workflow = Workflow(
+        name="Error Condition",
+        storage=workflow_storage,
+        steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
+    )
 
-        def failing_evaluator(_: StepInput) -> bool:
-            raise ValueError("Evaluator failed")
+    response = workflow.run(message="test")
+    assert isinstance(response, WorkflowRunResponse)
+    assert response.status == RunStatus.error
+    assert "Evaluator failed" in response.content
 
-        workflow = Workflow(
-            name="Error Condition",
-            storage=workflow_storage,
-            steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
-        )
+def test_nested_conditions(workflow_storage):
+    """Test nested conditions."""
+    workflow = Workflow(
+        name="Nested Conditions",
+        storage=workflow_storage,
+        steps=[
+            Condition(
+                name="outer",
+                evaluator=is_tech_topic,
+                steps=[research_step, Condition(name="inner", evaluator=has_statistics, steps=[fact_check_step])],
+            )
+        ],
+    )
 
-        response = workflow.run(message="test")
-        assert isinstance(response, WorkflowRunResponse)
-        assert response.status == RunStatus.error
-        assert "Evaluator failed" in response.content
+    response = workflow.run(message="AI market shows 40% growth")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 1
+    outer_condition = response.step_responses[0]
+    assert isinstance(outer_condition, list)
+    # research_step + inner condition result
+    assert len(outer_condition) == 2
 
-    def test_nested_conditions(self, workflow_storage):
-        """Test nested conditions."""
-        workflow = Workflow(
-            name="Nested Conditions",
-            storage=workflow_storage,
-            steps=[
-                Condition(
-                    name="outer",
-                    evaluator=is_tech_topic,
-                    steps=[research_step, Condition(name="inner", evaluator=has_statistics, steps=[fact_check_step])],
-                )
-            ],
-        )
+@pytest.mark.asyncio
+async def test_async_condition(workflow_storage):
+    """Test async condition."""
+    workflow = Workflow(
+        name="Async Condition",
+        storage=workflow_storage,
+        steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
+    )
 
-        response = workflow.run(message="AI market shows 40% growth")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 1
-        outer_condition = response.step_responses[0]
-        assert isinstance(outer_condition, list)
-        # research_step + inner condition result
-        assert len(outer_condition) == 2
+    response = await workflow.arun(message="AI technology")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 1
+    assert isinstance(response.step_responses[0], list)
+    assert len(response.step_responses[0]) == 1
 
-    @pytest.mark.asyncio
-    async def test_async_condition(self, workflow_storage):
-        """Test async condition."""
-        workflow = Workflow(
-            name="Async Condition",
-            storage=workflow_storage,
-            steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
-        )
+@pytest.mark.asyncio
+async def test_async_condition_streaming(workflow_storage):
+    """Test async condition with streaming."""
+    workflow = Workflow(
+        name="Async Streaming Condition",
+        storage=workflow_storage,
+        steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
+    )
 
-        response = await workflow.arun(message="AI technology")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 1
-        assert isinstance(response.step_responses[0], list)
-        assert len(response.step_responses[0]) == 1
+    events = []
+    async for event in await workflow.arun(message="AI technology", stream=True):
+        events.append(event)
 
-    @pytest.mark.asyncio
-    async def test_async_condition_streaming(self, workflow_storage):
-        """Test async condition with streaming."""
-        workflow = Workflow(
-            name="Async Streaming Condition",
-            storage=workflow_storage,
-            steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
-        )
+    condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
+    condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
 
-        events = []
-        async for event in await workflow.arun(message="AI technology", stream=True):
-            events.append(event)
-
-        condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
-        condition_completed = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
-        workflow_completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
-
-        assert len(condition_started) == 1
-        assert len(condition_completed) == 1
-        assert len(workflow_completed) == 1
-        assert condition_started[0].condition_result is True
+    assert len(condition_started) == 1
+    assert len(condition_completed) == 1
+    assert len(workflow_completed) == 1
+    assert condition_started[0].condition_result is True

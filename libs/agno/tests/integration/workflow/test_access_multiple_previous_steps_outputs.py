@@ -7,15 +7,6 @@ from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2 import Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
-
-@pytest.fixture
-def workflow_storage(tmp_path):
-    """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
-    storage.create()
-    return storage
-
-
 # Helper functions
 def research_step(step_input: StepInput) -> StepOutput:
     """Research step."""
@@ -44,63 +35,59 @@ Available Steps: {list(step_input.previous_steps_outputs.keys())}"""
 
     return StepOutput(step_name="report_step", content=report, success=True)
 
+def test_basic_access(workflow_storage):
+    """Test basic access to previous steps."""
+    workflow = Workflow(
+        name="Basic Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
+    )
 
-class TestAccessMultipleSteps:
-    """Test accessing multiple previous step outputs."""
+    response = workflow.run(message="test topic")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 3
 
-    def test_basic_access(self, workflow_storage):
-        """Test basic access to previous steps."""
-        workflow = Workflow(
-            name="Basic Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-        )
+    # Verify report contains data from previous steps
+    report = response.step_responses[2]
+    assert "Research:" in report.content
+    assert "Analysis:" in report.content
+    assert "research_step" in report.content
+    assert "analysis_step" in report.content
 
-        response = workflow.run(message="test topic")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 3
+def test_streaming_access(workflow_storage):
+    """Test streaming with multiple step access."""
+    workflow = Workflow(
+        name="Streaming Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
+    )
 
-        # Verify report contains data from previous steps
-        report = response.step_responses[2]
-        assert "Research:" in report.content
-        assert "Analysis:" in report.content
-        assert "research_step" in report.content
-        assert "analysis_step" in report.content
+    events = list(workflow.run(message="test topic", stream=True))
 
-    def test_streaming_access(self, workflow_storage):
-        """Test streaming with multiple step access."""
-        workflow = Workflow(
-            name="Streaming Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-        )
+    # Verify events
+    completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(completed_events) == 1
+    assert "Report:" in completed_events[0].content
 
-        events = list(workflow.run(message="test topic", stream=True))
+@pytest.mark.asyncio
+async def test_async_access(workflow_storage):
+    """Test async execution with multiple step access."""
+    workflow = Workflow(
+        name="Async Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
+    )
 
-        # Verify events
-        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
-        assert len(completed_events) == 1
-        assert "Report:" in completed_events[0].content
+    response = await workflow.arun(message="test topic")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 3
+    assert "Report:" in response.content
 
-    @pytest.mark.asyncio
-    async def test_async_access(self, workflow_storage):
-        """Test async execution with multiple step access."""
-        workflow = Workflow(
-            name="Async Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-        )
+@pytest.mark.asyncio
+async def test_async_streaming_access(workflow_storage):
+    """Test async streaming with multiple step access."""
+    workflow = Workflow(
+        name="Async Streaming", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
+    )
 
-        response = await workflow.arun(message="test topic")
-        assert isinstance(response, WorkflowRunResponse)
-        assert len(response.step_responses) == 3
-        assert "Report:" in response.content
+    events = []
+    async for event in await workflow.arun(message="test topic", stream=True):
+        events.append(event)
 
-    @pytest.mark.asyncio
-    async def test_async_streaming_access(self, workflow_storage):
-        """Test async streaming with multiple step access."""
-        workflow = Workflow(
-            name="Async Streaming", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-        )
-
-        events = []
-        async for event in await workflow.arun(message="test topic", stream=True):
-            events.append(event)
-
-        completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
-        assert len(completed_events) == 1
-        assert "Report:" in completed_events[0].content
+    completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
+    assert len(completed_events) == 1
+    assert "Report:" in completed_events[0].content
