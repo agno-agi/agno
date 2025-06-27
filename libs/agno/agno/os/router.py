@@ -2,13 +2,16 @@ import json
 from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.params import Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.os.interfaces.playground.schemas import AgentSessionsResponse
+from agno.os.operator import get_session_title
 from agno.os.schema import (
     AgentResponse,
     AppsResponse,
@@ -168,7 +171,7 @@ def get_base_router(
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
-        stream: bool = Form(True),
+        stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -268,6 +271,145 @@ def get_base_router(
             )
             return run_response.to_dict()
 
+
+    @router.get("/agents/{agent_id}/sessions/{session_id}")
+    async def get_agent_session(agent_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
+
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        session_manager = None
+        for app in os.apps:
+            if app.type == "session":
+                session_manager = app
+                break
+        
+        log_debug(f"Session manager found: {session_manager}")
+        if session_manager is None:
+            return JSONResponse(status_code=404, content="Session management not enabled.")
+
+        # Use the session manager's database to get the session
+        try:
+            from agno.db.base import SessionType
+            # Use get_session instead of read
+            agent_session = session_manager.db.get_session(
+                session_id=session_id, 
+                user_id=user_id,
+                session_type=SessionType.AGENT
+            )
+        except Exception as e:
+            return JSONResponse(status_code=500, content=f"Error reading session: {str(e)}")
+        
+        if agent_session is None:
+            return JSONResponse(status_code=404, content="Session not found.")
+
+        # Convert to dict first
+        agent_session_dict = agent_session.to_dict()
+        
+        # Check if memory exists in the dict and process runs
+        if agent_session_dict.get("memory") is not None:
+            memory = agent_session_dict["memory"]
+            runs = memory.get("runs") if isinstance(memory, dict) else None
+            
+            if runs is not None and len(runs) > 0:
+                first_run = runs[0]
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
+                    agent_session_dict["runs"] = []
+
+                    for run in runs:
+                        first_user_message = None
+                        for msg in run.get("messages", []):
+                            if msg.get("role") == "user" and msg.get("from_history", False) is False:
+                                first_user_message = msg
+                                break
+                        # Remove the memory from the response
+                        run.pop("memory", None)
+                        agent_session_dict["runs"].append(
+                            {
+                                "message": first_user_message,
+                                "response": run,
+                            }
+                        )
+        
+        return agent_session_dict
+    
+
+    @router.get("/agents/{agent_id}/sessions")
+    async def get_all_agent_sessions(
+        agent_id: str, 
+        user_id: Optional[str] = Query(None, min_length=1),
+        limit: Optional[int] = Query(None, ge=1, le=100),
+        page: Optional[int] = Query(None, ge=1),
+        sort_by: Optional[str] = Query(None),
+        sort_order: Optional[str] = Query(None, regex="^(asc|desc)$")
+    ):
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            return JSONResponse(status_code=404, content="Agent not found.")
+
+        session_manager = None
+        for app in os.apps:
+            if app.type == "session":
+                session_manager = app
+                break
+        
+        log_debug(f"Session manager found: {session_manager}")
+        if session_manager is None:
+            return JSONResponse(status_code=404, content="Session management not enabled.")
+
+        try:
+            from agno.db.base import SessionType
+            # Use get_sessions_raw to get both sessions and total count
+            sessions_raw, total_count = session_manager.db.get_sessions_raw(
+                session_type=SessionType.AGENT,
+                user_id=user_id,
+                component_id=agent_id,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+            
+            log_debug(f"Found {total_count} total sessions, returning {len(sessions_raw)} sessions")
+            
+        except Exception as e:
+            log_error(f"Error getting sessions: {str(e)}")
+            return JSONResponse(status_code=500, content=f"Error retrieving sessions: {str(e)}")
+
+        agent_sessions: List[AgentSessionsResponse] = []
+        for session_dict in sessions_raw:
+            try:
+                # Convert dict to session object or work with dict directly
+                session_id = session_dict.get("session_id")
+                created_at = session_dict.get("created_at")
+                session_data = session_dict.get("session_data", {})
+                
+                # You might need to adjust this based on your session structure
+                title = session_dict.get("title") or f"Session {session_id}"
+                
+                agent_sessions.append(
+                    AgentSessionsResponse(
+                        title=title,
+                        session_id=session_id,
+                        session_name=session_data.get("session_name") if session_data is not None else None,
+                        created_at=created_at,
+                    )
+                )
+            except Exception as e:
+                log_error(f"Error processing session {session_dict.get('session_id', 'unknown')}: {str(e)}")
+                continue
+        
+        # Return with pagination info
+        return {
+            "sessions": agent_sessions,
+            "total_count": total_count,
+            "page": page,
+            "limit": limit,
+            "returned_count": len(agent_sessions)
+        }
+    
     @router.post("/agents/{agent_id}/runs/{run_id}/continue")
     async def continue_agent_run(
         agent_id: str,
