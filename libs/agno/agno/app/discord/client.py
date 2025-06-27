@@ -9,6 +9,10 @@ from agno.run.response import RunResponse
 from agno.team.team import Team
 from agno.utils.log import log_info, log_warning
 
+from textwrap import dedent
+
+
+
 try:
     import discord
     from discord.ext import commands
@@ -31,7 +35,7 @@ class HITLView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button, ):
+    async def cancel(self, interaction: discord.Interaction,button: discord.ui.Button, ):
         self.value = False
         button.disabled = True
         await interaction.response.edit_message(view=self)
@@ -108,7 +112,7 @@ class DiscordClient:
                 elif self.team:
                     agent_or_team = self.team
 
-                self.agent_or_team.additional_context = dedent(f"""
+                agent_or_team.additional_context = dedent(f"""
                 Discord username: {message_user}
                 Discord url: {message_url}""")
 
