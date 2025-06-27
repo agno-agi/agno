@@ -1244,8 +1244,12 @@ class PostgresDb(BaseDb):
                         )
                         agent_runs_count = 0
                         for session in agent_sessions:
+                            users_count += len(
+                                set(
+                                    [session["user_id"] for session in agent_sessions if session["user_id"] is not None]
+                                )
+                            )
                             agent_runs_count += len(session.get("runs", []))
-                            users_count += len(set([session["user_id"] for session in agent_sessions]))
                             metrics = session["session_data"]["session_metrics"]
                             input_tokens += metrics.get("input_tokens", 0)
                             output_tokens += metrics.get("output_tokens", 0)
@@ -1269,8 +1273,10 @@ class PostgresDb(BaseDb):
                         )
                         team_runs_count = 0
                         for session in team_sessions:
+                            users_count += len(
+                                set([session["user_id"] for session in team_sessions if session["user_id"] is not None])
+                            )
                             team_runs_count += len(session.get("runs", []))
-                            users_count += len(set([session["user_id"] for session in team_sessions]))
                             metrics = session["session_data"]["session_metrics"]
                             input_tokens += metrics.get("input_tokens", 0)
                             output_tokens += metrics.get("output_tokens", 0)
@@ -1294,8 +1300,16 @@ class PostgresDb(BaseDb):
                         )
                         workflow_runs_count = 0
                         for session in workflow_sessions:
+                            users_count += len(
+                                set(
+                                    [
+                                        session["user_id"]
+                                        for session in workflow_sessions
+                                        if session["user_id"] is not None
+                                    ]
+                                )
+                            )
                             workflow_runs_count += len(session.get("runs", []))
-                            users_count += len(set([session["user_id"] for session in workflow_sessions]))
                             metrics = session["session_data"]["session_metrics"]
                             input_tokens += metrics.get("input_tokens", 0)
                             output_tokens += metrics.get("output_tokens", 0)
