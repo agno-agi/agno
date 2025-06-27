@@ -840,7 +840,6 @@ class Agent:
                         model_response=model_response_event,
                         model_response_event=model_response_event,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        reasoning_state=None,
                     )
 
                 parser_model_response_message: Optional[Message] = None
@@ -1299,6 +1298,37 @@ class Agent:
             stream_intermediate_steps=stream_intermediate_steps,
         ):
             yield event
+
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                # TODO: Add stream_intermediate_steps for parser model
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                model_response_stream = self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=self._get_response_format(self.parser_model),
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=model_response_event,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -3140,7 +3170,7 @@ class Agent:
         run_response: RunResponse,
         model_response: ModelResponse,
         model_response_event: Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
