@@ -5539,39 +5539,6 @@ class Team:
         if not files:
             files = []
 
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
-
         def run_member_agents(
             task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
@@ -5590,7 +5557,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5701,7 +5670,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5798,6 +5769,41 @@ class Team:
 
         return run_member_agents_func
 
+    def _determine_team_context(
+        self, session_id: str, images: List[Image], videos: List[Video], audio: List[Audio]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        if isinstance(self.memory, TeamMemory):
+            self.memory = cast(TeamMemory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str()
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str()
+                if context_images := self.memory.get_team_context_images():
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos():
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio():
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        else:
+            self.memory = cast(Memory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
+                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        return team_context_str, team_member_interactions_str
+
     def get_transfer_task_function(
         self,
         session_id: str,
@@ -5819,39 +5825,6 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
 
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5876,7 +5849,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -6012,7 +5987,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
