@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass, field
+from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional, Union
 
@@ -7,14 +8,206 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.run.response import RunEvent, RunResponse, RunResponseExtraData
+from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
+from agno.run.response import RunEvent, RunResponse, RunResponseEvent, run_response_event_from_dict
+
+
+class TeamRunEvent(str, Enum):
+    """Events that can be sent by the run() functions"""
+
+    run_started = "TeamRunStarted"
+    run_response_content = "TeamRunResponseContent"
+    run_completed = "TeamRunCompleted"
+    run_error = "TeamRunError"
+    run_cancelled = "TeamRunCancelled"
+
+    tool_call_started = "TeamToolCallStarted"
+    tool_call_completed = "TeamToolCallCompleted"
+
+    reasoning_started = "TeamReasoningStarted"
+    reasoning_step = "TeamReasoningStep"
+    reasoning_completed = "TeamReasoningCompleted"
+
+    memory_update_started = "TeamMemoryUpdateStarted"
+    memory_update_completed = "TeamMemoryUpdateCompleted"
+
+
+@dataclass
+class BaseTeamRunResponseEvent(BaseRunResponseEvent):
+    created_at: int = field(default_factory=lambda: int(time()))
+    event: str = ""
+    team_id: str = ""
+    team_name: str = ""
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    # If the team is a member of a team, this will be the session id of the parent team
+    team_session_id: Optional[str] = None
+
+    # For backwards compatibility
+    content: Optional[Any] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BaseTeamRunResponseEvent":
+        member_responses = data.pop("member_responses", None)
+        event = super().from_dict(data)
+
+        member_responses_final = []
+        for response in member_responses or []:
+            if "agent_id" in response:
+                run_response_parsed = RunResponse.from_dict(response)
+            else:
+                run_response_parsed = TeamRunResponse.from_dict(response)  # type: ignore
+            member_responses_final.append(run_response_parsed)
+
+        if member_responses_final:
+            event.member_responses = member_responses_final
+
+        return event
+
+
+@dataclass
+class RunResponseStartedEvent(BaseTeamRunResponseEvent):
+    """Event sent when the run starts"""
+
+    event: str = TeamRunEvent.run_started.value
+    model: str = ""
+    model_provider: str = ""
+
+
+@dataclass
+class RunResponseContentEvent(BaseTeamRunResponseEvent):
+    """Main event for each delta of the RunResponse"""
+
+    event: str = TeamRunEvent.run_response_content.value
+    content: Optional[Any] = None
+    content_type: str = "str"
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+    image: Optional[ImageArtifact] = None  # Image attached to the response
+    extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass
+class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.run_completed.value
+    content: Optional[Any] = None
+    content_type: str = "str"
+    reasoning_content: Optional[str] = None
+    thinking: Optional[str] = None
+    citations: Optional[Citations] = None
+    images: Optional[List[ImageArtifact]] = None  # Images attached to the response
+    videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
+    audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+    response_audio: Optional[AudioResponse] = None  # Model audio response
+    extra_data: Optional[RunResponseExtraData] = None
+    member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
+
+
+@dataclass
+class RunResponseErrorEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.run_error.value
+    content: Optional[str] = None
+
+
+@dataclass
+class RunResponseCancelledEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.run_cancelled.value
+    reason: Optional[str] = None
+
+
+@dataclass
+class MemoryUpdateStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.memory_update_started.value
+
+
+@dataclass
+class MemoryUpdateCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.memory_update_completed.value
+
+
+@dataclass
+class ReasoningStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.reasoning_started.value
+
+
+@dataclass
+class ReasoningStepEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.reasoning_step.value
+    content: Optional[Any] = None
+    content_type: str = "str"
+    reasoning_content: str = ""
+
+
+@dataclass
+class ReasoningCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.reasoning_completed.value
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+
+@dataclass
+class ToolCallStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.tool_call_started.value
+    tool: Optional[ToolExecution] = None
+
+
+@dataclass
+class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.tool_call_completed.value
+    tool: Optional[ToolExecution] = None
+    content: Optional[Any] = None
+    images: Optional[List[ImageArtifact]] = None  # Images produced by the tool call
+    videos: Optional[List[VideoArtifact]] = None  # Videos produced by the tool call
+    audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
+
+
+TeamRunResponseEvent = Union[
+    RunResponseStartedEvent,
+    RunResponseContentEvent,
+    RunResponseCompletedEvent,
+    RunResponseErrorEvent,
+    RunResponseCancelledEvent,
+    ReasoningStartedEvent,
+    ReasoningStepEvent,
+    ReasoningCompletedEvent,
+    MemoryUpdateStartedEvent,
+    MemoryUpdateCompletedEvent,
+    ToolCallStartedEvent,
+    ToolCallCompletedEvent,
+]
+
+# Map event string to dataclass for team events
+TEAM_RUN_EVENT_TYPE_REGISTRY = {
+    TeamRunEvent.run_started.value: RunResponseStartedEvent,
+    TeamRunEvent.run_response_content.value: RunResponseContentEvent,
+    TeamRunEvent.run_completed.value: RunResponseCompletedEvent,
+    TeamRunEvent.run_error.value: RunResponseErrorEvent,
+    TeamRunEvent.run_cancelled.value: RunResponseCancelledEvent,
+    TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
+    TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
+    TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
+    TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
+    TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+}
+
+
+def team_run_response_event_from_dict(data: dict) -> BaseTeamRunResponseEvent:
+    event_type = data.get("event", "")
+    if event_type in {e.value for e in RunEvent}:
+        return run_response_event_from_dict(data)  # type: ignore
+    else:
+        event_class = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not event_class:
+        raise ValueError(f"Unknown team event type: {event_type}")
+    return event_class.from_dict(data)  # type: ignore
 
 
 @dataclass
 class TeamRunResponse:
     """Response returned by Team.run() functions"""
-
-    event: str = RunEvent.run_response.value
 
     content: Optional[Any] = None
     content_type: str = "str"
@@ -28,7 +221,10 @@ class TeamRunResponse:
 
     run_id: Optional[str] = None
     team_id: Optional[str] = None
+    team_name: Optional[str] = None
     session_id: Optional[str] = None
+    # If the team is a member of a team, this will be the session id of the parent team
+    team_session_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
@@ -46,13 +242,43 @@ class TeamRunResponse:
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    events: Optional[List[Union[RunResponseEvent, TeamRunResponseEvent]]] = None
+
+    status: RunStatus = RunStatus.running
+
+    @property
+    def is_paused(self):
+        return self.status == RunStatus.paused
+
+    @property
+    def is_cancelled(self):
+        return self.status == RunStatus.cancelled
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k
+            not in [
+                "messages",
+                "status",
+                "tools",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+                "citations",
+                "events",
+            ]
         }
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
+
+        if self.status is not None:
+            _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
@@ -81,7 +307,7 @@ class TeamRunResponse:
                 _dict["citations"] = self.citations
 
         if self.content and isinstance(self.content, BaseModel):
-            _dict["content"] = self.content.model_dump(exclude_none=True)
+            _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
         if self.tools is not None:
             _dict["tools"] = []
@@ -102,6 +328,19 @@ class TeamRunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunResponse":
+        events = data.pop("events", None)
+        final_events = []
+        for event in events or []:
+            if "agent_id" in event:
+                # Use the factory from response.py for agent events
+                from agno.run.response import run_response_event_from_dict
+
+                event = run_response_event_from_dict(event)
+            else:
+                event = team_run_response_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
+
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
@@ -133,6 +372,10 @@ class TeamRunResponse:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        # To make it backwards compatible
+        if "event" in data:
+            data.pop("event")
+
         return cls(
             messages=messages,
             member_responses=parsed_member_responses,
@@ -142,6 +385,7 @@ class TeamRunResponse:
             audio=audio,
             response_audio=response_audio,
             tools=tools,
+            events=events,
             **data,
         )
 

@@ -17,6 +17,8 @@ from agno.utils.log import log_debug, log_info
 
 
 class BaseAPIApp(ABC):
+    type: Optional[str] = None
+
     def __init__(
         self,
         agent: Optional[Agent] = None,
@@ -28,6 +30,7 @@ class BaseAPIApp(ABC):
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        version: Optional[str] = None,
     ):
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
@@ -44,6 +47,7 @@ class BaseAPIApp(ABC):
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.description = description
+        self.version = version
         self.set_app_id()
 
         if self.agent:
@@ -87,11 +91,18 @@ class BaseAPIApp(ABC):
 
     def get_app(self, use_async: bool = True, prefix: str = "") -> FastAPI:
         if not self.api_app:
+            kwargs = {
+                "title": self.settings.title,
+            }
+            if self.version:
+                kwargs["version"] = self.version
+            if self.settings.docs_enabled:
+                kwargs["docs_url"] = "/docs"
+                kwargs["redoc_url"] = "/redoc"
+                kwargs["openapi_url"] = "/openapi.json"
+
             self.api_app = FastAPI(
-                title=self.settings.title,
-                docs_url="/docs" if self.settings.docs_enabled else None,
-                redoc_url="/redoc" if self.settings.docs_enabled else None,
-                openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+                **kwargs,  # type: ignore
             )
 
         if not self.api_app:
@@ -190,7 +201,7 @@ class BaseAPIApp(ABC):
             ]
             if self.team
             else None,
-            "type": "fastapi",
+            "type": self.type,
             "description": self.description,
         }
         payload = {k: v for k, v in payload.items() if v is not None}

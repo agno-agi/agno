@@ -144,8 +144,8 @@ def main() -> None:
                     )
                     for _resp_chunk in run_response:
                         # Display tool calls if available
-                        if _resp_chunk.tools and len(_resp_chunk.tools) > 0:
-                            display_tool_calls(tool_calls_container, _resp_chunk.tools)
+                        if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
+                            display_tool_calls(tool_calls_container, [_resp_chunk.tool])
 
                         # Display response if available and event is RunResponse
                         if (

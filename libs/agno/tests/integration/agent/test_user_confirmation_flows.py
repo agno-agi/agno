@@ -161,6 +161,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
         tools=[get_the_weather],
         storage=agent_storage,
         memory=memory,
+        instructions="When you have confirmation, then just use the tool",
         telemetry=False,
         monitoring=False,
     )
@@ -168,6 +169,7 @@ async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_
     response = await agent.arun("What is the weather in Tokyo?", session_id=session_id)
 
     assert response.is_paused
+    assert len(response.tools) == 1
     assert response.tools[0].requires_confirmation
     assert response.tools[0].tool_name == "get_the_weather"
     assert response.tools[0].tool_args == {"city": "Tokyo"}
@@ -253,7 +255,7 @@ def test_tool_call_requires_confirmation_stream():
     assert found_confirmation, "No tools were found to require confirmation"
 
     found_confirmation = False
-    for response in agent.continue_run(response, stream=True):
+    for response in agent.continue_run(agent.run_response, stream=True):
         if response.is_paused:
             found_confirmation = True
     assert found_confirmation is False, "Some tools still require confirmation"
@@ -315,7 +317,7 @@ async def test_tool_call_requires_confirmation_stream_async():
     assert found_confirmation, "No tools were found to require confirmation"
 
     found_confirmation = False
-    async for response in await agent.acontinue_run(response, stream=True):
+    async for response in await agent.acontinue_run(agent.run_response, stream=True):
         if response.is_paused:
             found_confirmation = True
     assert found_confirmation is False, "Some tools still require confirmation"

@@ -1,8 +1,5 @@
 """Run `pip install openai yfinance` to install dependencies."""
 
-# Note: Currently, Llama API does not support tools with parameters other than string.
-# This is a limitation of the Llama API.
-
 from agno.agent import Agent
 from agno.models.meta import LlamaOpenAI
 from agno.tools.yfinance import YFinanceTools
