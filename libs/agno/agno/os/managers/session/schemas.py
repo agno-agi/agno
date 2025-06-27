@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from agno.db.base import SessionType
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
 
@@ -20,6 +21,11 @@ class SessionSchema(BaseModel):
             created_at=datetime.fromtimestamp(session.get("created_at", 0)) if session.get("created_at") else None,
             updated_at=datetime.fromtimestamp(session.get("updated_at", 0)) if session.get("updated_at") else None,
         )
+
+
+class DeleteSessionRequest(BaseModel):
+    session_ids: List[str]
+    session_types: List[SessionType]
 
 
 class AgentSessionDetailSchema(BaseModel):

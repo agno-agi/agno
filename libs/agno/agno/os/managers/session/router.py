@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from agno.db.base import BaseDb, SessionType
 from agno.os.managers.session.schemas import (
     AgentSessionDetailSchema,
+    DeleteSessionRequest,
     RunSchema,
     SessionSchema,
     TeamRunSchema,
@@ -81,5 +82,34 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return [TeamRunSchema.from_dict(run) for run in runs]  # type: ignore
         elif session_type == SessionType.WORKFLOW:
             return [WorkflowRunSchema.from_dict(run) for run in runs]  # type: ignore
+
+    @router.delete("/sessions")
+    async def delete_session(request: DeleteSessionRequest) -> None:
+        if len(request.session_ids) != len(request.session_types):
+            raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
+
+        # TODO: optimize
+        for session_id, session_type in zip(request.session_ids, request.session_types):
+            db.delete_session(session_id=session_id, session_type=session_type)
+
+    @router.post(
+        "/sessions/{session_id}/rename",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+    )
+    async def rename_session(
+        session_id: str = Path(...),
+        session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
+        session_name: str = Query(default=None, description="Session name"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.from_session(session)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.from_session(session)
+        elif session_type == SessionType.WORKFLOW:
+            return WorkflowSessionDetailSchema.from_session(session)
 
     return router
