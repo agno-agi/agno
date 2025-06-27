@@ -1044,24 +1044,32 @@ class Workflow:
         self.load_session(force=True)
 
     def _format_step_content_for_display(self, step_output: StepOutput) -> str:
-        """Format step output content for display, handling structured outputs"""
-        if not step_output.content:
+        """Format content for display, handling structured outputs. Works for both raw content and StepOutput objects."""
+        # If it's a StepOutput, extract the content
+        if hasattr(step_output, "content"):
+            actual_content = step_output.content
+        else:
+            actual_content = step_output
+
+        if not actual_content:
             return ""
 
         # If it's already a string, return as-is
-        if isinstance(step_output.content, str):
-            return step_output.content
+        if isinstance(actual_content, str):
+            return actual_content
 
         # If it's a structured output (BaseModel or dict), format it nicely
-        if isinstance(step_output.content, BaseModel):
-            return f"**Structured Output:**\n\n```json\n{step_output.content.model_dump_json(indent=2, exclude_none=True)}\n```"
-        elif isinstance(step_output.content, dict):
+        if isinstance(actual_content, BaseModel):
+            return (
+                f"**Structured Output:**\n\n```json\n{actual_content.model_dump_json(indent=2, exclude_none=True)}\n```"
+            )
+        elif isinstance(actual_content, (dict, list)):
             import json
 
-            return f"**Structured Output:**\n\n```json\n{json.dumps(step_output.content, indent=2, default=str)}\n```"
+            return f"**Structured Output:**\n\n```json\n{json.dumps(actual_content, indent=2, default=str)}\n```"
         else:
             # Fallback to string conversion
-            return str(step_output.content)
+            return str(actual_content)
 
     def print_response(
         self,
@@ -1624,6 +1632,9 @@ class Workflow:
                                 response_str = response.content
                             else:
                                 continue
+
+                        # Use the unified formatting function for consistency
+                        response_str = self._format_step_content_for_display(response_str)
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():
@@ -2198,6 +2209,9 @@ class Workflow:
                                 response_str = response.content
                             else:
                                 continue
+
+                        # Use the unified formatting function for consistency
+                        response_str = self._format_step_content_for_display(response_str)
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():

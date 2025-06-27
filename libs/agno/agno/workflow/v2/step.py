@@ -666,53 +666,20 @@ class Step:
                     else:
                         raise e
 
-    def _convert_input_to_string(
-        self, message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]
-    ) -> Optional[str]:
-        """Convert various input types to string"""
-        if message is None:
-            return None
-        if isinstance(message, str):
-            return message
-        elif isinstance(message, BaseModel):
-            return f"Process the following structured data:\n{message.model_dump_json(indent=2, exclude_none=True)}"
-        elif isinstance(message, (dict, list)):
-            import json
-
-            return f"Process the following data:\n{json.dumps(message, indent=2, default=str)}"
-        else:
-            return str(message)
-
     def _prepare_message(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
         previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
-    ) -> Optional[str]:
+    ) -> Union[str, list, Dict[str, Any], BaseModel]:
         """Prepare the primary input by combining message and previous step outputs"""
 
-        # Convert message to string if needed
-        message_str = self._convert_input_to_string(message)
-
-        # Build the final message by combining all components
-        parts = []
-
-        # Add the main message
-        if message_str:
-            parts.append(message_str)
-
-        # For agents/teams, use the previous step outputs
         if previous_steps_outputs and self._executor_type in ["agent", "team"]:
             last_output = list(previous_steps_outputs.values())[-1] if previous_steps_outputs else None
-            if last_output:
-                # Priority: structured_output > content
-                if last_output.is_structured_output:
-                    structured_json = last_output.get_structured_output_as_json()
-                    if structured_json:
-                        parts.append(f"--- Previous Step Structured Output ---\n{structured_json}")
-                elif last_output.content:
-                    parts.append(f"--- Previous Step Output ---\n{last_output.content}")
+            if last_output and last_output.content:
+                return last_output.content
 
-        return "\n\n".join(parts) if parts else None
+        # If no previous step outputs, return the original message unchanged
+        return message
 
     def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""

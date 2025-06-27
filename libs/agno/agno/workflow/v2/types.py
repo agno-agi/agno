@@ -188,47 +188,6 @@ class StepOutput:
     success: bool = True
     error: Optional[str] = None
 
-    @property
-    def structured_output(self) -> Optional[Union[BaseModel, Dict[str, Any]]]:
-        """Get structured output if available from the response"""
-        if self.response and hasattr(self.response, "content"):
-            # Check if content_type indicates structured output (not "str")
-            if hasattr(self.response, "content_type") and self.response.content_type != "str":
-                return self.response.content
-            # Also check if content is directly a BaseModel or dict
-            elif isinstance(self.response.content, (BaseModel, dict)):
-                return self.response.content
-        return None
-
-    @property
-    def is_structured_output(self) -> bool:
-        """Check if this step output contains structured data"""
-        return self.structured_output is not None
-
-    def get_structured_output_as_dict(self) -> Optional[Dict[str, Any]]:
-        """Get structured output as dictionary"""
-        structured = self.structured_output
-        if structured is None:
-            return None
-        if isinstance(structured, BaseModel):
-            return structured.model_dump(exclude_none=True)
-        elif isinstance(structured, dict):
-            return structured
-        return None
-
-    def get_structured_output_as_json(self) -> Optional[str]:
-        """Get structured output as JSON string"""
-        structured = self.structured_output
-        if structured is None:
-            return None
-        if isinstance(structured, BaseModel):
-            return structured.model_dump_json(exclude_none=True)
-        elif isinstance(structured, dict):
-            import json
-
-            return json.dumps(structured, default=str)
-        return str(structured)
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
