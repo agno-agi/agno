@@ -20,6 +20,7 @@ db = PostgresDb(
     agent_session_table="agent_sessions",
     team_session_table="team_sessions",
     workflow_session_table="workflow_sessions",
+    user_memory_table="user_memory",
     eval_table="eval_runs",
 )
 
