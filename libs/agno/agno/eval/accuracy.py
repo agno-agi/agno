@@ -147,7 +147,7 @@ class AccuracyEval:
     # Evaluation UUID
     eval_id: str = field(default_factory=lambda: str(uuid4()))
     # Number of iterations to run
-    num_iterations: int = 1
+    num_iterations: Optional[int] = 1
     # Result of the evaluation
     result: Optional[AccuracyResult] = None
 

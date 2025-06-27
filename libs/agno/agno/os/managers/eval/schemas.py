@@ -1,8 +1,38 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from agno.eval import AccuracyResult, PerformanceResult, ReliabilityResult
 from agno.eval.schemas import EvalType
+
+
+class AccuracyEvalInput(BaseModel):
+    input: str
+    expected_output: str
+    additional_guidelines: Optional[str] = None
+    num_iterations: Optional[int] = 1
+    name: Optional[str] = None
+
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+
+
+class ReliabilityEvalInput(BaseModel):
+    input: str
+    expected_tool_calls: List[str]
+    additional_guidelines: Optional[str] = None
+    num_iterations: Optional[int] = 1
+    name: Optional[str] = None
+
+
+class PerformanceEvalInput(BaseModel):
+    input: str
+    expected_output: str
+    additional_guidelines: Optional[str] = None
+    num_iterations: Optional[int] = 3
+    warmup_runs: Optional[int] = 0
+    name: Optional[str] = None
 
 
 class EvalSchema(BaseModel):
@@ -32,3 +62,15 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
         )
+
+    @classmethod
+    def from_accuracy_result(cls, result: AccuracyResult) -> "EvalSchema":
+        return cls()
+
+    @classmethod
+    def from_performance_result(cls, result: PerformanceResult) -> "EvalSchema":
+        return cls()
+
+    @classmethod
+    def from_reliability_result(cls, result: ReliabilityResult) -> "EvalSchema":
+        return cls()

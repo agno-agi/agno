@@ -166,9 +166,9 @@ class PerformanceEval:
     # Evaluation UUID
     eval_id: str = field(default_factory=lambda: str(uuid4()))
     # Number of warm-up runs (not included in final stats)
-    warmup_runs: int = 10
+    warmup_runs: Optional[int] = 10
     # Number of measured iterations
-    num_iterations: int = 50
+    num_iterations: Optional[int] = 50
     # Result of the evaluation
     result: Optional[PerformanceResult] = None
 
