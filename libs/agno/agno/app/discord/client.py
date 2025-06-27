@@ -23,17 +23,19 @@ class HITLView(discord.ui.View):
         self.value = None
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.primary)
-    async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button, ):
         self.value = True
         button.disabled = True
         await interaction.response.edit_message(view=self)
+        self.clear_items()
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button, ):
         self.value = False
         button.disabled = True
         await interaction.response.edit_message(view=self)
+        self.clear_items()
         self.stop()
 
     async def on_timeout(self):
@@ -69,6 +71,7 @@ class DiscordClient:
             message_text = message.content
             message_url = message.jump_url
             message_user = message.author.name
+            message_user_id = message.author.id
 
             if message.attachments:
                 media = message.attachments[0]
@@ -99,28 +102,25 @@ class DiscordClient:
                 return
 
             async with thread.typing():
+                agent_or_team = None
                 if self.agent:
-                    self.agent.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
-                    response: RunResponse = await self.agent.arun(
-                        message_text,
-                        user_id=message_user,
-                        session_id=str(thread.id),
-                        images=[Image(url=message_image)] if message_image else None,
-                        videos=[Video(content=message_video)] if message_video else None,
-                        audio=[Audio(url=message_audio)] if message_audio else None,
-                    )
+                    agent_or_team = self.agent
                 elif self.team:
-                    self.team.additional_context = f"message username:\n{message_user} \n message_url:{message_url}"
-                    response: RunResponse = await self.team.arun(
-                        message=message_text,
-                        user_id=message_user,
-                        session_id=str(thread.id),
-                        images=[Image(url=message_image)] if message_image else None,
-                        videos=[Video(content=message_video)] if message_video else None,
-                        audio=[Audio(url=message_audio)] if message_audio else None,
-                        files=[File(url=message_audio)] if message_file else None,
-                    )
+                    agent_or_team = self.team
 
+                self.agent_or_team.additional_context = dedent(f"""
+                Discord username: {message_user}
+                Discord url: {message_url}""")
+
+                response: RunResponse = await agent_or_team.arun(
+                    message_text,
+                    user_id=message_user_id,
+                    session_id=str(thread.id),
+
+                    images=[Image(url=message_image)] if message_image else None,
+                    videos=[Video(content=message_video)] if message_video else None,
+                    audio=[Audio(url=message_audio)] if message_audio else None,
+                )
                 await self._handle_response_in_thread(response, thread)
 
     async def _handle_hitl(self, response: RunResponse, thread: discord.Thread):
