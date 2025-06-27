@@ -1,7 +1,7 @@
-from typing import List
+from typing import List, Optional
 
+from fastapi import HTTPException, Query
 from fastapi.routing import APIRouter
-from fastapi import HTTPException
 
 from agno.db.base import BaseDb
 from agno.os.connectors.metrics.schemas import AggregatedMetrics
@@ -9,13 +9,12 @@ from agno.os.connectors.metrics.schemas import AggregatedMetrics
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.get("/metrics", response_model=List[AggregatedMetrics], status_code=200)
-    async def get_metrics() -> List[AggregatedMetrics]:
-        """Get all metrics from the database."""
-        try:
-            metrics = db.get_metrics()
-            return metrics
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving metrics: {str(e)}")
+    async def get_metrics(
+        starting_date: Optional[str] = Query(default=None, description="Starting date to filter metrics"),
+        ending_date: Optional[str] = Query(default=None, description="Ending date to filter metrics"),
+    ) -> List[AggregatedMetrics]:
+        metrics = db.get_metrics_raw(starting_date=starting_date, ending_date=ending_date)
+        return [AggregatedMetrics.from_dict(metric) for metric in metrics]
 
     @router.post("/metrics", response_model=AggregatedMetrics, status_code=200)
     async def upsert_metrics() -> AggregatedMetrics:

@@ -197,11 +197,11 @@ class BaseDb(ABC):
     # --- Metrics Table ---
 
     @abstractmethod
-    def get_metrics(self) -> List[Any]:
+    def get_metrics_raw(self, starting_date: Optional[str] = None, ending_date: Optional[str] = None) -> List[Any]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_metrics(self, metrics: Any) -> Optional[Any]:
+    def upsert_metrics(self) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge Table ---
