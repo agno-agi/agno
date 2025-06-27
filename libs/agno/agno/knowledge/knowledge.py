@@ -11,21 +11,20 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
 from agno.document.document_store import DocumentStore
 from agno.document.document_v2 import DocumentV2
-from agno.document.reader.firecrawl_reader import FirecrawlReader
-from agno.document.reader.pdf_reader import PDFReader, PDFUrlReader
-from agno.document.reader.url_reader import URLReader
-from agno.document.reader.csv_reader import CSVReader
+from agno.document.reader import Reader
+from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
 from agno.document.reader.docx_reader import DocxReader
+from agno.document.reader.firecrawl_reader import FirecrawlReader
 from agno.document.reader.json_reader import JSONReader
 from agno.document.reader.markdown_reader import MarkdownReader
+from agno.document.reader.pdf_reader import PDFReader, PDFUrlReader
 from agno.document.reader.text_reader import TextReader
+from agno.document.reader.url_reader import URLReader
 from agno.document.reader.website_reader import WebsiteReader
 from agno.document.reader.youtube_reader import YouTubeReader
-from agno.document.reader.csv_reader import CSVUrlReader
+from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
-from agno.document.reader import Reader
-from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 
 
 @dataclass
@@ -127,12 +126,12 @@ class Knowledge:
             pass
 
     def _load_from_path(
-            self,
-            document: DocumentV2,
+        self,
+        document: DocumentV2,
     ):
         log_info("Adding document from path")
         path = Path(document.path)
-        if path.is_file():  
+        if path.is_file():
             if document.reader:
                 read_documents = document.reader.read(path, name=document.name or path.name)
             else:
@@ -142,7 +141,7 @@ class Knowledge:
                     read_documents = reader.read(path, name=document.name or path.name)
                 else:
                     log_info(f"No reader found for path: {path}")
-    
+
             if not document.size and document.content:
                 document.size = len(document.content.content)
             if not document.size:
@@ -159,7 +158,6 @@ class Knowledge:
                     self.vector_store.upsert(documents=[read_document], filters=document.metadata)
                 else:
                     self.vector_store.insert(documents=[read_document], filters=document.metadata)
-        
 
         elif path.is_dir():
             for file in path.iterdir():
@@ -171,12 +169,11 @@ class Knowledge:
                 self._load_from_path(file_document)
         else:
             raise ValueError(f"Invalid path: {path}")
-            
 
     def _load_from_url(self, document: DocumentV2):
         log_info("Adding document from URL")
         from urllib.parse import urlparse
-        
+
         # Validate URL
         try:
             parsed_url = urlparse(document.url)
@@ -184,11 +181,11 @@ class Knowledge:
                 raise ValueError(f"Invalid URL format: {document.url}")
         except Exception as e:
             raise ValueError(f"Invalid URL: {document.url} - {str(e)}")
-        
+
         # Determine file type from URL
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
-        
+
         # Check if it's a file with known extension
         if file_extension and file_extension is not None:
             log_info(f"Detected file type: {file_extension} from URL: {document.url}")
@@ -217,7 +214,7 @@ class Knowledge:
                     self.vector_store.upsert(documents=[read_document], filters=document.metadata)
                 else:
                     self.vector_store.insert(documents=[read_document], filters=document.metadata)
-                
+
         document.size = file_size
         self._add_to_documents_db(document)
 
@@ -257,13 +254,9 @@ class Knowledge:
         else:
             raise ValueError("No content provided")
 
+    def _load_from_topics(self): ...
 
-    def _load_from_topics(self):
-        ...
-
-    def _load_from_cloud_storage(self):
-        ...
-
+    def _load_from_cloud_storage(self): ...
 
     def _load_document(self, document: DocumentV2) -> None:
         if document.path:
@@ -284,7 +277,6 @@ class Knowledge:
         if document.config:
             self._load_from_cloud_storage(id, document)
 
-    
     def add_document(
         self,
         document: Optional[DocumentV2] = None,
@@ -301,20 +293,24 @@ class Knowledge:
         if document is not None:
             arguments = [name, path, url, content, metadata, topics, config, reader]
             if any(argument is not None for argument in arguments):
-                log_warning("If 'document' is provided, no other parameters should be provided. "
-                    "Use either 'document' OR individual parameters, not both.")
-      
+                log_warning(
+                    "If 'document' is provided, no other parameters should be provided. "
+                    "Use either 'document' OR individual parameters, not both."
+                )
+
             # Use the provided document
             if not document.id:
                 document.id = str(uuid4())
             log_info(f"Adding document: {document.id}")
             self._load_document(document)
             return
-        
+
         # Validation: If document is not provided, at least one of the other parameters must be provided
         if all(argument is None for argument in [name, path, url, content]):
-            log_warning("Either 'document' must be provided, or at least one of 'path', 'url', or 'content' must be provided.")
-            
+            log_warning(
+                "Either 'document' must be provided, or at least one of 'path', 'url', or 'content' must be provided."
+            )
+
         # Create DocumentV2 from individual parameters
         document = DocumentV2(
             id=str(uuid4()),
@@ -328,7 +324,6 @@ class Knowledge:
             reader=reader,
         )
         self._load_document(document)
-
 
     # def add_documents(self, documents: List[DocumentV2]) -> None:
     #     """
@@ -397,7 +392,6 @@ class Knowledge:
         return self.document_store.delete_all_documents()
 
     def _add_to_documents_db(self, document: DocumentV2):
-
         if self.documents_db:
             document_row = KnowledgeRow(
                 id=document.id,
@@ -410,8 +404,6 @@ class Knowledge:
                 access_count=0,
             )
             self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
-
-
 
     def _add_from_file(self, file_path: str):
         path = Path(file_path)
@@ -451,7 +443,7 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
-# --- Readers Setup ---
+    # --- Readers Setup ---
 
     # TODO: Rework these into a map we can use for selection, but also return to API.
     def _select_reader(self, extension: str) -> Reader:
@@ -469,13 +461,12 @@ class Knowledge:
             return self.text_reader
         else:
             return None
-        
+
     def _select_url_reader(self, url: str) -> Reader:
         if any(domain in url for domain in ["youtube.com", "youtu.be"]):
             return self.youtube_reader
         else:
             return self.url_reader
-        
 
     def _select_url_file_reader(self, extension: str) -> Reader:
         if extension == ".pdf":
@@ -484,7 +475,6 @@ class Knowledge:
             return self.csv_url_reader
         else:
             return self.url_reader
-
 
     # --- File Readers ---
     @cached_property
@@ -496,34 +486,34 @@ class Knowledge:
     def csv_reader(self) -> CSVReader:
         """CSV reader - lazy loaded and cached."""
         return CSVReader()
-    
+
     @cached_property
     def docx_reader(self) -> DocxReader:
         """Docx reader - lazy loaded and cached."""
         return DocxReader()
-    
+
     @cached_property
     def json_reader(self) -> JSONReader:
         """JSON reader - lazy loaded and cached."""
         return JSONReader()
-    
+
     @cached_property
     def markdown_reader(self) -> MarkdownReader:
         """Markdown reader - lazy loaded and cached."""
         return MarkdownReader()
-    
+
     @cached_property
     def text_reader(self) -> TextReader:
         """Txt reader - lazy loaded and cached."""
         return TextReader()
-        
+
     # --- URL Readers ---
 
     @cached_property
     def website_reader(self) -> WebsiteReader:
         """Website reader - lazy loaded and cached."""
         return WebsiteReader()
-    
+
     @cached_property
     def firecrawl_reader(self) -> FirecrawlReader:
         """Firecrawl reader - lazy loaded and cached."""
@@ -536,24 +526,25 @@ class Knowledge:
     def url_reader(self) -> URLReader:
         """URL reader - lazy loaded and cached."""
         return URLReader()
-    
+
     @cached_property
     def pdf_url_reader(self) -> PDFUrlReader:
         """PDF URL reader - lazy loaded and cached."""
         return PDFUrlReader()
-    
+
     @cached_property
     def youtube_reader(self) -> YouTubeReader:
         """YouTube reader - lazy loaded and cached."""
         return YouTubeReader()
-    
+
     @cached_property
     def csv_url_reader(self) -> CSVUrlReader:
         """CSV URL reader - lazy loaded and cached."""
         return CSVUrlReader()
-    
+
+
 # -----------------------------
-    
+
 # -- Unused for now. Will revisit when we do async and optimizations ---
 
 

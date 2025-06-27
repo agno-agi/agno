@@ -32,8 +32,6 @@ knowledge.add_documents(
 )
 
 
-
-
 knowledge.add_document(
     name="CVs",
     path="tmp/",
@@ -89,7 +87,10 @@ knowledge.add_document(
 
 knowledge.add_document(
     name="Wikipedia",
-    topics=["Manchester United", "Real Madrid"], #Throw error if no reader passed when topics are provided
+    topics=[
+        "Manchester United",
+        "Real Madrid",
+    ],  # Throw error if no reader passed when topics are provided
     metadata={"user_tag": "Football"},
     reader=WikipediaReader(),
 )
@@ -119,7 +120,6 @@ knowledge.add_document(
 
 # # Supported with document db and vector db
 # knowledge.remove_document(id="CV1")
-
 
 
 # knowledge.add_documents(

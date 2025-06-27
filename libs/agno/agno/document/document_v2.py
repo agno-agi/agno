@@ -35,7 +35,6 @@ class DocumentV2:  # We will rename this to Document
 #     ]
 
 
-
 # "UUID": PDF: [
 #     "id1": PDFReader(),
 #     "id2": PDFURLReader(),
@@ -51,10 +50,6 @@ class DocumentV2:  # We will rename this to Document
 # ]
 
 
-
-
-
-
 # LOAD:
 
 # DocumentStore
@@ -64,13 +59,11 @@ class DocumentV2:  # We will rename this to Document
 # Content
 
 
-
 # ADD DOCUMENT
 # DocumentV2   -> Paths URLS
 # Paths
 # URLs
 # Content
-
 
 
 # VECTOR DB

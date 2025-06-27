@@ -50,10 +50,14 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
 
-        document_content = DocumentContent(
-            content=content_bytes,
-            type=file.content_type if file.content_type else None,
-        ) if file else None
+        document_content = (
+            DocumentContent(
+                content=content_bytes,
+                type=file.content_type if file.content_type else None,
+            )
+            if file
+            else None
+        )
 
         document = DocumentV2(
             name=name if name else file.filename,

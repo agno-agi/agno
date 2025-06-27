@@ -22,7 +22,9 @@ from agno.utils.log import logger
 class CSVReader(Reader):
     """Reader for CSV files"""
 
-    def read(self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None) -> List[Document]:
+    def read(
+        self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
+    ) -> List[Document]:
         try:
             if isinstance(file, Path):
                 if not file.exists():
@@ -59,7 +61,12 @@ class CSVReader(Reader):
             return []
 
     async def async_read(
-        self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', page_size: int = 1000, name: Optional[str] = None
+        self,
+        file: Union[Path, IO[Any]],
+        delimiter: str = ",",
+        quotechar: str = '"',
+        page_size: int = 1000,
+        name: Optional[str] = None,
     ) -> List[Document]:
         """
         Read a CSV file asynchronously, processing batches of rows concurrently.
