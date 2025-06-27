@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
+from agno.file.file_store import FileStore
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.agent import AgentMemory, AgentRun
@@ -327,6 +328,7 @@ class Agent:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
+    filestore: Optional[FileStore] = None
 
     def __init__(
         self,
@@ -417,6 +419,7 @@ class Agent:
         debug_mode: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
+        filestore: Optional[FileStore] = None,
     ):
         self.model = model
         self.name = name
@@ -527,6 +530,7 @@ class Agent:
         self.debug_mode = debug_mode
         self.monitoring = monitoring
         self.telemetry = telemetry
+        self.filestore = filestore
 
         # --- Params not to be set by user ---
         self.session_metrics: Optional[SessionMetrics] = None
