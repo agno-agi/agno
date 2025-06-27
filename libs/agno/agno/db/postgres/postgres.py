@@ -1,4 +1,5 @@
 import time
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -79,8 +80,6 @@ class PostgresDb(BaseDb):
         self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
 
-        # Initialize metadata for table management
-        self.metadata = MetaData()
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
@@ -297,7 +296,7 @@ class PostgresDb(BaseDb):
             raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
+            table = Table(table_name, MetaData(), schema=db_schema, autoload_with=self.db_engine)
             log_debug(f"Loaded existing table {db_schema}.{table_name}")
             return table
 
@@ -362,6 +361,26 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
+
+    def get_first_session_date(self) -> Optional[int]:
+        """Get the timestamp of the first session in the database"""
+        try:
+            dates = []
+            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
+                table = self.get_table_for_session_type(session_type=session_type)
+                if table is None:
+                    continue
+                with self.Session() as sess:
+                    stmt = select(table.c.created_at).order_by(table.c.created_at.asc()).limit(1)
+                    result = sess.execute(stmt).fetchone()
+                    if result is not None:
+                        dates.append(result[0])
+
+            return min(dates) if dates else None
+
+        except Exception as e:
+            log_error(f"Error getting first session date: {e}")
+            return None
 
     def get_runs_raw(self, session_id: str, session_type: SessionType) -> Optional[List[Dict[str, Any]]]:
         """
@@ -478,6 +497,8 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        starting_date: Optional[int] = None,
+        ending_date: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -509,6 +530,10 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
+                if starting_date is not None:
+                    stmt = stmt.where(table.c.created_at >= starting_date)
+                if ending_date is not None:
+                    stmt = stmt.where(table.c.created_at <= ending_date)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1168,143 +1193,184 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting metrics: {e}")
             return []
 
-    # WIP
-    def upsert_metrics(self) -> Optional[dict]:
-        """Upsert metrics in the database."""
+    def refresh_metrics(self) -> Optional[list[dict]]:
         try:
             table = self.get_metrics_table()
 
-            # Count agent sessions and runs
-            agent_sessions_count = 0
-            agent_runs_count = 0
-            if self.agent_session_table_name:
-                try:
-                    agent_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.AGENT)
-                    agent_sessions_count = len(agent_sessions_raw)
-
-                    # Count runs in agent sessions
-                    for session in agent_sessions_raw:
-                        runs = session.get("runs")
-                        if runs and isinstance(runs, list):
-                            agent_runs_count += len(runs)
-                except Exception as e:
-                    log_debug(f"Could not count agent sessions/runs: {e}")
-
-            # Count team sessions and runs
-            team_sessions_count = 0
-            team_runs_count = 0
-            if self.team_session_table_name:
-                try:
-                    team_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.TEAM)
-                    team_sessions_count = len(team_sessions_raw)
-
-                    # Count runs in team sessions
-                    for session in team_sessions_raw:
-                        runs = session.get("runs")
-                        if runs and isinstance(runs, list):
-                            team_runs_count += len(runs)
-                except Exception as e:
-                    log_debug(f"Could not count team sessions/runs: {e}")
-
-            # Count workflow sessions and runs
-            workflow_sessions_count = 0
-            workflow_runs_count = 0
-            if self.workflow_session_table_name:
-                try:
-                    workflow_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.WORKFLOW)
-                    workflow_sessions_count = len(workflow_sessions_raw)
-
-                    # Count runs in workflow sessions
-                    for session in workflow_sessions_raw:
-                        runs = session.get("runs")
-                        if runs and isinstance(runs, list):
-                            workflow_runs_count += len(runs)
-                except Exception as e:
-                    log_debug(f"Could not count workflow sessions/runs: {e}")
-            users_count = 0
-            if self.agent_session_table_name:
-                try:
-                    agent_sessions_raw, _ = self.get_sessions_raw(session_type=SessionType.AGENT)
-                    users_count = len(set([session.get("user_id") for session in agent_sessions_raw]))
-                except Exception as e:
-                    log_debug(f"Could not count users: {e}")
-            # Calculate current day for aggregation
-            current_time = int(time.time())
-            current_day = current_time // (24 * 60 * 60)  # Days since epoch
-            current_month = current_day // 30  # Rough month calculation
-
-            # Create deterministic ID based on day to ensure same row is updated
-            day_based_id = f"metrics_day_{current_day}"
-
-            # Check if record exists for current day
-            existing_record = None
+            # Get the first day without a completed metrics record
             with self.Session() as sess:
-                stmt = select(table).where(table.c.day == current_day)
+                stmt = select(table).where(table.c.completed).order_by(table.c.date.desc()).limit(1)
                 result = sess.execute(stmt).fetchone()
-                if result:
-                    existing_record = result._mapping
-
-            # Prepare metrics data (tokens and model metrics go in the JSON field)
-            metrics_data = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model_metrics": {}}
-
-            with self.Session() as sess, sess.begin():
-                if existing_record:
-                    # Update existing record
-                    stmt = (
-                        table.update()
-                        .where(table.c.day == current_day)
-                        .values(
-                            agent_sessions_count=agent_sessions_count,
-                            team_sessions_count=team_sessions_count,
-                            workflow_sessions_count=workflow_sessions_count,
-                            agent_runs_count=agent_runs_count,
-                            team_runs_count=team_runs_count,
-                            workflow_runs_count=workflow_runs_count,
-                            metrics=metrics_data,
-                            updated_at=current_time,
-                            completed=True,
-                        )
-                        .returning(table)
-                    )
-                    log_debug(f"Updating existing metrics record for day {current_day}")
+                if result is not None:
+                    starting_date = result._mapping["date"] + timedelta(days=1)
                 else:
-                    # Insert new record
-                    stmt = (
-                        postgresql.insert(table)
-                        .values(
-                            id=day_based_id,
+                    # No complete records found. Will start from the date of the latest incomplete record
+                    stmt = select(table).order_by(table.c.date.desc()).limit(1)
+                    result = sess.execute(stmt).fetchone()
+                    if result is not None:
+                        starting_date = result._mapping["date"]
+                    else:
+                        # No records found. Will start from the date of the first recorded session, or today
+                        first_session_date = self.get_first_session_date()
+                        starting_date = date.fromtimestamp(first_session_date) if first_session_date else date.today()
+
+            results: list[dict] = []
+
+            # Create a metrics record for each day missing a completed one
+            dates_to_process = [
+                starting_date + timedelta(days=x) for x in range((date.today() - starting_date).days + 1)
+            ]
+            for date_to_process in dates_to_process:
+                starting_date = int(datetime.combine(date_to_process, datetime.min.time()).timestamp())
+                ending_date = starting_date + 86400
+                users_count = 0
+                input_tokens = 0
+                output_tokens = 0
+                total_tokens = 0
+                audio_tokens = 0
+                input_audio_tokens = 0
+                output_audio_tokens = 0
+                cached_tokens = 0
+                cache_write_tokens = 0
+                reasoning_tokens = 0
+                prompt_tokens = 0
+                completion_tokens = 0
+
+                # Count Agent sessions and runs
+                if self.agent_session_table_name:
+                    try:
+                        agent_sessions, agent_sessions_count = self.get_sessions_raw(
+                            session_type=SessionType.AGENT, starting_date=starting_date, ending_date=ending_date
+                        )
+                        agent_runs_count = 0
+                        for session in agent_sessions:
+                            agent_runs_count += len(session.get("runs", []))
+                            users_count += len(set([session["user_id"] for session in agent_sessions]))
+                            metrics = session["session_data"]["session_metrics"]
+                            input_tokens += metrics.get("input_tokens", 0)
+                            output_tokens += metrics.get("output_tokens", 0)
+                            total_tokens += metrics.get("total_tokens", 0)
+                            audio_tokens += metrics.get("audio_tokens", 0)
+                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
+                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
+                            cached_tokens += metrics.get("cached_tokens", 0)
+                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
+                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
+                            prompt_tokens += metrics.get("prompt_tokens", 0)
+                            completion_tokens += metrics.get("completion_tokens", 0)
+                    except Exception as e:
+                        log_debug(f"Could not count agent sessions/runs: {e}")
+
+                # Count Team sessions and runs
+                if self.team_session_table_name:
+                    try:
+                        team_sessions, team_sessions_count = self.get_sessions_raw(
+                            session_type=SessionType.TEAM, starting_date=starting_date, ending_date=ending_date
+                        )
+                        team_runs_count = 0
+                        for session in team_sessions:
+                            team_runs_count += len(session.get("runs", []))
+                            users_count += len(set([session["user_id"] for session in team_sessions]))
+                            metrics = session["session_data"]["session_metrics"]
+                            input_tokens += metrics.get("input_tokens", 0)
+                            output_tokens += metrics.get("output_tokens", 0)
+                            total_tokens += metrics.get("total_tokens", 0)
+                            audio_tokens += metrics.get("audio_tokens", 0)
+                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
+                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
+                            cached_tokens += metrics.get("cached_tokens", 0)
+                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
+                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
+                            prompt_tokens += metrics.get("prompt_tokens", 0)
+                            completion_tokens += metrics.get("completion_tokens", 0)
+                    except Exception as e:
+                        log_debug(f"Could not count team sessions/runs: {e}")
+
+                # Count Workflow sessions and runs and token metrics
+                if self.workflow_session_table_name:
+                    try:
+                        workflow_sessions, workflow_sessions_count = self.get_sessions_raw(
+                            session_type=SessionType.WORKFLOW, starting_date=starting_date, ending_date=ending_date
+                        )
+                        workflow_runs_count = 0
+                        for session in workflow_sessions:
+                            workflow_runs_count += len(session.get("runs", []))
+                            users_count += len(set([session["user_id"] for session in workflow_sessions]))
+                            metrics = session["session_data"]["session_metrics"]
+                            input_tokens += metrics.get("input_tokens", 0)
+                            output_tokens += metrics.get("output_tokens", 0)
+                            total_tokens += metrics.get("total_tokens", 0)
+                            audio_tokens += metrics.get("audio_tokens", 0)
+                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
+                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
+                            cached_tokens += metrics.get("cached_tokens", 0)
+                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
+                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
+                            prompt_tokens += metrics.get("prompt_tokens", 0)
+                            completion_tokens += metrics.get("completion_tokens", 0)
+                    except Exception as e:
+                        log_debug(f"Could not count workflow sessions/runs: {e}")
+
+                # TODO:
+                model_metrics = {}
+                token_metrics = {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "audio_tokens": audio_tokens,
+                    "input_audio_tokens": input_audio_tokens,
+                    "output_audio_tokens": output_audio_tokens,
+                    "cached_tokens": cached_tokens,
+                    "cache_write_tokens": cache_write_tokens,
+                    "reasoning_tokens": reasoning_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                }
+
+                # Create or update the metrics record
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table).values(
+                        id=str(uuid4()),
+                        date=date_to_process,
+                        users_count=users_count,
+                        agent_sessions_count=agent_sessions_count,
+                        team_sessions_count=team_sessions_count,
+                        workflow_sessions_count=workflow_sessions_count,
+                        agent_runs_count=agent_runs_count,
+                        team_runs_count=team_runs_count,
+                        workflow_runs_count=workflow_runs_count,
+                        token_metrics=token_metrics,
+                        model_metrics=model_metrics,
+                        created_at=int(time.time()),
+                        updated_at=int(time.time()),
+                        completed=date_to_process < date.today(),
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["date"],
+                        set_=dict(
+                            users_count=users_count,
                             agent_sessions_count=agent_sessions_count,
                             team_sessions_count=team_sessions_count,
                             workflow_sessions_count=workflow_sessions_count,
                             agent_runs_count=agent_runs_count,
                             team_runs_count=team_runs_count,
                             workflow_runs_count=workflow_runs_count,
-                            users_count=users_count,
-                            metrics=metrics_data,
-                            time=current_time,
-                            day=current_day,
-                            month=current_month,
-                            created_at=current_time,
-                            updated_at=current_time,
-                            completed=True,
-                        )
-                        .returning(table)
-                    )
-                    log_debug(f"Creating new metrics record for day {current_day}")
+                            token_metrics=token_metrics,
+                            model_metrics=model_metrics,
+                            updated_at=int(time.time()),
+                            completed=date_to_process < date.today(),
+                        ),
+                    ).returning(table)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+                    sess.commit()
+                    results.append(row._mapping)
 
-                result = sess.execute(stmt)
-                row = result.fetchone()
-                sess.commit()
-
-            if row:
-                row_dict = row._mapping
-                return row_dict
-
-            return None
+            return results
 
         except Exception as e:
-            log_error(f"Exception upserting metrics: {e}")
-            return None
+            log_error(f"Exception refreshing metrics: {e}")
+            raise e
 
     # -- Knowledge methods --
 

@@ -94,9 +94,9 @@ METRICS_TABLE_SCHEMA = {
     "users_count": {"type": BigInteger, "nullable": False, "default": 0},
     "token_metrics": {"type": JSON, "nullable": False, "default": {}},
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
-    "date": {"type": Date, "nullable": False},
+    "date": {"type": Date, "nullable": False, "unique": True},
     "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
 }
 

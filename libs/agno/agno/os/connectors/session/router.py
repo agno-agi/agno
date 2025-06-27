@@ -75,8 +75,6 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 
-        breakpoint()
-
         if session_type == SessionType.AGENT:
             return [RunSchema.from_dict(run) for run in runs]  # type: ignore
         elif session_type == SessionType.TEAM:
