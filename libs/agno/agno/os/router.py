@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.interfaces.playground.schemas import WorkflowRunRequest
 from agno.os.schema import (
     AgentResponse,
     AppsResponse,
@@ -18,6 +17,7 @@ from agno.os.schema import (
     ManagerResponse,
     TeamResponse,
     WorkflowResponse,
+    WorkflowRunRequest,
 )
 from agno.os.utils import (
     get_agent_by_id,
@@ -130,10 +130,10 @@ def get_base_router(
             ],
         )
 
-        app_response.session = app_response.session or None
-        app_response.knowledge = app_response.knowledge or None
-        app_response.memory = app_response.memory or None
-        app_response.eval = app_response.eval or None
+        app_response.session = app_response.session or []
+        app_response.knowledge = app_response.knowledge or []
+        app_response.memory = app_response.memory or []
+        app_response.eval = app_response.eval or []
 
         return ConfigResponse(
             os_id=os.os_id,

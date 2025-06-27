@@ -180,3 +180,9 @@ class WorkflowResponse(BaseModel):
     workflow_id: str
     name: Optional[str] = None
     description: Optional[str] = None
+
+
+class WorkflowRunRequest(BaseModel):
+    input: Dict[str, Any]
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
