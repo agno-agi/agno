@@ -182,8 +182,19 @@ class AgentOS:
 
         self.host_url = f"{full_host}:{port}"
 
-        # Create a panel with the interface URLs
+        # Create a panel with the Home and interface URLs
         panels = []
+        encoded_endpoint = f"{full_host}:{port}/home"
+        panels.append(
+            Panel(
+                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
+                title="Home",
+                expand=False,
+                border_style="green",
+                box=box.HEAVY,
+                padding=(2, 2),
+            )
+        )
         for interface_type, interface_prefix in self.interfaces_loaded:
             if interface_type == "whatsapp":
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"

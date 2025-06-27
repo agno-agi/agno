@@ -21,13 +21,16 @@ from agno.os.schema import (
 )
 from agno.os.utils import (
     get_agent_by_id,
+    get_team_by_id,
+    get_workflow_by_id,
     process_audio,
     process_document,
     process_image,
     process_video,
-    team_chat_response_streamer,
 )
 from agno.run.response import RunResponse, RunResponseErrorEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
 
 
@@ -94,6 +97,42 @@ async def agent_continue_response_streamer(
         return
 
 
+async def team_chat_response_streamer(
+    team: Team,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+) -> AsyncGenerator:
+    """Run the given team asynchronously and yield its response"""
+    try:
+        run_response = await team.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = TeamRunResponseErrorEvent(
+            content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
 def get_base_router(
     os: "AgentOS",
 ) -> APIRouter:
@@ -130,10 +169,10 @@ def get_base_router(
             ],
         )
 
-        app_response.session = app_response.session or []
-        app_response.knowledge = app_response.knowledge or []
-        app_response.memory = app_response.memory or []
-        app_response.eval = app_response.eval or []
+        app_response.session = app_response.session or None
+        app_response.knowledge = app_response.knowledge or None
+        app_response.memory = app_response.memory or None
+        app_response.eval = app_response.eval or None
 
         return ConfigResponse(
             os_id=os.os_id,
@@ -157,7 +196,7 @@ def get_base_router(
 
     @router.get("/agents/{agent_id}", response_model=AgentResponse)
     async def get_agent(agent_id: str):
-        agent = next((agent for agent in os.agents if agent.agent_id == agent_id), None)
+        agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -340,7 +379,7 @@ def get_base_router(
 
     @router.get("/teams/{team_id}", response_model=TeamResponse)
     async def get_team(team_id: str):
-        team = next((team for team in os.teams if team.team_id == team_id), None)
+        team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -361,7 +400,7 @@ def get_base_router(
         files: Optional[List[UploadFile]] = File(None),
     ):
         logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
-        team = next((team for team in os.teams if team.team_id == team_id), None)
+        team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -474,7 +513,7 @@ def get_base_router(
 
     @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
     async def get_workflow(workflow_id: str):
-        workflow = next((wf for wf in os.workflows if wf.workflow_id == workflow_id), None)
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -487,7 +526,7 @@ def get_base_router(
     @router.post("/workflows/{workflow_id}/runs")
     async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
         # Retrieve the workflow by ID
-        workflow = next((wf for wf in os.workflows if wf.workflow_id == workflow_id), None)
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 

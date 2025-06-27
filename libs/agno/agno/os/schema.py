@@ -23,10 +23,10 @@ class ManagerResponse(BaseModel):
 
 
 class AppsResponse(BaseModel):
-    session: List[ManagerResponse]
-    knowledge: List[ManagerResponse]
-    memory: List[ManagerResponse]
-    eval: List[ManagerResponse]
+    session: Optional[List[ManagerResponse]] = None
+    knowledge: Optional[List[ManagerResponse]] = None
+    memory: Optional[List[ManagerResponse]] = None
+    eval: Optional[List[ManagerResponse]] = None
 
 
 class ConfigResponse(BaseModel):
@@ -177,7 +177,7 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    workflow_id: str
+    workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
 

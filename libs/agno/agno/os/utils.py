@@ -1,15 +1,15 @@
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
 
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
+from agno.workflow.workflow import Workflow
 
 
 def process_image(file: UploadFile) -> Image:
@@ -84,37 +84,21 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     return None
 
 
-async def team_chat_response_streamer(
-    team: Team,
-    message: str,
-    session_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    images: Optional[List[Image]] = None,
-    audio: Optional[List[Audio]] = None,
-    videos: Optional[List[Video]] = None,
-    files: Optional[List[FileMedia]] = None,
-) -> AsyncGenerator:
-    """Run the given team asynchronously and yield its response"""
-    try:
-        run_response = await team.arun(
-            message,
-            session_id=session_id,
-            user_id=user_id,
-            images=images,
-            audio=audio,
-            videos=videos,
-            files=files,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
-        async for run_response_chunk in run_response:
-            yield run_response_chunk.to_json()
-    except Exception as e:
-        import traceback
+def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+    if team_id is None or teams is None:
+        return None
 
-        traceback.print_exc()
-        error_response = TeamRunResponseErrorEvent(
-            content=str(e),
-        )
-        yield error_response.to_json()
-        return
+    for team in teams:
+        if team.team_id == team_id:
+            return team
+    return None
+
+
+def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+    if workflow_id is None or workflows is None:
+        return None
+
+    for workflow in workflows:
+        if workflow.workflow_id == workflow_id:
+            return workflow
+    return None
