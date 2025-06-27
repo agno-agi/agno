@@ -1418,3 +1418,64 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
             return []
+
+    def delete_eval_run_raw(self, eval_run_id: str) -> None:
+        """Delete an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to delete.
+        """
+        try:
+            table = self.get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    log_warning(f"No eval run found with ID: {eval_run_id}")
+                else:
+                    log_debug(f"Deleted eval run: {eval_run_id}")
+
+        except Exception as e:
+            log_debug(f"Error deleting eval run {eval_run_id}: {e}")
+            raise
+
+    def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[EvalRunRecord]:
+        """Upsert the name of an eval run in the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+        """
+        try:
+            table = self.get_eval_table()   
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(name=name)
+                sess.execute(stmt)
+                sess.commit()
+
+            return self.get_eval_run(eval_run_id=eval_run_id)
+
+        except Exception as e:
+            log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
+            return None
+
+    def upsert_eval_run_name_raw(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+        """Upsert the name of an eval run in the database, returning raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+        """
+        try:
+            table = self.get_eval_table()   
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(name=name)
+                sess.execute(stmt)
+                sess.commit()
+
+            return self.get_eval_run_raw(eval_run_id=eval_run_id)
+
+        except Exception as e:
+            log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
+            return None

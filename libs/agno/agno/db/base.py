@@ -257,3 +257,11 @@ class BaseDb(ABC):
         eval_type: Optional[EvalType] = None,
     ) -> List[EvalRunRecord]:
         raise NotImplementedError
+
+    @abstractmethod
+    def delete_eval_run_raw(self, eval_run_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[EvalRunRecord]:
+        raise NotImplementedError

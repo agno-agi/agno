@@ -9,7 +9,7 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
-from agno.os.managers import KnowledgeManager, MemoryManager, SessionManager
+from agno.os.managers import EvalManager, KnowledgeManager, MemoryManager, SessionManager
 from agno.vectordb.pgvector.pgvector import PgVector
 
 # Setup the database
@@ -19,6 +19,7 @@ db = PostgresDb(
     agent_session_table="agent_sessions",
     team_session_table="team_sessions",
     workflow_session_table="workflow_sessions",
+    eval_table="eval_runs",
 )
 
 # Setup the memory
@@ -30,10 +31,21 @@ document_store = LocalDocumentStore(
     storage_path="tmp/documents",
 )
 
-vector_store = PgVector(
+vector_store_1 = PgVector(
     table_name="pdf_documents",
-    # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
+    # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
     db_url=db_url,
+)
+
+vector_store_2 = PgVector(
+    table_name="pdf_documents_2",
+    # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
+    db_url=db_url,
+)
+
+document_db = PostgresDb(
+    db_url=db_url,
+    knowledge_table="knowledge_documents",
 )
 
 # Create knowledge base
@@ -41,33 +53,35 @@ knowledge1 = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
     document_store=document_store,
-    vector_store=vector_store,
+    documents_db=document_db,
+    vector_store=vector_store_1,
 )
 
 knowledge2 = Knowledge(
     name="My Knowledge Base 2",
     description="A simple knowledge base 2",
     document_store=document_store,
-    vector_store=vector_store,
+    documents_db=document_db,
+    vector_store=vector_store_2,
 )
 
 
 # Add a document
-knowledge1.add_documents(
-    DocumentV2(
-        name="CV1",
-        paths=["tmp/cv_1.pdf"],
-        metadata={"user_tag": "Engineering candidates"},
-    )
-)
+# knowledge1.add_documents(
+#     DocumentV2(
+#         name="CV1",
+#         paths=["tmp/cv_1.pdf"],
+#         metadata={"user_tag": "Engineering candidates"},
+#     )
+# )
 
-knowledge2.add_documents(
-    DocumentV2(
-        name="CV1",
-        paths=["tmp/cv_2.pdf"],
-        metadata={"user_tag": "Engineering candidates"},
-    )
-)
+# knowledge2.add_documents(
+#     DocumentV2(
+#         name="CV1",
+#         paths=["tmp/cv_2.pdf"],
+#         metadata={"user_tag": "Engineering candidates"},
+#     )
+# )
 
 # Setup the agent
 agent = Agent(
@@ -102,6 +116,7 @@ agent_os = AgentOS(
         KnowledgeManager(knowledge=knowledge1, name="Knowledge Manager 1"),
         KnowledgeManager(knowledge=knowledge2, name="Knowledge Manager 2"),
         MemoryManager(memory=memory, name="Memory Manager"),
+        EvalManager(db=db, name="Eval Manager"),
     ],
 )
 app = agent_os.get_app()

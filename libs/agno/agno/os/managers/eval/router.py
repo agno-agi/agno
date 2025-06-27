@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from agno.db.base import BaseDb
 from agno.eval.schemas import EvalType
-from agno.os.managers.eval.schemas import EvalSchema
+from agno.os.managers.eval.schemas import DeleteEvalRunsRequest, EvalSchema, UpdateEvalRunRequest
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
@@ -50,5 +50,21 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
         return EvalSchema.from_dict(eval_run)
+    
+    @router.delete("/evals", status_code=204)
+    async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
+        
+        for eval_run_id in request.eval_run_ids:
+            db.delete_eval_run_raw(eval_run_id=eval_run_id)
+
+    @router.patch("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)
+    async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
+        eval_run = db.upsert_eval_run_name_raw(eval_run_id=eval_run_id, name=request.name)
+        if not eval_run:
+            raise HTTPException(status_code=500, detail="Failed to update eval run")
+
+        return EvalSchema.from_dict(eval_run)
+
 
     return router
+
