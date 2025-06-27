@@ -17,7 +17,7 @@ document_store = LocalDocumentStore(
 )
 
 vector_store = PgVector(
-    table_name="pdf_documents",
+    table_name="vectors",
     # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
     db_url=db_url,
 )

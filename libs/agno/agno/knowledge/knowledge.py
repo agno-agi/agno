@@ -208,7 +208,7 @@ class Knowledge:
                 else:
                     self.vector_store.insert(documents=[read_document], filters=document.metadata)
                 
-
+        self._add_to_documents_db(document)
 
     def _load_from_content(self, document: DocumentV2):
         log_info("Adding document from content")
@@ -255,7 +255,6 @@ class Knowledge:
 
 
     def _load_document(self, document: DocumentV2) -> None:
-
         if document.path:
             self._load_from_path(document)
 
@@ -297,6 +296,7 @@ class Knowledge:
             # Use the provided document
             if not document.id:
                 document.id = str(uuid4())
+            log_info(f"Adding document: {document.id}")
             self._load_document(document)
             return
         

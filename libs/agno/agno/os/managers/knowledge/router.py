@@ -18,24 +18,27 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
-        urls: Optional[str] = Form(None),
+        url: Optional[str] = Form(None),
         metadata: Optional[str] = Form(None, description="JSON string of metadata dict or list of dicts"),
         file: Optional[UploadFile] = File(None),
     ):
         # Generate ID immediately
         document_id = str(uuid4())
-
         # Read the content once and store it
-        content_bytes = await file.read()
+        if file:
+            content_bytes = await file.read()
+            log_info(f"Content bytes: {content_bytes}")
+        else:
+            content_bytes = None
 
         parsed_urls = None
-        if urls and urls.strip():
+        if url and url.strip():
             try:
-                parsed_urls = json.loads(urls)
+                parsed_urls = json.loads(url)
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a single URL string
-                parsed_urls = [urls] if urls != "string" else None
-
+                parsed_urls = url if url != "string" else None
+        log_info(f"Parsed URLs: {parsed_urls}")
         # Parse metadata with proper error handling
         parsed_metadata = None
         if metadata and metadata.strip():
@@ -45,12 +48,17 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
 
+        document_content = DocumentContent(
+            content=content_bytes,
+            type=file.content_type if file.content_type else None,
+        ) if file else None
+
         document = DocumentV2(
             name=name if name else file.filename,
             description=description,
-            urls=parsed_urls,
+            url=parsed_urls,
             metadata=parsed_metadata,
-            content=DocumentContent(content=content_bytes, type=file.content_type),
+            content=document_content,
         )
 
         # Add the processing task to background tasks
@@ -143,6 +151,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
 def process_document(knowledge: Knowledge, document_id: str, document: DocumentV2):
     """Background task to process the document"""
+    print(f"Processing document {document_id}")
     try:
         # Set the document ID
         document.id = document_id
