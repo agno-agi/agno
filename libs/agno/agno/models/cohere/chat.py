@@ -109,9 +109,9 @@ class Cohere(Model):
         if response_format:
             _request_params["response_format"] = response_format
 
+        # Format tools
         if tools is not None and len(tools) > 0:
-            # Filter out Agno-specific fields that Cohere doesn't support
-            filtered_tools = []
+            formatted_tools = []
             for tool in tools:
                 if tool.get("type") == "function" and "function" in tool:
                     # Extract only the fields that Cohere supports
@@ -123,12 +123,12 @@ class Cohere(Model):
                             "parameters": tool["function"]["parameters"],
                         },
                     }
-                    filtered_tools.append(filtered_tool)
+                    formatted_tools.append(filtered_tool)
                 else:
                     # For non-function tools, pass them through as-is
-                    filtered_tools.append(tool)
+                    formatted_tools.append(tool)
 
-            _request_params["tools"] = filtered_tools
+            _request_params["tools"] = formatted_tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
