@@ -110,7 +110,25 @@ class Cohere(Model):
             _request_params["response_format"] = response_format
 
         if tools is not None and len(tools) > 0:
-            _request_params["tools"] = tools
+            # Filter out Agno-specific fields that Cohere doesn't support
+            filtered_tools = []
+            for tool in tools:
+                if tool.get("type") == "function" and "function" in tool:
+                    # Extract only the fields that Cohere supports
+                    filtered_tool = {
+                        "type": "function",
+                        "function": {
+                            "name": tool["function"]["name"],
+                            "description": tool["function"]["description"],
+                            "parameters": tool["function"]["parameters"],
+                        },
+                    }
+                    filtered_tools.append(filtered_tool)
+                else:
+                    # For non-function tools, pass them through as-is
+                    filtered_tools.append(tool)
+
+            _request_params["tools"] = filtered_tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
