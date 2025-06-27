@@ -11,7 +11,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func
+    from sqlalchemy import and_, func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -631,7 +631,35 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from table: {e}")
             return []
 
-    def upsert_agent_session_raw(self, session: AgentSession, table: Optional[Table] = None) -> Optional[AgentSession]:
+    def rename_session(
+        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Table] = None
+    ) -> Optional[Session]:
+        try:
+            if table is None:
+                table = self.get_table_for_session_type(session_type)
+                if table is None:
+                    raise ValueError(f"Table not found for session type: {session_type}")
+
+            with self.Session() as sess, sess.begin():
+                stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                sess.commit()
+
+            if table == self.agent_session_table:
+                return AgentSession.from_dict(row._mapping)
+            elif table == self.team_session_table:
+                return TeamSession.from_dict(row._mapping)
+            elif table == self.workflow_session_table:
+                return WorkflowSession.from_dict(row._mapping)
+            else:
+                raise ValueError(f"Invalid table: {table}")
+
+        except Exception as e:
+            log_error(f"Exception renaming session: {e}")
+            return None
+
+    def upsert_agent_session_raw(self, session: AgentSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.AGENT)
@@ -677,7 +705,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into agent session table: {e}")
             return None
 
-    def upsert_team_session_raw(self, session: TeamSession, table: Optional[Table] = None) -> Optional[TeamSession]:
+    def upsert_team_session_raw(self, session: TeamSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.TEAM)
@@ -724,9 +752,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into team session table: {e}")
             return None
 
-    def upsert_workflow_session_raw(
-        self, session: WorkflowSession, table: Optional[Table] = None
-    ) -> Optional[WorkflowSession]:
+    def upsert_workflow_session_raw(self, session: WorkflowSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.WORKFLOW)
@@ -771,7 +797,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into workflow session table: {e}")
             return None
 
-    def upsert_session_raw(self, session: Session) -> Optional[Session]:
+    def upsert_session_raw(self, session: Session) -> Optional[dict]:
         """
         Insert or update a Session in the database.
 
@@ -803,9 +829,12 @@ class PostgresDb(BaseDb):
         if session_raw is None:
             return None
 
-        # TODO:
-
-        return session_raw
+        if isinstance(session, AgentSession):
+            return AgentSession.from_dict(session_raw)
+        elif isinstance(session, TeamSession):
+            return TeamSession.from_dict(session_raw)
+        elif isinstance(session, WorkflowSession):
+            return WorkflowSession.from_dict(session_raw)
 
     # -- Memory methods --
 

@@ -3,39 +3,20 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
-from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.managers.session import SessionManager
 
-# Setup the database
+# Setup the database and memory
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(
-    db_url=db_url,
-    agent_session_table="agent_sessions",
-    team_session_table="team_sessions",
-    workflow_session_table="workflow_sessions",
-)
-
-# Setup the memory
+db = PostgresDb(db_url=db_url, agent_session_table="agent_sessions")
 memory = Memory(db=db)
 
-# Setup the agent
-basic_agent = Agent(
-    name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
-    enable_user_memories=True,
-    markdown=True,
-)
+# Sessions of this agent will be stored (it has memory)
+basic_agent = Agent(memory=memory, enable_user_memories=True)
 
-# Setup the Agno API App
-agent_os = AgentOS(
-    name="Example App: Session Agent",
-    description="Example app for basic agent with session capabilities",
-    os_id="session-demo",
-    agents=[basic_agent],
-    apps=[SessionManager(db=db)],
-)
+
+# Setup the AgentOS
+agent_os = AgentOS(agents=[basic_agent], apps=[SessionManager(db=db)])
 app = agent_os.get_app()
 
 

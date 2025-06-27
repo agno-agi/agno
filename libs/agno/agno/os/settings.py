@@ -22,15 +22,6 @@ class AgnoAPISettings(BaseSettings):
     # This list is set using the set_cors_origin_list validator
     cors_origin_list: Optional[List[str]] = Field(None, validate_default=True)
 
-    @field_validator("env", mode="before")
-    def validate_playground_env(cls, env):
-        """Validate playground_env."""
-
-        valid_runtime_envs = ["dev", "stg", "prd"]
-        if env not in valid_runtime_envs:
-            raise ValueError(f"Invalid Playground Env: {env}")
-        return env
-
     @field_validator("cors_origin_list", mode="before")
     def set_cors_origin_list(cls, cors_origin_list):
         valid_cors = cors_origin_list or []

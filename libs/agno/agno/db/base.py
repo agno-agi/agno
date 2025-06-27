@@ -71,7 +71,7 @@ class BaseDb(ABC):
     # --- Sessions Table ---
 
     @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None):
+    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT):
         raise NotImplementedError
 
     @abstractmethod
@@ -124,6 +124,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def get_all_session_ids(self, session_type: SessionType, entity_id: Optional[str] = None) -> List[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> None:
         raise NotImplementedError
 
     @abstractmethod

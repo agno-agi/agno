@@ -10,10 +10,8 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.utils import generate_id
 from agno.cli.console import console
-from agno.cli.settings import agno_cli_settings
 from agno.os.interfaces.base import BaseInterface
 from agno.os.managers.base import BaseManager
 from agno.os.router import get_base_router
@@ -47,13 +45,11 @@ class AgentOS:
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
 
-        self.settings: AgnoAPISettings = settings or AgnoAPISettings()
+        self.settings: AgnoAPISettings = settings or AgnoAPISettings(cors_origin_list=["*"])
         self.api_app: Optional[FastAPI] = api_app
 
         self.interfaces = interfaces or []
         self.apps = apps or []
-
-        self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
 
         self.os_id: Optional[str] = os_id
         self.name: Optional[str] = name
@@ -70,7 +66,8 @@ class AgentOS:
                 if not agent.os_id:
                     agent.os_id = self.os_id
                 agent.initialize_agent()
-                # Required for playground to work
+
+                # Required for the built-in routes to work
                 agent.store_events = True
 
         if self.teams:
@@ -78,8 +75,10 @@ class AgentOS:
                 if not team.os_id:
                     team.os_id = self.os_id
                 team.initialize_team()
-                # Required for playground to work
+
+                # Required for the built-in routes to work
                 team.store_events = True
+
                 for member in team.members:
                     if isinstance(member, Agent):
                         if not member.os_id:
@@ -136,7 +135,7 @@ class AgentOS:
                 return await call_next(request)
             except Exception as e:
                 return JSONResponse(
-                    status_code=e.status_code if hasattr(e, "status_code") else 500,
+                    status_code=e.status_code if hasattr(e, "status_code") else 500,  # type: ignore
                     content={"detail": str(e)},
                 )
 
@@ -146,13 +145,7 @@ class AgentOS:
         self.api_app.include_router(get_base_router(self))
 
         for interface in self.interfaces:
-            if interface.type == "playground":
-                self.api_app.include_router(
-                    interface.get_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
-                )
-            else:
-                self.api_app.include_router(interface.get_router())
-
+            self.api_app.include_router(interface.get_router())
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
         app_index_map: Dict[str, int] = {}
@@ -163,7 +156,7 @@ class AgentOS:
 
         self.api_app.add_middleware(
             CORSMiddleware,
-            allow_origins=self.settings.cors_origin_list,
+            allow_origins=self.settings.cors_origin_list,  # type: ignore
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -189,23 +182,21 @@ class AgentOS:
 
         self.host_url = f"{full_host}:{port}"
 
-        # Create a panel with the playground URL
+        # Create a panel with the Home and interface URLs
         panels = []
+        encoded_endpoint = f"{full_host}:{port}/home"
+        panels.append(
+            Panel(
+                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
+                title="Home",
+                expand=False,
+                border_style="green",
+                box=box.HEAVY,
+                padding=(2, 2),
+            )
+        )
         for interface_type, interface_prefix in self.interfaces_loaded:
-            if interface_type == "playground":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                url = f"{agno_cli_settings.playground_url}?endpoint={encoded_endpoint}"
-                panels.append(
-                    Panel(
-                        f"[bold orange1]Playground URL:[/bold orange1] [link={url}]{url}[/link]",
-                        title="Agno Playground",
-                        expand=False,
-                        border_style="orange1",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-            elif interface_type == "whatsapp":
+            if interface_type == "whatsapp":
                 encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
                 panels.append(
                     Panel(
