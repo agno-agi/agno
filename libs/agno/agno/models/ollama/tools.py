@@ -61,8 +61,7 @@ class OllamaTools(Ollama):
         base_params: Dict[str, Any] = {
             "format": self.format,
             "options": self.options,
-            "keep_alive": self.keep_alive,
-            "request_params": self.request_params,
+            "keep_alive": self.keep_alive
         }
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
         # Add additional request params if provided
