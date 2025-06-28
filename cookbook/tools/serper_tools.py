@@ -1,3 +1,11 @@
+"""
+This is a example of an agent using the Serper Toolkit.
+
+You can obtain an API key from https://serper.dev/
+
+ - Set your API key as an environment variable: export SERPER_API_KEY="your_api_key_here"
+ - or pass api_key to the SerperTools class
+"""
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.serper import SerperTools
