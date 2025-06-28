@@ -7,11 +7,9 @@ You can obtain an API key from https://serper.dev/
  - or pass api_key to the SerperTools class
 """
 from agno.agent import Agent
-from agno.models.google import Gemini
 from agno.tools.serper import SerperTools
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-flash"),
     tools=[SerperTools()],
     show_tool_calls=True,
 )
