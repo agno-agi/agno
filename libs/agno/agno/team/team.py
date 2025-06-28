@@ -217,6 +217,10 @@ class Team:
     # --- Structured output ---
     # Response model for the team response
     response_model: Optional[Type[BaseModel]] = None
+    # Provide a secondary model to parse the response from the primary model
+    parser_model: Optional[Model] = None
+    # Provide a prompt for the parser model
+    parser_model_prompt: Optional[str] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
@@ -327,6 +331,8 @@ class Team:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
+        parser_model: Optional[Model] = None,
+        parser_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
         memory: Optional[Union[TeamMemory, Memory]] = None,
@@ -407,6 +413,8 @@ class Team:
         self.tool_hooks = tool_hooks
 
         self.response_model = response_model
+        self.parser_model = parser_model
+        self.parser_model_prompt = parser_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
@@ -940,6 +948,29 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )
 
+        # If a parser model is provided, structure the response separately
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+                parser_model_response: ModelResponse = self.parser_model.response(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                )
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_messages.messages.append(parser_model_response_message)
+                    model_response.parsed = parser_model_response.parsed
+                    model_response.content = parser_model_response.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
         #  Update TeamRunResponse
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1342,6 +1373,29 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
         )  # type: ignore
+
+        # If a parser model is provided, structure the response separately
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+                parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                )
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_messages.messages.append(parser_model_response_message)
+                    model_response.parsed = parser_model_response.parsed
+                    model_response.content = parser_model_response.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
         # Update TeamRunResponse
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
@@ -5234,6 +5288,26 @@ class Team:
                 return Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+
+    def get_messages_for_parser_model(
+        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        from agno.utils.prompts import get_json_output_prompt
+
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
