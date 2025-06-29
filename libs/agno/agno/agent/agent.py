@@ -322,6 +322,9 @@ class Agent:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
+    
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
@@ -415,6 +418,7 @@ class Agent:
         add_transfer_instructions: bool = True,
         team_response_separator: str = "\n",
         debug_mode: bool = False,
+        debug_level: Literal[1, 2] = 1,
         monitoring: bool = False,
         telemetry: bool = True,
     ):
@@ -525,6 +529,10 @@ class Agent:
         self.team_response_separator = team_response_separator
 
         self.debug_mode = debug_mode
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.monitoring = monitoring
         self.telemetry = telemetry
 
@@ -562,7 +570,7 @@ class Agent:
     def set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug()
+            set_log_level_to_debug(level=self.debug_level)
         else:
             set_log_level_to_info()
 
@@ -5662,6 +5670,7 @@ class Agent:
                 monitoring=self.monitoring,
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5750,6 +5759,7 @@ class Agent:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                 )
 
             # Validate reasoning agent
@@ -5883,6 +5893,7 @@ class Agent:
                 monitoring=self.monitoring,
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5971,6 +5982,7 @@ class Agent:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                 )
 
             # Validate reasoning agent

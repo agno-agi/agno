@@ -319,3 +319,30 @@ def test_parse_preserves_field_name_case_with_markdown():
     assert result is not None
     assert result.Supplier_name == 'test "quoted" supplier'
     assert result.newData == 'some "quoted" data'
+
+
+def test_parse_json_with_python_code_in_value():
+    """Test parsing JSON with valid Python code containing # and * characters as a value"""
+
+    class CodeModel(BaseModel):
+        function_name: str
+        code: str
+        description: str
+
+    content = """```json
+    {
+        "function_name": "calculate_factorial",
+        "code": "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+        "description": "A recursive factorial function with comments and multiplication"
+    }
+    ```"""
+
+    result = parse_response_model_str(content, CodeModel)
+
+    assert result is not None
+    assert result.function_name == "calculate_factorial"
+    assert (
+        result.code
+        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+    )
+    assert result.description == "A recursive factorial function with comments and multiplication"

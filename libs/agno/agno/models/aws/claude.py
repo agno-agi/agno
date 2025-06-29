@@ -161,7 +161,7 @@ class Claude(AnthropicClaude):
             _request_params.update(self.request_params)
 
         if _request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {_request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def invoke(

@@ -266,7 +266,7 @@ class AwsBedrock(Model):
             body = {k: v for k, v in body.items() if v is not None}
 
             if self.request_params:
-                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}")
+                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
