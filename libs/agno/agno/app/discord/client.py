@@ -162,9 +162,9 @@ class DiscordClient:
         #     modal = RequiresUserInputModal()
         #     await thread.send_modal(modal)
 
-            if self.agent:
-                return await self.agent.acontinue_run(run_response=run_response, )
-            return None
+        if self.agent:
+            return await self.agent.acontinue_run(run_response=run_response, )
+        return None
 
     async def _handle_response_in_thread(self, response: Union[RunResponse, TeamRunResponse],
                                          thread: discord.TextChannel):
