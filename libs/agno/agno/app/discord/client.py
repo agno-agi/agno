@@ -105,6 +105,7 @@ class DiscordClient:
                 log_info(f"received {message.content} but not in a supported channel")
                 return
 
+            response = None
             async with thread.typing():
                 # TODO Unhappy with the duplication here but it keeps MyPy from complaining
                 if self.agent:
@@ -138,8 +139,8 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         document=[File(url=message_file)] if message_file else None,
                     )
-
-                await self._handle_response_in_thread(response, thread)
+                if response:
+                    await self._handle_response_in_thread(response, thread)
 
     async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
         for tool in run_response.tools_requiring_confirmation:
@@ -170,15 +171,8 @@ class DiscordClient:
             await thread.send_modal(RequiresUserInputModal())
 
         if self.agent:
-            return await self.agent.acontinue_run(
-                run_response=run_response,
-            )
-        elif self.team:
-            return await self.team.acontinue_run(
-                run_response=run_response,
-            )
-        else:
-            return None
+            return await self.agent.acontinue_run(run_response=run_response, )
+        return None
 
     async def _handle_response_in_thread(self, response: RunResponse, thread: discord.TextChannel):
         if response.is_paused:
