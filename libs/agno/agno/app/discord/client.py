@@ -138,7 +138,7 @@ class DiscordClient:
                     )
                     await self._handle_response_in_thread(team_response, thread)
 
-    async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
+    async def _handle_hitl(self, run_response: RunResponse | TeamRunResponse, thread: discord.Thread):
         for tool in run_response.tools_requiring_confirmation:
             view = RequiresConfirmationView()
             await thread.send(f"Tool requiring confirmation: {tool.tool_name}", view=view)
