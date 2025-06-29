@@ -14,7 +14,6 @@ from agno.tools.function import UserInputField
 
 from textwrap import dedent
 
-from cookbook.demo.sql.agents import additional_context
 
 try:
     import discord
