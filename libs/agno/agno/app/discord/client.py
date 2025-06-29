@@ -4,7 +4,7 @@ from typing import Optional
 import requests
 
 from agno.agent.agent import Agent
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.run.response import RunResponse
 from agno.team.team import Team
 from agno.utils.log import log_info, log_warning
@@ -70,6 +70,7 @@ class DiscordClient:
             message_image = None
             message_video = None
             message_audio = None
+            message_file = None
             media_url = None
             message_text = message.content
             message_url = message.jump_url
@@ -123,6 +124,7 @@ class DiscordClient:
                     images=[Image(url=message_image)] if message_image else None,
                     videos=[Video(content=message_video)] if message_video else None,
                     audio=[Audio(url=message_audio)] if message_audio else None,
+                    document=[File(url=message_file)] if message_file else None,
                 )
                 await self._handle_response_in_thread(response, thread)
 
