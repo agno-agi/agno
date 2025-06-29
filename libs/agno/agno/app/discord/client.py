@@ -5,7 +5,7 @@ import requests
 
 from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
-from agno.team.team import Team, TeamResponse
+from agno.team.team import Team, TeamRunResponse
 from agno.utils.log import log_info, log_warning
 
 from typing import List
