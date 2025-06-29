@@ -102,3 +102,10 @@ python cookbook/models/google/gemini/video_agent_input_bytes_content.py
 ```shell
 python cookbook/models/google/gemini/flash_thinking_agent.py
 ```
+
+### 13. Run Agent with thinking budget configuration
+
+```shell
+python cookbook/models/google/gemini/agent_with_thinking_budget.py
+```
+
