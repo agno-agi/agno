@@ -4,24 +4,24 @@ from typing import Optional
 import requests
 
 from agno.agent.agent import Agent
-from agno.media import Audio, File, Image, Video
+from agno.media import Audio, Image, Video
 from agno.run.response import RunResponse
 from agno.team.team import Team
 from agno.utils.log import log_info, log_warning
 
+from typing import List
+from agno.tools.function import UserInputField
+
 from textwrap import dedent
-
-
 
 try:
     import discord
-    from discord.ext import commands
 
 except (ImportError, ModuleNotFoundError):
     print("`discord.py` not installed. Please install using `pip install discord.py`")
 
 
-class HITLView(discord.ui.View):
+class RequiresConfirmationView(discord.ui.View):
     def __init__(self):
         super().__init__()
         self.value = None
@@ -35,7 +35,7 @@ class HITLView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction,button: discord.ui.Button, ):
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button, ):
         self.value = False
         button.disabled = True
         await interaction.response.edit_message(view=self)
@@ -43,7 +43,7 @@ class HITLView(discord.ui.View):
         self.stop()
 
     async def on_timeout(self):
-        log_warning(f"Agent Timeout Error")
+        log_warning("Agent Timeout Error")
 
 
 class DiscordClient:
@@ -70,7 +70,6 @@ class DiscordClient:
             message_image = None
             message_video = None
             message_audio = None
-            message_file = None
             media_url = None
             message_text = message.content
             message_url = message.jump_url
@@ -127,15 +126,36 @@ class DiscordClient:
                 )
                 await self._handle_response_in_thread(response, thread)
 
-    async def _handle_hitl(self, response: RunResponse, thread: discord.Thread):
-        for tool in response.tools_requiring_confirmation:
-            view = HITLView()
+    async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
+        for tool in run_response.tools_requiring_confirmation:
+            view = RequiresConfirmationView()
             await thread.send(f"Tool requiring confirmation: {tool.tool_name}", view=view)
             await view.wait()
             tool.confirmed = view.value if view.value is not None else False
 
+        for tool in run_response.tools_requiring_user_input:
+            input_schema: List[UserInputField] = tool.user_input_schema
+            RequiresUserInputModal = type(
+                "RequiresUserInputModal",
+                (discord.ui.Modal,),
+                {field.name: discord.ui.TextInput(
+                    label=field.name,
+                    required=True,
+                    placeholder=field.description,
+                    style=discord.TextStyle.short) for field in input_schema})
+
+            # async def on_submit(self, interaction: discord.Interaction):
+            #     await interaction.response.send_message(f'Thanks for your feedback, {self.name.value}!', ephemeral=True)
+            #
+            # async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+            #     await interaction.response.send_message('Oops! Something went wrong.', ephemeral=True)
+            #     # Make sure we know what the error actually is
+            #     traceback.print_exception(type(error), error, error.__traceback__)
+
+            await thread.send_modal(RequiresUserInputModal())
+
         return await self.agent.acontinue_run(
-            run_response=response,
+            run_response=run_response,
         )
 
     async def _handle_response_in_thread(self, response: RunResponse, thread: discord.TextChannel):
