@@ -14,6 +14,8 @@ from agno.tools.function import UserInputField
 
 from textwrap import dedent
 
+from cookbook.demo.sql.agents import additional_context
+
 try:
     import discord
 
@@ -105,16 +107,15 @@ class DiscordClient:
                 log_info(f"received {message.content} but not in a supported channel")
                 return
 
-            response = None
             async with thread.typing():
                 # TODO Unhappy with the duplication here but it keeps MyPy from complaining
+                additional_context = dedent(f"""
+                    Discord username: {message_user}
+                    Discord url: {message_url}
+                    """)
                 if self.agent:
-                    self.agent.additional_context = dedent(f"""
-                        Discord username: {message_user}
-                        Discord url: {message_url}
-                        """)
-
-                    response: RunResponse = await self.agent.arun(
+                    self.agent.additional_context = additional_context
+                    agent_response: RunResponse = await self.agent.arun(
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -124,12 +125,10 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         document=[File(url=message_file)] if message_file else None,
                     )
+                    await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
-                    self.team.additional_context = dedent(f"""
-                        Discord username: {message_user}
-                        Discord url: {message_url}
-                        """)
-                    response: RunResponse = await self.team.arun(
+                    self.team.additional_context = additional_context
+                    team_response: RunResponse = await self.team.arun(
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -139,8 +138,7 @@ class DiscordClient:
                         audio=[Audio(url=message_audio)] if message_audio else None,
                         document=[File(url=message_file)] if message_file else None,
                     )
-                if response:
-                    await self._handle_response_in_thread(response, thread)
+                    await self._handle_response_in_thread(team_response, thread)
 
     async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
         for tool in run_response.tools_requiring_confirmation:
