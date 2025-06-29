@@ -106,26 +106,39 @@ class DiscordClient:
                 return
 
             async with thread.typing():
-                agent_or_team = None
+                # TODO Unhappy with the duplication here but it keeps MyPy from complaining
                 if self.agent:
-                    agent_or_team = self.agent
+                    self.agent.additional_context = dedent(f"""
+                        Discord username: {message_user}
+                        Discord url: {message_url}
+                        """)
+
+                    response: RunResponse = await self.agent.arun(
+                        message_text,
+                        user_id=message_user_id,
+                        session_id=str(thread.id),
+
+                        images=[Image(url=message_image)] if message_image else None,
+                        videos=[Video(content=message_video)] if message_video else None,
+                        audio=[Audio(url=message_audio)] if message_audio else None,
+                        document=[File(url=message_file)] if message_file else None,
+                    )
                 elif self.team:
-                    agent_or_team = self.team
+                    self.team.additional_context = dedent(f"""
+                        Discord username: {message_user}
+                        Discord url: {message_url}
+                        """)
+                    response: RunResponse = await self.team.arun(
+                        message_text,
+                        user_id=message_user_id,
+                        session_id=str(thread.id),
 
-                agent_or_team.additional_context = dedent(f"""
-                Discord username: {message_user}
-                Discord url: {message_url}""")
+                        images=[Image(url=message_image)] if message_image else None,
+                        videos=[Video(content=message_video)] if message_video else None,
+                        audio=[Audio(url=message_audio)] if message_audio else None,
+                        document=[File(url=message_file)] if message_file else None,
+                    )
 
-                response: RunResponse = await agent_or_team.arun(
-                    message_text,
-                    user_id=message_user_id,
-                    session_id=str(thread.id),
-
-                    images=[Image(url=message_image)] if message_image else None,
-                    videos=[Video(content=message_video)] if message_video else None,
-                    audio=[Audio(url=message_audio)] if message_audio else None,
-                    document=[File(url=message_file)] if message_file else None,
-                )
                 await self._handle_response_in_thread(response, thread)
 
     async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
@@ -156,9 +169,16 @@ class DiscordClient:
 
             await thread.send_modal(RequiresUserInputModal())
 
-        return await self.agent.acontinue_run(
-            run_response=run_response,
-        )
+        if self.agent:
+            return await self.agent.acontinue_run(
+                run_response=run_response,
+            )
+        elif self.team:
+            return await self.team.acontinue_run(
+                run_response=run_response,
+            )
+        else:
+            return None
 
     async def _handle_response_in_thread(self, response: RunResponse, thread: discord.TextChannel):
         if response.is_paused:
@@ -169,7 +189,7 @@ class DiscordClient:
                 thread=thread, message=f"Reasoning: \n{response.reasoning_content}", italics=True
             )
 
-        await self._send_discord_messages(thread=thread, message=response.content)
+        await self._send_discord_messages(thread=thread, message=str(response.content))
 
     async def _send_discord_messages(self, thread: discord.channel, message: str,
                                      italics: bool = False):  # type: ignore
