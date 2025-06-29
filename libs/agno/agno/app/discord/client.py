@@ -3,10 +3,9 @@ from typing import Optional
 
 import requests
 
-from agno.agent.agent import Agent
+from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
-from agno.run.response import RunResponse, TeamRunResponse
-from agno.team.team import Team
+from agno.team.team import Team, TeamResponse
 from agno.utils.log import log_info, log_warning
 
 from typing import List
