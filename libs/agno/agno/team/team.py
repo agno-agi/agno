@@ -286,7 +286,7 @@ class Team:
 
     def __init__(
         self,
-        members: List[Union[Agent, "Team"]],
+        members: List[Union[Agent, Team]],
         mode: Literal["route", "coordinate", "collaborate"] = "coordinate",
         model: Optional[Model] = None,
         name: Optional[str] = None,
