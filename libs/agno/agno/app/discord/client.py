@@ -5,7 +5,7 @@ import requests
 
 from agno.agent.agent import Agent
 from agno.media import Audio, File, Image, Video
-from agno.run.response import RunResponse
+from agno.run.response import RunResponse, TeamRunResponse
 from agno.team.team import Team
 from agno.utils.log import log_info, log_warning
 
@@ -127,7 +127,7 @@ class DiscordClient:
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
                     self.team.additional_context = additional_context
-                    team_response: RunResponse = await self.team.arun(
+                    team_response: TeamRunResponse = await self.team.arun(
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
