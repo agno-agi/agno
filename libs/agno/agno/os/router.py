@@ -200,11 +200,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        return AgentResponse(
-            agent_id=agent.agent_id,
-            name=agent.name,
-            description=agent.description,
-        )
+        return AgentResponse.from_agent(agent)
 
     @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
@@ -383,11 +379,7 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        return TeamResponse(
-            team_id=team.team_id,
-            name=team.name,
-            description=team.description,
-        )
+        return TeamResponse.from_team(team)
 
     @router.post("/teams/{team_id}/runs")
     async def create_team_run(
