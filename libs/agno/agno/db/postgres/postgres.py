@@ -12,7 +12,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import and_, func, literal, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -496,42 +496,45 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from table: {e}")
             return None
 
-    def get_all_sessions_for_metrics_calculation(
+    def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Get all sessions of all types (agent, team, workflow) as raw dictionaries.
-
         Args:
             start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
             end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
-
         Returns:
-            List[Dict[str, Any]]: List of session dictionaries.
+            List[Dict[str, Any]]: List of session dictionaries with session_type field.
         """
         try:
-            tables = []
+            cols = ["user_id", "session_data", "runs", "created_at"]
+            select_statements = []
+
             for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
                 try:
                     table = self.get_table_for_session_type(session_type)
+                    # Add session_type as a literal column
+                    if table is not None:
+                        table_cols = [
+                            *[table.c[col] for col in cols],
+                            literal(session_type.value).label("session_type"),
+                        ]
+                        select_statements.append(select(*table_cols))
                 except ValueError:
                     continue
-                if table is not None:
-                    tables.append(table)
-            if not tables:
-                return []
 
-            cols = ["user_id", "session_data", "runs", "created_at"]
-            select_statements = [select(*[t.c[col] for col in cols]) for t in tables]
+            if not select_statements:
+                return []
 
             union_stmt = union_all(*select_statements)
             subquery = union_stmt.subquery()
             stmt = select(subquery)
 
             if start_timestamp is not None:
-                stmt = stmt.where(stmt.c.created_at >= start_timestamp)
+                stmt = stmt.where(subquery.c.created_at >= start_timestamp)
             if end_timestamp is not None:
-                stmt = stmt.where(stmt.c.created_at <= end_timestamp)
+                stmt = stmt.where(subquery.c.created_at <= end_timestamp)
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
@@ -1346,7 +1349,7 @@ class PostgresDb(BaseDb):
             for date_to_process in dates_to_process
         }
 
-        sessions = self.get_all_sessions_for_metrics_calculation(
+        sessions = self._get_all_sessions_for_metrics_calculation(
             start_timestamp=start_timestamp, end_timestamp=end_timestamp
         )
         for session in sessions:
