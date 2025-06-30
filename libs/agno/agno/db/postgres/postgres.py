@@ -1375,8 +1375,11 @@ class PostgresDb(BaseDb):
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
 
-                # Sorting
-                stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
+                # Sorting - apply default sort by created_at desc if no sort parameters provided
+                if sort_by is None:
+                    stmt = stmt.order_by(table.c.created_at.desc())
+                else:
+                    stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
