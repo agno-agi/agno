@@ -975,7 +975,8 @@ class Team:
                         parser_model_response_message = message
                         break
                 if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
+                    if run_messages.messages is not None:
+                        run_messages.messages.append(parser_model_response_message)
                     model_response.parsed = parser_model_response.parsed
                     model_response.content = parser_model_response.content
                 else:
@@ -1082,7 +1083,8 @@ class Team:
                         parser_model_response_message = message
                         break
                 if parser_model_response_message is not None:
-                    run_response.messages.append(parser_model_response_message)
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
                     run_response.content = parser_model_response_message.content
                 else:
                     log_warning("Unable to parse response with parser model")
@@ -1440,7 +1442,8 @@ class Team:
                         parser_model_response_message = message
                         break
                 if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
+                    if run_messages.messages is not None:
+                        run_messages.messages.append(parser_model_response_message)
                     model_response.parsed = parser_model_response.parsed
                     model_response.content = parser_model_response.content
                 else:
@@ -1549,7 +1552,8 @@ class Team:
                         parser_model_response_message = message
                         break
                 if parser_model_response_message is not None:
-                    run_response.messages.append(parser_model_response_message)
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
                     run_response.content = parser_model_response_message.content
                 else:
                     log_warning("Unable to parse response with parser model")

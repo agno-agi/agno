@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
@@ -404,7 +404,9 @@ def create_team_run_response_content_event(
     )
 
 
-def create_parser_model_response_started_event(from_run_response: RunResponse) -> ParserModelResponseStartedEvent:
+def create_parser_model_response_started_event(
+    from_run_response: Union[RunResponse, TeamRunResponse],
+) -> ParserModelResponseStartedEvent:
     return ParserModelResponseStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
@@ -414,7 +416,9 @@ def create_parser_model_response_started_event(from_run_response: RunResponse) -
     )
 
 
-def create_parser_model_response_completed_event(from_run_response: RunResponse) -> ParserModelResponseCompletedEvent:
+def create_parser_model_response_completed_event(
+    from_run_response: Union[RunResponse, TeamRunResponse],
+) -> ParserModelResponseCompletedEvent:
     return ParserModelResponseCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore

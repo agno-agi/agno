@@ -15,46 +15,46 @@ class NationalParkAdventure(BaseModel):
         ...,
         description="Optimal time of year to visit this park (e.g., 'Late spring to early fall')",
     )
-    signature_attractions: List[str] = Field(
-        ...,
-        description="Must-see landmarks, viewpoints, or natural features in the park",
-    )
-    recommended_trails: List[str] = Field(
-        ...,
-        description="Top hiking trails with difficulty levels (e.g., 'Angel's Landing - Strenuous')",
-    )
-    wildlife_encounters: List[str] = Field(
-        ..., description="Animals visitors are likely to spot, with viewing tips"
-    )
-    photography_spots: List[str] = Field(
-        ...,
-        description="Best locations for capturing stunning photos, including sunrise/sunset spots",
-    )
-    camping_options: List[str] = Field(
-        ..., description="Available camping areas, from primitive to RV-friendly sites"
-    )
-    safety_warnings: List[str] = Field(
-        ..., description="Important safety considerations specific to this park"
-    )
-    hidden_gems: List[str] = Field(
-        ..., description="Lesser-known spots or experiences that most visitors miss"
-    )
-    difficulty_rating: int = Field(
-        ...,
-        ge=1,
-        le=5,
-        description="Overall park difficulty for average visitor (1=easy, 5=very challenging)",
-    )
-    estimated_days: int = Field(
-        ...,
-        ge=1,
-        le=14,
-        description="Recommended number of days to properly explore the park",
-    )
-    special_permits_needed: List[str] = Field(
-        default=[],
-        description="Any special permits or reservations required for certain activities",
-    )
+    # signature_attractions: List[str] = Field(
+    #     ...,
+    #     description="Must-see landmarks, viewpoints, or natural features in the park",
+    # )
+    # recommended_trails: List[str] = Field(
+    #     ...,
+    #     description="Top hiking trails with difficulty levels (e.g., 'Angel's Landing - Strenuous')",
+    # )
+    # wildlife_encounters: List[str] = Field(
+    #     ..., description="Animals visitors are likely to spot, with viewing tips"
+    # )
+    # photography_spots: List[str] = Field(
+    #     ...,
+    #     description="Best locations for capturing stunning photos, including sunrise/sunset spots",
+    # )
+    # camping_options: List[str] = Field(
+    #     ..., description="Available camping areas, from primitive to RV-friendly sites"
+    # )
+    # safety_warnings: List[str] = Field(
+    #     ..., description="Important safety considerations specific to this park"
+    # )
+    # hidden_gems: List[str] = Field(
+    #     ..., description="Lesser-known spots or experiences that most visitors miss"
+    # )
+    # difficulty_rating: int = Field(
+    #     ...,
+    #     ge=1,
+    #     le=5,
+    #     description="Overall park difficulty for average visitor (1=easy, 5=very challenging)",
+    # )
+    # estimated_days: int = Field(
+    #     ...,
+    #     ge=1,
+    #     le=14,
+    #     description="Recommended number of days to properly explore the park",
+    # )
+    # special_permits_needed: List[str] = Field(
+    #     default=[],
+    #     description="Any special permits or reservations required for certain activities",
+    # )
 
 
 itinerary_planner = Agent(
@@ -74,6 +74,7 @@ national_park_expert = Team(
     members=[itinerary_planner, weather_expert],
     response_model=NationalParkAdventure,
     parser_model=OpenAIChat(id="gpt-4o"),
+    instructions="Just respond directly and do not make any tool calls",
 )
 
 # Get the response in a variable
@@ -90,12 +91,15 @@ national_parks = [
     "Rocky National Park",
 ]
 # Get the response in a variable
-run: RunResponse = national_park_expert.run(
-    f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park."
-)
-pprint(run.content)
+# run: RunResponse = national_park_expert.run(
+#     f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park."
+# )
+# pprint(run.content)
 
 # Stream the response
-# run_events: Iterator[RunResponseEvent] = national_park_expert.run(f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park.", stream=True)
-# for event in run_events:
-#     pprint(event)
+run_events: Iterator[RunResponseEvent] = national_park_expert.run(
+    f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park.",
+    stream=True,
+)
+for event in run_events:
+    pprint(event.content)
