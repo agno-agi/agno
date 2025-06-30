@@ -3,19 +3,25 @@ from dataclasses import asdict
 from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.schema import (
     AgentResponse,
+    AgentSessionDetailSchema,
     AppsResponse,
     ConfigResponse,
     InterfaceResponse,
     ManagerResponse,
+    RunSchema,
+    SessionSchema,
     TeamResponse,
+    TeamSessionDetailSchema,
     WorkflowResponse,
     WorkflowRunRequest,
 )
@@ -193,6 +199,85 @@ def get_base_router(
             return []
 
         return [AgentResponse.from_agent(agent) for agent in os.agents]
+
+    @router.get(
+        "/agents/{agent_id}/sessions",
+        response_model=PaginatedResponse[SessionSchema],
+        status_code=200,
+    )
+    async def get_agent_sessions(
+        agent_id: str,
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
+        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
+        sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
+    ) -> PaginatedResponse[SessionSchema]:
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+        if agent.memory is None:
+            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+
+        sessions, total_count = agent.memory.db.get_sessions_raw(  # type: ignore
+            session_type=SessionType.AGENT,
+            component_id=agent_id,
+            user_id=user_id,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=total_count,
+                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+            ),
+        )
+
+    @router.get("/agents/{agent_id}/sessions/{session_id}", response_model=AgentSessionDetailSchema, status_code=200)
+    async def get_agent_session_by_id(
+        agent_id: str,
+        session_id: str,
+    ) -> AgentSessionDetailSchema:
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+
+        if agent.memory is None:
+            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+
+        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return AgentSessionDetailSchema.from_session(session)  # type: ignore
+
+    @router.get(
+        "/agents/{agent_id}/sessions/{session_id}/runs",
+        response_model=List[RunSchema],
+        status_code=200,
+    )
+    async def get_agent_session_runs(
+        agent_id: str,
+        session_id: str,
+    ) -> List[RunSchema]:
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+
+        if agent.memory is None or agent.memory.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no memory. Runs are unavailable.")
+
+        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
 
     @router.get("/agents/{agent_id}", response_model=AgentResponse)
     async def get_agent(agent_id: str):
@@ -372,6 +457,84 @@ def get_base_router(
             return []
 
         return [TeamResponse.from_team(team) for team in os.teams]
+
+    @router.get(
+        "/teams/{team_id}/sessions",
+        response_model=PaginatedResponse[SessionSchema],
+        status_code=200,
+    )
+    async def get_team_sessions(
+        team_id: str,
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
+        session_title: Optional[str] = Query(default=None, description="Filter sessions by title"),
+        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
+        sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
+    ) -> PaginatedResponse[SessionSchema]:
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if team.memory is None or team.memory.db is None:
+            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+
+        sessions, total_count = team.memory.db.get_sessions_raw(
+            session_type=SessionType.TEAM,
+            component_id=team_id,
+            user_id=user_id,
+            session_title=session_title,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=total_count,
+                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+            ),
+        )
+
+    @router.get("/teams/{team_id}/sessions/{session_id}", response_model=TeamSessionDetailSchema, status_code=200)
+    async def get_team_session_by_id(
+        team_id: str,
+        session_id: str,
+    ) -> TeamSessionDetailSchema:
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if team.memory is None or team.memory.db is None:
+            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+
+        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return TeamSessionDetailSchema.from_session(session)  # type: ignore
+
+    @router.get("/teams/{team_id}/sessions/{session_id}/runs", response_model=List[RunSchema], status_code=200)
+    async def get_team_session_runs(
+        team_id: str,
+        session_id: str,
+    ) -> List[RunSchema]:
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if team.memory is None or team.memory.db is None:
+            raise HTTPException(status_code=404, detail="Team has no memory. Runs are unavailable.")
+
+        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
 
     @router.get("/teams/{team_id}", response_model=TeamResponse)
     async def get_team(team_id: str):

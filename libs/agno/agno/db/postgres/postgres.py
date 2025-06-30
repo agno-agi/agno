@@ -475,6 +475,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -510,6 +511,12 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
+                if session_title is not None:
+                    stmt = stmt.where(
+                        func.coalesce(
+                            func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
+                        ).ilike(f"%{session_title}%")
+                    )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -537,6 +544,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -565,6 +573,7 @@ class PostgresDb(BaseDb):
                 session_type=session_type,
                 user_id=user_id,
                 component_id=component_id,
+                session_title=session_title,
                 limit=limit,
                 page=page,
                 sort_by=sort_by,
