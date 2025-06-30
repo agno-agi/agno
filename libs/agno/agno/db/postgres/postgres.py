@@ -498,8 +498,8 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        starting_date: Optional[int] = None,
-        ending_date: Optional[int] = None,
+        starting_timestamp: Optional[int] = None,
+        ending_timestamp: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -531,10 +531,10 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
-                if starting_date is not None:
-                    stmt = stmt.where(table.c.created_at >= starting_date)
-                if ending_date is not None:
-                    stmt = stmt.where(table.c.created_at <= ending_date)
+                if starting_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at >= starting_timestamp)
+                if ending_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at <= ending_timestamp)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1248,8 +1248,8 @@ class PostgresDb(BaseDb):
                 starting_date + timedelta(days=x) for x in range((date.today() - starting_date).days + 1)
             ]
             for date_to_process in dates_to_process:
-                starting_date = int(datetime.combine(date_to_process, datetime.min.time()).timestamp())
-                ending_date = starting_date + 86400
+                starting_timestamp = int(datetime.combine(date_to_process, datetime.min.time()).timestamp())
+                ending_timestamp = starting_timestamp + 86400  # starting_timestamp + 1 day (86400 seconds)
                 users_count = 0
                 input_tokens = 0
                 output_tokens = 0
@@ -1267,7 +1267,9 @@ class PostgresDb(BaseDb):
                 if self.agent_session_table_name:
                     try:
                         agent_sessions, agent_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.AGENT, starting_date=starting_date, ending_date=ending_date
+                            session_type=SessionType.AGENT,
+                            starting_timestamp=starting_timestamp,
+                            ending_timestamp=ending_timestamp,
                         )
                         agent_runs_count = 0
                         for session in agent_sessions:
@@ -1296,7 +1298,9 @@ class PostgresDb(BaseDb):
                 if self.team_session_table_name:
                     try:
                         team_sessions, team_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.TEAM, starting_date=starting_date, ending_date=ending_date
+                            session_type=SessionType.TEAM,
+                            starting_timestamp=starting_timestamp,
+                            ending_timestamp=ending_timestamp,
                         )
                         team_runs_count = 0
                         for session in team_sessions:
@@ -1323,7 +1327,9 @@ class PostgresDb(BaseDb):
                 if self.workflow_session_table_name:
                     try:
                         workflow_sessions, workflow_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.WORKFLOW, starting_date=starting_date, ending_date=ending_date
+                            session_type=SessionType.WORKFLOW,
+                            starting_timestamp=starting_timestamp,
+                            ending_timestamp=ending_timestamp,
                         )
                         workflow_runs_count = 0
                         for session in workflow_sessions:
