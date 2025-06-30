@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from agno.db.base import BaseDb
-from agno.eval.schemas import EvalType
+from agno.eval.schemas import EvalFilterType, EvalType
 from agno.os.managers.eval.schemas import DeleteEvalRunsRequest, EvalSchema, UpdateEvalRunRequest
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
@@ -16,6 +16,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
         model_id: Optional[str] = Query(default=None, description="Model ID"),
         eval_type: Optional[EvalType] = Query(default=None, description="Eval type"),
+        filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type"),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
@@ -31,6 +32,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             workflow_id=workflow_id,
             model_id=model_id,
             eval_type=eval_type,
+            filter_type=filter_type,
         )
 
         return PaginatedResponse(
