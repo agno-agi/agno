@@ -14,46 +14,46 @@ class NationalParkAdventure(BaseModel):
         ...,
         description="Optimal time of year to visit this park (e.g., 'Late spring to early fall')",
     )
-    # signature_attractions: List[str] = Field(
-    #     ...,
-    #     description="Must-see landmarks, viewpoints, or natural features in the park",
-    # )
-    # recommended_trails: List[str] = Field(
-    #     ...,
-    #     description="Top hiking trails with difficulty levels (e.g., 'Angel's Landing - Strenuous')",
-    # )
-    # wildlife_encounters: List[str] = Field(
-    #     ..., description="Animals visitors are likely to spot, with viewing tips"
-    # )
-    # photography_spots: List[str] = Field(
-    #     ...,
-    #     description="Best locations for capturing stunning photos, including sunrise/sunset spots",
-    # )
-    # camping_options: List[str] = Field(
-    #     ..., description="Available camping areas, from primitive to RV-friendly sites"
-    # )
-    # safety_warnings: List[str] = Field(
-    #     ..., description="Important safety considerations specific to this park"
-    # )
-    # hidden_gems: List[str] = Field(
-    #     ..., description="Lesser-known spots or experiences that most visitors miss"
-    # )
-    # difficulty_rating: int = Field(
-    #     ...,
-    #     ge=1,
-    #     le=5,
-    #     description="Overall park difficulty for average visitor (1=easy, 5=very challenging)",
-    # )
-    # estimated_days: int = Field(
-    #     ...,
-    #     ge=1,
-    #     le=14,
-    #     description="Recommended number of days to properly explore the park",
-    # )
-    # special_permits_needed: List[str] = Field(
-    #     default=[],
-    #     description="Any special permits or reservations required for certain activities",
-    # )
+    signature_attractions: List[str] = Field(
+        ...,
+        description="Must-see landmarks, viewpoints, or natural features in the park",
+    )
+    recommended_trails: List[str] = Field(
+        ...,
+        description="Top hiking trails with difficulty levels (e.g., 'Angel's Landing - Strenuous')",
+    )
+    wildlife_encounters: List[str] = Field(
+        ..., description="Animals visitors are likely to spot, with viewing tips"
+    )
+    photography_spots: List[str] = Field(
+        ...,
+        description="Best locations for capturing stunning photos, including sunrise/sunset spots",
+    )
+    camping_options: List[str] = Field(
+        ..., description="Available camping areas, from primitive to RV-friendly sites"
+    )
+    safety_warnings: List[str] = Field(
+        ..., description="Important safety considerations specific to this park"
+    )
+    hidden_gems: List[str] = Field(
+        ..., description="Lesser-known spots or experiences that most visitors miss"
+    )
+    difficulty_rating: int = Field(
+        ...,
+        ge=1,
+        le=5,
+        description="Overall park difficulty for average visitor (1=easy, 5=very challenging)",
+    )
+    estimated_days: int = Field(
+        ...,
+        ge=1,
+        le=14,
+        description="Recommended number of days to properly explore the park",
+    )
+    special_permits_needed: List[str] = Field(
+        default=[],
+        description="Any special permits or reservations required for certain activities",
+    )
 
 
 agent = Agent(
