@@ -44,7 +44,7 @@ editing_step = Step(
     description="Edit and polish the article",
 )
 
-# Create a Steps sequence that chains these steps together
+# Create a Steps sequence that chains these above steps together
 article_creation_sequence = Steps(
     name="article_creation",
     description="Complete article creation workflow from research to final edit",
