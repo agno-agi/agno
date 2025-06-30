@@ -27,7 +27,10 @@ class LangDB(OpenAILike):
     project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
     if not project_id:
         logger.warning("LANGDB_PROJECT_ID not set in the environment")
-    base_url: str = f"https://api.us-east-1.langdb.ai/{project_id}/v1"
+
+    base_host_url: str = getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai")
+
+    base_url: str = f"{base_host_url}/{project_id}/v1"
     label: Optional[str] = None
     default_headers: Optional[dict] = None
 

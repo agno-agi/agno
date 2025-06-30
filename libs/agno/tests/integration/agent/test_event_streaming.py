@@ -1,6 +1,7 @@
 from textwrap import dedent
 
 import pytest
+from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
@@ -77,6 +78,34 @@ def test_basic_intermediate_steps_events():
     assert len(events[RunEvent.run_completed]) == 1
 
 
+def test_basic_intermediate_steps_events_persisted(agent_storage):
+    """Test that the agent streams events."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        store_events=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
+
+    run_response_from_storage = agent_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 2, "We should only have the run started and run completed events"
+    assert run_response_from_storage["events"][0]["event"] == RunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == RunEvent.run_completed
+
+
 def test_intermediate_steps_with_tools():
     """Test that the agent streams events."""
     agent = Agent(
@@ -110,6 +139,43 @@ def test_intermediate_steps_with_tools():
     assert len(events[RunEvent.tool_call_completed]) == 1
     assert events[RunEvent.tool_call_completed][0].content is not None
     assert events[RunEvent.tool_call_completed][0].tool.result is not None
+
+
+def test_intermediate_steps_with_tools_events_persisted(agent_storage):
+    """Test that the agent streams events."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[YFinanceTools(cache_results=True)],
+        storage=agent_storage,
+        store_events=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+    }
+
+    run_response_from_storage = agent_storage.get_all_sessions()[0].memory["runs"][0]
+
+    assert run_response_from_storage["events"] is not None
+    assert len(run_response_from_storage["events"]) == 4
+    assert run_response_from_storage["events"][0]["event"] == RunEvent.run_started
+    assert run_response_from_storage["events"][1]["event"] == RunEvent.tool_call_started
+    assert run_response_from_storage["events"][2]["event"] == RunEvent.tool_call_completed
+    assert run_response_from_storage["events"][3]["event"] == RunEvent.run_completed
 
 
 def test_intermediate_steps_with_reasoning():
@@ -162,7 +228,7 @@ def test_intermediate_steps_with_reasoning():
     assert events[RunEvent.reasoning_step][0].reasoning_content is not None
 
 
-def test_intermediate_steps_with_user_confirmation():
+def test_intermediate_steps_with_user_confirmation(agent_storage):
     """Test that the agent streams events."""
 
     @tool(requires_confirmation=True)
@@ -172,6 +238,10 @@ def test_intermediate_steps_with_user_confirmation():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        storage=agent_storage,
+        store_events=True,
+        add_history_to_messages=True,
+        num_history_responses=2,
         telemetry=False,
         monitoring=False,
     )
@@ -199,6 +269,13 @@ def test_intermediate_steps_with_user_confirmation():
     updated_tools = agent.run_response.tools
     run_id = agent.run_response.run_id
     updated_tools[0].confirmed = True
+
+    # Check stored events
+    stored_session = agent_storage.get_all_sessions()[0]
+    assert stored_session.memory["runs"][0]["events"] is not None
+    assert len(stored_session.memory["runs"][0]["events"]) == 2
+    assert stored_session.memory["runs"][0]["events"][0]["event"] == RunEvent.run_started
+    assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
 
     # Then we continue the run
     response_generator = agent.continue_run(
@@ -231,6 +308,17 @@ def test_intermediate_steps_with_user_confirmation():
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response.is_paused is False
+
+    # Check stored events
+    stored_session = agent_storage.get_all_sessions()[0]
+    assert stored_session.memory["runs"][0]["events"] is not None
+    assert len(stored_session.memory["runs"][0]["events"]) == 6
+    assert stored_session.memory["runs"][0]["events"][0]["event"] == RunEvent.run_started
+    assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
+    assert stored_session.memory["runs"][0]["events"][2]["event"] == RunEvent.run_continued
+    assert stored_session.memory["runs"][0]["events"][3]["event"] == RunEvent.tool_call_started
+    assert stored_session.memory["runs"][0]["events"][4]["event"] == RunEvent.tool_call_completed
+    assert stored_session.memory["runs"][0]["events"][5]["event"] == RunEvent.run_completed
 
 
 def test_intermediate_steps_with_memory(agent_storage, memory):
@@ -265,3 +353,48 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1
+
+
+def test_intermediate_steps_with_structured_output(agent_storage):
+    """Test that the agent streams events."""
+
+    class Person(BaseModel):
+        name: str
+        description: str
+        age: int
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        response_model=Person,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_response_content]) == 1
+    assert len(events[RunEvent.run_completed]) == 1
+
+    assert events[RunEvent.run_response_content][0].content is not None
+    assert events[RunEvent.run_response_content][0].content_type == "Person"
+    assert events[RunEvent.run_response_content][0].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_response_content][0].content.description) > 1
+
+    assert events[RunEvent.run_completed][0].content is not None
+    assert events[RunEvent.run_completed][0].content_type == "Person"
+    assert events[RunEvent.run_completed][0].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_completed][0].content.description) > 1

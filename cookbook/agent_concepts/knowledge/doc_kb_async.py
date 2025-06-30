@@ -1,4 +1,5 @@
 import asyncio
+
 from agno.agent import Agent
 from agno.document.base import Document
 from agno.knowledge.document import DocumentKnowledgeBase
@@ -33,6 +34,7 @@ knowledge_base = DocumentKnowledgeBase(
     ),
 )
 
+
 async def main():
     # Load the knowledge base
     await knowledge_base.aload(recreate=False)
@@ -46,6 +48,7 @@ async def main():
     await agent.aprint_response(
         "Ask me about something from the knowledge base about earth", markdown=True
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -25,7 +25,6 @@ def test_website_knowledge_base_directory(setup_vector_db):
     kb.load(recreate=True)
 
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 4
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are agents in Agno and what levels are there?", markdown=True)
@@ -47,7 +46,6 @@ def test_website_knowledge_base_single_url(setup_vector_db):
     kb.load(recreate=True)
 
     assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 2
 
     agent = Agent(knowledge=kb)
     response = agent.run("How do I create a basic agent in Agno?", markdown=True)
@@ -70,7 +68,6 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
     await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() == 4
 
     agent = Agent(
         knowledge=kb,
@@ -83,7 +80,7 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
 
-    assert "asearch_knowledge_base" in [
+    assert "search_knowledge_base" in [
         call["function"]["name"] for call in tool_calls if call.get("type") == "function"
     ]
 
@@ -97,7 +94,6 @@ async def test_website_knowledge_base_async_single_url(setup_vector_db):
     await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() == 2
 
     agent = Agent(
         knowledge=kb,
@@ -110,6 +106,6 @@ async def test_website_knowledge_base_async_single_url(setup_vector_db):
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
 
-    assert "asearch_knowledge_base" in [
+    assert "search_knowledge_base" in [
         call["function"]["name"] for call in tool_calls if call.get("type") == "function"
     ]

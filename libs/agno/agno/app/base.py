@@ -102,7 +102,7 @@ class BaseAPIApp(ABC):
                 kwargs["openapi_url"] = "/openapi.json"
 
             self.api_app = FastAPI(
-                **kwargs,
+                **kwargs,  # type: ignore
             )
 
         if not self.api_app:

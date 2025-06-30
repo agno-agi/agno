@@ -18,4 +18,4 @@ knowledge_base = AgentKnowledge(
         embedder=NebiusEmbedder(),
     ),
     num_documents=2,
-) 
+)

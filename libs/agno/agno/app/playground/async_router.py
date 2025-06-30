@@ -37,9 +37,8 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunResponseErrorEvent
+from agno.run.response import RunResponseErrorEvent, RunResponseEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.team import TeamRunResponseEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
@@ -83,6 +82,36 @@ async def chat_response_streamer(
         return
 
 
+async def agent_acontinue_run_streamer(
+    agent: Agent,
+    run_id: Optional[str] = None,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> AsyncGenerator:
+    try:
+        continue_response = await agent.acontinue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in continue_response:
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunResponseErrorEvent(
+            content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
 async def team_chat_response_streamer(
     team: Team,
     message: str,
@@ -106,7 +135,6 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
@@ -361,7 +389,7 @@ def get_async_playground_router(
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 chat_response_streamer(
                     agent,
@@ -390,6 +418,69 @@ def get_async_playground_router(
                 ),
             )
             return run_response.to_dict()
+
+    @playground_router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    async def continue_agent_run(
+        agent_id: str,
+        run_id: str,
+        tools: str = Form(...),  # JSON string of tools
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        logger.debug(
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
+        )
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is None or session_id == "":
+            logger.warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+        else:
+            logger.debug(f"Continuing run within session: {session_id}")
+
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if tools_data:
+            try:
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if stream:
+            return StreamingResponse(
+                agent_acontinue_run_streamer(
+                    agent,
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response_obj = cast(
+                RunResponse,
+                await agent.acontinue_run(
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                ),
+            )
+            return run_response_obj.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -434,8 +525,8 @@ def get_async_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -736,7 +827,7 @@ def get_async_playground_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and team.is_streamable:
+        if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
                     team,
@@ -812,10 +903,14 @@ def get_async_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     team_session_dict["runs"] = []
                     for run in runs:
+                        # We skip runs that are not from the parent team
+                        if run.get("team_session_id") is not None and run.get("team_session_id") == session_id:
+                            continue
+
                         first_user_message = None
                         for msg in run.get("messages", []):
                             if msg.get("role") == "user" and msg.get("from_history", False) is False:
