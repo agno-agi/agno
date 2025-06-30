@@ -1385,7 +1385,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.model_id == model_id)
                 if eval_type is not None:
                     stmt = stmt.where(table.c.eval_type == eval_type)
-                if filter_type is not None and filter_type != EvalFilterType.ALL:
+                if filter_type is not None:
                     if filter_type == EvalFilterType.AGENT:
                         stmt = stmt.where(table.c.agent_id.is_not(None))
                     elif filter_type == EvalFilterType.TEAM:
