@@ -1467,25 +1467,25 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception getting eval runs: {e}")
             return []
 
-    def delete_eval_run(self, eval_run_id: str) -> None:
-        """Delete an eval run from the database.
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
 
         Args:
-            eval_run_id (str): The ID of the eval run to delete.
+            eval_run_ids (List[str]): List of eval run IDs to delete.
         """
         try:
             table = self.get_eval_table()
 
             with self.Session() as sess, sess.begin():
-                stmt = table.delete().where(table.c.run_id == eval_run_id)
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
-                    log_warning(f"No eval run found with ID: {eval_run_id}")
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
                 else:
-                    log_debug(f"Deleted eval run: {eval_run_id}")
+                    log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_debug(f"Error deleting eval run {eval_run_id}: {e}")
+            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
     def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:

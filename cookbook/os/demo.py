@@ -116,7 +116,7 @@ evaluation = AccuracyEval(
     num_iterations=1,
 )
 
-evaluation.run(print_results=True)  # Comment this to prevent the eval from running
+# evaluation.run(print_results=True)  # Comment this to prevent the eval from running
 # Setup the Agno API App
 agent_os = AgentOS(
     name="Demo App",

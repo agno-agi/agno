@@ -56,8 +56,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.delete("/evals", status_code=204)
     async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
         try:
-            for eval_run_id in request.eval_run_ids:
-                db.delete_eval_run(eval_run_id=eval_run_id)
+            db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 

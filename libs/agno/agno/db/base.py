@@ -263,7 +263,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_eval_run(self, eval_run_id: str) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod
