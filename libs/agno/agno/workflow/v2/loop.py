@@ -64,6 +64,8 @@ class Loop:
         from agno.workflow.v2.condition import Condition
         from agno.workflow.v2.parallel import Parallel
         from agno.workflow.v2.step import Step
+        from agno.workflow.v2.steps import Steps
+        from agno.workflow.v2.router import Router
 
         prepared_steps = []
         for step in self.steps:
@@ -73,7 +75,7 @@ class Loop:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
-            elif isinstance(step, (Step, Loop, Parallel, Condition)):
+            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")

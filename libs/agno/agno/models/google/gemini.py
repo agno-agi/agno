@@ -14,7 +14,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
@@ -135,7 +135,7 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    def _get_request_kwargs(
+    def get_request_params(
         self,
         system_message: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -219,6 +219,8 @@ class Gemini(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
         return request_params
 
     def invoke(
@@ -232,7 +234,7 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
@@ -264,7 +266,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -295,7 +297,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             return await self.get_client().aio.models.generate_content(
@@ -327,7 +329,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             async_stream = await self.get_client().aio.models.generate_content_stream(
