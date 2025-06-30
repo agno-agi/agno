@@ -1263,8 +1263,6 @@ class PostgresDb(BaseDb):
             "cached_tokens": 0,
             "cache_write_tokens": 0,
             "reasoning_tokens": 0,
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
         }
 
         session_types = [

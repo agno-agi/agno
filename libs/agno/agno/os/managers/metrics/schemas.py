@@ -4,8 +4,8 @@ from typing import Any, Dict
 from pydantic import BaseModel
 
 
-class AggregatedMetrics(BaseModel):
-    """Aggregated metrics for a given day or month"""
+class DayAggregatedMetrics(BaseModel):
+    """Aggregated metrics for a given day"""
 
     id: str
 
@@ -25,20 +25,20 @@ class AggregatedMetrics(BaseModel):
     completed: bool
 
     @classmethod
-    def from_dict(cls, metrics_dict: Dict[str, Any]) -> "AggregatedMetrics":
+    def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
         return cls(
-            agent_runs_count=metrics_dict["agent_runs_count"],
-            agent_sessions_count=metrics_dict["agent_sessions_count"],
-            completed=metrics_dict["completed"],
-            created_at=metrics_dict["created_at"],
-            date=metrics_dict["date"],
-            id=metrics_dict["id"],
-            model_metrics=metrics_dict["model_metrics"],
-            team_runs_count=metrics_dict["team_runs_count"],
-            team_sessions_count=metrics_dict["team_sessions_count"],
-            token_metrics=metrics_dict["token_metrics"],
-            updated_at=metrics_dict["updated_at"],
-            users_count=metrics_dict["users_count"],
-            workflow_runs_count=metrics_dict["workflow_runs_count"],
-            workflow_sessions_count=metrics_dict["workflow_sessions_count"],
+            agent_runs_count=metrics_dict.get("agent_runs_count", 0),
+            agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
+            completed=metrics_dict.get("completed", False),
+            created_at=metrics_dict.get("created_at", 0),
+            date=metrics_dict.get("date", datetime.now()),
+            id=metrics_dict.get("id", ""),
+            model_metrics=metrics_dict.get("model_metrics", {}),
+            team_runs_count=metrics_dict.get("team_runs_count", 0),
+            team_sessions_count=metrics_dict.get("team_sessions_count", 0),
+            token_metrics=metrics_dict.get("token_metrics", {}),
+            updated_at=metrics_dict.get("updated_at", 0),
+            users_count=metrics_dict.get("users_count", 0),
+            workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),
+            workflow_sessions_count=metrics_dict.get("workflow_sessions_count", 0),
         )
