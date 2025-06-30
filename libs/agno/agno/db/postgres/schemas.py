@@ -3,7 +3,7 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -92,26 +92,20 @@ KNOWLEDGE_TABLE_SCHEMA = {
 
 METRICS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
-    "input_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "output_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "total_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "input_audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "output_audio_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "cached_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "cache_write_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "reasoning_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "prompt_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "completion_tokens": {"type": BigInteger, "nullable": False, "default": 0},
-    "prompt_tokens_details": {"type": JSON, "nullable": False, "default": {}},
-    "completion_tokens_details": {"type": JSON, "nullable": False, "default": {}},
-    "additional_metrics": {"type": JSON, "nullable": False, "default": {}},
-    "time_to_first_token": {"type": BigInteger, "nullable": False},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "metrics": {"type": JSON, "nullable": False, "default": {}},
     "time": {"type": BigInteger, "nullable": False},
     "day": {"type": BigInteger, "nullable": False, "unique": True},
     "month": {"type": BigInteger, "nullable": False, "unique": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": False},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
 }
 
 LEARNING_TABLE_SCHEMA = {}
