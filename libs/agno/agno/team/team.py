@@ -48,6 +48,8 @@ from agno.storage.session.team import TeamSession
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
+    create_parser_model_response_completed_event,
+    create_parser_model_response_started_event,
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
     create_team_reasoning_completed_event,
@@ -779,7 +781,9 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -1052,6 +1056,42 @@ class Team:
             stream_intermediate_steps=stream_intermediate_steps,
         )
 
+        # If a parser model is provided, structure the response separately
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=self._get_response_format(self.parser_model),
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=model_response_event,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -1207,7 +1247,9 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -1477,6 +1519,43 @@ class Team:
             stream_intermediate_steps=stream_intermediate_steps,
         ):
             yield event
+
+        # If a parser model is provided, structure the response separately
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=self._get_response_format(self.parser_model),
+                    stream_model_response=False,
+                ):
+                    async for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=model_response_event,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -1870,7 +1949,7 @@ class Team:
         run_response: TeamRunResponse,
         full_model_response: ModelResponse,
         model_response_event: Union[ModelResponse, TeamRunResponseEvent, RunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
@@ -1895,7 +1974,6 @@ class Team:
                         full_model_response.content = model_response_event.content
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content_type = content_type
-                        self._convert_response_to_structured_format(full_model_response)
                     else:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
@@ -2182,14 +2260,14 @@ class Team:
                     create_team_memory_update_completed_event(from_run_response=self.run_response), self.run_response
                 )
 
-    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, self.model)
+    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -2199,7 +2277,7 @@ class Team:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode:
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -4049,7 +4127,11 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode, debug_level=self.debug_level
+            model=reasoning_model,
+            monitoring=self.monitoring,
+            telemetry=self.telemetry,
+            debug_mode=self.debug_mode,
+            debug_level=self.debug_level,
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -5308,7 +5390,7 @@ class Team:
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
+            else "You are tasked with creating a structured output from the provided user message."
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:
@@ -5317,6 +5399,26 @@ class Team:
         return [
             Message(role="system", content=system_content),
             Message(role="user", content=model_response.content),
+        ]
+
+    def get_messages_for_parser_model_stream(
+        self, run_response: RunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        from agno.utils.prompts import get_json_output_prompt
+
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
         ]
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:

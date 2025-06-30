@@ -53,6 +53,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
+    create_parser_model_response_completed_event,
+    create_parser_model_response_started_event,
     create_reasoning_completed_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
@@ -324,7 +326,7 @@ class Agent:
     debug_mode: bool = False
     # Debug level: 1 = basic, 2 = detailed
     debug_level: Literal[1, 2] = 1
-    
+
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
@@ -836,7 +838,9 @@ class Agent:
 
         if self.parser_model is not None:
             if self.response_model is not None:
-                # TODO: Add stream_intermediate_steps for parser model
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
                 messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
                 for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
@@ -860,6 +864,10 @@ class Agent:
                     run_response.content = parser_model_response_message.content
                 else:
                     log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
@@ -3197,8 +3205,6 @@ class Agent:
                     if self.should_parse_structured_output:
                         model_response.content = model_response_event.content
                         content_type = self.response_model.__name__  # type: ignore
-                        # Convert the model response to the structured format before assigning to run_response
-                        self._convert_response_to_structured_format(model_response)
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -3838,13 +3844,13 @@ class Agent:
         )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, model or self.model)
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -3854,7 +3860,7 @@ class Agent:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -4957,7 +4963,7 @@ class Agent:
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
+            else "You are tasked with creating a structured output from the provided user message."
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:

@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.response import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ParserModelResponseCompletedEvent,
+    ParserModelResponseStartedEvent,
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
@@ -399,4 +401,24 @@ def create_team_run_response_content_event(
         response_audio=response_audio,
         image=image,
         extra_data=from_run_response.extra_data,
+    )
+
+
+def create_parser_model_response_started_event(from_run_response: RunResponse) -> ParserModelResponseStartedEvent:
+    return ParserModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_parser_model_response_completed_event(from_run_response: RunResponse) -> ParserModelResponseCompletedEvent:
+    return ParserModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
     )
