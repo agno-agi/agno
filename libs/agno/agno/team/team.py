@@ -1063,11 +1063,14 @@ class Team:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
                 parser_model_response = ModelResponse(content="")
                 for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
-                    response_format=self._get_response_format(self.parser_model),
+                    response_format=parser_response_format,
                     stream_model_response=False,
                 ):
                     yield from self._handle_model_response_chunk(
@@ -1531,10 +1534,13 @@ class Team:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
                 parser_model_response = ModelResponse(content="")
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
                 model_response_stream = self.parser_model.aresponse_stream(
                     messages=messages_for_parser_model,
-                    response_format=self._get_response_format(self.parser_model),
+                    response_format=parser_response_format,
                     stream_model_response=False,
                 )
                 async for model_response_event in model_response_stream:
