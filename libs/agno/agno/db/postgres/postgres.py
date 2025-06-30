@@ -1193,7 +1193,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting metrics: {e}")
             return []
 
-    def refresh_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self) -> Optional[list[dict]]:
         try:
             table = self.get_metrics_table()
 

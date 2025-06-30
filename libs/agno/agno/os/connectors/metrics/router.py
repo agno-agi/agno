@@ -20,9 +20,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
     @router.post("/metrics/refresh", response_model=List[AggregatedMetrics], status_code=200)
-    async def refresh_metrics() -> List[AggregatedMetrics]:
+    async def calculate_metrics() -> List[AggregatedMetrics]:
         try:
-            result = db.refresh_metrics()
+            result = db.calculate_metrics()
             if result is None:
                 return []
             return [AggregatedMetrics.from_dict(metric) for metric in result]
