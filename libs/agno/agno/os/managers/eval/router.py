@@ -53,15 +53,18 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     
     @router.delete("/evals", status_code=204)
     async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
-        
-        for eval_run_id in request.eval_run_ids:
-            db.delete_eval_run_raw(eval_run_id=eval_run_id)
+        try:
+            for eval_run_id in request.eval_run_ids:
+                db.delete_eval_run_raw(eval_run_id=eval_run_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
     @router.patch("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
-        eval_run = db.upsert_eval_run_name_raw(eval_run_id=eval_run_id, name=request.name)
-        if not eval_run:
-            raise HTTPException(status_code=500, detail="Failed to update eval run")
+        try:
+            eval_run = db.upsert_eval_run_name_raw(eval_run_id=eval_run_id, name=request.name)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to update eval run: {e}")
 
         return EvalSchema.from_dict(eval_run)
 

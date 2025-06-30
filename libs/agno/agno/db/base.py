@@ -263,5 +263,5 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[EvalRunRecord]:
+    def upsert_eval_run_name_raw(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
