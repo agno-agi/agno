@@ -18,7 +18,7 @@ try:
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import select, text, union_all
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -80,6 +80,7 @@ class PostgresDb(BaseDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
         self.db_schema: str = db_schema if db_schema is not None else "ai"
+        self.metadata: MetaData = MetaData()
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -297,7 +298,7 @@ class PostgresDb(BaseDb):
             raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
 
         try:
-            table = Table(table_name, MetaData(), schema=db_schema, autoload_with=self.db_engine)
+            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
             log_debug(f"Loaded existing table {db_schema}.{table_name}")
             return table
 
@@ -366,18 +367,20 @@ class PostgresDb(BaseDb):
     def get_first_session_date(self) -> Optional[int]:
         """Get the timestamp of the first session in the database"""
         try:
-            dates = []
+            tables = []
             for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
                 table = self.get_table_for_session_type(session_type=session_type)
-                if table is None:
-                    continue
-                with self.Session() as sess:
-                    stmt = select(table.c.created_at).order_by(table.c.created_at.asc()).limit(1)
-                    result = sess.execute(stmt).fetchone()
-                    if result is not None:
-                        dates.append(result[0])
+                if table is not None:
+                    tables.append(select(table.c.created_at))
+            if not tables:
+                return None
 
-            return min(dates) if dates else None
+            union_stmt = union_all(*tables)
+            stmt = select(func.min(union_stmt.c.created_at))
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).scalar()
+                return result
 
         except Exception as e:
             log_error(f"Error getting first session date: {e}")
@@ -1381,6 +1384,7 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
+                breakpoint()
                 metrics_record = self._calculate_date_metrics(date_to_process, sessions_for_date)
                 metrics_records.append(metrics_record)
 
