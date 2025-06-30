@@ -4905,9 +4905,11 @@ class Team:
             from copy import deepcopy
 
             history = self.memory.get_messages_from_last_n_runs(
-                session_id=session_id, last_n=self.num_history_runs, skip_role=self.system_message_role,
-                    # Only filter by team_id if this is part of a team
-                    team_id=self.team_id if self.team_session_id is not None else None,
+                session_id=session_id,
+                last_n=self.num_history_runs,
+                skip_role=self.system_message_role,
+                # Only filter by team_id if this is part of a team
+                team_id=self.team_id if self.team_session_id is not None else None,
             )
 
             if len(history) > 0:
@@ -6454,10 +6456,11 @@ class Team:
             return []
 
         if isinstance(self.memory, Memory):
-            return self.memory.get_messages_from_last_n_runs(session_id=_session_id,
-
+            return self.memory.get_messages_from_last_n_runs(
+                session_id=_session_id,
                 # Only filter by team_id if this is part of a team
-                team_id=self.team_id if self.team_session_id is not None else None,)
+                team_id=self.team_id if self.team_session_id is not None else None,
+            )
         else:
             return []
 

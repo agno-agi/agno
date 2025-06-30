@@ -5,13 +5,14 @@ from uuid import uuid4
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.os.connectors.metrics.schemas import AggregatedMetrics
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func
+    from sqlalchemy import and_, func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -517,7 +518,7 @@ class PostgresDb(BaseDb):
                 if limit is not None:
                     stmt = stmt.limit(limit)
                     if page is not None:
-                        stmt = stmt.offset(page * limit)
+                        stmt = stmt.offset((page - 1) * limit)
 
                 records = sess.execute(stmt).fetchall()
                 if records is None:
@@ -632,7 +633,35 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from table: {e}")
             return []
 
-    def upsert_agent_session_raw(self, session: AgentSession, table: Optional[Table] = None) -> Optional[AgentSession]:
+    def rename_session(
+        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Table] = None
+    ) -> Optional[Session]:
+        try:
+            if table is None:
+                table = self.get_table_for_session_type(session_type)
+                if table is None:
+                    raise ValueError(f"Table not found for session type: {session_type}")
+
+            with self.Session() as sess, sess.begin():
+                stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                sess.commit()
+
+            if table == self.agent_session_table:
+                return AgentSession.from_dict(row._mapping)
+            elif table == self.team_session_table:
+                return TeamSession.from_dict(row._mapping)
+            elif table == self.workflow_session_table:
+                return WorkflowSession.from_dict(row._mapping)
+            else:
+                raise ValueError(f"Invalid table: {table}")
+
+        except Exception as e:
+            log_error(f"Exception renaming session: {e}")
+            return None
+
+    def upsert_agent_session_raw(self, session: AgentSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.AGENT)
@@ -678,7 +707,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into agent session table: {e}")
             return None
 
-    def upsert_team_session_raw(self, session: TeamSession, table: Optional[Table] = None) -> Optional[TeamSession]:
+    def upsert_team_session_raw(self, session: TeamSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.TEAM)
@@ -725,9 +754,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into team session table: {e}")
             return None
 
-    def upsert_workflow_session_raw(
-        self, session: WorkflowSession, table: Optional[Table] = None
-    ) -> Optional[WorkflowSession]:
+    def upsert_workflow_session_raw(self, session: WorkflowSession, table: Optional[Table] = None) -> Optional[dict]:
         try:
             if table is None:
                 table = self.get_table_for_session_type(SessionType.WORKFLOW)
@@ -772,7 +799,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into workflow session table: {e}")
             return None
 
-    def upsert_session_raw(self, session: Session) -> Optional[Session]:
+    def upsert_session_raw(self, session: Session) -> Optional[dict]:
         """
         Insert or update a Session in the database.
 
@@ -804,9 +831,12 @@ class PostgresDb(BaseDb):
         if session_raw is None:
             return None
 
-        # TODO:
-
-        return session_raw
+        if isinstance(session, AgentSession):
+            return AgentSession.from_dict(session_raw)
+        elif isinstance(session, TeamSession):
+            return TeamSession.from_dict(session_raw)
+        elif isinstance(session, WorkflowSession):
+            return WorkflowSession.from_dict(session_raw)
 
     # -- Memory methods --
 
@@ -951,7 +981,7 @@ class PostgresDb(BaseDb):
                 if limit is not None:
                     stmt = stmt.limit(limit)
                     if page is not None:
-                        stmt = stmt.offset(page * limit)
+                        stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
@@ -1153,17 +1183,90 @@ class PostgresDb(BaseDb):
 
     # -- Knowledge methods --
 
+    def get_knowledge_table(self) -> Table:
+        """Get or create the knowledge table."""
+        if not hasattr(self, "knowledge_table"):
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge table was not provided on initialization")
+            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
+            self.knowledge_table = self.get_or_create_table(
+                table_name=self.knowledge_table_name, table_type="knowledge_documents", db_schema=self.db_schema
+            )
+        return self.knowledge_table
+
     def delete_knowledge_document(self, knowledge_id: str):
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = table.delete().where(table.c.id == knowledge_id)
+            sess.execute(stmt)
+            sess.commit()
         return
 
-    def get_knowledge_document(self, knowledge_id: str):
-        return
+    def get_knowledge_document(self, knowledge_id: str) -> Optional[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.id == knowledge_id)
+            result = sess.execute(stmt).fetchone()
+            return KnowledgeRow.model_validate(result._mapping)
 
-    def get_knowledge_documents(self, knowledge_id: str):
-        return
+    def get_knowledge_documents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge documents from the database.
 
-    def upsert_knowledge_document(self, knowledge_id: str):
-        return
+        Args:
+            limit (Optional[int]): The maximum number of knowledge documents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[KnowledgeRow]: The knowledge documents.
+        """
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table)
+
+            # Apply sorting
+            if sort_by is not None:
+                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+
+            # Get total count before applying limit and pagination
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            total_count = sess.execute(count_stmt).scalar()
+
+            # Apply pagination after count
+            if limit is not None:
+                stmt = stmt.limit(limit)
+                if page is not None:
+                    stmt = stmt.offset((page - 1) * limit)
+
+            result = sess.execute(stmt).fetchall()
+            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+        """Upsert a knowledge document in the database.
+
+        Args:
+            knowledge_document (KnowledgeRow): The knowledge document to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
+        """
+        try:
+            table = self.get_knowledge_table()
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(knowledge_row.model_dump())
+                sess.execute(stmt)
+                sess.commit()
+            return
+        except Exception as e:
+            log_error(f"Error upserting knowledge document: {e}")
+            return None
 
     # -- Eval methods --
 
@@ -1255,7 +1358,7 @@ class PostgresDb(BaseDb):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """Get all eval runs from the database as raw dictionaries.
 
         Args:
@@ -1290,23 +1393,28 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.model_id == model_id)
                 if eval_type is not None:
                     stmt = stmt.where(table.c.eval_type == eval_type)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
                 # Sorting
                 stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
                     if page is not None:
-                        stmt = stmt.offset(page * limit)
+                        stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return []
+                    return [], 0
 
-                return [row._mapping for row in result]
+                return [row._mapping for row in result], total_count
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
-            return []
+            return [], 0
 
     def get_eval_runs(
         self,
@@ -1342,7 +1450,7 @@ class PostgresDb(BaseDb):
             if table is None:
                 table = self.get_eval_table()
 
-            eval_runs_raw = self.get_eval_runs_raw(
+            eval_runs_raw, total_count = self.get_eval_runs_raw(
                 limit=limit,
                 page=page,
                 sort_by=sort_by,

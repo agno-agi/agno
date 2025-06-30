@@ -37,7 +37,7 @@ class AgentSession:
     # List of all messages in the session
     chat_history: Optional[list[Message]] = None
     # List of all runs in the session
-    runs: Optional[list[RunResponse]] = None
+    runs: Optional[list[Dict[str, Any]]] = None
     # Summary of the session
     summary: Optional[SessionSummary] = None
 
@@ -78,8 +78,8 @@ class AgentSession:
             summary=data.get("summary"),
         )
 
-    def add_run(self, run):
-        """Adds a RunResponse to the runs list."""
+    def add_run(self, run: RunResponse, run_data: Dict[str, Any]):
+        """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages
         for m in messages:
@@ -89,7 +89,7 @@ class AgentSession:
         if not self.runs:
             self.runs = []
 
-        self.runs.append(run)
+        self.runs.append({"run": run.to_dict(), "run_data": run_data})
 
         log_debug("Added RunResponse to Agent Session")
 

@@ -207,6 +207,7 @@ class RunStatus(str, Enum):
     """State of the main run response"""
 
     running = "RUNNING"
+    completed = "COMPLETED"
     paused = "PAUSED"
     cancelled = "CANCELLED"
     error = "ERROR"

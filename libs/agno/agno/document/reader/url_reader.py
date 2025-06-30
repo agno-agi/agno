@@ -16,7 +16,7 @@ class URLReader(Reader):
         super().__init__(**kwargs)
         self.proxy = proxy
 
-    def read(self, url: str) -> List[Document]:
+    def read(self, url: str, id: Optional[str] = None, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -24,12 +24,12 @@ class URLReader(Reader):
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url, proxy=self.proxy)
 
-        document = self._create_document(url, response.text)
+        document = self._create_document(url, response.text, id, name)
         if self.chunk:
             return self.chunk_document(document)
         return [document]
 
-    async def async_read(self, url: str) -> List[Document]:
+    async def async_read(self, url: str, id: Optional[str] = None, name: Optional[str] = None) -> List[Document]:
         """Async version of read method"""
         if not url:
             raise ValueError("No url provided")
@@ -39,21 +39,27 @@ class URLReader(Reader):
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
-        document = self._create_document(url, response.text)
+        document = self._create_document(url, response.text, id, name)
         if self.chunk:
             return await self.chunk_documents_async([document])
         return [document]
 
-    def _create_document(self, url: str, content: str) -> Document:
+    def _create_document(
+        self, url: str, content: str, id: Optional[str] = None, name: Optional[str] = None
+    ) -> Document:
         """Helper method to create a document from URL content"""
+        print(f"Creating document: {url}, {id}, {name}")
         parsed_url = urlparse(url)
-        doc_name = parsed_url.path.strip("/").replace("/", "_").replace(" ", "_")
+        doc_name = name or parsed_url.path.strip("/").replace("/", "_").replace(" ", "_")
         if not doc_name:
             doc_name = parsed_url.netloc
+        if not doc_name:
+            doc_name = url
 
         return Document(
             name=doc_name,
-            id=doc_name,
+            id=id or doc_name,
             meta_data={"url": url},
             content=content,
+            size=len(content),
         )

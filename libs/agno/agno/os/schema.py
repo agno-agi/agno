@@ -1,28 +1,33 @@
 import json
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
+
 from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.os.utils import format_team_tools, format_tools
 from agno.team.team import Team
 
+
 class InterfaceResponse(BaseModel):
     type: str
     version: str
     route: str
 
-class ConnectorResponse(BaseModel):
+
+class ManagerResponse(BaseModel):
     type: str
     name: str
     version: str
     route: str
 
+
 class AppsResponse(BaseModel):
-    session: List[ConnectorResponse]
-    knowledge: List[ConnectorResponse]
-    memory: List[ConnectorResponse]
-    eval: List[ConnectorResponse]
+    session: Optional[List[ManagerResponse]] = None
+    knowledge: Optional[List[ManagerResponse]] = None
+    memory: Optional[List[ManagerResponse]] = None
+    eval: Optional[List[ManagerResponse]] = None
+
 
 class ConfigResponse(BaseModel):
     os_id: str
@@ -39,7 +44,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    agent_id: str
+    agent_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
@@ -50,7 +55,6 @@ class AgentResponse(BaseModel):
 
     @classmethod
     def from_agent(self, agent: Agent) -> "AgentResponse":
-        
         agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
         formatted_tools = format_tools(agent_tools)
 
@@ -66,7 +70,7 @@ class AgentResponse(BaseModel):
             model_provider = model_id
         else:
             model_provider = ""
-                
+
         memory_dict: Optional[Dict[str, Any]] = None
         if agent.memory and agent.memory.db:
             memory_dict = {"name": "Memory"}
@@ -76,8 +80,6 @@ class AgentResponse(BaseModel):
                     model=agent.memory.model.id,
                     provider=agent.memory.model.provider,
                 )
-            if agent.memory.db is not None:
-                memory_dict["db"] = agent.memory.db.__dict__()  # type: ignore
 
         return AgentResponse(
             agent_id=agent.agent_id,
@@ -93,6 +95,7 @@ class AgentResponse(BaseModel):
             memory=memory_dict,
             knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
         )
+
 
 class TeamResponse(BaseModel):
     team_id: Optional[str] = None
@@ -113,7 +116,6 @@ class TeamResponse(BaseModel):
 
     @classmethod
     def from_team(self, team: Team) -> "TeamResponse":
-        
         team.determine_tools_for_model(
             model=team.model,
             session_id=str(uuid4()),
@@ -144,8 +146,6 @@ class TeamResponse(BaseModel):
                     model=team.memory.model.id,
                     provider=team.memory.model.provider,
                 )
-            if team.memory.db is not None:
-                memory_dict["db"] = team.memory.db.__dict__()  # type: ignore
 
         return TeamResponse(
             team_id=team.team_id,
@@ -176,9 +176,13 @@ class TeamResponse(BaseModel):
         )
 
 
-
 class WorkflowResponse(BaseModel):
-    workflow_id: str
+    workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
 
+
+class WorkflowRunRequest(BaseModel):
+    input: Dict[str, Any]
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
