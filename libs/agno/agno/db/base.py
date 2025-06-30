@@ -201,7 +201,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def refresh_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge Table ---
