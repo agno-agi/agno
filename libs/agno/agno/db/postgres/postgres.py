@@ -1497,7 +1497,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
-    def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
