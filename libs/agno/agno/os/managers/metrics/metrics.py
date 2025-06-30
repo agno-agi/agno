@@ -4,13 +4,13 @@ from typing import Optional
 from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
-from agno.os.connectors.base import BaseConnector
-from agno.os.connectors.metrics.router import attach_routes
+from agno.os.managers.base import BaseManager
+from agno.os.managers.metrics.router import attach_routes
 
 logger = logging.getLogger(__name__)
 
 
-class MetricsConnector(BaseConnector):
+class MetricsManager(BaseManager):
     type = "metrics"
 
     router: APIRouter
@@ -21,7 +21,7 @@ class MetricsConnector(BaseConnector):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Metrics Connector {index}"
+            self.name = f"Metrics Manager {index}"
 
         self.router_prefix = f"/metric/{index}"
 

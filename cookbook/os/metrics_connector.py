@@ -1,11 +1,11 @@
-"""Simple example creating a session and using the AgentOS with a MetricsConnector to expose it"""
+"""Simple example creating a session and using the AgentOS with a MetricsManager to expose it"""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.connectors import MetricsConnector, SessionConnector
+from agno.os.managers import MetricsManager, SessionManager
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -33,10 +33,10 @@ basic_agent = Agent(
 # Setup the Agno API App
 agent_os = AgentOS(
     name="Example App: Metrics",
-    description="Example app showcasing the MetricsConnector",
+    description="Example app showcasing the MetricsManager",
     os_id="metrics-demo",
     agents=[basic_agent],
-    apps=[SessionConnector(db=db), MetricsConnector(db=db)],
+    apps=[SessionManager(db=db), MetricsManager(db=db)],
 )
 app = agent_os.get_app()
 
@@ -49,4 +49,4 @@ if __name__ == "__main__":
     Now you can interact with your metrics using the API. Examples:
     - http://localhost:8001/metrics
     """
-    agent_os.serve(app="metrics_connector:app", reload=True)
+    agent_os.serve(app="metrics_manager:app", reload=True)
