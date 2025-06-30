@@ -149,8 +149,6 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        if _request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {_request_params}")
         return _request_params
 
     def _prepare_request_kwargs(
@@ -179,6 +177,9 @@ class Claude(Model):
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
+
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
     def _format_tools_for_model(self, tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
