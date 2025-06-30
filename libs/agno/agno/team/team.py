@@ -5409,7 +5409,7 @@ class Team:
         ]
 
     def get_messages_for_parser_model_stream(
-        self, run_response: RunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+        self, run_response: TeamRunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
     ) -> List[Message]:
         """Get the messages for the parser model."""
         from agno.utils.prompts import get_json_output_prompt
