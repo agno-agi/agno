@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory, UserMemory
 from agno.models.base import Model
@@ -146,7 +147,7 @@ class Agent:
     num_history_runs: int = 3
 
     # --- Agent Knowledge ---
-    knowledge: Optional[AgentKnowledge] = None
+    knowledge: Optional[Union[AgentKnowledge, Knowledge]] = None
     # Enable RAG by adding references from AgentKnowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
@@ -728,6 +729,8 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         # 6. Save session to short-term memory
         self.save_session(user_id=user_id, session_id=session_id)
 
@@ -800,6 +803,8 @@ class Agent:
 
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
+
+        self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
@@ -1157,14 +1162,13 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
@@ -1235,6 +1239,8 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
@@ -1243,9 +1249,6 @@ class Agent:
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1784,6 +1787,8 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
@@ -1854,6 +1859,8 @@ class Agent:
 
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
+
+        self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
@@ -2158,14 +2165,13 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
@@ -2237,6 +2243,8 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response.status = RunStatus.completed
+
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
@@ -2245,9 +2253,6 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2664,12 +2669,33 @@ class Agent:
         # Update the RunResponse metrics
         run_response.metrics = self.calculate_metrics(messages_for_run_response)
 
-    def add_run_to_session(
-        self,
-        run_response: RunResponse,
-    ):
-        # Add AgentRun to memory
-        self.agent_session.add_run(run=run_response)
+    def _create_run_data(self) -> Dict[str, Any]:
+        """Create and return the run data dictionary."""
+        run_response_format = "text"
+        self.run_response = cast(RunResponse, self.run_response)
+        if self.response_model is not None:
+            run_response_format = "json"
+        elif self.markdown:
+            run_response_format = "markdown"
+
+        functions = {}
+        if self._functions_for_model is not None:
+            functions = {
+                f_name: func.to_dict()
+                for f_name, func in self._functions_for_model.items()
+                if isinstance(func, Function)
+            }
+
+        return {
+            "run_functions": functions,
+            "run_input": self.run_input,
+            "run_response_format": run_response_format,
+        }
+
+    def add_run_to_session(self, run_response: RunResponse):
+        """Add the given RunResponse to memory, together with some calculated data"""
+        run_data = self._create_run_data()
+        self.agent_session.add_run(run=run_response, run_data=run_data)
 
     def set_session_metrics(self, run_messages: RunMessages):
         # Calculate session metrics
@@ -4709,7 +4735,7 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                getattr(self.knowledge, "vector_db", None) is None
+                (getattr(self.knowledge, "vector_db", None) or getattr(self.knowledge, "vector_store", None)) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None

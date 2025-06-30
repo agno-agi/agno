@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import List, Optional
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -16,7 +16,7 @@ except ImportError:
 class YouTubeReader(Reader):
     """Reader for YouTube video transcripts"""
 
-    def read(self, video_url: str) -> List[Document]:
+    def read(self, video_url: str, name: Optional[str] = None) -> List[Document]:
         try:
             # Extract video ID from URL
             video_id = video_url.split("v=")[-1].split("&")[0]
@@ -32,7 +32,7 @@ class YouTubeReader(Reader):
 
             documents = [
                 Document(
-                    name=f"youtube_{video_id}",
+                    name=name or f"youtube_{video_id}",
                     id=f"youtube_{video_id}",
                     meta_data={"video_url": video_url, "video_id": video_id},
                     content=transcript_text.strip(),

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import Table
 
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.session import Session
 
@@ -73,7 +74,7 @@ class BaseDb(ABC):
     # --- Sessions Table ---
 
     @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None):
+    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT):
         raise NotImplementedError
 
     @abstractmethod
@@ -126,6 +127,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def get_all_session_ids(self, session_type: SessionType, entity_id: Optional[str] = None) -> List[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -211,7 +216,13 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_documents(self, knowledge_id: str):
+    def get_knowledge_documents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -245,7 +256,7 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
     @abstractmethod

@@ -94,9 +94,11 @@ class BasePDFReader(Reader):
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
-    def read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
+    def read(self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
-            if isinstance(pdf, str):
+            if name:
+                doc_name = name
+            elif isinstance(pdf, str):
                 doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
                 doc_name = pdf.name.split(".")[0]
@@ -170,7 +172,7 @@ class PDFUrlReader(BasePDFReader):
         super().__init__(**kwargs)
         self.proxy = proxy
 
-    def read(self, url: str) -> List[Document]:
+    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -181,7 +183,7 @@ class PDFUrlReader(BasePDFReader):
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url, proxy=self.proxy)
 
-        doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
 
         documents = []
@@ -198,7 +200,7 @@ class PDFUrlReader(BasePDFReader):
             return self._build_chunked_documents(documents)
         return documents
 
-    async def async_read(self, url: str) -> List[Document]:
+    async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -212,7 +214,7 @@ class PDFUrlReader(BasePDFReader):
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
-        doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:

@@ -574,7 +574,7 @@ class Memory:
         session_copy = deepcopy(session)
         session_copy.summary = deepcopy(session.summary)
 
-        session_copy.runs = [run.to_dict() for run in session.runs] if session.runs else []
+        session_copy.runs = session.runs
         session_copy.summary = session.summary.to_dict() if session.summary else None
 
         try:

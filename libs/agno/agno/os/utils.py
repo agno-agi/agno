@@ -2,11 +2,14 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
 
+from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
+from agno.workflow.workflow import Workflow
 
 
 def process_image(file: UploadFile) -> Image:
@@ -67,6 +70,35 @@ def format_tools(agent_tools: List[Union[Dict[str, Any], Toolkit, Function, Call
     return formatted_tools
 
 
-
 def format_team_tools(team_tools: List[Function]):
     return [tool.to_dict() for tool in team_tools]
+
+
+def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Optional[Agent]:
+    if agent_id is None or agents is None:
+        return None
+
+    for agent in agents:
+        if agent.agent_id == agent_id:
+            return agent
+    return None
+
+
+def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+    if team_id is None or teams is None:
+        return None
+
+    for team in teams:
+        if team.team_id == team_id:
+            return team
+    return None
+
+
+def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+    if workflow_id is None or workflows is None:
+        return None
+
+    for workflow in workflows:
+        if workflow.workflow_id == workflow_id:
+            return workflow
+    return None
