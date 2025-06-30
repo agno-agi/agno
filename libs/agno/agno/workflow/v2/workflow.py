@@ -97,13 +97,8 @@ class Workflow:
     # Workflow session for storage
     workflow_session: Optional[WorkflowSessionV2] = None
     
-    # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
-    # monitoring=True logs Workflow information to agno.com for monitoring
-    monitoring: bool = False
-    # telemetry=True logs minimal telemetry for analytics
-    telemetry: bool = True
 
     def __init__(
         self,
@@ -116,8 +111,6 @@ class Workflow:
         workflow_session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
-        monitoring: bool = False,
-        telemetry: bool = True,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -128,8 +121,6 @@ class Workflow:
         self.workflow_session_state = workflow_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
-        self.monitoring = monitoring
-        self.telemetry = telemetry
 
     def initialize_workflow(self):
         """Initialize workflow with proper logging setup"""
@@ -1669,6 +1660,49 @@ class Workflow:
 
                         step_started_printed = True
 
+                    elif isinstance(response, ConditionExecutionStartedEvent):
+                        current_step_name = response.step_name or "Condition"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        if status:
+                            status.update("Thinking...")
+                            live_log.update(status)
+
+                    elif isinstance(response, ConditionExecutionCompletedEvent):
+                        step_name = response.step_name or "Condition"
+                        step_index = response.step_index or 0
+
+                        if status:
+                            status.update("Thinking...")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_name}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "ConditionStepResult",
+                                    }
+                                )
+
+                        # Print condition summary
+                        if show_step_details:
+                            summary_content = f"**Condition Summary:**\n\n"
+                            summary_content += f"- Condition result: {response.condition_result}\n"
+                            summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
+
+                            condition_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Condition {step_name} (Completed)",
+                                border_style="blue",
+                            )
+                            console.print(condition_summary_panel)
+
+                        step_started_printed = True
+
                     elif isinstance(response, WorkflowCompletedEvent):
                         if status:
                             status.update("Thinking...")
@@ -2265,6 +2299,49 @@ class Workflow:
                                 border_style="purple",
                             )
                             console.print(router_summary_panel)
+
+                        step_started_printed = True
+
+                    elif isinstance(response, ConditionExecutionStartedEvent):
+                        current_step_name = response.step_name or "Condition"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        if status:
+                            status.update("Thinking...")
+                            live_log.update(status)
+
+                    elif isinstance(response, ConditionExecutionCompletedEvent):
+                        step_name = response.step_name or "Condition"
+                        step_index = response.step_index or 0
+
+                        if status:
+                            status.update("Thinking...")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_name}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "ConditionStepResult",
+                                    }
+                                )
+
+                        # Print condition summary
+                        if show_step_details:
+                            summary_content = f"**Condition Summary:**\n\n"
+                            summary_content += f"- Condition result: {response.condition_result}\n"
+                            summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
+
+                            condition_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Condition {step_name} (Completed)",
+                                border_style="blue",
+                            )
+                            console.print(condition_summary_panel)
 
                         step_started_printed = True
 
