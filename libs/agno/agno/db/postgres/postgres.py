@@ -1467,7 +1467,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception getting eval runs: {e}")
             return []
 
-    def delete_eval_run_raw(self, eval_run_id: str) -> None:
+    def delete_eval_run(self, eval_run_id: str) -> None:
         """Delete an eval run from the database.
 
         Args:
@@ -1488,7 +1488,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Error deleting eval run {eval_run_id}: {e}")
             raise
 
-    def upsert_eval_run_name_raw(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def upsert_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
