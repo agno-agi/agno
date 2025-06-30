@@ -21,6 +21,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
@@ -29,6 +30,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         sessions, total_count = db.get_sessions_raw(
             session_type=session_type,
             component_id=component_id,
+            user_id=user_id,
             limit=limit,
             page=page,
             sort_by=sort_by,

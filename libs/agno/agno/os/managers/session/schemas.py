@@ -17,7 +17,7 @@ class SessionSchema(BaseModel):
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         return cls(
             session_id=session.get("session_id", ""),
-            title=session["runs"][0].get("run_data", {}).get("run_input", {}),
+            title=session["runs"][0].get("run_data", {}).get("run_input", ""),
             created_at=datetime.fromtimestamp(session.get("created_at", 0)) if session.get("created_at") else None,
             updated_at=datetime.fromtimestamp(session.get("updated_at", 0)) if session.get("updated_at") else None,
         )

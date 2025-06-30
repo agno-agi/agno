@@ -485,10 +485,14 @@ class PostgresDb(BaseDb):
         Get all sessions in the given table as raw dictionaries.
 
         Args:
-            table (Table): Table to read from.
+            table (Optional[Table]): Table to read from.
+            session_type (Optional[SessionType]): The type of session to get. Used if no table is provided.
             user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
+            component_id (Optional[str]): The ID of the agent, team or workflow to filter by.
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
+            page (Optional[int]): The page number to return. Defaults to None.
+            sort_by (Optional[str]): The field to sort by. Defaults to None.
+            sort_order (Optional[str]): The sort order. Defaults to None.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: List of Session objects matching the criteria and the total number of sessions.
