@@ -2,7 +2,6 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from fastapi import UploadFile
 from pydantic import BaseModel
 
 from agno.agent import Agent
@@ -24,10 +23,10 @@ class ManagerResponse(BaseModel):
 
 
 class AppsResponse(BaseModel):
-    session: List[ManagerResponse]
-    knowledge: List[ManagerResponse]
-    memory: List[ManagerResponse]
-    eval: List[ManagerResponse]
+    session: Optional[List[ManagerResponse]] = None
+    knowledge: Optional[List[ManagerResponse]] = None
+    memory: Optional[List[ManagerResponse]] = None
+    eval: Optional[List[ManagerResponse]] = None
 
 
 class ConfigResponse(BaseModel):
@@ -45,7 +44,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    agent_id: str
+    agent_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
@@ -178,6 +177,12 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    workflow_id: str
+    workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+
+
+class WorkflowRunRequest(BaseModel):
+    input: Dict[str, Any]
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None

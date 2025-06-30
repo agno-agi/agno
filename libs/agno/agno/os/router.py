@@ -1,9 +1,9 @@
 import json
+from dataclasses import asdict
 from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.params import Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
@@ -17,10 +17,21 @@ from agno.os.schema import (
     ManagerResponse,
     TeamResponse,
     WorkflowResponse,
+    WorkflowRunRequest,
 )
-from agno.os.utils import get_agent_by_id, process_audio, process_image, process_video
+from agno.os.utils import (
+    get_agent_by_id,
+    get_team_by_id,
+    get_workflow_by_id,
+    process_audio,
+    process_document,
+    process_image,
+    process_video,
+)
 from agno.run.response import RunResponse, RunResponseErrorEvent
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.team.team import Team
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 
 async def agent_response_streamer(
@@ -86,10 +97,48 @@ async def agent_continue_response_streamer(
         return
 
 
+async def team_chat_response_streamer(
+    team: Team,
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+) -> AsyncGenerator:
+    """Run the given team asynchronously and yield its response"""
+    try:
+        run_response = await team.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = TeamRunResponseErrorEvent(
+            content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
 def get_base_router(
     os: "AgentOS",
 ) -> APIRouter:
     router = APIRouter(tags=["Built-In"])
+
+    # -- Util routes ---
 
     @router.get("/status")
     async def status():
@@ -136,6 +185,8 @@ def get_base_router(
             apps=app_response,
         )
 
+    # -- Agent routes ---
+
     @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
     async def get_agents():
         if os.agents is None:
@@ -143,32 +194,19 @@ def get_base_router(
 
         return [AgentResponse.from_agent(agent) for agent in os.agents]
 
-    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
-    async def get_teams():
-        if os.teams is None:
-            return []
+    @router.get("/agents/{agent_id}", response_model=AgentResponse)
+    async def get_agent(agent_id: str):
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-        return [TeamResponse.from_team(team) for team in os.teams]
-
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
-    async def get_workflows():
-        if os.workflows is None:
-            return []
-
-        return [
-            WorkflowResponse(
-                workflow_id=str(workflow.workflow_id),
-                name=workflow.name,
-                description=workflow.description,
-            )
-            for workflow in os.workflows
-        ]
+        return AgentResponse.from_agent(agent)
 
     @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
-        stream: bool = Form(True),
+        stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -178,7 +216,7 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
-            log_debug(f"Creating new session")
+            log_debug("Creating new session")
             session_id = str(uuid4())
 
         base64_images: List[Image] = []
@@ -289,7 +327,7 @@ def get_base_router(
 
         if session_id is None or session_id == "":
             log_warning(
-                f"Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
             )
 
         # Convert tools dict to ToolExecution objects if provided
@@ -325,5 +363,188 @@ def get_base_router(
                 ),
             )
             return run_response_obj.to_dict()
+
+    # -- Team routes ---
+
+    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
+    async def get_teams():
+        if os.teams is None:
+            return []
+
+        return [TeamResponse.from_team(team) for team in os.teams]
+
+    @router.get("/teams/{team_id}", response_model=TeamResponse)
+    async def get_team(team_id: str):
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        return TeamResponse.from_team(team)
+
+    @router.post("/teams/{team_id}/runs")
+    async def create_team_run(
+        team_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        monitor: bool = Form(True),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        files: Optional[List[UploadFile]] = File(None),
+    ):
+        logger.debug(f"Creating team run: {message} {session_id} {monitor} {user_id} {team_id} {files}")
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if session_id is not None and session_id != "":
+            logger.debug(f"Continuing session: {session_id}")
+        else:
+            logger.debug("Creating new session")
+            session_id = str(uuid4())
+
+        if monitor:
+            team.monitoring = True
+        else:
+            team.monitoring = False
+
+        base64_images: List[Image] = []
+        base64_audios: List[Audio] = []
+        base64_videos: List[Video] = []
+        document_files: List[FileMedia] = []
+
+        if files:
+            for file in files:
+                if file.content_type in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
+                    try:
+                        base64_image = process_image(file)
+                        base64_images.append(base64_image)
+                    except Exception as e:
+                        logger.error(f"Error processing image {file.filename}: {e}")
+                        continue
+                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                    try:
+                        base64_audio = process_audio(file)
+                        base64_audios.append(base64_audio)
+                    except Exception as e:
+                        logger.error(f"Error processing audio {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "video/x-flv",
+                    "video/quicktime",
+                    "video/mpeg",
+                    "video/mpegs",
+                    "video/mpgs",
+                    "video/mpg",
+                    "video/mpg",
+                    "video/mp4",
+                    "video/webm",
+                    "video/wmv",
+                    "video/3gpp",
+                ]:
+                    try:
+                        base64_video = process_video(file)
+                        base64_videos.append(base64_video)
+                    except Exception as e:
+                        logger.error(f"Error processing video {file.filename}: {e}")
+                        continue
+                elif file.content_type in [
+                    "application/pdf",
+                    "text/csv",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "text/plain",
+                    "application/json",
+                ]:
+                    document_file = process_document(file)
+                    if document_file is not None:
+                        document_files.append(document_file)
+                else:
+                    raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        if stream and team.is_streamable:
+            return StreamingResponse(
+                team_chat_response_streamer(
+                    team,
+                    message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response = await team.arun(
+                message=message,
+                session_id=session_id,
+                user_id=user_id,
+                images=base64_images if base64_images else None,
+                audio=base64_audios if base64_audios else None,
+                videos=base64_videos if base64_videos else None,
+                files=document_files if document_files else None,
+                stream=False,
+            )
+            return run_response.to_dict()
+
+    # -- Workflow routes ---
+
+    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
+    async def get_workflows():
+        if os.workflows is None:
+            return []
+
+        return [
+            WorkflowResponse(
+                workflow_id=str(workflow.workflow_id),
+                name=workflow.name,
+                description=workflow.description,
+            )
+            for workflow in os.workflows
+        ]
+
+    @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+    async def get_workflow(workflow_id: str):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        return WorkflowResponse(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+        )
+
+    @router.post("/workflows/{workflow_id}/runs")
+    async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
+        # Retrieve the workflow by ID
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if body.session_id is not None:
+            logger.debug(f"Continuing session: {body.session_id}")
+        else:
+            logger.debug("Creating new session")
+
+        # Create a new instance of this workflow
+        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
+        new_workflow_instance.user_id = body.user_id
+        new_workflow_instance.session_name = None
+
+        # Return based on the response type
+        try:
+            if new_workflow_instance._run_return_type == "RunResponse":
+                # Return as a normal response
+                return new_workflow_instance.run(**body.input)
+            else:
+                # Return as a streaming response
+                return StreamingResponse(
+                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
+                    media_type="text/event-stream",
+                )
+        except Exception as e:
+            # Handle unexpected runtime errors
+            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     return router
