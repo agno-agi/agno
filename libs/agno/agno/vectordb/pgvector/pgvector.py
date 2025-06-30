@@ -404,7 +404,7 @@ class PgVector(VectorDb):
                                     "embedding": doc.embedding,
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
-                                    "source_document_id": doc.id,
+                                    "source_document_id": doc.source_id,
                                 }
                                 batch_records.append(record)
                             except Exception as e:
@@ -1038,6 +1038,24 @@ class PgVector(VectorDb):
                 sess.execute(delete(self.table))
                 sess.commit()
                 log_info(f"Deleted all records from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_source_id(self, id: str) -> bool:
+        """
+        Delete documents by source ID.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.source_document_id == id)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with source_document_id '{id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
