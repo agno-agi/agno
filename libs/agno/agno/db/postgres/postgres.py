@@ -496,6 +496,51 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from table: {e}")
             return None
 
+    def get_all_sessions_for_metrics_calculation(
+        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
+
+        Args:
+            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
+            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of session dictionaries.
+        """
+        try:
+            tables = []
+            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
+                try:
+                    table = self.get_table_for_session_type(session_type)
+                except ValueError:
+                    continue
+                if table is not None:
+                    tables.append(table)
+            if not tables:
+                return []
+
+            cols = ["user_id", "session_data", "runs", "created_at"]
+            select_statements = [select(*[t.c[col] for col in cols]) for t in tables]
+
+            union_stmt = union_all(*select_statements)
+            subquery = union_stmt.subquery()
+            stmt = select(subquery)
+
+            if start_timestamp is not None:
+                stmt = stmt.where(stmt.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                stmt = stmt.where(stmt.c.created_at <= end_timestamp)
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).fetchall()
+                return [record._mapping for record in result]
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return []
+
     def get_sessions_raw(
         self,
         session_type: Optional[SessionType] = None,
@@ -510,13 +555,19 @@ class PostgresDb(BaseDb):
         table: Optional[Table] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
-        Get all sessions in the given table as raw dictionaries.
+        Get all sessions in the given table, or of the given session_type, as raw dictionaries.
 
         Args:
-            table (Table): Table to read from.
+            table (Optional[Table]): Table to read from.
+            session_type (Optional[SessionType]): The type of session to get. Used if no table is provided.
             user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
+            start_timestamp (Optional[int]): The start timestamp to filter by.
+            end_timestamp (Optional[int]): The end timestamp to filter by.
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
+            page (Optional[int]): The page number to return. Defaults to None.
+            sort_by (Optional[str]): The field to sort by. Defaults to None.
+            sort_order (Optional[str]): The sort order. Defaults to None.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: List of Session objects matching the criteria and the total number of sessions.
@@ -1295,26 +1346,13 @@ class PostgresDb(BaseDb):
             for date_to_process in dates_to_process
         }
 
-        session_types = [
-            (SessionType.AGENT, "agent", self.agent_session_table_name),
-            (SessionType.TEAM, "team", self.team_session_table_name),
-            (SessionType.WORKFLOW, "workflow", self.workflow_session_table_name),
-        ]
-
-        for session_type, key, table_name in session_types:
-            if not table_name:
-                continue
-            try:
-                sessions, _ = self.get_sessions_raw(
-                    session_type=session_type, start_timestamp=start_timestamp, end_timestamp=end_timestamp
-                )
-                for session in sessions:
-                    session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
-                    if session_date in all_sessions_data:
-                        all_sessions_data[session_date][key].append(session)
-
-            except Exception as e:
-                log_debug(f"Could not fetch {key} sessions: {e}")
+        sessions = self.get_all_sessions_for_metrics_calculation(
+            start_timestamp=start_timestamp, end_timestamp=end_timestamp
+        )
+        for session in sessions:
+            session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+            if session_date in all_sessions_data:
+                all_sessions_data[session_date][session["session_type"]].append(session)
 
         return all_sessions_data
 
@@ -1384,7 +1422,6 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                breakpoint()
                 metrics_record = self._calculate_date_metrics(date_to_process, sessions_for_date)
                 metrics_records.append(metrics_record)
 
