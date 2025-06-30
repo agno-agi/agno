@@ -37,6 +37,9 @@ class WorkflowRunEvent(str, Enum):
     router_execution_started = "RouterExecutionStarted"
     router_execution_completed = "RouterExecutionCompleted"
 
+    steps_execution_started = "StepsExecutionStarted"
+    steps_execution_completed = "StepsExecutionCompleted"
+
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
@@ -282,6 +285,30 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     step_index: Optional[int] = None
     # Names of steps that were selected
     selected_steps: List[str] = field(default_factory=list)
+    executed_steps: Optional[int] = None
+
+    # Results from executed steps
+    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+
+
+@dataclass
+class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when steps execution starts"""
+
+    event: str = WorkflowRunEvent.steps_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    steps_count: Optional[int] = None
+
+
+@dataclass
+class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when steps execution completes"""
+
+    event: str = WorkflowRunEvent.steps_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    steps_count: Optional[int] = None
     executed_steps: Optional[int] = None
 
     # Results from executed steps
