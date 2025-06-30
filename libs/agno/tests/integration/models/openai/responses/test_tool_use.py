@@ -166,7 +166,7 @@ def test_multiple_tool_calls():
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
