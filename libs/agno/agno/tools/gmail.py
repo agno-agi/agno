@@ -137,6 +137,7 @@ class GmailTools(Toolkit):
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
         """
         self.creds = creds
         self.credentials_path = credentials_path
