@@ -14,7 +14,6 @@ class EvalFilterType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
-    ALL = "all"
 
 
 class EvalRunRecord(BaseModel):

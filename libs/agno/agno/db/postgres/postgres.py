@@ -1436,7 +1436,7 @@ class PostgresDb(BaseDb):
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[EvalType]): The type of eval to filter by.
-            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow, all).
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
 
         Returns:
             List[EvalRunRecord]: The eval runs.
