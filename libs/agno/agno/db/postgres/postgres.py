@@ -1220,198 +1220,190 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting metrics: {e}")
             return []
 
+    def _bulk_upsert_metrics(self, table: Table, metrics_records: list[dict]) -> list[dict]:
+        if not metrics_records:
+            return []
+
+        results = []
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table)
+
+            # Columns to update in case of conflict
+            update_columns = {
+                col.name: stmt.excluded[col.name]
+                for col in table.columns
+                if col.name not in ["id", "date", "created_at"]
+            }
+
+            stmt = stmt.on_conflict_do_update(index_elements=["date"], set_=update_columns).returning(table)
+            result = sess.execute(stmt, metrics_records)
+            results = [row._mapping for row in result.fetchall()]
+            sess.commit()
+
+        return results
+
+    def _calculate_date_metrics(self, date_to_process: date, sessions_data: dict) -> dict:
+        """Calculate metrics for the given single date"""
+        metrics = {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+        }
+        token_metrics = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "audio_tokens": 0,
+            "input_audio_tokens": 0,
+            "output_audio_tokens": 0,
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "reasoning_tokens": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+        session_types = [
+            ("agent", "agent_sessions_count", "agent_runs_count"),
+            ("team", "team_sessions_count", "team_runs_count"),
+            ("workflow", "workflow_sessions_count", "workflow_runs_count"),
+        ]
+        all_user_ids = set()
+
+        for session_type, sessions_count_key, runs_count_key in session_types:
+            sessions = sessions_data.get(session_type, [])
+            metrics[sessions_count_key] = len(sessions)
+
+            for session in sessions:
+                if session.get("user_id"):
+                    all_user_ids.add(session["user_id"])
+                metrics[runs_count_key] += len(session.get("runs", []))
+                session_metrics = session.get("session_data", {}).get("session_metrics", {})
+                for field in token_metrics:
+                    token_metrics[field] += session_metrics.get(field, 0)
+
+        metrics["users_count"] = len(all_user_ids)
+
+        return {
+            "id": str(uuid4()),
+            "date": date_to_process,
+            "completed": date_to_process < date.today(),
+            "token_metrics": token_metrics,
+            "model_metrics": {},  # TODO:
+            "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+            **metrics,
+        }
+
+    def _fetch_all_sessions_data(self, dates_to_process: list[date]) -> Optional[dict]:
+        """Fetch all sessions data for the date range in bulk."""
+        if not dates_to_process:
+            return None
+
+        # Calculate overall timestamp range
+        start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+        end_timestamp = int(datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp())
+
+        all_sessions_data = {}
+
+        for date_to_process in dates_to_process:
+            all_sessions_data[date_to_process.isoformat()] = {"agent": [], "team": [], "workflow": []}
+
+        session_types = [
+            (SessionType.AGENT, "agent", self.agent_session_table_name),
+            (SessionType.TEAM, "team", self.team_session_table_name),
+            (SessionType.WORKFLOW, "workflow", self.workflow_session_table_name),
+        ]
+
+        for session_type, key, table_name in session_types:
+            if not table_name:
+                continue
+
+            try:
+                sessions, _ = self.get_sessions_raw(
+                    session_type=session_type,
+                    starting_timestamp=start_timestamp,
+                    ending_timestamp=end_timestamp,
+                )
+                for session in sessions:
+                    session_date = date.fromtimestamp(session.get("created_at", start_timestamp))
+                    date_key = session_date.isoformat()
+                    if date_key in all_sessions_data:
+                        all_sessions_data[date_key][key].append(session)
+
+            except Exception as e:
+                log_debug(f"Could not fetch {key} sessions: {e}")
+
+        return all_sessions_data
+
+    def _get_dates_to_calculate_metrics_for(self, starting_date: date) -> list[date]:
+        """Generate the list of dates to calculate metrics for."""
+        days_diff = (date.today() - starting_date).days + 1
+        if days_diff <= 0:
+            return []
+        return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+        """Get the first date for which metrics calculation is needed"""
+        with self.Session() as sess:
+            stmt = select(table).order_by(table.c.date.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+
+            # Return the date of the first day with not complete aggregated metrics.
+            if result is not None:
+                if result.completed:
+                    return result._mapping["date"] + timedelta(days=1)
+                else:
+                    return result._mapping["date"]
+
+            # No metrics found. Return the date of the first recorded session, or None if no sessions.
+            else:
+                first_session_date = self.get_first_session_date()
+                if not first_session_date:
+                    return None
+
+                return date.fromtimestamp(first_session_date)
+
     def calculate_metrics(self) -> Optional[list[dict]]:
+        """Calculate metrics for all dates with not complete aggregated metrics."""
         try:
             table = self.get_metrics_table()
 
-            # Get the first day without a completed metrics record
-            with self.Session() as sess:
-                stmt = select(table).where(table.c.completed).order_by(table.c.date.desc()).limit(1)
-                result = sess.execute(stmt).fetchone()
-                if result is not None:
-                    starting_date = result._mapping["date"] + timedelta(days=1)
-                else:
-                    # No complete records found. Will start from the date of the latest incomplete record
-                    stmt = select(table).order_by(table.c.date.desc()).limit(1)
-                    result = sess.execute(stmt).fetchone()
-                    if result is not None:
-                        starting_date = result._mapping["date"]
-                    else:
-                        # No records found. Will start from the date of the first recorded session, or today
-                        first_session_date = self.get_first_session_date()
-                        starting_date = date.fromtimestamp(first_session_date) if first_session_date else date.today()
+            starting_date = self._get_metrics_calculation_starting_date(table)
+            if starting_date is None:
+                log_info("No session data found. Won't calculate metrics.")
+                return None
 
-            results: list[dict] = []
+            dates_to_process = self._get_dates_to_calculate_metrics_for(starting_date)
+            if not dates_to_process:
+                log_info("Metrics already calculated for all relevant dates.")
+                return None
 
-            # Create a metrics record for each day missing a completed one
-            dates_to_process = [
-                starting_date + timedelta(days=x) for x in range((date.today() - starting_date).days + 1)
-            ]
+            all_sessions_data = self._fetch_all_sessions_data(dates_to_process)
+            if not all_sessions_data:
+                log_info("No new session data found. Won't calculate metrics.")
+                return None
+
+            results = []
+            metrics_records = []
+
             for date_to_process in dates_to_process:
-                starting_timestamp = int(datetime.combine(date_to_process, datetime.min.time()).timestamp())
-                ending_timestamp = starting_timestamp + 86400  # starting_timestamp + 1 day (86400 seconds)
-                users_count = 0
-                input_tokens = 0
-                output_tokens = 0
-                total_tokens = 0
-                audio_tokens = 0
-                input_audio_tokens = 0
-                output_audio_tokens = 0
-                cached_tokens = 0
-                cache_write_tokens = 0
-                reasoning_tokens = 0
-                prompt_tokens = 0
-                completion_tokens = 0
+                date_key = date_to_process.isoformat()
+                sessions_for_date = all_sessions_data.get(date_key, {})
 
-                # Count Agent sessions and runs
-                if self.agent_session_table_name:
-                    try:
-                        agent_sessions, agent_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.AGENT,
-                            starting_timestamp=starting_timestamp,
-                            ending_timestamp=ending_timestamp,
-                        )
-                        agent_runs_count = 0
-                        for session in agent_sessions:
-                            users_count += len(
-                                set(
-                                    [session["user_id"] for session in agent_sessions if session["user_id"] is not None]
-                                )
-                            )
-                            agent_runs_count += len(session.get("runs", []))
-                            metrics = session["session_data"]["session_metrics"]
-                            input_tokens += metrics.get("input_tokens", 0)
-                            output_tokens += metrics.get("output_tokens", 0)
-                            total_tokens += metrics.get("total_tokens", 0)
-                            audio_tokens += metrics.get("audio_tokens", 0)
-                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
-                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
-                            cached_tokens += metrics.get("cached_tokens", 0)
-                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
-                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
-                            prompt_tokens += metrics.get("prompt_tokens", 0)
-                            completion_tokens += metrics.get("completion_tokens", 0)
-                    except Exception as e:
-                        log_debug(f"Could not count agent sessions/runs: {e}")
+                # Skip dates with no sessions
+                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+                    continue
 
-                # Count Team sessions and runs
-                if self.team_session_table_name:
-                    try:
-                        team_sessions, team_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.TEAM,
-                            starting_timestamp=starting_timestamp,
-                            ending_timestamp=ending_timestamp,
-                        )
-                        team_runs_count = 0
-                        for session in team_sessions:
-                            users_count += len(
-                                set([session["user_id"] for session in team_sessions if session["user_id"] is not None])
-                            )
-                            team_runs_count += len(session.get("runs", []))
-                            metrics = session["session_data"]["session_metrics"]
-                            input_tokens += metrics.get("input_tokens", 0)
-                            output_tokens += metrics.get("output_tokens", 0)
-                            total_tokens += metrics.get("total_tokens", 0)
-                            audio_tokens += metrics.get("audio_tokens", 0)
-                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
-                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
-                            cached_tokens += metrics.get("cached_tokens", 0)
-                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
-                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
-                            prompt_tokens += metrics.get("prompt_tokens", 0)
-                            completion_tokens += metrics.get("completion_tokens", 0)
-                    except Exception as e:
-                        log_debug(f"Could not count team sessions/runs: {e}")
+                metrics_record = self._calculate_date_metrics(date_to_process, sessions_for_date)
+                metrics_records.append(metrics_record)
 
-                # Count Workflow sessions and runs and token metrics
-                if self.workflow_session_table_name:
-                    try:
-                        workflow_sessions, workflow_sessions_count = self.get_sessions_raw(
-                            session_type=SessionType.WORKFLOW,
-                            starting_timestamp=starting_timestamp,
-                            ending_timestamp=ending_timestamp,
-                        )
-                        workflow_runs_count = 0
-                        for session in workflow_sessions:
-                            users_count += len(
-                                set(
-                                    [
-                                        session["user_id"]
-                                        for session in workflow_sessions
-                                        if session["user_id"] is not None
-                                    ]
-                                )
-                            )
-                            workflow_runs_count += len(session.get("runs", []))
-                            metrics = session["session_data"]["session_metrics"]
-                            input_tokens += metrics.get("input_tokens", 0)
-                            output_tokens += metrics.get("output_tokens", 0)
-                            total_tokens += metrics.get("total_tokens", 0)
-                            audio_tokens += metrics.get("audio_tokens", 0)
-                            input_audio_tokens += metrics.get("input_audio_tokens", 0)
-                            output_audio_tokens += metrics.get("output_audio_tokens", 0)
-                            cached_tokens += metrics.get("cached_tokens", 0)
-                            cache_write_tokens += metrics.get("cache_write_tokens", 0)
-                            reasoning_tokens += metrics.get("reasoning_tokens", 0)
-                            prompt_tokens += metrics.get("prompt_tokens", 0)
-                            completion_tokens += metrics.get("completion_tokens", 0)
-                    except Exception as e:
-                        log_debug(f"Could not count workflow sessions/runs: {e}")
-
-                # TODO:
-                model_metrics = {}
-                token_metrics = {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "total_tokens": total_tokens,
-                    "audio_tokens": audio_tokens,
-                    "input_audio_tokens": input_audio_tokens,
-                    "output_audio_tokens": output_audio_tokens,
-                    "cached_tokens": cached_tokens,
-                    "cache_write_tokens": cache_write_tokens,
-                    "reasoning_tokens": reasoning_tokens,
-                    "prompt_tokens": prompt_tokens,
-                    "completion_tokens": completion_tokens,
-                }
-
-                # Create or update the metrics record
-                with self.Session() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        id=str(uuid4()),
-                        date=date_to_process,
-                        users_count=users_count,
-                        agent_sessions_count=agent_sessions_count,
-                        team_sessions_count=team_sessions_count,
-                        workflow_sessions_count=workflow_sessions_count,
-                        agent_runs_count=agent_runs_count,
-                        team_runs_count=team_runs_count,
-                        workflow_runs_count=workflow_runs_count,
-                        token_metrics=token_metrics,
-                        model_metrics=model_metrics,
-                        created_at=int(time.time()),
-                        updated_at=int(time.time()),
-                        completed=date_to_process < date.today(),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["date"],
-                        set_=dict(
-                            users_count=users_count,
-                            agent_sessions_count=agent_sessions_count,
-                            team_sessions_count=team_sessions_count,
-                            workflow_sessions_count=workflow_sessions_count,
-                            agent_runs_count=agent_runs_count,
-                            team_runs_count=team_runs_count,
-                            workflow_runs_count=workflow_runs_count,
-                            token_metrics=token_metrics,
-                            model_metrics=model_metrics,
-                            updated_at=int(time.time()),
-                            completed=date_to_process < date.today(),
-                        ),
-                    ).returning(table)
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-                    sess.commit()
-                    results.append(row._mapping)
+            if metrics_records:
+                results = self._bulk_upsert_metrics(table, metrics_records)
 
             return results
 
