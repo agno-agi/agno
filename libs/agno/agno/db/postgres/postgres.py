@@ -1200,12 +1200,9 @@ class PostgresDb(BaseDb):
             )
         return self.metrics_table
 
-    def get_metrics_raw(
-        self, starting_date: Optional[str] = None, ending_date: Optional[str] = None, table: Optional[Table] = None
-    ) -> List[dict]:
+    def get_metrics_raw(self, starting_date: Optional[date] = None, ending_date: Optional[date] = None) -> List[dict]:
         try:
-            if table is None:
-                table = self.get_metrics_table()
+            table = self.get_metrics_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)

@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.os.managers import MetricsManager, SessionManager
 
@@ -23,7 +23,7 @@ memory = Memory(db=db)
 # Setup the agent
 basic_agent = Agent(
     name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-5-sonnet-20240620"),
     session_id="123",
     memory=memory,
     enable_user_memories=True,

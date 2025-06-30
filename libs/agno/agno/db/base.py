@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -202,7 +203,7 @@ class BaseDb(ABC):
     # --- Metrics Table ---
 
     @abstractmethod
-    def get_metrics_raw(self, starting_date: Optional[str] = None, ending_date: Optional[str] = None) -> List[Any]:
+    def get_metrics_raw(self, starting_date: Optional[date] = None, ending_date: Optional[date] = None) -> List[Any]:
         raise NotImplementedError
 
     @abstractmethod
