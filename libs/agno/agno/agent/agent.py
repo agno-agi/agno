@@ -841,6 +841,7 @@ class Agent:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
+                parser_model_response = ModelResponse(content="")
                 messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
                 for model_response_event in self.parser_model.response_stream(
                     messages=messages_for_parser_model,
@@ -849,7 +850,7 @@ class Agent:
                 ):
                     yield from self._handle_model_response_chunk(
                         run_response=run_response,
-                        model_response=model_response_event,
+                        model_response=parser_model_response,
                         model_response_event=model_response_event,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
@@ -1317,9 +1318,9 @@ class Agent:
 
         if self.parser_model is not None:
             if self.response_model is not None:
-                # TODO: Add stream_intermediate_steps for parser model
+                parser_model_response = ModelResponse(content="")
                 messages_for_parser_model = self.get_messages_for_parser_model_stream(run_response, response_format)
-                model_response_stream = self.parser_model.response_stream(
+                model_response_stream = self.parser_model.aresponse_stream(
                     messages=messages_for_parser_model,
                     response_format=self._get_response_format(self.parser_model),
                     stream_model_response=False,
@@ -1327,7 +1328,7 @@ class Agent:
                 async for model_response_event in model_response_stream:  # type: ignore
                     for event in self._handle_model_response_chunk(
                         run_response=run_response,
-                        model_response=model_response_event,
+                        model_response=parser_model_response,
                         model_response_event=model_response_event,
                         stream_intermediate_steps=stream_intermediate_steps,
                     ):
