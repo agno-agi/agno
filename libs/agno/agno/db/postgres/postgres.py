@@ -498,8 +498,8 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        starting_timestamp: Optional[int] = None,
-        ending_timestamp: Optional[int] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -531,10 +531,10 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
-                if starting_timestamp is not None:
-                    stmt = stmt.where(table.c.created_at >= starting_timestamp)
-                if ending_timestamp is not None:
-                    stmt = stmt.where(table.c.created_at <= ending_timestamp)
+                if start_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at >= start_timestamp)
+                if end_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at <= end_timestamp)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -1189,37 +1189,6 @@ class PostgresDb(BaseDb):
 
     # -- Metrics methods --
 
-    def get_metrics_table(self) -> Table:
-        """Get or create the metrics table."""
-        if not hasattr(self, "metrics_table"):
-            if self.metrics_table_name is None:
-                raise ValueError("Metrics table was not provided on initialization")
-            log_info(f"Getting metrics table: {self.metrics_table_name}")
-            self.metrics_table = self.get_or_create_table(
-                table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
-            )
-        return self.metrics_table
-
-    def get_metrics_raw(self, starting_date: Optional[date] = None, ending_date: Optional[date] = None) -> List[dict]:
-        try:
-            table = self.get_metrics_table()
-
-            with self.Session() as sess, sess.begin():
-                stmt = select(table)
-                if starting_date:
-                    stmt = stmt.where(table.c.date >= starting_date)
-                if ending_date:
-                    stmt = stmt.where(table.c.date <= ending_date)
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return []
-
-                return [row._mapping for row in result]
-
-        except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
-            return []
-
     def _bulk_upsert_metrics(self, table: Table, metrics_records: list[dict]) -> list[dict]:
         if not metrics_records:
             return []
@@ -1298,18 +1267,30 @@ class PostgresDb(BaseDb):
         }
 
     def _fetch_all_sessions_data(self, dates_to_process: list[date]) -> Optional[dict]:
-        """Fetch all sessions data for the date range in bulk."""
+        """Return all session data for the given dates, for all session types.
+
+        Returns:
+            dict: A dictionary with dates as keys and session data as values, for all session types.
+
+        Example:
+        {
+            "2000-01-01": {
+                "agent": [<session1>, <session2>, ...],
+                "team": [...],
+                "workflow": [...],
+            }
+        }
+        """
         if not dates_to_process:
             return None
 
-        # Calculate overall timestamp range
         start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
         end_timestamp = int(datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp())
 
-        all_sessions_data = {}
-
-        for date_to_process in dates_to_process:
-            all_sessions_data[date_to_process.isoformat()] = {"agent": [], "team": [], "workflow": []}
+        all_sessions_data = {
+            date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []}
+            for date_to_process in dates_to_process
+        }
 
         session_types = [
             (SessionType.AGENT, "agent", self.agent_session_table_name),
@@ -1320,18 +1301,14 @@ class PostgresDb(BaseDb):
         for session_type, key, table_name in session_types:
             if not table_name:
                 continue
-
             try:
                 sessions, _ = self.get_sessions_raw(
-                    session_type=session_type,
-                    starting_timestamp=start_timestamp,
-                    ending_timestamp=end_timestamp,
+                    session_type=session_type, start_timestamp=start_timestamp, end_timestamp=end_timestamp
                 )
                 for session in sessions:
-                    session_date = date.fromtimestamp(session.get("created_at", start_timestamp))
-                    date_key = session_date.isoformat()
-                    if date_key in all_sessions_data:
-                        all_sessions_data[date_key][key].append(session)
+                    session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+                    if session_date in all_sessions_data:
+                        all_sessions_data[session_date][key].append(session)
 
             except Exception as e:
                 log_debug(f"Could not fetch {key} sessions: {e}")
@@ -1339,35 +1316,42 @@ class PostgresDb(BaseDb):
         return all_sessions_data
 
     def _get_dates_to_calculate_metrics_for(self, starting_date: date) -> list[date]:
-        """Generate the list of dates to calculate metrics for."""
+        """Return the list of dates to calculate metrics for."""
         days_diff = (date.today() - starting_date).days + 1
         if days_diff <= 0:
             return []
         return [starting_date + timedelta(days=x) for x in range(days_diff)]
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed"""
+        """Get the first date for which metrics calculation is needed:
+
+        1. If there are metrics records, return the date of the first day without a complete metrics record.
+        2. If there are no metrics records, return the date of the first recorded session.
+        3. If there are no metrics records and no sessions records, return None.
+        """
         with self.Session() as sess:
             stmt = select(table).order_by(table.c.date.desc()).limit(1)
             result = sess.execute(stmt).fetchone()
 
-            # Return the date of the first day with not complete aggregated metrics.
+            # 1. Return the date of the first day without a complete metrics record.
             if result is not None:
                 if result.completed:
                     return result._mapping["date"] + timedelta(days=1)
                 else:
                     return result._mapping["date"]
 
-            # No metrics found. Return the date of the first recorded session, or None if no sessions.
+            # 2. No metrics records. Return the date of the first recorded session.
             else:
                 first_session_date = self.get_first_session_date()
+
+                # 3. No metrics records and no sessions records. Return None.
                 if not first_session_date:
                     return None
 
                 return date.fromtimestamp(first_session_date)
 
     def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates with not complete aggregated metrics."""
+        """Calculate metrics for all dates without complete metrics."""
         try:
             table = self.get_metrics_table()
 
@@ -1408,6 +1392,37 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception refreshing metrics: {e}")
             raise e
+
+    def get_metrics_table(self) -> Table:
+        """Get or create the metrics table."""
+        if not hasattr(self, "metrics_table"):
+            if self.metrics_table_name is None:
+                raise ValueError("Metrics table was not provided on initialization")
+            log_info(f"Getting metrics table: {self.metrics_table_name}")
+            self.metrics_table = self.get_or_create_table(
+                table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+            )
+        return self.metrics_table
+
+    def get_metrics_raw(self, starting_date: Optional[date] = None, ending_date: Optional[date] = None) -> List[dict]:
+        try:
+            table = self.get_metrics_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if starting_date:
+                    stmt = stmt.where(table.c.date >= starting_date)
+                if ending_date:
+                    stmt = stmt.where(table.c.date <= ending_date)
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return []
+
+                return [row._mapping for row in result]
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {e}")
+            return []
 
     # -- Knowledge methods --
 
