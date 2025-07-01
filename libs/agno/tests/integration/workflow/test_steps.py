@@ -59,9 +59,7 @@ def test_basic_steps_execution(workflow_storage):
     response = workflow.run(message="test message")
 
     assert len(response.step_responses) == 1
-    assert response.step_responses[0].success is True
     assert "Step2: Step1: test message" in response.content
-    assert response.step_responses[0].step_name == "test_steps"
 
 
 def test_steps_streaming(workflow_storage):
@@ -110,7 +108,6 @@ async def test_async_steps_execution(workflow_storage):
     response = await workflow.arun(message="async test")
 
     assert len(response.step_responses) == 1
-    assert response.step_responses[0].success is True
     assert "Step2: AsyncStep: async test" in response.content
 
 

@@ -1,5 +1,3 @@
-import asyncio
-import inspect
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
@@ -82,16 +80,16 @@ class Steps:
         current_audio = step_input.audio or []
 
         if isinstance(step_outputs, list):
-            all_images = sum([out.images or [] for out in step_outputs], [])
-            all_videos = sum([out.videos or [] for out in step_outputs], [])
-            all_audio = sum([out.audio or [] for out in step_outputs], [])
+            step_images = sum([out.images or [] for out in step_outputs], [])
+            step_videos = sum([out.videos or [] for out in step_outputs], [])
+            step_audio = sum([out.audio or [] for out in step_outputs], [])
             # Use the last output's content for chaining
             previous_step_content = step_outputs[-1].content if step_outputs else None
         else:
             # Single output
-            all_images = step_outputs.images or []
-            all_videos = step_outputs.videos or []
-            all_audio = step_outputs.audio or []
+            step_images = step_outputs.images or []
+            step_videos = step_outputs.videos or []
+            step_audio = step_outputs.audio or []
             previous_step_content = step_outputs.content
 
         updated_previous_steps_outputs = {}
@@ -102,62 +100,24 @@ class Steps:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,
-            images=current_images + all_images,
-            videos=current_videos + all_videos,
-            audio=current_audio + all_audio,
-        )
-
-    def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
-        """Aggregate multiple step outputs into a single StepOutput
-        For Steps, we use the last step's content as the main result but combine all media"""
-        if not step_outputs:
-            return StepOutput(step_name=self.name or "Steps", content="No steps executed")
-
-        if len(step_outputs) == 1:
-            # Single result, just update the step name
-            single_result = step_outputs[0]
-            single_result.step_name = self.name or "Steps"
-            return single_result
-
-        # Multiple results - use last step's content but combine all media
-        last_step = step_outputs[-1]
-
-        # Combine all media from sequential steps
-        all_images = []
-        all_videos = []
-        all_audio = []
-        has_any_failure = False
-
-        for result in step_outputs:
-            all_images.extend(result.images or [])
-            all_videos.extend(result.videos or [])
-            all_audio.extend(result.audio or [])
-            if result.success is False:
-                has_any_failure = True
-
-        return StepOutput(
-            step_name=self.name or "Steps",
-            content=last_step.content or "",
-            images=all_images if all_images else None,
-            videos=all_videos if all_videos else None,
-            audio=all_audio if all_audio else None,
-            success=not has_any_failure,
+            images=current_images + step_images,
+            videos=current_videos + step_videos,
+            audio=current_audio + step_audio,
         )
 
     def execute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> StepOutput:
+    ) -> List[StepOutput]:
         """Execute all steps in sequence and return the final result"""
         logger.info(f"Executing {len(self.steps)} steps in sequence: {self.name}")
 
         self._prepare_steps()
 
         if not self.steps:
-            return StepOutput(step_name=self.name or "Steps", content="No steps to execute")
+            return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results = []
@@ -188,17 +148,18 @@ class Steps:
                     current_step_input, step_output, steps_step_outputs
                 )
 
-            # Return aggregated result
-            return self._aggregate_results(all_results)
+            return all_results
 
         except Exception as e:
             logger.error(f"Steps execution failed: {e}")
-            return StepOutput(
-                step_name=self.name or "Steps",
-                content=f"Steps execution failed: {str(e)}",
-                success=False,
-                error=str(e),
-            )
+            return [
+                StepOutput(
+                    step_name=self.name or "Steps",
+                    content=f"Steps execution failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+            ]
 
     def execute_stream(
         self,
@@ -272,10 +233,6 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
-            # Return aggregated result
-            aggregated_result = self._aggregate_results(all_results)
-            yield aggregated_result
-
             # Yield steps execution completed event
             yield StepsExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -289,6 +246,9 @@ class Steps:
                 step_results=all_results,
             )
 
+            for result in all_results:
+                yield result
+
         except Exception as e:
             logger.error(f"Steps streaming failed: {e}")
             error_result = StepOutput(
@@ -301,14 +261,14 @@ class Steps:
 
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
-    ) -> StepOutput:
+    ) -> List[StepOutput]:
         """Execute all steps in sequence asynchronously and return the final result"""
         logger.info(f"Async executing {len(self.steps)} steps in sequence: {self.name}")
 
         self._prepare_steps()
 
         if not self.steps:
-            return StepOutput(step_name=self.name or "Steps", content="No steps to execute")
+            return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results = []
@@ -339,17 +299,18 @@ class Steps:
                     current_step_input, step_output, steps_step_outputs
                 )
 
-            # Return aggregated result
-            return self._aggregate_results(all_results)
+            return all_results
 
         except Exception as e:
             logger.error(f"Async steps execution failed: {e}")
-            return StepOutput(
-                step_name=self.name or "Steps",
-                content=f"Steps execution failed: {str(e)}",
-                success=False,
-                error=str(e),
-            )
+            return [
+                StepOutput(
+                    step_name=self.name or "Steps",
+                    content=f"Steps execution failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+            ]
 
     async def aexecute_stream(
         self,
@@ -423,10 +384,6 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
-            # Return aggregated result
-            aggregated_result = self._aggregate_results(all_results)
-            yield aggregated_result
-
             # Yield steps execution completed event
             yield StepsExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -439,6 +396,9 @@ class Steps:
                 executed_steps=len(all_results),
                 step_results=all_results,
             )
+
+            for result in all_results:
+                yield result
 
         except Exception as e:
             logger.error(f"Async steps streaming failed: {e}")
