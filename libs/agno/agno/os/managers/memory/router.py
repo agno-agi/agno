@@ -6,7 +6,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.schemas import MemoryRow
 from agno.memory import Memory
-from agno.os.managers.memory.schemas import DeleteMemoriesRequest, UserMemoryCreateSchema, UserMemorySchema
+from agno.os.managers.memory.schemas import DeleteMemoriesRequest, UserMemoryCreateSchema, UserMemorySchema, UserStatsSchema
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
@@ -106,5 +106,25 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             raise HTTPException(status_code=500, detail="Failed to update memory")
 
         return UserMemorySchema.from_dict(user_memory)
+
+    @router.get("/users", response_model=List[UserStatsSchema], status_code=200)
+    async def get_users() -> List[UserStatsSchema]:
+        if memory.db is None:
+            raise HTTPException(status_code=500, detail="Database not initialized")
+
+        try:
+            user_stats = memory.db.get_user_memory_stats()
+            
+            return [
+                UserStatsSchema(
+                    user_id=stats["user_id"],
+                    total_memories=stats["total_memories"],
+                    last_memory_created_at=stats["last_memory_created_at"]
+                )
+                for stats in user_stats
+            ]
+                
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
 
     return router

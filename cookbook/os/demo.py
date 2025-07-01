@@ -11,6 +11,7 @@ from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
 from agno.os.managers import EvalManager, KnowledgeManager, MemoryManager, SessionManager
 from agno.eval.accuracy import AccuracyEval
+from agno.eval.performance import PerformanceEval
 from agno.vectordb.pgvector.pgvector import PgVector
 
 # Setup the database
@@ -106,6 +107,9 @@ agent_2 = Agent(
     markdown=True,
 )
 
+def instantiate_agent():
+    return Agent(system_message="Be concise, reply with one sentence.")
+
 evaluation = AccuracyEval(
     db=db, 
     name="Calculator Evaluation",
@@ -116,7 +120,13 @@ evaluation = AccuracyEval(
     num_iterations=1,
 )
 
-# evaluation.run(print_results=True)  # Comment this to prevent the eval from running
+evaluation2 = PerformanceEval(
+    name="Performance Evaluation",
+    func=instantiate_agent,
+    num_iterations=100,
+)
+
+# evaluation2.run(print_results=True)  # Comment this to prevent the eval from running
 # Setup the Agno API App
 agent_os = AgentOS(
     name="Demo App",
@@ -126,10 +136,12 @@ agent_os = AgentOS(
     interfaces=[Whatsapp(agent=agent)],
     apps=[
         SessionManager(db=db, name="Session Manager"),
+        SessionManager(db=db, name="Session Manager 2"),
         KnowledgeManager(knowledge=knowledge1, name="Knowledge Manager 1"),
         KnowledgeManager(knowledge=knowledge2, name="Knowledge Manager 2"),
         MemoryManager(memory=memory, name="Memory Manager"),
         EvalManager(db=db, name="Eval Manager"),
+        EvalManager(db=db, name="Eval Manager 2"),
     ],
 )
 app = agent_os.get_app()

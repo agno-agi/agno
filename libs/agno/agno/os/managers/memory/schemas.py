@@ -40,3 +40,11 @@ class UserMemoryCreateSchema(BaseModel):
     memory: str
     user_id: str
     topics: Optional[List[str]] = None
+
+
+class UserStatsSchema(BaseModel):
+    """Schema for user memory statistics"""
+
+    user_id: str
+    total_memories: int
+    last_memory_created_at: Optional[datetime]

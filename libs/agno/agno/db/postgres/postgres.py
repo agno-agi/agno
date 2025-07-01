@@ -1175,6 +1175,45 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             return False
 
+    def get_user_memory_stats(self) -> List[Dict[str, Any]]:
+        """Get user memory statistics grouped by user_id.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries containing user_id, total_memories, and last_memory_created_at.
+        """
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.last_updated).label("last_memory_created_at")
+                ).where(
+                    table.c.user_id.is_not(None)
+                ).group_by(
+                    table.c.user_id
+                ).order_by(
+                    func.max(table.c.last_updated).desc()
+                )
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return []
+
+                return [
+                    {
+                        "user_id": record.user_id,
+                        "total_memories": record.total_memories,
+                        "last_memory_created_at": record.last_memory_created_at
+                    }
+                    for record in result
+                ]
+
+        except Exception as e:
+            log_debug(f"Exception getting user memory stats: {e}")
+            return []
+
     # -- Knowledge methods --
 
     def get_knowledge_table(self) -> Table:
