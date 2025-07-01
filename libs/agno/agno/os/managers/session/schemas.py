@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -18,8 +18,12 @@ class SessionSchema(BaseModel):
         return cls(
             session_id=session.get("session_id", ""),
             title=session["runs"][0].get("run_data", {}).get("run_input", ""),
-            created_at=datetime.fromtimestamp(session.get("created_at", 0)) if session.get("created_at") else None,
-            updated_at=datetime.fromtimestamp(session.get("updated_at", 0)) if session.get("updated_at") else None,
+            created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
+            if session.get("created_at")
+            else None,
+            updated_at=datetime.fromtimestamp(session.get("updated_at", 0), tz=timezone.utc)
+            if session.get("updated_at")
+            else None,
         )
 
 
@@ -55,8 +59,8 @@ class AgentSessionDetailSchema(BaseModel):
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
-            created_at=datetime.fromtimestamp(session.created_at) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at) if session.updated_at else None,
+            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
+            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
 
 
@@ -89,7 +93,7 @@ class RunSchema(BaseModel):
             workspace_id=None,
             user_id=None,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_dict["run"]["created_at"])
+            created_at=datetime.fromtimestamp(run_dict["run"]["created_at"], tz=timezone.utc)
             if run_dict["run"]["created_at"] is not None
             else None,
             run_data={
@@ -119,7 +123,9 @@ class TeamRunSchema(BaseModel):
             user_id=None,
             run_data=run_response,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_response["created_at"]) if run_response["created_at"] else None,
+            created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
+            if run_response["created_at"]
+            else None,
         )
 
 
@@ -139,5 +145,7 @@ class WorkflowRunSchema(BaseModel):
             user_id=None,
             run_data=run_response,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_response["created_at"]) if run_response["created_at"] else None,
+            created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
+            if run_response["created_at"]
+            else None,
         )
