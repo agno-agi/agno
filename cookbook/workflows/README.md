@@ -66,17 +66,38 @@ Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-ste
 ```python
 from agno.workflow.v2 import Step, Workflow
 
-# Simple sequential workflow
+# Simple sequential workflow - just use agents directly
 workflow = Workflow(
     name="Content Creation Pipeline",
     steps=[
-        Step(name="Research", agent=researcher),
-        Step(name="Analysis", agent=analyst), 
-        Step(name="Writing", agent=writer),
+        researcher,  # Agent
+        analyst,     # Agent 
+        writer,      # Agent
     ]
 )
 
 # Run the workflow
+workflow.print_response(
+    "AI trends in 2024",
+    markdown=True,
+)
+```
+
+**You can name your steps** for better logging and future support on the Agno platform:
+
+```python
+from agno.workflow.v2 import Step, Workflow
+
+# Named steps for better tracking
+workflow = Workflow(
+    name="Content Creation Pipeline",
+    steps=[
+        Step(name="Research Phase", agent=researcher),
+        Step(name="Analysis Phase", agent=analyst), 
+        Step(name="Writing Phase", agent=writer),
+    ]
+)
+
 workflow.print_response(
     "AI trends in 2024",
     markdown=True,
