@@ -333,17 +333,30 @@ Share data across workflow steps:
 
 ```python
 from agno.workflow.v2 import Workflow
+from agno.agent.agent import Agent
+
+# Access state in agent tools
+def add_to_shared_data(agent: Agent, data: str) -> str:
+    agent.workflow_session_state["collected_data"] = data
+    return f"Added: {data}"
+
+shopping_assistant = Agent(
+    name="Shopping Assistant",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[add_to_shared_data],
+    instructions=[
+        "You are a helpful shopping assistant.",
+        "You can help users manage their shopping list by adding, removing, and listing items.",
+        "Always use the provided tools to interact with the shopping list.",
+        "Be friendly and helpful in your responses.",
+    ],
+)
 
 workflow = Workflow(
     name="Stateful Workflow",
     workflow_session_state={},  # Initialize shared state
     steps=[data_collector_step, data_processor_step, data_finalizer_step]
 )
-
-# Access state in agent tools
-def add_to_shared_data(agent: Agent, data: str) -> str:
-    agent.workflow_session_state["collected_data"] = data
-    return f"Added: {data}"
 ```
 
 **See**: [`shared_session_state_with_agent.py`](sync/shared_session_state_with_agent.py)
@@ -402,13 +415,6 @@ workflow = Workflow(
 | **Loop** | Quality assurance, retry logic | Known finite processes |
 | **Router** | Complex decision trees | Simple if/else logic |
 | **Mixed** | Maximum flexibility | Simple workflows |
-
-### Performance Optimization
-
-1. **Use Parallel** for independent tasks
-2. **Minimize Loop iterations** with good end conditions
-3. **Cache expensive operations** in functions
-4. **Use Conditions** to avoid unnecessary processing
 
 ## Migration from Workflows 1.0
 
