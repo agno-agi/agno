@@ -90,6 +90,27 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
+    def _extract_text_with_error_handling(self, page: Any, page_number: int, doc_name: str) -> str:
+        """Extract text from a PDF page with comprehensive error handling for encoding issues."""
+        try:
+            page_text = page.extract_text()
+            if page_text is None:
+                page_text = ""
+            return page_text
+        except UnicodeDecodeError as e:
+            logger.warning(f"Unicode decode error on page {page_number} of {doc_name}: {e}")
+            # Try alternative extraction methods
+            try:
+                # Try to extract text with different encoding
+                page_text = page.extract_text().encode("latin-1").decode("utf-8", errors="ignore")
+                return page_text
+            except Exception:
+                logger.error(f"Failed to extract text from page {page_number} of {doc_name}")
+                return f"[Page {page_number} - Text extraction failed]"
+        except Exception as e:
+            logger.error(f"Error extracting text from page {page_number} of {doc_name}: {e}")
+            return f"[Page {page_number} - Text extraction failed]"
+
 
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
@@ -115,12 +136,14 @@ class PDFReader(BasePDFReader):
 
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
+            page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
+
             documents.append(
                 Document(
                     name=doc_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=page.extract_text(),
+                    content=page_text,
                 )
             )
         if self.chunk:
@@ -145,11 +168,13 @@ class PDFReader(BasePDFReader):
             return []
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
+            page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
+
             return Document(
                 name=doc_name,
                 id=str(uuid4()),
                 meta_data={"page": page_number},
-                content=page.extract_text(),
+                content=page_text,
             )
 
         # Process pages in parallel using asyncio.gather
@@ -188,12 +213,14 @@ class PDFUrlReader(BasePDFReader):
 
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
+            page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
+
             documents.append(
                 Document(
                     name=doc_name,
                     id=f"{doc_name}_{page_number}",
                     meta_data={"page": page_number},
-                    content=page.extract_text(),
+                    content=page_text,
                 )
             )
         if self.chunk:
@@ -218,11 +245,13 @@ class PDFUrlReader(BasePDFReader):
         doc_reader = DocumentReader(BytesIO(response.content))
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
+            page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
+
             return Document(
                 name=doc_name,
-                id=f"{doc_name}_{page_number}",
+                id=str(uuid4()),
                 meta_data={"page": page_number},
-                content=page.extract_text(),
+                content=page_text,
             )
 
         # Process pages in parallel using asyncio.gather

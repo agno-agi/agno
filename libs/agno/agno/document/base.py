@@ -18,6 +18,7 @@ class Document:
     reranking_score: Optional[float] = None
     source_id: Optional[str] = None
     size: Optional[int] = None
+    name: Optional[str] = None
 
     def embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder"""

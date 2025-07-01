@@ -217,7 +217,13 @@ class BaseDb(ABC):
     # --- Knowledge Table ---
 
     @abstractmethod
-    def get_knowledge_document(self, knowledge_id: str):
+    def get_document_status(self, document_id: str) -> Optional[str]:
+        """Get the status of a knowledge document by ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge document by ID."""
         raise NotImplementedError
 
     @abstractmethod
@@ -228,14 +234,17 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge documents from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_knowledge_document(self):
+    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+        """Upsert a knowledge document in the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def delete_knowledge_document(self):
+    def delete_knowledge_document(self, document_id: str):
+        """Delete a knowledge document by ID."""
         raise NotImplementedError
 
     # --- Eval Table ---

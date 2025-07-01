@@ -4,14 +4,19 @@ from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.document.document_v2 import DocumentV2
 from agno.document.local_document_store import LocalDocumentStore
+from agno.eval.accuracy import AccuracyEval
+from agno.eval.performance import PerformanceEval
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
-from agno.os.managers import EvalManager, KnowledgeManager, MemoryManager, SessionManager
-from agno.eval.accuracy import AccuracyEval
-from agno.eval.performance import PerformanceEval
+from agno.os.managers import (
+    EvalManager,
+    KnowledgeManager,
+    MemoryManager,
+    SessionManager,
+)
 from agno.vectordb.pgvector.pgvector import PgVector
 
 # Setup the database
@@ -107,11 +112,13 @@ agent_2 = Agent(
     markdown=True,
 )
 
+
 def instantiate_agent():
     return Agent(system_message="Be concise, reply with one sentence.")
 
+
 evaluation = AccuracyEval(
-    db=db, 
+    db=db,
     name="Calculator Evaluation",
     model=OpenAIChat(id="gpt-4o"),
     agent=agent,

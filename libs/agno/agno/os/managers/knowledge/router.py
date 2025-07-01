@@ -93,6 +93,9 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     size=str(document.size) if document.size else "0",
                     metadata=document.metadata,
                     linked_to=knowledge.name,
+                    status=document.status,
+                    created_at=str(document.created_at) if document.created_at else None,
+                    updated_at=str(document.updated_at) if document.updated_at else None,
                 )
                 for document in documents
             ],
@@ -110,7 +113,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         document = knowledge.get_document(document_id=document_id)
 
-        document = DocumentResponseSchema(
+        response = DocumentResponseSchema(
             id=document_id,
             name=document.name,
             description=document.description,
@@ -119,9 +122,12 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             linked_to=knowledge.name,
             metadata=document.metadata,
             access_count=0,
+            status=document.status,
+            created_at=str(document.created_at) if document.created_at else None,
+            updated_at=str(document.updated_at) if document.updated_at else None,
         )
 
-        return document
+        return response
 
     @router.delete(
         "/documents/{document_id}",
@@ -142,16 +148,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         log_info(f"Deleting all documents")
         return "success"
 
-    @router.get("/documents/{document_id}/status")
-    async def get_document_status(document_id: str):
-        """Get the processing status of a document"""
-        try:
-            # Try to get the document from the database
-            document = knowledge.get_document(document_id)
-            return {"document_id": document_id, "status": "completed", "document": document}
-        except Exception as e:
-            # Document not found or still processing
-            return {"document_id": document_id, "status": "processing", "message": "Document is still being processed"}
+    @router.get("/documents/{document_id}/status", status_code=200)
+    def get_document_status(document_id: str) -> str:
+        log_info(f"Getting document status: {document_id}")
+        return knowledge.get_document_status(document_id=document_id)
 
     return router
 

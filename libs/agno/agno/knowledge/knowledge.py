@@ -1,5 +1,6 @@
 import io
 import os
+import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -10,7 +11,7 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
 from agno.document.document_store import DocumentStore
-from agno.document.document_v2 import DocumentV2
+from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.document.reader import Reader
 from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
 from agno.document.reader.docx_reader import DocxReader
@@ -150,7 +151,6 @@ class Knowledge:
                 except (OSError, IOError) as e:
                     log_warning(f"Could not get file size for {path}: {e}")
                     document.size = 0
-            self._add_to_documents_db(document)
 
             for read_document in read_documents:
                 read_document.source_id = document.id
@@ -168,7 +168,10 @@ class Knowledge:
                 )
                 self._load_from_path(file_document)
         else:
+            self._update_document_status(document.id, "Failed")
             raise ValueError(f"Invalid path: {path}")
+
+        self._update_document_status(document.id, "Completed")
 
     def _load_from_url(self, document: DocumentV2):
         log_info("Adding document from URL")
@@ -178,8 +181,10 @@ class Knowledge:
         try:
             parsed_url = urlparse(document.url)
             if not all([parsed_url.scheme, parsed_url.netloc]):
+                self._update_document_status(document.id, "Failed")
                 raise ValueError(f"Invalid URL format: {document.url}")
         except Exception as e:
+            self._update_document_status(document.id, "Failed")
             raise ValueError(f"Invalid URL: {document.url} - {str(e)}")
 
         # Determine file type from URL
@@ -216,20 +221,34 @@ class Knowledge:
                     self.vector_store.insert(documents=[read_document], filters=document.metadata)
 
         document.size = file_size
-        self._add_to_documents_db(document)
+        self._update_document_status(document.id, "Completed")
 
     def _load_from_content(self, document: DocumentV2):
         log_info(f"Adding document from content: {document.size}")
 
-        if document.content:
-            if "pdf" in document.content.type:
-                # Convert bytes to BytesIO for the reader
-                if isinstance(document.content.content, bytes):
-                    content_io = io.BytesIO(document.content.content)
-                else:
-                    content_io = document.content.content
+        read_documents = []
+        if isinstance(document.content, str):
+            if document.name is None:
+                document.name = document.content[:10] if len(document.content) >= 10 else document.content
+            content_io = io.BytesIO(document.content.encode("utf-8"))
+            if document.reader:
+                read_documents = document.reader.read(content_io, name=document.name)
+            else:
+                read_documents = self.text_reader.read(content_io, name=document.name)
 
-                read_documents = self.pdf_reader.read(content_io, name=document.name)
+        elif isinstance(document.content, DocumentContent):
+            if document.content.type:
+                log_info(f"Document content type: {document.content.type}")
+
+                if "pdf" in document.content.type:
+                    read_documents = self._process_pdf_content(document)
+                elif "csv" in document.content.type:
+                    read_documents = self._process_csv_content(document)
+                elif any(ext in document.content.type for ext in ["docx", "doc", "word"]):
+                    read_documents = self._process_docx_content(document)
+                else:
+                    log_warning(f"Unsupported content type: {document.content.type}")
+                    return
 
                 # Process each document in the list
                 for read_document in read_documents:
@@ -242,23 +261,23 @@ class Knowledge:
                     if self.vector_store:
                         self.vector_store.upsert(documents=[read_document], filters=document.metadata)
 
-            self._add_to_documents_db(document)
-
             # Add to document store if available
             if self.document_store:
                 self.document_store.add_document(id, document)
 
-            else:
-                # For non-PDF content, log warning for now
-                log_warning("Non-PDF content not supported yet")
         else:
+            self._update_document_status(document.id, "Failed")
             raise ValueError("No content provided")
+
+        self._update_document_status(document.id, "Completed")
 
     def _load_from_topics(self): ...
 
     def _load_from_cloud_storage(self): ...
 
     def _load_document(self, document: DocumentV2) -> None:
+        self._add_to_documents_db(document)
+
         if document.path:
             self._load_from_path(document)
 
@@ -274,8 +293,8 @@ class Knowledge:
             else:
                 self._load_from_topics(id, document)
 
-        if document.config:
-            self._load_from_cloud_storage(id, document)
+        # if document.config:
+        #     self._load_from_cloud_storage(id, document)
 
     def add_document(
         self,
@@ -347,6 +366,9 @@ class Knowledge:
             description=document_row.description,
             metadata=document_row.metadata,
             size=document_row.size,
+            status=document_row.status,
+            created_at=document_row.created_at,
+            updated_at=document_row.updated_at if document_row.updated_at else document_row.created_at,
         )
         return document
 
@@ -364,17 +386,25 @@ class Knowledge:
         )
         # Convert database rows to DocumentV2 objects
         result = []
-        for doc_row in documents:
+        for document_row in documents:
             # Create DocumentV2 from database row
             doc = DocumentV2(
-                id=doc_row.id,
-                name=doc_row.name,
-                description=doc_row.description,
-                metadata=doc_row.metadata,
-                size=doc_row.size,
+                id=document_row.id,
+                name=document_row.name,
+                description=document_row.description,
+                metadata=document_row.metadata,
+                size=document_row.size,
+                status=document_row.status,
+                created_at=document_row.created_at,
+                updated_at=document_row.updated_at if document_row.updated_at else document_row.created_at,
             )
             result.append(doc)
         return result, count
+
+    def get_document_status(self, document_id: str) -> Optional[str]:
+        if self.documents_db is None:
+            raise ValueError("No documents db provided")
+        return self.documents_db.get_document_status(document_id)
 
     def remove_document(self, document_id: str):
         if self.documents_db is not None:
@@ -393,6 +423,9 @@ class Knowledge:
 
     def _add_to_documents_db(self, document: DocumentV2):
         if self.documents_db:
+            created_at = document.created_at if document.created_at else int(time.time())
+            updated_at = document.updated_at if document.updated_at else int(time.time())
+
             document_row = KnowledgeRow(
                 id=document.id,
                 name=document.name if document.name else "",
@@ -402,7 +435,17 @@ class Knowledge:
                 size=document.size if document.size else len(document.content.content) if document.content else None,
                 linked_to=self.name,
                 access_count=0,
+                status=document.status if document.status else "Processing",
+                created_at=created_at,
+                updated_at=updated_at,
             )
+            self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
+
+    def _update_document_status(self, document_id: str, status: str):
+        if self.documents_db:
+            document_row = self.documents_db.get_knowledge_document(document_id)
+            document_row.status = status
+            document_row.updated_at = int(time.time())
             self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
 
     def _add_from_file(self, file_path: str):
@@ -447,20 +490,20 @@ class Knowledge:
 
     # TODO: Rework these into a map we can use for selection, but also return to API.
     def _select_reader(self, extension: str) -> Reader:
-        if extension == ".pdf":
+        log_info(f"Selecting reader for extension: {extension}")
+        extension = extension.lower()
+        if "pdf" in extension:
             return self.pdf_reader
-        elif extension == ".csv":
+        elif "csv" in extension:
             return self.csv_reader
-        elif extension == ".docx":
+        elif any(ext in extension for ext in ["docx", "doc", "word"]):
             return self.docx_reader
-        elif extension == ".json":
+        elif "json" in extension:
             return self.json_reader
-        elif extension == ".md":
+        elif any(ext in extension for ext in ["md", "markdown"]):
             return self.markdown_reader
-        elif extension == ".txt":
-            return self.text_reader
         else:
-            return None
+            return self.text_reader
 
     def _select_url_reader(self, url: str) -> Reader:
         if any(domain in url for domain in ["youtube.com", "youtu.be"]):
@@ -542,8 +585,43 @@ class Knowledge:
         """CSV URL reader - lazy loaded and cached."""
         return CSVUrlReader()
 
+    # --- Content Processing ---
 
-# -----------------------------
+    def _process_pdf_content(self, document: DocumentV2) -> List[Document]:
+        """Process PDF content"""
+
+        # Convert bytes to BytesIO for the reader
+        if isinstance(document.content.content, bytes):
+            content_io = io.BytesIO(document.content.content)
+        else:
+            content_io = document.content.content
+
+        read_documents = self.pdf_reader.read(content_io, name=document.name)
+        return read_documents
+
+    def _process_csv_content(self, document: DocumentV2) -> List[Document]:
+        """Process CSV content"""
+        # Convert bytes to BytesIO for the reader
+        if isinstance(document.content.content, bytes):
+            content_io = io.BytesIO(document.content.content)
+        else:
+            content_io = document.content.content
+
+        log_info(f"Processing CSV content: {document.name}")
+        read_documents = self.csv_reader.read(content_io, name=document.name)
+        return read_documents
+
+    def _process_docx_content(self, document: DocumentV2) -> List[Document]:
+        """Process DOCX content"""
+        if isinstance(document.content.content, bytes):
+            content_io = io.BytesIO(document.content.content)
+        else:
+            content_io = document.content.content
+
+        log_info(f"Processing DOCX content: {document.name}")
+        read_documents = self.docx_reader.read(content_io, name=document.name)
+        return read_documents
+
 
 # -- Unused for now. Will revisit when we do async and optimizations ---
 

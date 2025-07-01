@@ -33,8 +33,10 @@ class EvalSchema(BaseModel):
             eval_data=eval_run["eval_data"],
         )
 
+
 class DeleteEvalRunsRequest(BaseModel):
     eval_run_ids: List[str]
+
 
 class UpdateEvalRunRequest(BaseModel):
     name: str

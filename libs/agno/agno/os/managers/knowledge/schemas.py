@@ -13,3 +13,6 @@ class DocumentResponseSchema(BaseModel):
     linked_to: Optional[str] = None
     metadata: Optional[dict] = None
     access_count: Optional[int] = None
+    status: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None

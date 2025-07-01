@@ -1307,18 +1307,25 @@ class PostgresDb(BaseDb):
             )
         return self.knowledge_table
 
-    def delete_knowledge_document(self, knowledge_id: str):
+    def delete_knowledge_document(self, document_id: str):
         table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == knowledge_id)
+            stmt = table.delete().where(table.c.id == document_id)
             sess.execute(stmt)
             sess.commit()
         return
 
-    def get_knowledge_document(self, knowledge_id: str) -> Optional[KnowledgeRow]:
+    def get_document_status(self, document_id: str) -> Optional[str]:
         table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == knowledge_id)
+            stmt = select(table.c.status).where(table.c.id == document_id)
+            result = sess.execute(stmt).fetchone()
+            return result._mapping["status"]
+
+    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.id == document_id)
             result = sess.execute(stmt).fetchone()
             return KnowledgeRow.model_validate(result._mapping)
 
@@ -1373,10 +1380,32 @@ class PostgresDb(BaseDb):
         try:
             table = self.get_knowledge_table()
             with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(knowledge_row.model_dump())
+                # Only include fields that are not None in the update
+                update_fields = {
+                    k: v
+                    for k, v in {
+                        "name": knowledge_row.name,
+                        "description": knowledge_row.description,
+                        "metadata": knowledge_row.metadata,
+                        "type": knowledge_row.type,
+                        "size": knowledge_row.size,
+                        "linked_to": knowledge_row.linked_to,
+                        "access_count": knowledge_row.access_count,
+                        "status": knowledge_row.status,
+                        "created_at": knowledge_row.created_at,
+                        "updated_at": knowledge_row.updated_at,
+                    }.items()
+                    if v is not None
+                }
+
+                stmt = (
+                    postgresql.insert(table)
+                    .values(knowledge_row.model_dump())
+                    .on_conflict_do_update(index_elements=["id"], set_=update_fields)
+                )
                 sess.execute(stmt)
                 sess.commit()
-            return
+            return knowledge_row
         except Exception as e:
             log_error(f"Error upserting knowledge document: {e}")
             return None

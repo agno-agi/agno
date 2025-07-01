@@ -25,8 +25,8 @@ class JSONReader(Reader):
                 json_contents = json.loads(path.read_text("utf-8"))
 
             elif isinstance(path, BytesIO):
-                log_info(f"Reading uploaded file: {path.name}")
                 json_name = name or path.name.split(".")[0]
+                log_info(f"Reading uploaded file: {json_name}")
                 path.seek(0)
                 json_contents = json.load(path)
 
