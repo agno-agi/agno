@@ -18,6 +18,13 @@ try:
 except ImportError:
     raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
+try:
+    import aioboto3
+    AIOBOTO3_AVAILABLE = True
+except ImportError:
+    aioboto3 = None
+    AIOBOTO3_AVAILABLE = False
+
 
 @dataclass
 class AwsBedrock(Model):
@@ -30,6 +37,9 @@ class AwsBedrock(Model):
        - AWS_SECRET_ACCESS_KEY
        - AWS_REGION
     2. Or provide a boto3 Session object
+
+    For async support, you also need aioboto3 installed:
+       pip install aioboto3
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
 
@@ -59,6 +69,7 @@ class AwsBedrock(Model):
     request_params: Optional[Dict[str, Any]] = None
 
     client: Optional[AwsClient] = None
+    async_client: Optional[Any] = None
 
     def get_client(self) -> AwsClient:
         """
@@ -94,6 +105,44 @@ class AwsBedrock(Model):
                 aws_secret_access_key=self.aws_secret_access_key,
             )
         return self.client
+
+    def get_async_client(self):
+        """
+        Get the async Bedrock client context manager.
+
+        Returns:
+            The async Bedrock client context manager.
+        """
+        if not AIOBOTO3_AVAILABLE:
+            raise ImportError(
+                "`aioboto3` not installed. Please install using `pip install aioboto3` for async support."
+            )
+
+        # Use aioboto3.Session for async operations
+        session = aioboto3.Session()
+        
+        # Prepare client parameters
+        client_kwargs = {
+            "service_name": "bedrock-runtime",
+            "region_name": self.aws_region or getenv("AWS_REGION"),
+        }
+
+        if not self.aws_sso_auth:
+            aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
+            aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+            
+            if not aws_access_key_id or not aws_secret_access_key:
+                raise AgnoError(
+                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
+                    status_code=400,
+                )
+            
+            client_kwargs.update({
+                "aws_access_key_id": aws_access_key_id,
+                "aws_secret_access_key": aws_secret_access_key,
+            })
+
+        return session.client(**client_kwargs)
 
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """
@@ -312,6 +361,81 @@ class AwsBedrock(Model):
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Async invoke the Bedrock API.
+        """
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+
+            tool_config = None
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": self._get_inference_config(),
+            }
+            body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
+                body.update(**self.request_params)
+
+            async with self.get_async_client() as client:
+                return await client.converse(modelId=self.id, messages=formatted_messages, **body)
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
+        """
+        Async invoke the Bedrock API with streaming.
+        """
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+
+            tool_config = None
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": self._get_inference_config(),
+            }
+            body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                body.update(**self.request_params)
+
+            async with self.get_async_client() as client:
+                response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
+                async for chunk in response["stream"]:
+                    yield chunk
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
     # Overwrite the default from the base model
     def format_function_call_results(
         self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
@@ -499,9 +623,3 @@ class AwsBedrock(Model):
 
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
         pass
-
-    async def ainvoke(self, *args, **kwargs) -> Any:
-        raise NotImplementedError(f"Async not supported on {self.name}.")
-
-    async def ainvoke_stream(self, *args, **kwargs) -> Any:
-        raise NotImplementedError(f"Async not supported on {self.name}.")
