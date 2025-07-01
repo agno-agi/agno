@@ -11,9 +11,9 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
   - [2. Parallel Execution](#2-parallel-execution)
   - [3. Conditional Workflows](#3-conditional-workflows)
   - [4. Loop/Iteration Workflows](#4-loopiteration-workflows)
-  - [5. Router-Based Branching](#5-router-based-branching)
-  - [6. Mixed Execution Types](#6-mixed-execution-types)
-  - [7. Function-Based Steps](#7-function-based-steps)
+  - [5. Condition-Based Branching](#5-Condition-based-branching)
+  - [6. Function-Based Steps](#6-function-based-steps)
+  - [7. Mixed Execution Types](#7-mixed-execution-types)
   - [8. Complex Combinations](#8-complex-combinations)
 - [Advanced Features](#advanced-features)
 - [Best Practices](#best-practices)
@@ -47,6 +47,13 @@ Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-ste
 | **Loop** | Iterative execution | Quality-driven research |
 | **Router** | Dynamic routing | Content-based step selection |
 
+## Getting Started
+
+1. **Start Simple**: Begin with sequential workflows
+2. **Add Parallelism**: Identify independent tasks
+3. **Introduce Conditions**: Add content-aware branching
+4. **Enable Streaming**: Have event-based information
+5. **Scale Complexity**: Combine patterns as needed
 
 ## Workflow Patterns
 
@@ -69,11 +76,6 @@ workflow = Workflow(
     ]
 )
 ```
-
-**Key Benefits**:
-- Simple to understand and debug
-- Clear data flow
-- Perfect for linear processes
 
 **See**: [`sequence_of_steps.py`](sync/sequence_of_steps.py)
 
@@ -102,16 +104,11 @@ workflow = Workflow(
 )
 ```
 
-**Key Benefits**:
-- Faster execution
-- Resource efficiency
-- Independent task handling
-
 **See**: [`parallel_steps_workflow.py`](sync/parallel_steps_workflow.py)
 
-### 3. Conditional Workflows
+### 3. Conditional Steps
 
-**When to use**: Different processing paths based on content analysis or business logic.
+**When to use**: Conditional step execution based on business logic.
 
 **Example**: Topic-specific research strategies, content type routing
 
@@ -136,11 +133,6 @@ workflow = Workflow(
     ]
 )
 ```
-
-**Key Benefits**:
-- Dynamic behavior
-- Efficient resource usage
-- Content-aware processing
 
 **See**: [`condition_with_list_of_steps.py`](sync/condition_with_list_of_steps.py)
 
@@ -173,14 +165,9 @@ workflow = Workflow(
 )
 ```
 
-**Key Benefits**:
-- Quality assurance
-- Adaptive execution
-- Automatic retry logic
-
 **See**: [`loop_steps_workflow.py`](sync/loop_steps_workflow.py)
 
-### 5. Router-Based Branching
+### 5. Condition-Based Branching
 
 **When to use**: Complex decision trees, topic-specific workflows, dynamic routing.
 
@@ -214,45 +201,9 @@ workflow = Workflow(
 )
 ```
 
-**Key Benefits**:
-- Dynamic routing
-- Expertise matching
-- Scalable decision logic
-
 **See**: [`router_steps_workflow.py`](sync/router_steps_workflow.py)
 
-### 6. Mixed Execution Types
-
-**When to use**: Combining different execution types (agents, teams, functions) in one workflow.
-
-**Example**: Function → Team → Agent → Function
-
-```python
-from agno.workflow.v2 import Step, Workflow
-
-def data_preprocessor(step_input):
-    # Custom preprocessing logic
-    return StepOutput(content=f"Processed: {step_input.message}")
-
-workflow = Workflow(
-    name="Mixed Execution Pipeline",
-    steps=[
-        data_preprocessor,  # Function
-        research_team,      # Team
-        Step(name="Analysis", agent=analyst),  # Agent
-        Step(name="Custom Logic", executor=custom_function),  # Function in Step
-    ]
-)
-```
-
-**Key Benefits**:
-- Maximum flexibility
-- Custom logic integration
-- Component reusability
-
-**See**: [`sequence_of_functions_and_agents.py`](sync/sequence_of_functions_and_agents.py)
-
-### 7. Function-Based Steps
+### 6. Function-Based Steps
 
 **When to use**: Custom business logic, API integrations, data transformations.
 
@@ -283,12 +234,33 @@ workflow = Workflow(
 )
 ```
 
-**Key Benefits**:
-- Custom business logic
-- External API integration
-- Data transformation capabilities
-
 **See**: [`step_with_function.py`](sync/step_with_function.py)
+
+### 7. Mixed Execution Types
+
+**When to use**: Combining different execution types (agents, teams, functions) in one workflow.
+
+**Example**: Function → Team → Agent → Function
+
+```python
+from agno.workflow.v2 import Step, Workflow
+
+def data_preprocessor(step_input):
+    # Custom preprocessing logic
+    return StepOutput(content=f"Processed: {step_input.message}")
+
+workflow = Workflow(
+    name="Mixed Execution Pipeline",
+    steps=[
+        data_preprocessor,  # Function
+        research_team,      # Team
+        Step(name="Analysis", agent=analyst),  # Agent
+        Step(name="Custom Logic", executor=custom_function),  # Function in Step
+    ]
+)
+```
+
+**See**: [`sequence_of_functions_and_agents.py`](sync/sequence_of_functions_and_agents.py)
 
 ### 8. Complex Combinations
 
@@ -332,11 +304,6 @@ workflow = Workflow(
     ]
 )
 ```
-
-**Key Benefits**:
-- Ultimate flexibility
-- Complex business logic
-- Scalable architecture
 
 **See**: [`condition_and_parallel_steps.py`](sync/condition_and_parallel_steps.py), [`router_with_loop_steps.py`](sync/router_with_loop_steps.py)
 
@@ -404,9 +371,9 @@ workflow.run(
 
 **See**: [`pydantic_model_as_input.py`](sync/pydantic_model_as_input.py)
 
-### Function-Only Workflows
+### Custom Workflow Execution
 
-Replace traditional steps entirely with custom functions:
+Replace all the steps in the workflow with a single executable function where you can control everything.
 
 ```python
 def custom_workflow_function(workflow: Workflow, execution_input: WorkflowExecutionInput):
@@ -459,8 +426,8 @@ workflow = Workflow(
 1. **Assess current workflow**: Identify parallel opportunities
 2. **Add conditions**: Convert if/else logic to Condition components
 3. **Extract functions**: Move custom logic to function-based steps
-4. **Enable streaming**: Add stream=True for better UX
-5. **Add state management**: Use workflow_session_state for data sharing
+4. **Enable streaming**: For event-based information
+5. **Add state management**: Use `workflow_session_state` for data sharing
 
 ## Examples by Use Case
 
@@ -487,13 +454,5 @@ workflow = Workflow(
 ### Stateful Multi-Step Process
 - **Pattern**: Sequential + State management
 - **See**: [`shared_session_state_with_agent.py`](sync/shared_session_state_with_agent.py)
-
-## Getting Started
-
-1. **Start Simple**: Begin with sequential workflows
-2. **Add Parallelism**: Identify independent tasks
-3. **Introduce Conditions**: Add content-aware branching
-4. **Enable Streaming**: Improve user experience
-5. **Scale Complexity**: Combine patterns as needed
 
 For more examples and advanced patterns, explore the [`cookbook/workflows/sync/`](sync/) and [`cookbook/workflows/async/`](async/) directory. Each file demonstrates a specific pattern with detailed comments and real-world use cases.
