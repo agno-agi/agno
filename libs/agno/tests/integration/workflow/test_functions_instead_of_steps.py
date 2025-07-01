@@ -8,7 +8,6 @@ from agno.agent.agent import Agent
 from agno.run.base import RunStatus
 from agno.run.response import RunResponseEvent
 from agno.run.v2.workflow import WorkflowCompletedEvent
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow, WorkflowRunResponse
 
@@ -135,8 +134,8 @@ def test_custom_execution_streaming(workflow_storage):
 
         # Yield intermediate steps
         yield f"Starting analysis of: {message}"
-        yield f"Gathering research data..."
-        yield f"Processing insights..."
+        yield "Gathering research data..."
+        yield "Processing insights..."
 
         # Yield final result
         yield f"Complete analysis for {message}: Comprehensive insights and recommendations."
@@ -290,9 +289,9 @@ async def test_async_custom_execution_streaming(workflow_storage):
         # Yield intermediate steps
         yield f"Async: Starting analysis of: {message}"
         await asyncio.sleep(0.01)
-        yield f"Async: Gathering research data..."
+        yield "Async: Gathering research data..."
         await asyncio.sleep(0.01)
-        yield f"Async: Processing insights..."
+        yield "Async: Processing insights..."
         await asyncio.sleep(0.01)
 
         # Yield final result
@@ -360,19 +359,19 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
         research_phase += "- Gathered expert opinions\n\n"
 
         # Simulate analysis phase
-        analysis_phase = f"Analysis Phase Results:\n"
+        analysis_phase = "Analysis Phase Results:\n"
         analysis_phase += f"- Processed research on {topic}\n"
         analysis_phase += "- Generated insights and patterns\n"
         analysis_phase += "- Ranked findings by importance\n\n"
 
         # Simulate content creation phase
-        content_phase = f"Content Creation Phase:\n"
+        content_phase = "Content Creation Phase:\n"
         content_phase += f"- Created comprehensive report on {topic}\n"
         content_phase += "- Structured findings into actionable insights\n"
         content_phase += "- Prepared executive summary\n\n"
 
         # Final output
-        final_output = f"COMPREHENSIVE ANALYSIS REPORT\n\n"
+        final_output = "COMPREHENSIVE ANALYSIS REPORT\n\n"
         final_output += f"Topic: {topic}\n\n"
         final_output += research_phase + analysis_phase + content_phase
         final_output += "CONCLUSION: Analysis complete with actionable recommendations."

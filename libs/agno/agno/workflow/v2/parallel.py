@@ -11,7 +11,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import log_debug, logger
+from agno.utils.log import logger
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps

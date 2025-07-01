@@ -3,8 +3,7 @@
 import pytest
 
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
-from agno.workflow.v2 import Condition, Loop, Parallel, Step, Workflow
+from agno.workflow.v2 import Condition, Loop, Parallel, Workflow
 from agno.workflow.v2.router import Router
 from agno.workflow.v2.types import StepInput, StepOutput
 

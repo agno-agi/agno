@@ -4019,7 +4019,11 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode, debug_level=self.debug_level
+            model=reasoning_model,
+            monitoring=self.monitoring,
+            telemetry=self.telemetry,
+            debug_mode=self.debug_mode,
+            debug_level=self.debug_level,
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:

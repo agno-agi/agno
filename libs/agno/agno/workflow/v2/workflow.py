@@ -1462,7 +1462,7 @@ class Workflow:
 
                         # Print loop summary
                         if show_step_details:
-                            summary_content = f"**Loop Summary:**\n\n"
+                            summary_content = "**Loop Summary:**\n\n"
                             summary_content += (
                                 f"- Total iterations: {response.total_iterations}/{response.max_iterations}\n"
                             )
@@ -1566,7 +1566,7 @@ class Workflow:
                             selected_steps_text = (
                                 ", ".join(response.selected_steps) if response.selected_steps else "none"
                             )
-                            summary_content = f"**Router Summary:**\n\n"
+                            summary_content = "**Router Summary:**\n\n"
                             summary_content += f"- Selected steps: {selected_steps_text}\n"
                             summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
 
@@ -2066,7 +2066,7 @@ class Workflow:
 
                         # Print loop summary
                         if show_step_details:
-                            summary_content = f"**Loop Summary:**\n\n"
+                            summary_content = "**Loop Summary:**\n\n"
                             summary_content += (
                                 f"- Total iterations: {response.total_iterations}/{response.max_iterations}\n"
                             )
@@ -2143,7 +2143,7 @@ class Workflow:
                             selected_steps_text = (
                                 ", ".join(response.selected_steps) if response.selected_steps else "none"
                             )
-                            summary_content = f"**Router Summary:**\n\n"
+                            summary_content = "**Router Summary:**\n\n"
                             summary_content += f"- Selected steps: {selected_steps_text}\n"
                             summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
 
