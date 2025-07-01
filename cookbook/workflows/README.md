@@ -321,7 +321,7 @@ workflow = Workflow(
 )
 
 # Stream the response
-for event in workflow.run(message="AI trends", stream=True):
+for event in workflow.run(message="AI trends", stream=True, stream_intermediate_steps=True):
     print(f"Event: {event.step_name} - {event.content}")
 ```
 
