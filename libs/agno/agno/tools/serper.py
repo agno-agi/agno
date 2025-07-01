@@ -221,7 +221,7 @@ class SerperTools(Toolkit):
         topic_id: Optional[str] = None,
     ) -> str:
         """
-        Searches for reviews using the Serper Reviews API for sentiment analysis and opinion mining.
+        Searches for Google reviews using the Serper Reviews API for sentiment analysis and opinion mining.
 
         Args:
             place_id (str, optional): Google Place ID for the business/location.
