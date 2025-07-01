@@ -266,10 +266,48 @@ workflow = Workflow(
 
 **When to use**: Sophisticated workflows requiring multiple patterns.
 
-**Example**: Conditions + Parallel + Loops + Routing
+**Example**: Conditions + Parallel + Loops + Custom Post-Processing Function + Routing
 
 ```python
 from agno.workflow.v2 import Condition, Loop, Parallel, Router, Step, Workflow
+
+def research_post_processor(step_input) -> StepOutput:
+    """Post-process and consolidate research data from parallel conditions"""
+    research_data = step_input.previous_step_content or ""
+    
+    try:
+        # Analyze research quality and completeness
+        word_count = len(research_data.split())
+        has_tech_content = any(keyword in research_data.lower() 
+                              for keyword in ["technology", "ai", "software", "tech"])
+        has_business_content = any(keyword in research_data.lower() 
+                                  for keyword in ["market", "business", "revenue", "strategy"])
+        
+        # Create enhanced research summary
+        enhanced_summary = f"""
+            ## Research Analysis Report
+            
+            **Data Quality:** {"✓ High-quality" if word_count > 200 else "⚠ Limited data"}
+            
+            **Content Coverage:**
+            - Technical Analysis: {"✓ Completed" if has_tech_content else "✗ Not available"}
+            - Business Analysis: {"✓ Completed" if has_business_content else "✗ Not available"}
+            
+            **Research Findings:**
+            {research_data}
+        """.strip()
+        
+        return StepOutput(
+            content=enhanced_summary,
+            success=True,
+        )
+        
+    except Exception as e:
+        return StepOutput(
+            content=f"Research post-processing failed: {str(e)}",
+            success=False,
+            error=str(e)
+        )
 
 # Complex workflow combining multiple patterns
 workflow = Workflow(
@@ -294,6 +332,11 @@ workflow = Workflow(
                 ]
             ),
             name="Conditional Research Phase"
+        ),
+        Step(
+            name="Research Post-Processing",
+            executor=research_post_processor,
+            description="Consolidate and analyze research findings with quality metrics"
         ),
         Router(
             name="Content Type Router",
