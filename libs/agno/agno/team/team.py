@@ -6166,10 +6166,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name or member.agent_id is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):
