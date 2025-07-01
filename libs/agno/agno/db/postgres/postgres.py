@@ -1324,6 +1324,7 @@ class PostgresDb(BaseDb):
             "cache_write_tokens": 0,
             "reasoning_tokens": 0,
         }
+        model_counts = {}
 
         session_types = [
             ("agent", "agent_sessions_count", "agent_runs_count"),
@@ -1340,9 +1341,22 @@ class PostgresDb(BaseDb):
                 if session.get("user_id"):
                     all_user_ids.add(session["user_id"])
                 metrics[runs_count_key] += len(session.get("runs", []))
+                if runs := session.get("runs", []):
+                    for run in runs:
+                        if model_id := run.get("run", {}).get("model"):
+                            model_provider = run.get("run", {}).get("model_provider", "")
+                            model_counts[f"{model_id}:{model_provider}"] = (
+                                model_counts.get(f"{model_id}:{model_provider}", 0) + 1
+                            )
+
                 session_metrics = session.get("session_data", {}).get("session_metrics", {})
                 for field in token_metrics:
                     token_metrics[field] += session_metrics.get(field, 0)
+
+        model_metrics = []
+        for model, count in model_counts.items():
+            model_id, model_provider = model.split(":")
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         metrics["users_count"] = len(all_user_ids)
 
@@ -1351,7 +1365,7 @@ class PostgresDb(BaseDb):
             "date": date_to_process,
             "completed": date_to_process < datetime.now(timezone.utc).date(),
             "token_metrics": token_metrics,
-            "model_metrics": {},  # TODO:
+            "model_metrics": model_metrics,
             "created_at": int(time.time()),
             "updated_at": int(time.time()),
             **metrics,
