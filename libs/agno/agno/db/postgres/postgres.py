@@ -1175,11 +1175,19 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting user memory: {e}")
             return False
 
-    def get_user_memory_stats(self) -> List[Dict[str, Any]]:
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics grouped by user_id.
 
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing user_id, total_memories, and last_memory_updated_at.
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
         """
         try:
             table = self.get_user_memory_table()
@@ -1197,9 +1205,18 @@ class PostgresDb(BaseDb):
                     func.max(table.c.last_updated).desc()
                 )
 
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return []
+                    return [], 0
 
                 return [
                     {
@@ -1208,11 +1225,11 @@ class PostgresDb(BaseDb):
                         "last_memory_updated_at": record.last_memory_updated_at
                     }
                     for record in result
-                ]
+                ], total_count
 
         except Exception as e:
             log_debug(f"Exception getting user memory stats: {e}")
-            return []
+            return [], 0
 
     # -- Knowledge methods --
 
