@@ -331,6 +331,28 @@ class PostgresDb(BaseDb):
 
     # -- Session methods --
 
+    def _get_latest_session_created_at(self) -> Optional[int]:
+        """Get the created_at timestamp of the latest session in the database"""
+        try:
+            tables = []
+            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
+                table = self.get_table_for_session_type(session_type=session_type)
+                if table is not None:
+                    tables.append(select(table.c.created_at))
+            if not tables:
+                return None
+
+            union_stmt = union_all(*tables)
+            stmt = select(func.max(union_stmt.c.created_at))
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).scalar()
+                return result
+
+        except Exception as e:
+            log_error(f"Error getting latest session: {e}")
+            return None
+
     def delete_session(
         self,
         session_id: str,
@@ -1246,6 +1268,18 @@ class PostgresDb(BaseDb):
 
     # -- Metrics methods --
 
+    def _are_metrics_updated(self) -> bool:
+        """Check if all existing sessions have been accounted for in the metrics records."""
+        with self.Session() as sess:
+            stmt = select(self.metrics_table).order_by(self.metrics_table.c.updated_at.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return False
+
+            latest_session_created_at = self._get_latest_session_created_at()
+
+        return result._mapping["updated_at"] >= latest_session_created_at
+
     def _bulk_upsert_metrics(self, table: Table, metrics_records: list[dict]) -> list[dict]:
         if not metrics_records:
             return []
@@ -1448,7 +1482,18 @@ class PostgresDb(BaseDb):
             )
         return self.metrics_table
 
-    def get_metrics_raw(self, starting_date: Optional[date] = None, ending_date: Optional[date] = None) -> List[dict]:
+    def get_metrics_raw(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+    ) -> Tuple[List[dict], bool]:
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], bool]: A tuple containing the metrics and a boolean indicating if the metrics are up to date.
+        """
         try:
             table = self.get_metrics_table()
 
@@ -1460,13 +1505,14 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.date <= ending_date)
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return []
+                    return [], False
 
-                return [row._mapping for row in result]
+            are_metrics_updated = self._are_metrics_updated()
+            return [row._mapping for row in result], are_metrics_updated
 
         except Exception as e:
             log_error(f"Exception getting metrics: {e}")
-            return []
+            return [], False
 
     # -- Knowledge methods --
 

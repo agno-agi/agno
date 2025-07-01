@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
@@ -22,14 +22,12 @@ class DayAggregatedMetrics(BaseModel):
     date: datetime
     created_at: int
     updated_at: int
-    completed: bool
 
     @classmethod
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
         return cls(
             agent_runs_count=metrics_dict.get("agent_runs_count", 0),
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
-            completed=metrics_dict.get("completed", False),
             created_at=metrics_dict.get("created_at", 0),
             date=metrics_dict.get("date", datetime.now()),
             id=metrics_dict.get("id", ""),
@@ -42,3 +40,8 @@ class DayAggregatedMetrics(BaseModel):
             workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),
             workflow_sessions_count=metrics_dict.get("workflow_sessions_count", 0),
         )
+
+
+class MetricsResponse(BaseModel):
+    metrics: List[DayAggregatedMetrics]
+    is_updated: bool
