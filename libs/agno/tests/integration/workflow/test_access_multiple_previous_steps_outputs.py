@@ -3,7 +3,6 @@
 import pytest
 
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2 import Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -16,7 +15,7 @@ def research_step(step_input: StepInput) -> StepOutput:
 
 def analysis_step(step_input: StepInput) -> StepOutput:
     """Analysis step."""
-    return StepOutput(step_name="analysis_step", content=f"Analysis of research data", success=True)
+    return StepOutput(step_name="analysis_step", content="Analysis of research data", success=True)
 
 
 def report_step(step_input: StepInput) -> StepOutput:

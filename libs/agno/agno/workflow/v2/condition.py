@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import log_debug, logger
+from agno.utils.log import logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 

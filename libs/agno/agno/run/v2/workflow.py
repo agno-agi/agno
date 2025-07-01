@@ -398,7 +398,7 @@ class WorkflowRunResponse:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunResponse":
         # Import here to avoid circular import
-        from libs.agno.agno.workflow.v2.step import StepOutput
+        from agno.workflow.v2.step import StepOutput
 
         messages = data.pop("messages", [])
         messages = [Message.model_validate(message) for message in messages] if messages else None
