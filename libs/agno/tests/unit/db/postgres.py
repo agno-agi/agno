@@ -1,6 +1,6 @@
 """Test the PostgresDb class."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from agno.db.postgres.postgres import PostgresDb
@@ -50,7 +50,7 @@ def test_calculate_date_metrics_completed_flag_past_date(mock_time):
     """Test the completed flag is set to True for past dates"""
     mock_time.return_value = 1234567890
     db = MagicMock(spec=PostgresDb)
-    test_date = date.today() - timedelta(days=1)
+    test_date = datetime.now(timezone.utc).date() - timedelta(days=1)
     sessions_data = {}
 
     result = PostgresDb._calculate_date_metrics(db, test_date, sessions_data)
@@ -64,7 +64,7 @@ def test_calculate_date_metrics_completed_flag_today(mock_time):
     """Test the completed flag is set to False for today"""
     mock_time.return_value = 1234567890
     db = MagicMock(spec=PostgresDb)
-    test_date = date.today()
+    test_date = datetime.now(timezone.utc).date()
     sessions_data = {}
 
     result = PostgresDb._calculate_date_metrics(db, test_date, sessions_data)
@@ -181,14 +181,14 @@ def test_calculate_date_metrics_duplicate_users():
 def test_get_dates_to_calculate_metrics():
     """Test happy path for _get_dates_to_calculate_metrics_for"""
     db = MagicMock(spec=PostgresDb)
-    starting_date = date.today() - timedelta(days=2)
+    starting_date = datetime.now(timezone.utc).date() - timedelta(days=2)
 
     result = PostgresDb._get_dates_to_calculate_metrics_for(db, starting_date)
 
     expected = [
-        date.today() - timedelta(days=2),
-        date.today() - timedelta(days=1),
-        date.today(),
+        datetime.now(timezone.utc).date() - timedelta(days=2),
+        datetime.now(timezone.utc).date() - timedelta(days=1),
+        datetime.now(timezone.utc).date(),
     ]
     assert result == expected
 
@@ -196,8 +196,8 @@ def test_get_dates_to_calculate_metrics():
 def test_get_dates_to_calculate_metrics_if_starting_date_is_today():
     """Test _get_dates_to_calculate_metrics_for if starting_date is today"""
     db = MagicMock(spec=PostgresDb)
-    starting_date = date.today()
+    starting_date = datetime.now(timezone.utc).date()
 
     result = PostgresDb._get_dates_to_calculate_metrics_for(db, starting_date)
 
-    assert result == [date.today()]
+    assert result == [datetime.now(timezone.utc).date()]
