@@ -29,7 +29,7 @@ Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-ste
 - 🎯 **Smart Routing**: Dynamic step selection based on content analysis
 - 🔧 **Mixed Components**: Combine agents, teams, and functions seamlessly
 - 💾 **State Management**: Share data across steps with session state
-- 🌊 **Streaming Support**: Real-time processing with streaming capabilities
+- 🌊 **Streaming Support**: Having support for event-based streamed information
 - 📝 **Structured Inputs**: Type-safe inputs with Pydantic models
 
 ## Core Concepts
