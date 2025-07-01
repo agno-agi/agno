@@ -47,4 +47,4 @@ class UserStatsSchema(BaseModel):
 
     user_id: str
     total_memories: int
-    last_memory_created_at: Optional[datetime]
+    last_memory_updated_at: datetime

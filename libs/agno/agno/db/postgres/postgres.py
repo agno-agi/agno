@@ -1179,7 +1179,7 @@ class PostgresDb(BaseDb):
         """Get user memory statistics grouped by user_id.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing user_id, total_memories, and last_memory_created_at.
+            List[Dict[str, Any]]: A list of dictionaries containing user_id, total_memories, and last_memory_updated_at.
         """
         try:
             table = self.get_user_memory_table()
@@ -1188,7 +1188,7 @@ class PostgresDb(BaseDb):
                 stmt = select(
                     table.c.user_id,
                     func.count(table.c.memory_id).label("total_memories"),
-                    func.max(table.c.last_updated).label("last_memory_created_at")
+                    func.max(table.c.last_updated).label("last_memory_updated_at")
                 ).where(
                     table.c.user_id.is_not(None)
                 ).group_by(
@@ -1205,7 +1205,7 @@ class PostgresDb(BaseDb):
                     {
                         "user_id": record.user_id,
                         "total_memories": record.total_memories,
-                        "last_memory_created_at": record.last_memory_created_at
+                        "last_memory_updated_at": record.last_memory_updated_at
                     }
                     for record in result
                 ]

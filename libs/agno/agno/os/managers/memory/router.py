@@ -119,7 +119,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                 UserStatsSchema(
                     user_id=stats["user_id"],
                     total_memories=stats["total_memories"],
-                    last_memory_created_at=stats["last_memory_created_at"]
+                    last_memory_updated_at=stats["last_memory_updated_at"]
                 )
                 for stats in user_stats
             ]
