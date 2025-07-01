@@ -183,11 +183,7 @@ class Step:
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
-                        except TypeError:
-                            if isinstance(result, StepOutput):
-                                final_response = result
-                            else:
-                                final_response = StepOutput(content=str(result))
+
                         if final_response is not None:
                             response = final_response
                         else:
@@ -287,7 +283,7 @@ class Step:
                         raise ValueError("Cannot use async function with synchronous execution")
 
                     if inspect.isgeneratorfunction(self.active_executor):
-                        log_debug(f"Function returned iterable, streaming events")
+                        log_debug("Function returned iterable, streaming events")
                         content = ""
                         try:
                             for event in self.active_executor(step_input):
@@ -309,11 +305,7 @@ class Step:
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
-                        except TypeError:
-                            if isinstance(result, StepOutput):
-                                final_response = result
-                            else:
-                                final_response = StepOutput(content=str(result))
+
                     else:
                         result = self.active_executor(step_input)  # type: ignore
                         if isinstance(result, StepOutput):
@@ -442,11 +434,6 @@ class Step:
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
                                 final_response = e.value
-                        except TypeError:
-                            if isinstance(result, StepOutput):
-                                final_response = result
-                            else:
-                                final_response = StepOutput(content=str(result))
 
                         if final_response is not None:
                             response = final_response
