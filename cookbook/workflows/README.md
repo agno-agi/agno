@@ -311,7 +311,7 @@ workflow = Workflow(
 
 ### Streaming Support
 
-Enable real-time processing for long-running workflows:
+This adds support for having streaming event-based information for your workflows:
 
 ```python
 # Enable streaming for any workflow pattern
