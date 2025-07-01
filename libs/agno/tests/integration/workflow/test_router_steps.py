@@ -38,6 +38,7 @@ def test_basic_routing(workflow_storage):
     general_response = workflow.run(message="general topic")
     assert general_response.step_responses[0][0].content == "General content"
 
+
 def test_streaming(workflow_storage):
     """Test router with streaming."""
     stream_step = Step(name="stream", executor=lambda x: StepOutput(content="Stream content"))
@@ -64,6 +65,7 @@ def test_streaming(workflow_storage):
     assert len(completed_events) == 1
     assert "Stream content" in completed_events[0].content
 
+
 def test_agent_routing(workflow_storage, test_agent):
     """Test routing to agent steps."""
     agent_step = Step(name="agent_step", agent=test_agent)
@@ -87,6 +89,7 @@ def test_agent_routing(workflow_storage, test_agent):
 
     response = workflow.run(message="test")
     assert response.step_responses[0][0].success
+
 
 def test_mixed_routing(workflow_storage, test_agent, test_team):
     """Test routing to mix of function, agent, and team."""
@@ -126,6 +129,7 @@ def test_mixed_routing(workflow_storage, test_agent, test_team):
     team_response = workflow.run(message="test team")
     assert team_response.step_responses[0][0].success
 
+
 def test_multiple_step_routing(workflow_storage):
     """Test routing to multiple steps."""
     research_step = Step(name="research", executor=lambda x: StepOutput(content="Research output"))
@@ -161,7 +165,7 @@ def test_route_steps(workflow_storage):
     research_step = Step(name="research", executor=lambda x: StepOutput(content="Research output"))
     analysis_step = Step(name="analysis", executor=lambda x: StepOutput(content="Analysis output"))
     research_sequence = Steps(name="research_sequence", steps=[research_step, analysis_step])
-    
+
     summary_step = Step(name="summary", executor=lambda x: StepOutput(content="Summary output"))
 
     def route_selector(step_input: StepInput):

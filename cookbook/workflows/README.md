@@ -75,6 +75,12 @@ workflow = Workflow(
         Step(name="Writing", agent=writer),
     ]
 )
+
+# Run the workflow
+workflow.print_response(
+    "AI trends in 2024",
+    markdown=True,
+)
 ```
 
 **See**: [`sequence_of_steps.py`](sync/sequence_of_steps.py)
@@ -102,6 +108,8 @@ workflow = Workflow(
         Step(name="Synthesis", agent=synthesizer),
     ]
 )
+
+workflow.print_response("Write about the latest AI developments", markdown=True)
 ```
 
 **See**: [`parallel_steps_workflow.py`](sync/parallel_steps_workflow.py)
@@ -132,6 +140,8 @@ workflow = Workflow(
         Step(name="General Analysis", agent=general_analyst),
     ]
 )
+
+workflow.print_response("Comprehensive analysis of AI and machine learning trends", markdown=True)
 ```
 
 **See**: [`condition_with_list_of_steps.py`](sync/condition_with_list_of_steps.py)
@@ -163,6 +173,8 @@ workflow = Workflow(
         Step(name="Final Analysis", agent=analyst),
     ]
 )
+
+workflow.print_response("Research the impact of renewable energy on global markets", markdown=True)
 ```
 
 **See**: [`loop_steps_workflow.py`](sync/loop_steps_workflow.py)
@@ -199,6 +211,8 @@ workflow = Workflow(
         Step(name="Synthesis", agent=synthesizer),
     ]
 )
+
+workflow.print_response("Latest developments in artificial intelligence and machine learning", markdown=True)
 ```
 
 **See**: [`router_steps_workflow.py`](sync/router_steps_workflow.py)
@@ -232,6 +246,8 @@ workflow = Workflow(
         Step(name="Final Review", agent=reviewer),
     ]
 )
+
+workflow.print_response("Create a technical analysis of blockchain scalability solutions", markdown=True)
 ```
 
 **See**: [`step_with_function.py`](sync/step_with_function.py)
@@ -258,6 +274,8 @@ workflow = Workflow(
         Step(name="Custom Logic", executor=custom_function),  # Function in Step
     ]
 )
+
+workflow.print_response("Analyze the competitive landscape for fintech startups", markdown=True)
 ```
 
 **See**: [`sequence_of_functions_and_agents.py`](sync/sequence_of_functions_and_agents.py)
@@ -346,6 +364,8 @@ workflow = Workflow(
         Step(name="Final Review", agent=reviewer),
     ]
 )
+
+workflow.print_response("Create a comprehensive analysis of sustainable technology trends and their business impact for 2024", markdown=True)
 ```
 
 **See**: [`condition_and_parallel_steps.py`](sync/condition_and_parallel_steps.py), [`router_with_loop_steps.py`](sync/router_with_loop_steps.py)
@@ -357,15 +377,44 @@ workflow = Workflow(
 This adds support for having streaming event-based information for your workflows:
 
 ```python
+from agno.workflow.v2 import Workflow
+from agno.run.v2.workflow import (
+    WorkflowStartedEvent,
+    StepStartedEvent, 
+    StepCompletedEvent,
+    WorkflowCompletedEvent
+)
+
 # Enable streaming for any workflow pattern
 workflow = Workflow(
     name="Streaming Pipeline",
     steps=[research_step, analysis_step, writing_step]
 )
 
-# Stream the response
+# Stream with proper event handling
 for event in workflow.run(message="AI trends", stream=True, stream_intermediate_steps=True):
-    print(f"Event: {event.step_name} - {event.content}")
+    if isinstance(event, WorkflowStartedEvent):
+        print(f"🚀 Workflow Started: {event.workflow_name}")
+        print(f"   Run ID: {event.run_id}")
+        
+    elif isinstance(event, StepStartedEvent):
+        print(f"📍 Step Started: {event.step_name}")
+        print(f"   Step Index: {event.step_index}")
+        
+    elif isinstance(event, StepCompletedEvent):
+        print(f"✅ Step Completed: {event.step_name}")
+        # Show content preview instead of full content
+        if hasattr(event, 'content') and event.content:
+            preview = str(event.content)[:100] + "..." if len(str(event.content)) > 100 else str(event.content)
+            print(f"   Preview: {preview}")
+            
+    elif isinstance(event, WorkflowCompletedEvent):
+        print(f"🎉 Workflow Completed: {event.workflow_name}")
+        print(f"   Total Steps: {len(event.step_responses)}")
+        # Show final output preview
+        if hasattr(event, 'content') and event.content:
+            preview = str(event.content)[:150] + "..." if len(str(event.content)) > 150 else str(event.content)
+            print(f"   Final Output: {preview}")
 ```
 
 **See**: Any `*_stream.py` file for streaming examples.
@@ -400,6 +449,8 @@ workflow = Workflow(
     workflow_session_state={},  # Initialize shared state
     steps=[data_collector_step, data_processor_step, data_finalizer_step]
 )
+
+workflow.print_response("Add apples and oranges to my shopping list")
 ```
 
 **See**: [`shared_session_state_with_agent.py`](sync/shared_session_state_with_agent.py)
@@ -416,7 +467,7 @@ class ResearchRequest(BaseModel):
     depth: int = Field(description="Research depth (1-10)")
     sources: List[str] = Field(description="Preferred sources")
 
-workflow.run(
+workflow.print_response(
     message=ResearchRequest(
         topic="AI trends 2024",
         depth=8,
@@ -442,6 +493,8 @@ workflow = Workflow(
     name="Function-Based Workflow",
     steps=custom_workflow_function  # Single function replaces all steps
 )
+
+workflow.print_response("Evaluate the market potential for quantum computing applications", markdown=True)
 ```
 
 **See**: [`function_instead_of_steps.py`](sync/function_instead_of_steps.py)

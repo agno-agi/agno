@@ -38,6 +38,7 @@ def test_function_sequence_non_streaming(workflow_storage):
     assert "Content: Hello World | Referencing: Research: test" in response.content
     assert len(response.step_responses) == 2
 
+
 def test_function_sequence_streaming(workflow_storage):
     """Test function sequence with streaming."""
     workflow = Workflow(
@@ -55,6 +56,7 @@ def test_function_sequence_streaming(workflow_storage):
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
     assert "Content: Hello World | Referencing: Research: test" == completed_events[0].content
+
 
 def test_agent_sequence_non_streaming(workflow_storage, test_agent):
     """Test agent sequence."""
@@ -74,6 +76,7 @@ def test_agent_sequence_non_streaming(workflow_storage, test_agent):
     assert response.content is not None
     assert len(response.step_responses) == 2
 
+
 def test_team_sequence_non_streaming(workflow_storage, test_team):
     """Test team sequence."""
     test_team.members[0].role = "Do research on the topic and return the results."
@@ -91,6 +94,7 @@ def test_team_sequence_non_streaming(workflow_storage, test_team):
     assert isinstance(response, WorkflowRunResponse)
     assert response.content is not None
     assert len(response.step_responses) == 2
+
 
 @pytest.mark.asyncio
 async def test_async_function_sequence(workflow_storage):
@@ -114,6 +118,7 @@ async def test_async_function_sequence(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
     assert "Async: test" in response.content
     assert "Content: Hello World | Referencing: Async: test" in response.content
+
 
 @pytest.mark.asyncio
 async def test_async_streaming(workflow_storage):
@@ -139,6 +144,7 @@ async def test_async_streaming(workflow_storage):
     assert len(events) > 0
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
+
 
 def test_step_chaining(workflow_storage):
     """Test that steps properly chain outputs."""
