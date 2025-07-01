@@ -1,5 +1,5 @@
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
@@ -1349,7 +1349,7 @@ class PostgresDb(BaseDb):
         return {
             "id": str(uuid4()),
             "date": date_to_process,
-            "completed": date_to_process < date.today(),
+            "completed": date_to_process < datetime.now(timezone.utc).date(),
             "token_metrics": token_metrics,
             "model_metrics": {},  # TODO:
             "created_at": int(time.time()),
@@ -1395,7 +1395,8 @@ class PostgresDb(BaseDb):
 
     def _get_dates_to_calculate_metrics_for(self, starting_date: date) -> list[date]:
         """Return the list of dates to calculate metrics for."""
-        days_diff = (date.today() - starting_date).days + 1
+        today = datetime.now(timezone.utc).date()
+        days_diff = (today - starting_date).days + 1
         if days_diff <= 0:
             return []
         return [starting_date + timedelta(days=x) for x in range(days_diff)]
