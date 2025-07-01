@@ -238,13 +238,11 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        self.refresh_from_db(user_id=user_id)
 
         if self.memories is None:
             return []
@@ -254,19 +252,16 @@ class Memory:
         """Get the session summaries for a given user id"""
         if user_id is None:
             user_id = "default"
+        self.refresh_from_db(user_id=user_id)
         if self.summaries is None:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        self.refresh_from_db(user_id=user_id)
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
