@@ -6133,6 +6133,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+        
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -6140,6 +6145,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
