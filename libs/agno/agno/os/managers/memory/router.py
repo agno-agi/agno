@@ -126,8 +126,6 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                 page=page,
             )
 
-            breakpoint()
-
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(
