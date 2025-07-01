@@ -3,6 +3,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+from sqlalchemy import Index, UniqueConstraint
+
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
@@ -103,7 +105,7 @@ class PostgresDb(BaseDb):
         """
         try:
             expected_table_schema = get_table_schema_definition(table_type)
-            expected_columns = set(expected_table_schema.keys())
+            expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
 
             # Get existing columns
             inspector = inspect(self.db_engine)
@@ -170,6 +172,8 @@ class PostgresDb(BaseDb):
             log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
 
             columns, indexes, unique_constraints = [], [], []
+            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
                 column_kwargs = {}
@@ -190,10 +194,14 @@ class PostgresDb(BaseDb):
             table_metadata = MetaData(schema=db_schema)
             table = Table(table_name, table_metadata, *columns, schema=db_schema)
 
+            # Add multi-column unique constraints
+            for constraint in schema_unique_constraints:
+                constraint_name = constraint["name"]
+                constraint_columns = constraint["columns"]
+                table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
+
             # Add indexes to the table definition
             for idx_col in indexes:
-                from sqlalchemy import Index
-
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
@@ -205,6 +213,7 @@ class PostgresDb(BaseDb):
                 table_name,
                 MetaData(schema=db_schema),
                 *[c.copy() for c in table.columns],
+                *[c for c in table.constraints if not isinstance(c, Index)],
                 schema=db_schema,
             )
             table_without_indexes.create(self.db_engine, checkfirst=True)
@@ -331,6 +340,38 @@ class PostgresDb(BaseDb):
 
     # -- Session methods --
 
+    def _get_first_or_latest_session_date(self, latest: bool = False) -> Optional[int]:
+        """Get the session with the earliest or latest created_at timestamp.
+
+        Args:
+            latest: If True, return the latest session; if False, return the earliest session
+
+        Returns:
+            Timestamp of the session, or None if no sessions exist or on error.
+        """
+        try:
+            tables = []
+            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
+                table = self.get_table_for_session_type(session_type=session_type)
+                if table is not None:
+                    tables.append(select(table.c.created_at))
+            if not tables:
+                return None
+
+            union_stmt = union_all(*tables)
+            if latest:
+                stmt = select(func.max(union_stmt.c.created_at))
+            else:
+                stmt = select(func.min(union_stmt.c.created_at))
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).scalar()
+                return result
+
+        except Exception as e:
+            log_error(f"Error getting first session date: {e}")
+            return None
+
     def _get_latest_session_created_at(self) -> Optional[int]:
         """Get the created_at timestamp of the latest session in the database"""
         try:
@@ -385,28 +426,6 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
-
-    def get_first_session_date(self) -> Optional[int]:
-        """Get the timestamp of the first session in the database"""
-        try:
-            tables = []
-            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
-                table = self.get_table_for_session_type(session_type=session_type)
-                if table is not None:
-                    tables.append(select(table.c.created_at))
-            if not tables:
-                return None
-
-            union_stmt = union_all(*tables)
-            stmt = select(func.min(union_stmt.c.created_at))
-
-            with self.Session() as sess:
-                result = sess.execute(stmt).scalar()
-                return result
-
-        except Exception as e:
-            log_error(f"Error getting first session date: {e}")
-            return None
 
     def get_runs_raw(self, session_id: str, session_type: SessionType) -> Optional[List[Dict[str, Any]]]:
         """
@@ -1292,10 +1311,12 @@ class PostgresDb(BaseDb):
             update_columns = {
                 col.name: stmt.excluded[col.name]
                 for col in table.columns
-                if col.name not in ["id", "date", "created_at"]
+                if col.name not in ["id", "date", "created_at", "aggregation_period"]
             }
 
-            stmt = stmt.on_conflict_do_update(index_elements=["date"], set_=update_columns).returning(table)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["date", "aggregation_period"], set_=update_columns
+            ).returning(table)
             result = sess.execute(stmt, metrics_records)
             results = [row._mapping for row in result.fetchall()]
             sess.commit()
@@ -1359,6 +1380,7 @@ class PostgresDb(BaseDb):
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         metrics["users_count"] = len(all_user_ids)
+        current_time = int(time.time())
 
         return {
             "id": str(uuid4()),
@@ -1366,8 +1388,9 @@ class PostgresDb(BaseDb):
             "completed": date_to_process < datetime.now(timezone.utc).date(),
             "token_metrics": token_metrics,
             "model_metrics": model_metrics,
-            "created_at": int(time.time()),
-            "updated_at": int(time.time()),
+            "created_at": current_time,
+            "updated_at": current_time,
+            "aggregation_period": "daily",
             **metrics,
         }
 
@@ -1435,13 +1458,13 @@ class PostgresDb(BaseDb):
 
             # 2. No metrics records. Return the date of the first recorded session.
             else:
-                first_session_date = self.get_first_session_date()
+                first_session_date = self._get_first_or_latest_session_date(latest=False)
 
                 # 3. No metrics records and no sessions records. Return None.
                 if not first_session_date:
                     return None
 
-                return date.fromtimestamp(first_session_date)
+                return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
