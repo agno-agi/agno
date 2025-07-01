@@ -548,8 +548,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -4755,11 +4753,10 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
-                else:
-                    system_message_content += f"{indent * ' '}   - ID: {member.agent_id}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.tools is not None and self.add_member_tools_to_system_message:
@@ -6169,7 +6166,7 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
+            if member.name or member.agent_id is not None:
                 url_safe_member_id = self._get_member_id(member)
                 if url_safe_member_id == member_id:
                     return i, member
