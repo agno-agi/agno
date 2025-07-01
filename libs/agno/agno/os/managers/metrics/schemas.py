@@ -17,7 +17,7 @@ class DayAggregatedMetrics(BaseModel):
     workflow_sessions_count: int
     users_count: int
     token_metrics: Dict[str, Any]
-    model_metrics: Dict[str, Any]
+    model_metrics: List[Dict[str, Any]]
 
     date: datetime
     created_at: int
