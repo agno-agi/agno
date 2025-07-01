@@ -16,8 +16,12 @@ def get_weather(city: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(model="gpt-4o-mini"),
-    tools=[get_weather],
+    model=OpenAIChat(id="gpt-4o-mini"),
     markdown=True,
 )
+
+agent.print_response("What can you do?", stream=True)
+
+agent.add_tool(get_weather)
+
 agent.print_response("What is the weather in San Francisco?", stream=True)

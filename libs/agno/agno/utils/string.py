@@ -90,8 +90,8 @@ def _clean_json_content(content: str) -> str:
     elif "```" in content:
         content = content.split("```")[1].strip()
 
-    # Remove markdown formatting
-    content = re.sub(r"[*`#]", "", content)
+    # Replace markdown formatting like *"name"* or `"name"` with "name"
+    content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
 
     # Handle newlines and control characters
     content = content.replace("\n", " ").replace("\r", "")
@@ -108,7 +108,7 @@ def _clean_json_content(content: str) -> str:
         else:
             escaped_value = value.replace('"', '\\"')
 
-        return f'"{key.lower()}": "{escaped_value}'
+        return f'"{key}": "{escaped_value}'
 
     # Find and escape quotes in field values
     content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
