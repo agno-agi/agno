@@ -4758,6 +4758,8 @@ class Team:
                 if member.name is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
+                else:
+                    system_message_content += f"{indent * ' '}   - ID: {member.agent_id}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
                 if member.tools is not None and self.add_member_tools_to_system_message:
