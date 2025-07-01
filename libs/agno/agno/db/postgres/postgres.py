@@ -1180,7 +1180,7 @@ class PostgresDb(BaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory statistics grouped by user_id.
+        """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
@@ -1188,21 +1188,32 @@ class PostgresDb(BaseDb):
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
         """
         try:
             table = self.get_user_memory_table()
 
             with self.Session() as sess, sess.begin():
-                stmt = select(
-                    table.c.user_id,
-                    func.count(table.c.memory_id).label("total_memories"),
-                    func.max(table.c.last_updated).label("last_memory_updated_at")
-                ).where(
-                    table.c.user_id.is_not(None)
-                ).group_by(
-                    table.c.user_id
-                ).order_by(
-                    func.max(table.c.last_updated).desc()
+                stmt = (
+                    select(
+                        table.c.user_id,
+                        func.count(table.c.memory_id).label("total_memories"),
+                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                    )
+                    .where(table.c.user_id.is_not(None))
+                    .group_by(table.c.user_id)
+                    .order_by(func.max(table.c.last_updated).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1220,9 +1231,9 @@ class PostgresDb(BaseDb):
 
                 return [
                     {
-                        "user_id": record.user_id,
+                        "user_id": record.user_id,  # type: ignore
                         "total_memories": record.total_memories,
-                        "last_memory_updated_at": record.last_memory_updated_at
+                        "last_memory_updated_at": record.last_memory_updated_at,
                     }
                     for record in result
                 ], total_count

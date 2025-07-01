@@ -191,6 +191,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 

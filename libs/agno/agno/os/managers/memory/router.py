@@ -6,7 +6,12 @@ from fastapi.routing import APIRouter
 
 from agno.db.schemas import MemoryRow
 from agno.memory import Memory
-from agno.os.managers.memory.schemas import DeleteMemoriesRequest, UserMemoryCreateSchema, UserMemorySchema, UserStatsSchema
+from agno.os.managers.memory.schemas import (
+    DeleteMemoriesRequest,
+    UserMemoryCreateSchema,
+    UserMemorySchema,
+    UserStatsSchema,
+)
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
@@ -108,8 +113,8 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         return UserMemorySchema.from_dict(user_memory)
 
     @router.get("/users", response_model=PaginatedResponse[UserStatsSchema], status_code=200)
-    async def get_users(
-        limit: Optional[int] = Query(default=20, description="Number of users to return"),
+    async def get_user_memory_stats(
+        limit: Optional[int] = Query(default=20, description="Number of items to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
     ) -> PaginatedResponse[UserStatsSchema]:
         if memory.db is None:
@@ -120,16 +125,11 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                 limit=limit,
                 page=page,
             )
-            
+
+            breakpoint()
+
             return PaginatedResponse(
-                data=[
-                    UserStatsSchema(
-                        user_id=stats["user_id"],
-                        total_memories=stats["total_memories"],
-                        last_memory_updated_at=stats["last_memory_updated_at"]
-                    )
-                    for stats in user_stats
-                ],
+                data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(
                     page=page,
                     limit=limit,
@@ -137,7 +137,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                     total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,
                 ),
             )
-                
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
 
