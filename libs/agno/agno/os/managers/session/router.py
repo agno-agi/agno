@@ -3,8 +3,10 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
-from agno.os.managers.session.schemas import (
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
     AgentSessionDetailSchema,
+    DeleteSessionRequest,
     RunSchema,
     SessionSchema,
     TeamRunSchema,
@@ -12,7 +14,6 @@ from agno.os.managers.session.schemas import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
@@ -20,14 +21,18 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
+        session_title: Optional[str] = Query(default=None, description="Filter sessions by title"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[SessionSchema]:
         sessions, total_count = db.get_sessions_raw(
             session_type=session_type,
             component_id=component_id,
+            user_id=user_id,
+            session_title=session_title,
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -40,7 +45,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
                 page=page,
                 limit=limit,
                 total_count=total_count,
-                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
             ),
         )
 
@@ -81,5 +86,32 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return [TeamRunSchema.from_dict(run) for run in runs]  # type: ignore
         elif session_type == SessionType.WORKFLOW:
             return [WorkflowRunSchema.from_dict(run) for run in runs]  # type: ignore
+
+    @router.delete("/sessions", status_code=204)
+    async def delete_session(request: DeleteSessionRequest) -> None:
+        if len(request.session_ids) != len(request.session_types):
+            raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
+
+        db.delete_sessions(session_types=request.session_types, session_ids=request.session_ids)
+
+    @router.post(
+        "/sessions/{session_id}/rename",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+    )
+    async def rename_session(
+        session_id: str = Path(...),
+        session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
+        session_name: str = Query(default=None, description="Session name"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+
+        if session_type == SessionType.AGENT:
+            return AgentSessionDetailSchema.from_session(session)
+        elif session_type == SessionType.TEAM:
+            return TeamSessionDetailSchema.from_session(session)
+        elif session_type == SessionType.WORKFLOW:
+            return WorkflowSessionDetailSchema.from_session(session)
 
     return router

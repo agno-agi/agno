@@ -19,7 +19,7 @@ knowledge = Knowledge(
 )
 
 # ---  Sample 1: Add a single document from path ---
-knowledge.add_document("tmp/cv_1.pdf")
+knowledge.add_document(paths="tmp/cv_1.pdf")
 
 # --- Sample 2: Add a single document from DocumentV2 ---
 knowledge.add_document(
@@ -31,7 +31,7 @@ knowledge.add_document(
 )
 
 # --- Sample 3: Add multiple documents from paths ---
-knowledge.add_documents(["tmp/cv_1.pdf", "tmp/cv_2.pdf"])
+knowledge.add_documents(paths=["tmp/cv_1.pdf", "tmp/cv_2.pdf"])
 
 # --- Sample 4: Add multiple documents from DocumentV2 ---
 knowledge.add_documents(

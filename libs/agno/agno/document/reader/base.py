@@ -23,10 +23,10 @@ class Reader:
         self.chunk_size = chunk_size
         self.chunking_strategy = chunking_strategy
 
-    def read(self, obj: Any) -> List[Document]:
+    def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
-    async def async_read(self, obj: Any) -> List[Document]:
+    async def async_read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:

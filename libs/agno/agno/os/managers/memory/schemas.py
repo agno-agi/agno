@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -40,3 +40,23 @@ class UserMemoryCreateSchema(BaseModel):
     memory: str
     user_id: str
     topics: Optional[List[str]] = None
+
+
+class UserStatsSchema(BaseModel):
+    """Schema for user memory statistics"""
+
+    user_id: str
+    total_memories: int
+    last_memory_updated_at: Optional[datetime] = None
+
+    @classmethod
+    def from_dict(cls, user_stats_dict: Dict[str, Any]) -> "UserStatsSchema":
+        last_updated_at = user_stats_dict.get("last_memory_updated_at")
+
+        return cls(
+            user_id=user_stats_dict["user_id"],
+            total_memories=user_stats_dict["total_memories"],
+            last_memory_updated_at=datetime.fromtimestamp(last_updated_at, tz=timezone.utc)
+            if last_updated_at
+            else None,
+        )
