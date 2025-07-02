@@ -75,10 +75,12 @@ from agno.utils.log import (
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.response import (
+    async_generator_wrapper,
     check_if_run_cancelled,
     create_panel,
     escape_markdown_tags,
     format_tool_calls,
+    generator_wrapper,
     update_run_response_with_reasoning,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -274,6 +276,8 @@ class Team:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
     # monitoring=True logs Team information to agno.com for monitoring
@@ -350,6 +354,7 @@ class Team:
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
+        debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
@@ -443,6 +448,10 @@ class Team:
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
         self.monitoring = monitoring
@@ -478,6 +487,10 @@ class Team:
 
         self._memory_deepcopy_done: bool = False
 
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response
+
     def _set_team_id(self) -> str:
         if self.team_id is None:
             self.team_id = str(uuid4())
@@ -486,7 +499,7 @@ class Team:
     def _set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug(source_type="team")
+            set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
 
@@ -510,6 +523,7 @@ class Team:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
+            member.debug_level = self.debug_level
         if self.show_tool_calls:
             member.show_tool_calls = True
         if self.markdown:
@@ -534,8 +548,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -601,7 +613,7 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.parent_team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
@@ -620,9 +632,15 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-    @property
-    def is_streamable(self) -> bool:
-        return self.response_model is None
+    def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        if not self.tools:
+            self.tools = []
+        self.tools.append(tool)
+        self._rebuild_tools = True
+
+    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+        self.tools = tools
+        self._rebuild_tools = True
 
     @overload
     def run(
@@ -739,7 +757,7 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -748,11 +766,6 @@ class Team:
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._set_default_model()
@@ -842,7 +855,7 @@ class Team:
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._run_stream(
                         run_response=self.run_response,
                         run_messages=run_messages,
@@ -871,8 +884,8 @@ class Team:
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
-                    return self._generator_wrapper(
+                if stream:
+                    return generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -888,17 +901,13 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+            if stream:
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
-                return self._generator_wrapper(
-                    create_team_run_response_error_event(run_response, error=str(last_exception))
-                )
+            if stream:
+                return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -957,11 +966,11 @@ class Team:
         )
         deque(response_iterator, maxlen=0)
 
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
-        # 6. Parse team response model
+        # 5. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
+
+        # 6. Save session to storage
+        self.write_to_storage(session_id=session_id, user_id=user_id)
 
         # 8. Log Team Run
         self._log_team_run(session_id=session_id, user_id=user_id)
@@ -1026,6 +1035,9 @@ class Team:
             user_id=user_id,
         )
 
+        # 5. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
         if stream_intermediate_steps:
             yield self._handle_event(
                 create_team_run_response_completed_event(
@@ -1034,10 +1046,10 @@ class Team:
                 run_response,
             )
 
-        # 4. Save session to storage
+        # 6. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 5. Log Team Run
+        # 7. Log Team Run
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1150,7 +1162,7 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1159,11 +1171,6 @@ class Team:
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Configure the model for runs
         self._set_default_model()
@@ -1274,8 +1281,8 @@ class Team:
                 if attempt < num_attempts - 1:
                     await asyncio.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
-                    return self._async_generator_wrapper(
+                if stream:
+                    return async_generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
                 else:
@@ -1291,15 +1298,15 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+            if stream:
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
-                return self._async_generator_wrapper(
+            if stream:
+                return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
@@ -1361,13 +1368,13 @@ class Team:
         ):
             pass
 
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
         # 6. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
 
-        # 7. Log Team Run
+        # 7. Save session to storage
+        self.write_to_storage(session_id=session_id, user_id=user_id)
+
+        # 8. Log Team Run
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1432,15 +1439,18 @@ class Team:
         ):
             yield event
 
+        # 5. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
         if stream_intermediate_steps:
             yield self._handle_event(
                 create_team_run_response_completed_event(from_run_response=run_response), run_response
             )
 
-        # 5. Save session to storage
+        # 6. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 6. Log Team Run
+        # 7. Log Team Run
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1652,6 +1662,11 @@ class Team:
             "reasoning_time_taken": 0.0,
         }
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -1660,6 +1675,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
@@ -1724,6 +1740,12 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
+
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -1732,6 +1754,7 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
             for chunk in self._handle_model_response_chunk(
@@ -1807,13 +1830,18 @@ class Team:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                content_type = "str"
+
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if not full_model_response.content:
+                    if self.should_parse_structured_output:
                         full_model_response.content = model_response_event.content
+                        content_type = self.response_model.__name__  # type: ignore
+                        run_response.content_type = content_type
+                        self._convert_response_to_structured_format(full_model_response)
                     else:
-                        full_model_response.content += model_response_event.content
+                        full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
                 # Process thinking
@@ -1859,18 +1887,28 @@ class Team:
 
                 # Only yield the chunk
                 if should_yield:
-                    yield self._handle_event(
-                        create_team_run_response_content_event(
-                            from_run_response=run_response,
-                            content=model_response_event.content,
-                            thinking=model_response_event.thinking,
-                            redacted_thinking=model_response_event.redacted_thinking,
-                            response_audio=full_model_response.audio,
-                            citations=model_response_event.citations,
-                            image=model_response_event.image,
-                        ),
-                        run_response,
-                    )
+                    if content_type == "str":
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=model_response_event.content,
+                                thinking=model_response_event.thinking,
+                                redacted_thinking=model_response_event.redacted_thinking,
+                                response_audio=full_model_response.audio,
+                                citations=model_response_event.citations,
+                                image=model_response_event.image,
+                            ),
+                            run_response,
+                        )
+                    else:
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=full_model_response.content,
+                                content_type=content_type,
+                            ),
+                            run_response,
+                        )
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_started.value:
@@ -1959,7 +1997,7 @@ class Team:
                             run_response,
                         )
 
-    def _convert_response_to_structured_format(self, run_response: TeamRunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[TeamRunResponse, RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -1969,7 +2007,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -1987,7 +2026,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self._member_response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self._member_response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2161,9 +2201,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             self._print_response_stream(
@@ -2507,6 +2544,7 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -2588,6 +2626,12 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            except Exception as e:
+                                print(_response_content)
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -2756,7 +2800,7 @@ class Team:
                         panels.append(team_tool_calls_panel)
 
                 # Add the team response panel at the end
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(
@@ -3022,9 +3066,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             await self._aprint_response_stream(
@@ -3365,6 +3406,7 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -3444,6 +3486,11 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -3549,7 +3596,7 @@ class Team:
                     )
                     panels.append(tool_calls_panel)
 
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(
@@ -3946,7 +3993,7 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
+            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode, debug_level=self.debug_level
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -4094,6 +4141,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4314,6 +4362,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4414,12 +4463,6 @@ class Team:
                     ),
                     run_response,
                 )
-
-    def _generator_wrapper(self, event: TeamRunResponseEvent) -> Iterator[TeamRunResponseEvent]:
-        yield event
-
-    async def _async_generator_wrapper(self, event: TeamRunResponseEvent) -> AsyncIterator[TeamRunResponseEvent]:
-        yield event
 
     def _create_run_response(
         self,
@@ -4710,8 +4753,9 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
@@ -5504,39 +5548,6 @@ class Team:
         if not files:
             files = []
 
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
-
         def run_member_agents(
             task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
@@ -5555,7 +5566,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5666,7 +5679,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5763,6 +5778,41 @@ class Team:
 
         return run_member_agents_func
 
+    def _determine_team_context(
+        self, session_id: str, images: List[Image], videos: List[Video], audio: List[Audio]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        if isinstance(self.memory, TeamMemory):
+            self.memory = cast(TeamMemory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str()
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str()
+                if context_images := self.memory.get_team_context_images():
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos():
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio():
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        else:
+            self.memory = cast(Memory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
+                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        return team_context_str, team_member_interactions_str
+
     def get_transfer_task_function(
         self,
         session_id: str,
@@ -5784,39 +5834,6 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
 
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5841,7 +5858,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5977,7 +5996,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -6111,6 +6132,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+        
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -6118,6 +6144,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
@@ -6136,10 +6166,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):

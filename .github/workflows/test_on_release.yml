@@ -428,6 +428,7 @@ jobs:
 
   # Run tests for v0
   test-v0:
+    if: false # We don't have credits
     runs-on: ubuntu-latest
     strategy:
       matrix:
