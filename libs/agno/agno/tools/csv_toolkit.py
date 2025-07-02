@@ -148,9 +148,9 @@ class CsvTools(Toolkit):
                 logger.error("Error connecting to DuckDB")
                 return "Error connecting to DuckDB, please check the connection."
 
-            # Create a table from the csv file with explicit CSV parsing
+            # Create a table from the csv file
             con.execute(
-                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv('{file_path}', ignore_errors=true, auto_detect=true)"
+                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv('{file_path}', ignore_errors=false, auto_detect=true)"
             )
 
             # -*- Format the SQL Query

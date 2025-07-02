@@ -49,7 +49,7 @@ def test_create_table_from_path_no_quotes_around_table_name(duckdb_tools_instanc
     assert f"CREATE TABLE IF NOT EXISTS {expected_table_name} AS" in call_args
     assert f"'{expected_table_name}'" not in call_args  # Should NOT contain quoted table name
     assert (
-        f"read_csv('{path}', ignore_errors=true, auto_detect=true)" in call_args
+        f"read_csv('{path}', ignore_errors=false, auto_detect=true)" in call_args
     )  # CSV files should use read_csv with parameters
 
 
@@ -106,7 +106,7 @@ def test_load_local_csv_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_co
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
     assert f"'{expected_table_name}'" not in sql_statement
     assert "read_csv(" in sql_statement
-    assert "ignore_errors=true, auto_detect=true" in sql_statement
+    assert "ignore_errors=false, auto_detect=true" in sql_statement
 
 
 def test_load_local_csv_to_table_with_delimiter(duckdb_tools_instance, mock_duckdb_connection):
@@ -146,7 +146,7 @@ def test_load_s3_csv_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_conne
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
     assert f"'{expected_table_name}'" not in sql_statement
     assert "read_csv(" in sql_statement
-    assert "ignore_errors=true, auto_detect=true" in sql_statement
+    assert "ignore_errors=false, auto_detect=true" in sql_statement
 
 
 # --- Test Cases for Table Name Sanitization ---
@@ -239,7 +239,7 @@ def test_integration_create_and_query_table(duckdb_tools_instance, mock_duckdb_c
     create_call_args = mock_duckdb_connection.sql.call_args[0][0]
     assert f"CREATE TABLE IF NOT EXISTS {expected_table_name} AS" in create_call_args
     assert f"'{expected_table_name}'" not in create_call_args
-    assert f"read_csv('{path}', ignore_errors=true, auto_detect=true)" in create_call_args
+    assert f"read_csv('{path}', ignore_errors=false, auto_detect=true)" in create_call_args
 
     # Step 2: Setup mock for query execution
     mock_result = MagicMock()

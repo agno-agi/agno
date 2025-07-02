@@ -205,9 +205,9 @@ class DuckDbTools(Toolkit):
         if replace:
             create_statement = "CREATE OR REPLACE TABLE"
 
-        # Check if the file is a CSV and use explicit CSV parsing
+        # Check if the file is a CSV
         if path.lower().endswith(".csv"):
-            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true);"
+            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true);"
         else:
             create_statement += f" {table} AS SELECT * FROM '{path}';"
 
@@ -286,7 +286,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
@@ -344,7 +344,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
