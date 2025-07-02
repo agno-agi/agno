@@ -79,6 +79,10 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_runs_raw(self, session_id: str, session_type: SessionType) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
@@ -100,6 +104,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -113,6 +118,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -131,7 +137,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> None:
+    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
         raise NotImplementedError
 
     @abstractmethod
@@ -150,6 +156,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -190,6 +200,14 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> List[MemoryRow]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -276,4 +294,12 @@ class BaseDb(ABC):
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
     ) -> List[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError

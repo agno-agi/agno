@@ -1,6 +1,5 @@
 import logging
 from typing import Optional
-from uuid import uuid4
 
 from fastapi.routing import APIRouter
 

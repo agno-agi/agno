@@ -12,7 +12,7 @@ db = PostgresDb(db_url=db_url, agent_session_table="agent_sessions")
 memory = Memory(db=db)
 
 # Sessions of this agent will be stored (it has memory)
-basic_agent = Agent(memory=memory, enable_user_memories=True)
+basic_agent = Agent(memory=memory, enable_user_memories=True, agent_id="basic")
 
 
 # Setup the AgentOS

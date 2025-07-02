@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -32,3 +32,9 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
         )
+
+class DeleteEvalRunsRequest(BaseModel):
+    eval_run_ids: List[str]
+
+class UpdateEvalRunRequest(BaseModel):
+    name: str

@@ -9,7 +9,7 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.run.response import RunResponse
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -406,6 +406,45 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting session: {e}")
 
+    def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
+        """Delete all given sessions from the database.
+        Can handle multiple session types in the same run.
+
+        Args:
+            session_types (List[SessionType]): The types of sessions to delete.
+            session_ids (List[str]): The IDs of the sessions to delete.
+        """
+        if len(session_types) != len(session_ids):
+            raise ValueError("session_types and session_ids lists must have the same length")
+
+        try:
+            # Group session_ids by their corresponding table
+            table_to_session_ids = {}
+            for session_type, session_id in zip(session_types, session_ids):
+                table = self.get_table_for_session_type(session_type)
+                if table is None:
+                    raise ValueError(f"Table not found for session type: {session_type}")
+
+                if table not in table_to_session_ids:
+                    table_to_session_ids[table] = []
+                table_to_session_ids[table].append(session_id)
+
+            # Execute all deletes in a single transaction
+            total_deleted = 0
+            with self.Session() as sess, sess.begin():
+                for table, ids in table_to_session_ids.items():
+                    delete_stmt = table.delete().where(table.c.session_id.in_(ids))
+                    result = sess.execute(delete_stmt)
+                    total_deleted += result.rowcount
+
+                    if result.rowcount == 0:
+                        log_debug(f"No sessions found with session_ids: {ids} in table {table.name}")
+
+            log_debug(f"Successfully deleted {total_deleted} sessions across {len(table_to_session_ids)} tables")
+
+        except Exception as e:
+            log_error(f"Error deleting sessions: {e}")
+
     def get_runs_raw(self, session_id: str, session_type: SessionType) -> Optional[List[Dict[str, Any]]]:
         """
         Get all runs for the given session, as raw dictionaries.
@@ -571,6 +610,7 @@ class PostgresDb(BaseDb):
         component_id: Optional[str] = None,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -584,9 +624,9 @@ class PostgresDb(BaseDb):
             table (Optional[Table]): Table to read from.
             session_type (Optional[SessionType]): The type of session to get. Used if no table is provided.
             user_id (Optional[str]): The ID of the user to filter by.
-            component_id (Optional[str]): The ID of the agent / workflow to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
+            component_id (Optional[str]): The ID of the agent, team or workflow to filter by.
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
@@ -608,6 +648,12 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
+                if session_title is not None:
+                    stmt = stmt.where(
+                        func.coalesce(
+                            func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
+                        ).ilike(f"%{session_title}%")
+                    )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -639,6 +685,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -667,6 +714,7 @@ class PostgresDb(BaseDb):
                 session_type=session_type,
                 user_id=user_id,
                 component_id=component_id,
+                session_title=session_title,
                 limit=limit,
                 page=page,
                 sort_by=sort_by,
@@ -786,7 +834,9 @@ class PostgresDb(BaseDb):
                     session_data=session.session_data,
                     summary=session.summary,
                     extra_data=session.extra_data,
+                    chat_history=session.chat_history,
                     created_at=session.created_at,
+                    updated_at=session.created_at,
                 )
 
                 # TODO: Review the conflict params
@@ -832,8 +882,9 @@ class PostgresDb(BaseDb):
                     session_data=session.session_data,
                     summary=session.summary,
                     extra_data=session.extra_data,
-                    created_at=session.created_at,
                     chat_history=session.chat_history,
+                    created_at=session.created_at,
+                    updated_at=session.created_at,
                 )
                 # TODO: Review the conflict params
                 stmt = stmt.on_conflict_do_update(
@@ -878,8 +929,9 @@ class PostgresDb(BaseDb):
                     session_data=session.session_data,
                     summary=session.summary,
                     extra_data=session.extra_data,
-                    created_at=session.created_at,
                     chat_history=session.chat_history,
+                    created_at=session.created_at,
+                    updated_at=session.created_at,
                 )
                 # TODO: Review the conflict params
                 stmt = stmt.on_conflict_do_update(
@@ -1525,6 +1577,86 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting metrics: {e}")
             return [], None
 
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found with ids: {memory_ids}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memories: {e}")
+
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    select(
+                        table.c.user_id,
+                        func.count(table.c.memory_id).label("total_memories"),
+                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                    )
+                    .where(table.c.user_id.is_not(None))
+                    .group_by(table.c.user_id)
+                    .order_by(func.max(table.c.last_updated).desc())
+                )
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [
+                    {
+                        "user_id": record.user_id,  # type: ignore
+                        "total_memories": record.total_memories,
+                        "last_memory_updated_at": record.last_memory_updated_at,
+                    }
+                    for record in result
+                ], total_count
+
+        except Exception as e:
+            log_debug(f"Exception getting user memory stats: {e}")
+            return [], 0
+
     # -- Knowledge methods --
 
     def get_knowledge_table(self) -> Table:
@@ -1631,7 +1763,10 @@ class PostgresDb(BaseDb):
             table = self.get_eval_table()
 
             with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values({"created_at": int(time.time()), **eval_run.model_dump()})
+                current_time = int(time.time())
+                stmt = postgresql.insert(table).values(
+                    {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
+                )
                 sess.execute(stmt)
                 sess.commit()
 
@@ -1702,6 +1837,7 @@ class PostgresDb(BaseDb):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
+        filter_type: Optional[EvalFilterType] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get all eval runs from the database as raw dictionaries.
 
@@ -1716,6 +1852,7 @@ class PostgresDb(BaseDb):
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[EvalType]): The type of eval to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow, all).
 
         Returns:
             List[Dict[str, Any]]: The eval runs as raw dictionaries.
@@ -1737,13 +1874,23 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.model_id == model_id)
                 if eval_type is not None:
                     stmt = stmt.where(table.c.eval_type == eval_type)
+                if filter_type is not None:
+                    if filter_type == EvalFilterType.AGENT:
+                        stmt = stmt.where(table.c.agent_id.is_not(None))
+                    elif filter_type == EvalFilterType.TEAM:
+                        stmt = stmt.where(table.c.team_id.is_not(None))
+                    elif filter_type == EvalFilterType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id.is_not(None))
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
 
-                # Sorting
-                stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
+                # Sorting - apply default sort by created_at desc if no sort parameters provided
+                if sort_by is None:
+                    stmt = stmt.order_by(table.c.created_at.desc())
+                else:
+                    stmt = self._apply_sorting(stmt, table, sort_by, sort_order)
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
@@ -1772,6 +1919,7 @@ class PostgresDb(BaseDb):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
+        filter_type: Optional[EvalFilterType] = None,
     ) -> List[EvalRunRecord]:
         """Get all eval runs from the database.
 
@@ -1786,6 +1934,7 @@ class PostgresDb(BaseDb):
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[EvalType]): The type of eval to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
 
         Returns:
             List[EvalRunRecord]: The eval runs.
@@ -1805,6 +1954,7 @@ class PostgresDb(BaseDb):
                 workflow_id=workflow_id,
                 model_id=model_id,
                 eval_type=eval_type,
+                filter_type=filter_type,
             )
             if not eval_runs_raw:
                 return []
@@ -1814,3 +1964,44 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
             return []
+
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): List of eval run IDs to delete.
+        """
+        try:
+            table = self.get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
+                else:
+                    log_debug(f"Deleted {result.rowcount} eval runs")
+
+        except Exception as e:
+            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise
+
+    def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+        """Upsert the name of an eval run in the database, returning raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+        """
+        try:
+            table = self.get_eval_table()
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(name=name)
+                sess.execute(stmt)
+                sess.commit()
+
+            return self.get_eval_run_raw(eval_run_id=eval_run_id)
+
+        except Exception as e:
+            log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
+            return None

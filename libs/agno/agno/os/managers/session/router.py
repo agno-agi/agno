@@ -3,7 +3,8 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
-from agno.os.managers.session.schemas import (
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import (
     AgentSessionDetailSchema,
     DeleteSessionRequest,
     RunSchema,
@@ -13,7 +14,6 @@ from agno.os.managers.session.schemas import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
@@ -21,14 +21,18 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
+        session_title: Optional[str] = Query(default=None, description="Filter sessions by title"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default=None, description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default=None, description="Sort order (asc or desc)"),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[SessionSchema]:
         sessions, total_count = db.get_sessions_raw(
             session_type=session_type,
             component_id=component_id,
+            user_id=user_id,
+            session_title=session_title,
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -41,7 +45,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
                 page=page,
                 limit=limit,
                 total_count=total_count,
-                total_pages=total_count // limit if limit is not None and limit > 0 else 0,
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
             ),
         )
 
@@ -83,14 +87,12 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         elif session_type == SessionType.WORKFLOW:
             return [WorkflowRunSchema.from_dict(run) for run in runs]  # type: ignore
 
-    @router.delete("/sessions")
+    @router.delete("/sessions", status_code=204)
     async def delete_session(request: DeleteSessionRequest) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
-        # TODO: optimize
-        for session_id, session_type in zip(request.session_ids, request.session_types):
-            db.delete_session(session_id=session_id, session_type=session_type)
+        db.delete_sessions(session_types=request.session_types, session_ids=request.session_ids)
 
     @router.post(
         "/sessions/{session_id}/rename",
