@@ -22,6 +22,8 @@ class FastEmbedEmbedder(Embedder):
         model = TextEmbedding(model_name=self.id)
         embeddings = model.embed(text)
         embedding_list = list(embeddings)[0]
+        if isinstance(embedding_list, np.ndarray):
+            return embedding_list.tolist()
 
         try:
             return list(embedding_list)
