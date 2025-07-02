@@ -137,9 +137,17 @@ class Steps:
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 logger.info(f"Sequential step {step_name} completed")
 
@@ -223,12 +231,22 @@ class Steps:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         steps_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], steps_step_outputs
                         )
                     else:
                         # Use last output
                         steps_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
@@ -288,9 +306,17 @@ class Steps:
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 logger.info(f"Async sequential step {step_name} completed")
 
@@ -374,12 +400,22 @@ class Steps:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         steps_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], steps_step_outputs
                         )
                     else:
                         # Use last output
                         steps_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
