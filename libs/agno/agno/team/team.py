@@ -276,6 +276,8 @@ class Team:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
     # monitoring=True logs Team information to agno.com for monitoring
@@ -352,6 +354,7 @@ class Team:
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
+        debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
@@ -445,6 +448,10 @@ class Team:
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
         self.monitoring = monitoring
@@ -492,7 +499,7 @@ class Team:
     def _set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug(source_type="team")
+            set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
 
@@ -516,6 +523,7 @@ class Team:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
+            member.debug_level = self.debug_level
         if self.show_tool_calls:
             member.show_tool_calls = True
         if self.markdown:
@@ -540,8 +548,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -607,7 +613,7 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.parent_team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
@@ -3987,7 +3993,7 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
+            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode, debug_level=self.debug_level
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -4135,6 +4141,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4355,6 +4362,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4745,8 +4753,9 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
@@ -6123,6 +6132,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+        
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -6130,6 +6144,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
@@ -6148,10 +6166,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):

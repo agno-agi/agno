@@ -234,7 +234,7 @@ class Gemini(Model):
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def invoke(
