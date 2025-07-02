@@ -20,6 +20,7 @@ except ImportError:
 
 try:
     import aioboto3
+
     AIOBOTO3_AVAILABLE = True
 except ImportError:
     aioboto3 = None
@@ -120,7 +121,7 @@ class AwsBedrock(Model):
 
         # Use aioboto3.Session for async operations
         session = aioboto3.Session()
-        
+
         # Prepare client parameters
         client_kwargs = {
             "service_name": "bedrock-runtime",
@@ -130,17 +131,19 @@ class AwsBedrock(Model):
         if not self.aws_sso_auth:
             aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
             aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
-            
+
             if not aws_access_key_id or not aws_secret_access_key:
                 raise AgnoError(
                     message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
                     status_code=400,
                 )
-            
-            client_kwargs.update({
-                "aws_access_key_id": aws_access_key_id,
-                "aws_secret_access_key": aws_secret_access_key,
-            })
+
+            client_kwargs.update(
+                {
+                    "aws_access_key_id": aws_access_key_id,
+                    "aws_secret_access_key": aws_secret_access_key,
+                }
+            )
 
         return session.client(**client_kwargs)
 
