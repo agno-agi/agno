@@ -1334,8 +1334,8 @@ class PostgresDb(BaseDb):
                 metrics[runs_count_key] += len(session.get("runs", []))
                 if runs := session.get("runs", []):
                     for run in runs:
-                        if model_id := run.get("run", {}).get("model"):
-                            model_provider = run.get("run", {}).get("model_provider", "")
+                        if model_id := run.get("model"):
+                            model_provider = run.get("model_provider", "")
                             model_counts[f"{model_id}:{model_provider}"] = (
                                 model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                             )
