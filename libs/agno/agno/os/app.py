@@ -224,14 +224,16 @@ class AgentOS:
         apps_panel_text = ""
         for app_type, app_prefix in self.apps_loaded:
             encoded_endpoint = f"{full_host}:{port}{app_prefix}"
-            if app_type == "knowledge":
+            if app_type == "session":
+                apps_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
+            elif app_type == "knowledge":
                 apps_panel_text += f"[bold green]Knowledge Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "memory":
                 apps_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "eval":
                 apps_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "session":
-                apps_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
+            elif app_type == "metrics":
+                apps_panel_text += f"[bold green]Metrics Manager:[/bold green] {encoded_endpoint}\n"
             else:
                 log_warning(f"Unknown app type: {app_type}")
 

@@ -27,6 +27,7 @@ class AppsResponse(BaseModel):
     knowledge: Optional[List[ManagerResponse]] = None
     memory: Optional[List[ManagerResponse]] = None
     eval: Optional[List[ManagerResponse]] = None
+    metrics: Optional[List[ManagerResponse]] = None
 
 
 class ConfigResponse(BaseModel):
