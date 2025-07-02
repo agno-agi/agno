@@ -194,10 +194,8 @@ class Gemini(Model):
         thinking_config_params = {}
         if self.thinking_budget is not None:
             thinking_config_params["thinking_budget"] = self.thinking_budget
-            log_info(f"Thinking budget set to {self.thinking_budget}")
         if self.include_thoughts is not None:
             thinking_config_params["include_thoughts"] = self.include_thoughts
-            log_info(f"Include thoughts set to {self.include_thoughts}")
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 

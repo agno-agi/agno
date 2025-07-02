@@ -1,5 +1,6 @@
 """
 An example of how to use the thinking budget parameter with the Gemini model.
+This requires `google-genai > 1.10.0`
 
 - Turn off thinking use thinking_budget=0
 - Turn on dynamic thinking use thinking_budget=-1
