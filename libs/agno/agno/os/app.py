@@ -232,7 +232,7 @@ class AgentOS:
                 apps_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
             elif app_type == "eval":
                 apps_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "metric":
+            elif app_type == "metrics":
                 apps_panel_text += f"[bold green]Metrics Manager:[/bold green] {encoded_endpoint}\n"
             else:
                 log_warning(f"Unknown app type: {app_type}")

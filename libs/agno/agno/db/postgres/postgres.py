@@ -10,6 +10,7 @@ from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.run.response import RunResponse
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -771,13 +772,16 @@ class PostgresDb(BaseDb):
                 if table is None:
                     raise ValueError("Agent session table not found")
 
+            # TODO: runs should always be a list of RunResponse. Remove the type check once that's implemented.
+            runs = [run.to_dict() for run in session.runs if isinstance(run, RunResponse)] if session.runs else None
+
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
                     agent_id=session.agent_id,
                     team_session_id=session.team_session_id,
                     user_id=session.user_id,
-                    runs=session.runs,
+                    runs=runs,
                     agent_data=session.agent_data,
                     session_data=session.session_data,
                     summary=session.summary,
@@ -796,7 +800,7 @@ class PostgresDb(BaseDb):
                         session_data=session.session_data,
                         summary=session.summary,
                         extra_data=session.extra_data,
-                        runs=session.runs,
+                        runs=runs,
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)
@@ -1511,9 +1515,9 @@ class PostgresDb(BaseDb):
                 if not result:
                     return [], None
 
-            # Get the latest updated_at
-            latest_stmt = select(func.max(table.c.updated_at))
-            latest_updated_at = sess.execute(latest_stmt).scalar()
+                # Get the latest updated_at
+                latest_stmt = select(func.max(table.c.updated_at))
+                latest_updated_at = sess.execute(latest_stmt).scalar()
 
             return [row._mapping for row in result], latest_updated_at
 
