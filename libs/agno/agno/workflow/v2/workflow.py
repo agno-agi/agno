@@ -354,6 +354,8 @@ class Workflow:
                 shared_audio = execution_input.audio or []
                 output_audio = []
 
+                early_termination = False
+
                 for i, step in enumerate(self.steps):
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -655,6 +657,8 @@ class Workflow:
                 output_videos = []
                 shared_audio = execution_input.audio or []
                 output_audio = []
+
+                early_termination = False
 
                 for i, step in enumerate(self.steps):
                     step_name = getattr(step, "name", f"step_{i + 1}")
