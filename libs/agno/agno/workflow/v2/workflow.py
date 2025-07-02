@@ -1622,14 +1622,23 @@ class Workflow:
                             response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
+                            from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             # Check if this is a streaming content event from agent or team
                             if isinstance(
                                 response,
-                                (RunResponseContentEvent, WorkflowRunResponseEvent),
+                                (RunResponseContentEvent, TeamRunResponseContentEvent, WorkflowRunResponseEvent),
                             ):
                                 # Extract the content from the streaming event
                                 response_str = response.content
+
+                                # Check if this is a team's final structured output
+                                is_structured_output = (
+                                    isinstance(response, TeamRunResponseContentEvent)
+                                    and hasattr(response, "content_type")
+                                    and response.content_type != "str"
+                                    and response.content_type != ""
+                                )
                             else:
                                 continue
 
@@ -1638,7 +1647,19 @@ class Workflow:
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():
-                            current_step_content += response_str
+                            # If it's a structured output from a team, replace the content instead of appending
+                            if "is_structured_output" in locals() and is_structured_output:
+                                live_log.update(status, refresh=True)
+
+                                # Show structured output in a separate, distinctly colored panel
+                                structured_output_panel = create_panel(
+                                    content=Markdown(response_str) if markdown else response_str,
+                                    title=f"Step {current_step_index + 1}: {current_step_name} - Structured Output",
+                                    border_style="blue",
+                                )
+                                console.print(structured_output_panel)
+                            else:
+                                current_step_content += response_str
 
                             # Live update the step panel with streaming content
                             if show_step_details and not step_started_printed:
@@ -2199,14 +2220,23 @@ class Workflow:
                             response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
+                            from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             # Check if this is a streaming content event from agent or team
                             if isinstance(
                                 response,
-                                (RunResponseContentEvent, WorkflowRunResponseEvent),
+                                (RunResponseContentEvent, TeamRunResponseContentEvent, WorkflowRunResponseEvent),
                             ):
                                 # Extract the content from the streaming event
                                 response_str = response.content
+
+                                # Check if this is a team's final structured output
+                                is_structured_output = (
+                                    isinstance(response, TeamRunResponseContentEvent)
+                                    and hasattr(response, "content_type")
+                                    and response.content_type != "str"
+                                    and response.content_type != ""
+                                )
                             else:
                                 continue
 
@@ -2215,7 +2245,19 @@ class Workflow:
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():
-                            current_step_content += response_str
+                            # If it's a structured output from a team, replace the content instead of appending
+                            if "is_structured_output" in locals() and is_structured_output:
+                                live_log.update(status, refresh=True)
+
+                                # Show structured output in a separate, distinctly colored panel
+                                structured_output_panel = create_panel(
+                                    content=Markdown(response_str) if markdown else response_str,
+                                    title=f"Step {current_step_index + 1}: {current_step_name} - Structured Output",
+                                    border_style="blue",
+                                )
+                                console.print(structured_output_panel)
+                            else:
+                                current_step_content += response_str
 
                             # Live update the step panel with streaming content
                             if show_step_details and not step_started_printed:
