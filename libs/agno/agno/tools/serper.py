@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class SerperTools(Toolkit):
@@ -195,7 +195,7 @@ class SerperTools(Toolkit):
             result = self._make_request("scholar", params)
 
             if result["success"]:
-                log_info(f"Successfully found academic papers for query: {query}")
+                log_debug(f"Successfully found academic papers for query: {query}")
                 return result["raw_response"]
             else:
                 log_error(f"Error searching scholar for query {query}: {result['error']}")
@@ -235,7 +235,7 @@ class SerperTools(Toolkit):
             result = self._make_request("scrape", params)
 
             if result["success"]:
-                log_info(f"Successfully scraped webpage: {url}")
+                log_debug(f"Successfully scraped webpage: {url}")
                 return result["raw_response"]
             else:
                 log_error(f"Error scraping webpage {url}: {result['error']}")
