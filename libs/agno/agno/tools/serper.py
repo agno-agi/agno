@@ -12,8 +12,7 @@ class SerperTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        country: str = "us",
-        location: Optional[str] = None,
+        location: str = "us",
         language: str = "en",
         num_results: int = 10,
         date_range: Optional[str] = None,
@@ -24,7 +23,6 @@ class SerperTools(Toolkit):
 
         Args:
             api_key Optional[str]: The Serper API key.
-            country Optional[str]: The country code for search results.
             location Optional[str]: The Google location code for search results.
             language Optional[str]: The language code for search results.
             num_results Optional[int]: The number of search results to retrieve.
@@ -34,7 +32,6 @@ class SerperTools(Toolkit):
         if not self.api_key:
             log_debug("No Serper API key provided")
 
-        self.country = country
         self.location = location
         self.language = language
         self.num_results = num_results
@@ -73,10 +70,8 @@ class SerperTools(Toolkit):
             # Add optional parameters
             if self.date_range:
                 params["tbs"] = self.date_range
-            if self.country:
-                params["gl"] = self.country
             if self.location:
-                params["location"] = self.location
+                params["gl"] = self.location
 
             if self.language:
                 params["hl"] = self.language
