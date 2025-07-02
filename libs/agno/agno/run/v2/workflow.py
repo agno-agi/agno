@@ -409,7 +409,15 @@ class WorkflowRunResponse:
             _dict["response_audio"] = self.response_audio.to_dict()
 
         if self.step_responses:
-            _dict["step_responses"] = [step_output.to_dict() for step_output in self.step_responses]
+            flattened_responses = []
+            for step_response in self.step_responses:
+                if isinstance(step_response, list):
+                    # Handle List[StepOutput] from workflow components like Steps
+                    flattened_responses.extend([s.to_dict() for s in step_response])
+                else:
+                    # Handle single StepOutput
+                    flattened_responses.append(step_response.to_dict())
+            _dict["step_responses"] = flattened_responses
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
