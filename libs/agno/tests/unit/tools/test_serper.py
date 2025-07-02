@@ -130,9 +130,7 @@ def test_search_success(api_tools, mock_search_response):
             "POST",
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
-            data=json.dumps(
-                {"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "hl": "en"}
-            ),
+            data=json.dumps({"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "hl": "en"}),
         )
 
 
