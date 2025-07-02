@@ -47,7 +47,7 @@ class DuckDbTools(Toolkit):
         tools.append(self.load_local_path_to_table)
         tools.append(self.load_local_csv_to_table)
         tools.append(self.load_s3_path_to_table)
-        tools.append(self.load_s3_csv_to_table) 
+        tools.append(self.load_s3_csv_to_table)
         tools.append(self.create_fts_index)
         tools.append(self.full_text_search)
 
@@ -205,7 +205,12 @@ class DuckDbTools(Toolkit):
         if replace:
             create_statement = "CREATE OR REPLACE TABLE"
 
-        create_statement += f" {table} AS SELECT * FROM '{path}';"
+        # Check if the file is a CSV and use explicit CSV parsing
+        if path.lower().endswith(".csv"):
+            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true);"
+        else:
+            create_statement += f" {table} AS SELECT * FROM '{path}';"
+
         self.run_query(create_statement)
         log_debug(f"Created table {table} from {path}")
         return table
@@ -281,7 +286,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
@@ -339,7 +344,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=true, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
