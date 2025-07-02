@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
 from agno.document.base import Document
@@ -16,7 +16,7 @@ except ImportError:
 class DocxReader(Reader):
     """Reader for Doc/Docx files"""
 
-    def read(self, file: Union[Path, IO[Any]]) -> List[Document]:
+    def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""
         try:
             if isinstance(file, Path):
@@ -24,11 +24,11 @@ class DocxReader(Reader):
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_info(f"Reading: {file}")
                 docx_document = DocxDocument(str(file))
-                doc_name = file.stem
+                doc_name = name or file.stem
             else:
                 log_info(f"Reading uploaded file: {file.name}")
                 docx_document = DocxDocument(file)
-                doc_name = file.name.split(".")[0]
+                doc_name = name or file.name.split(".")[0]
 
             doc_content = "\n\n".join([para.text for para in docx_document.paragraphs])
 
@@ -51,10 +51,10 @@ class DocxReader(Reader):
             logger.error(f"Error reading file: {e}")
             return []
 
-    async def async_read(self, file: Union[Path, IO[Any]]) -> List[Document]:
+    async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Asynchronously read a docx file and return a list of documents"""
         try:
-            return await asyncio.to_thread(self.read, file)
+            return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
             logger.error(f"Error reading file asynchronously: {e}")
             return []

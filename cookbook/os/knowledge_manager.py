@@ -17,7 +17,7 @@ document_store = LocalDocumentStore(
 )
 
 vector_store = PgVector(
-    table_name="pdf_documents",
+    table_name="vectors",
     # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
     db_url=db_url,
 )
@@ -32,6 +32,8 @@ knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
     document_store=document_store,
+    documents_db=document_db,
+    vector_store=vector_store,
 )
 
 basic_agent = Agent(

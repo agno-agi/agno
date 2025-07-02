@@ -10,6 +10,12 @@ class EvalType(str, Enum):
     RELIABILITY = "reliability"
 
 
+class EvalFilterType(str, Enum):
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+
+
 class EvalRunRecord(BaseModel):
     """Evaluation run results stored in the database"""
 

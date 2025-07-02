@@ -18,7 +18,6 @@ db = PostgresDb(
 basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
-    enable_user_memories=True,
     markdown=True,
 )
 
@@ -48,9 +47,9 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """ Run your AgentOS:
     Now you can interact with your eval runs using the API. Examples:
-    - http://localhost:8001/eval/{id}/evals
-    - http://localhost:8001/eval/{id}/evals/123
-    - http://localhost:8001/eval/{id}/evals?agent_id=123
-    - http://localhost:8001/eval/{id}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/eval/{index}/evals
+    - http://localhost:8001/eval/{index}/evals/123
+    - http://localhost:8001/eval/{index}/evals?agent_id=123
+    - http://localhost:8001/eval/{index}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agent_os.serve(app="eval_manager:app", reload=True)

@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
+from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import Table
 
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalRunRecord, EvalType
 from agno.session import Session
 
@@ -23,6 +25,7 @@ class BaseDb(ABC):
         workflow_session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         learning_table: Optional[str] = None,
+        metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
@@ -32,6 +35,7 @@ class BaseDb(ABC):
             and not workflow_session_table
             and not user_memory_table
             and not learning_table
+            and not metrics_table
             and not eval_table
             and not knowledge_table
         ):
@@ -42,6 +46,7 @@ class BaseDb(ABC):
         self.workflow_session_table_name = workflow_session_table
         self.user_memory_table_name = user_memory_table
         self.learning_table_name = learning_table
+        self.metrics_table_name = metrics_table
         self.eval_table_name = eval_table
         self.knowledge_table_name = knowledge_table
 
@@ -70,7 +75,11 @@ class BaseDb(ABC):
     # --- Sessions Table ---
 
     @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None):
+    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT):
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -95,6 +104,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -108,6 +118,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_title: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -126,6 +137,10 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_session_raw(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
 
@@ -141,6 +156,10 @@ class BaseDb(ABC):
 
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -184,11 +203,31 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
+        raise NotImplementedError
+
+    # --- Metrics Table ---
+
+    @abstractmethod
+    def get_metrics_raw(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+    ) -> Tuple[List[Any], Optional[int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def calculate_metrics(self) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge Table ---
@@ -198,7 +237,13 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_documents(self, knowledge_id: str):
+    def get_knowledge_documents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -232,7 +277,7 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -249,4 +294,12 @@ class BaseDb(ABC):
         model_id: Optional[str] = None,
         eval_type: Optional[EvalType] = None,
     ) -> List[EvalRunRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
