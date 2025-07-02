@@ -81,7 +81,9 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         print(f"\n🔍 Previous Step Content Preview:")
         print("Topic: ", previous_step_content.topic, "\n")
         print("Key Insights: ", previous_step_content.key_insights, "\n")
-        print("Trending Technologies: ", previous_step_content.trending_technologies, "\n")
+        print(
+            "Trending Technologies: ", previous_step_content.trending_technologies, "\n"
+        )
 
         analysis_results.append("✅ Received structured data (BaseModel)")
 
@@ -91,9 +93,7 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         )
         try:
             model_dict = previous_step_content.model_dump()
-            analysis_results.append(
-                f"✅ Model fields: {list(model_dict.keys())}"
-            )
+            analysis_results.append(f"✅ Model fields: {list(model_dict.keys())}")
 
             # If it's ResearchFindings, extract specific data
             if hasattr(previous_step_content, "topic"):

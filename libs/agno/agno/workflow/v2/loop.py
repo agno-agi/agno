@@ -227,6 +227,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             log_debug(f"Loop iteration {iteration + 1}/{self.max_iterations}")
@@ -452,6 +453,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")

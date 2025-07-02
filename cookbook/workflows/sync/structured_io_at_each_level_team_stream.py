@@ -1,5 +1,4 @@
 from typing import List
-from pydantic import BaseModel, Field
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -7,6 +6,7 @@ from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
+from pydantic import BaseModel, Field
 
 
 # Define structured models for each step
@@ -15,10 +15,14 @@ class ResearchFindings(BaseModel):
 
     topic: str = Field(description="The research topic")
     key_insights: List[str] = Field(description="Main insights discovered", min_items=3)
-    trending_technologies: List[str] = Field(description="Technologies that are trending", min_items=2)
+    trending_technologies: List[str] = Field(
+        description="Technologies that are trending", min_items=2
+    )
     market_impact: str = Field(description="Potential market impact analysis")
     sources_count: int = Field(description="Number of sources researched")
-    confidence_score: float = Field(description="Confidence in findings (0.0-1.0)", ge=0.0, le=1.0)
+    confidence_score: float = Field(
+        description="Confidence in findings (0.0-1.0)", ge=0.0, le=1.0
+    )
 
 
 class ContentStrategy(BaseModel):
@@ -27,20 +31,30 @@ class ContentStrategy(BaseModel):
     target_audience: str = Field(description="Primary target audience")
     content_pillars: List[str] = Field(description="Main content themes", min_items=3)
     posting_schedule: List[str] = Field(description="Recommended posting schedule")
-    key_messages: List[str] = Field(description="Core messages to communicate", min_items=3)
+    key_messages: List[str] = Field(
+        description="Core messages to communicate", min_items=3
+    )
     hashtags: List[str] = Field(description="Recommended hashtags", min_items=5)
-    engagement_tactics: List[str] = Field(description="Ways to increase engagement", min_items=2)
+    engagement_tactics: List[str] = Field(
+        description="Ways to increase engagement", min_items=2
+    )
 
 
 class FinalContentPlan(BaseModel):
     """Final content plan with specific deliverables"""
 
     campaign_name: str = Field(description="Name for the content campaign")
-    content_calendar: List[str] = Field(description="Specific content pieces planned", min_items=6)
-    success_metrics: List[str] = Field(description="How to measure success", min_items=3)
+    content_calendar: List[str] = Field(
+        description="Specific content pieces planned", min_items=6
+    )
+    success_metrics: List[str] = Field(
+        description="How to measure success", min_items=3
+    )
     budget_estimate: str = Field(description="Estimated budget range")
     timeline: str = Field(description="Implementation timeline")
-    risk_factors: List[str] = Field(description="Potential risks and mitigation", min_items=2)
+    risk_factors: List[str] = Field(
+        description="Potential risks and mitigation", min_items=2
+    )
 
 
 # Create individual agents for teams
@@ -115,7 +129,7 @@ budget_analyst = Agent(
 research_team = Team(
     name="AI Research Team",
     members=[research_specialist, data_analyst],
-    mode="collaborate",
+    mode="route",
     model=OpenAIChat(id="gpt-4o"),
     description="A collaborative team that researches AI trends and extracts structured insights",
     response_model=ResearchFindings,
@@ -130,7 +144,7 @@ research_team = Team(
 strategy_team = Team(
     name="Content Strategy Team",
     members=[content_strategist, marketing_expert],
-    mode="collaborate",
+    mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     description="A strategic team that creates comprehensive content strategies",
     response_model=ContentStrategy,
