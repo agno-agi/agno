@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -44,4 +44,4 @@ class DayAggregatedMetrics(BaseModel):
 
 class MetricsResponse(BaseModel):
     metrics: List[DayAggregatedMetrics]
-    is_updated: bool
+    updated_at: Optional[datetime]

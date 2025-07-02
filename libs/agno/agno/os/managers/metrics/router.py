@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import List, Optional
 
 from fastapi import HTTPException, Query
@@ -15,11 +15,11 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         ending_date: Optional[date] = Query(default=None, description="Ending date to filter metrics (YYYY-MM-DD)"),
     ) -> MetricsResponse:
         try:
-            metrics, is_updated = db.get_metrics_raw(starting_date=starting_date, ending_date=ending_date)
+            metrics, latest_updated_at = db.get_metrics_raw(starting_date=starting_date, ending_date=ending_date)
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
-                is_updated=is_updated,
+                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc) if latest_updated_at else None,
             )
 
         except Exception as e:

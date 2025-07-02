@@ -205,7 +205,7 @@ class BaseDb(ABC):
     @abstractmethod
     def get_metrics_raw(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
-    ) -> Tuple[List[Any], bool]:
+    ) -> Tuple[List[Any], Optional[int]]:
         raise NotImplementedError
 
     @abstractmethod
