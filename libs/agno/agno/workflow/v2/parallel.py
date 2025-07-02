@@ -86,6 +86,8 @@ class Parallel:
             single_result.step_name = self.name or "Parallel"
             return single_result
 
+        early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
+
         # Multiple results - aggregate them
         aggregated_content = self._build_aggregated_content(step_outputs)
 
@@ -109,6 +111,7 @@ class Parallel:
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,
             success=not has_any_failure,
+            stop=early_termination_requested,
         )
 
     def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:

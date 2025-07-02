@@ -175,10 +175,18 @@ class Condition:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} completed")
@@ -275,12 +283,22 @@ class Condition:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
                         # Use last output
                         condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
@@ -344,10 +362,18 @@ class Condition:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async completed")
@@ -446,12 +472,22 @@ class Condition:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
                         # Use last output
                         condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )

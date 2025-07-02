@@ -172,10 +172,18 @@ class Router:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         router_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     router_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, router_step_outputs
@@ -267,12 +275,22 @@ class Router:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         router_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], router_step_outputs
                         )
                     else:
                         # Use last output
                         router_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )
@@ -335,10 +353,18 @@ class Router:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         router_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     router_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Router step {step_name} async completed")
@@ -435,12 +461,22 @@ class Router:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         router_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], router_step_outputs
                         )
                     else:
                         # Use last output
                         router_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )

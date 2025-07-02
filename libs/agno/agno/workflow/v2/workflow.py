@@ -243,9 +243,15 @@ class Workflow:
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
                             previous_steps_outputs[step_name] = step_output[-1]
+                            if any(output.stop for output in step_output):
+                                logger.info(f"Early termination requested by step {step_name}")
+                                break
                     else:
                         # Single output
                         previous_steps_outputs[step_name] = step_output
+                        if step_output.stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
 
                     # Update shared media for next step
                     if isinstance(step_output, list):
@@ -377,6 +383,24 @@ class Workflow:
                             # Update the workflow-level previous_steps_outputs dictionary
                             previous_steps_outputs[step_name] = step_output
 
+                            if step_output.stop:
+                                logger.info(f"Early termination requested by step {step_name}")
+                                # Update shared media for next step
+                                shared_images.extend(step_output.images or [])
+                                shared_videos.extend(step_output.videos or [])
+                                shared_audio.extend(step_output.audio or [])
+                                output_images.extend(step_output.images or [])
+                                output_videos.extend(step_output.videos or [])
+                                output_audio.extend(step_output.audio or [])
+
+                                # Only yield StepOutput for generator functions, not for agents/teams
+                                if getattr(step, "executor_type", None) == "function":
+                                    yield event
+
+                                # Break out of the step loop
+                                early_termination = True
+                                break
+
                             # Update shared media for next step
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
@@ -391,6 +415,10 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
+
+                    # Break out of main step loop if early termination was requested
+                    if "early_termination" in locals() and early_termination:
+                        break
 
                     self._collect_workflow_session_state_from_agents_and_teams()
 
@@ -513,9 +541,15 @@ class Workflow:
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
                             previous_steps_outputs[step_name] = step_output[-1]
+                            if any(output.stop for output in step_output):
+                                logger.info(f"Early termination requested by step {step_name}")
+                                break
                     else:
                         # Single output
                         previous_steps_outputs[step_name] = step_output
+                        if step_output.stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
 
                     # Update shared media for next step
                     if isinstance(step_output, list):
@@ -651,6 +685,24 @@ class Workflow:
                             # Update the workflow-level previous_steps_outputs dictionary
                             previous_steps_outputs[step_name] = step_output
 
+                            if step_output.stop:
+                                logger.info(f"Early termination requested by step {step_name}")
+                                # Update shared media for next step
+                                shared_images.extend(step_output.images or [])
+                                shared_videos.extend(step_output.videos or [])
+                                shared_audio.extend(step_output.audio or [])
+                                output_images.extend(step_output.images or [])
+                                output_videos.extend(step_output.videos or [])
+                                output_audio.extend(step_output.audio or [])
+
+                                # Only yield StepOutput for generator functions, not for agents/teams
+                                if getattr(step, "executor_type", None) == "function":
+                                    yield event
+
+                                # Break out of the step loop
+                                early_termination = True
+                                break
+
                             # Update shared media for next step
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
@@ -665,6 +717,10 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
+
+                    # Break out of main step loop if early termination was requested
+                    if "early_termination" in locals() and early_termination:
+                        break
 
                     self._collect_workflow_session_state_from_agents_and_teams()
 
