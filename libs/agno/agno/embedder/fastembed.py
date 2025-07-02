@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-
+import numpy as np
 from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
