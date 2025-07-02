@@ -17,7 +17,6 @@ class SerperTools(Toolkit):
         language: str = "en",
         num_results: int = 10,
         date_range: Optional[str] = None,
-        sort_reviews_by: Optional[str] = "mostRelevant",
         **kwargs,
     ):
         """
@@ -40,13 +39,11 @@ class SerperTools(Toolkit):
         self.language = language
         self.num_results = num_results
         self.date_range = date_range
-        self.sort_reviews_by = sort_reviews_by
 
         tools: List[Any] = []
         tools.append(self.search)
         tools.append(self.search_news)
         tools.append(self.search_scholar)
-        tools.append(self.search_reviews)
         tools.append(self.scrape_webpage)
 
         super().__init__(name="serper_tools", tools=tools, **kwargs)
@@ -211,63 +208,6 @@ class SerperTools(Toolkit):
 
         except Exception as e:
             log_error(f"Unexpected error searching scholar for query {query}: {e}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
-
-    def search_reviews(
-        self,
-        place_id: Optional[str] = None,
-        cid: Optional[str] = None,
-        fid: Optional[str] = None,
-        topic_id: Optional[str] = None,
-    ) -> str:
-        """
-        Searches for Google reviews using the Serper Reviews API for sentiment analysis and opinion mining.
-
-        Args:
-            place_id (str, optional): Google Place ID for the business/location.
-            cid (str, optional): Customer ID for reviews.
-            fid (str, optional): FID identifier for reviews.
-            topic_id (str, optional): Topic ID for reviews.
-
-        Returns:
-            str: Reviews search results or an error message.
-        """
-        try:
-            if not any([place_id, cid, fid, topic_id]):
-                log_warning("No place_id, cid, fid, or topic_id provided to search reviews")
-                return json.dumps(
-                    {"error": "Please provide at least one of: place_id, cid, fid, or topic_id"}, indent=2
-                )
-
-            params = {}
-
-            # Add required identifier
-            if place_id:
-                params["placeId"] = place_id
-            elif cid:
-                params["cid"] = cid
-            elif fid:
-                params["fid"] = fid
-            elif topic_id:
-                params["topicId"] = topic_id
-
-            # Add optional parameters
-            if self.sort_reviews_by:
-                params["sortBy"] = self.sort_reviews_by
-
-            result = self._make_request("reviews", params)
-
-            if result["success"]:
-                log_debug(
-                    f"Successfully found reviews for place_id: {place_id}, cid: {cid}, fid: {fid}, topic_id: {topic_id}"
-                )
-                return result["raw_response"]
-            else:
-                log_error(f"Error searching reviews: {result['error']}")
-                return json.dumps({"error": result["error"]}, indent=2)
-
-        except Exception as e:
-            log_error(f"Unexpected error searching reviews: {e}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def scrape_webpage(

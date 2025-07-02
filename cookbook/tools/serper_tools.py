@@ -25,13 +25,7 @@ agent.print_response(
 #     markdown=True,
 # )
 
-# Example 3: Reviews Search
-# agent.print_response(
-#     "Use this Google Place ID: ChIJ_Yjh6Za1j4AR8IgGUZGDDTs and analyze the reviews",
-#     markdown=True
-# )
-
-# Example 4: Web Scraping
+# Example 3: Web Scraping
 # agent.print_response(
 #     "Scrape and summarize the main content from this OpenAI blog post: https://openai.com/index/gpt-4/",
 #     markdown=True
