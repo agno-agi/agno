@@ -37,6 +37,9 @@ class WorkflowRunEvent(str, Enum):
     router_execution_started = "RouterExecutionStarted"
     router_execution_completed = "RouterExecutionCompleted"
 
+    steps_execution_started = "StepsExecutionStarted"
+    steps_execution_completed = "StepsExecutionCompleted"
+
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
@@ -288,6 +291,30 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
 
 
+@dataclass
+class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when steps execution starts"""
+
+    event: str = WorkflowRunEvent.steps_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    steps_count: Optional[int] = None
+
+
+@dataclass
+class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when steps execution completes"""
+
+    event: str = WorkflowRunEvent.steps_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+    steps_count: Optional[int] = None
+    executed_steps: Optional[int] = None
+
+    # Results from executed steps
+    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+
+
 # Union type for all workflow run response events
 WorkflowRunResponseEvent = Union[
     WorkflowStartedEvent,
@@ -382,7 +409,15 @@ class WorkflowRunResponse:
             _dict["response_audio"] = self.response_audio.to_dict()
 
         if self.step_responses:
-            _dict["step_responses"] = [step_output.to_dict() for step_output in self.step_responses]
+            flattened_responses = []
+            for step_response in self.step_responses:
+                if isinstance(step_response, list):
+                    # Handle List[StepOutput] from workflow components like Steps
+                    flattened_responses.extend([s.to_dict() for s in step_response])
+                else:
+                    # Handle single StepOutput
+                    flattened_responses.append(step_response.to_dict())
+            _dict["step_responses"] = flattened_responses
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

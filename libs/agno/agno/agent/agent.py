@@ -655,7 +655,7 @@ class Agent:
             from copy import deepcopy
 
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
