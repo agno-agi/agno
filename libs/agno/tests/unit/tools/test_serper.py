@@ -18,12 +18,10 @@ def api_tools():
     """SerperTools with a known API key and custom settings for testing."""
     return SerperTools(
         api_key="test_key",
-        country="us",
-        location="New York",
+        location="us",
         language="en",
         num_results=5,
         date_range="qdr:d",  # Last day
-        sort_reviews_by="newest",
     )
 
 
@@ -64,16 +62,6 @@ def mock_scholar_response():
 
 
 @pytest.fixture
-def mock_reviews_response():
-    """Mock a successful Serper API reviews response."""
-    mock = Mock(spec=requests.Response)
-    mock.text = '{"reviews": [{"text": "Great place!", "rating": 5, "date": "2 days ago"}]}'
-    mock.json.return_value = {"reviews": [{"text": "Great place!", "rating": 5, "date": "2 days ago"}]}
-    mock.raise_for_status.return_value = None
-    return mock
-
-
-@pytest.fixture
 def mock_scrape_response():
     """Mock a successful Serper API scrape response."""
     mock = Mock(spec=requests.Response)
@@ -102,20 +90,16 @@ def test_init_with_custom_params():
     """Test initialization with custom parameters."""
     tools = SerperTools(
         api_key="test_key",
-        country="uk",
-        location="London",
+        location="uk",
         language="fr",
         num_results=15,
         date_range="qdr:w",
-        sort_reviews_by="oldest",
     )
     assert tools.api_key == "test_key"
-    assert tools.country == "uk"
-    assert tools.location == "London"
+    assert tools.location == "uk"
     assert tools.language == "fr"
     assert tools.num_results == 15
     assert tools.date_range == "qdr:w"
-    assert tools.sort_reviews_by == "oldest"
 
 
 # Search Tests
@@ -147,7 +131,7 @@ def test_search_success(api_tools, mock_search_response):
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(
-                {"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "location": "New York", "hl": "en"}
+                {"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "hl": "en"}
             ),
         )
 
@@ -163,7 +147,6 @@ def test_search_with_custom_num_results(api_tools, mock_search_response):
             "num": 20,
             "tbs": "qdr:d",
             "gl": "us",
-            "location": "New York",
             "hl": "en",
         }
         mock_req.assert_called_once_with(
@@ -212,7 +195,6 @@ def test_search_news_success(api_tools, mock_news_response):
             "num": 5,
             "tbs": "qdr:d",
             "gl": "us",
-            "location": "New York",
             "hl": "en",
         }
         mock_req.assert_called_once_with(
@@ -229,7 +211,7 @@ def test_search_news_with_custom_num_results(api_tools, mock_news_response):
         result = api_tools.search_news("tech news", num_results=15)
         assert result == mock_news_response.text
 
-        expected_payload = {"q": "tech news", "num": 15, "tbs": "qdr:d", "gl": "us", "location": "New York", "hl": "en"}
+        expected_payload = {"q": "tech news", "num": 15, "tbs": "qdr:d", "gl": "us", "hl": "en"}
         mock_req.assert_called_once()
         call_args = mock_req.call_args
         assert json.loads(call_args[1]["data"]) == expected_payload
@@ -273,7 +255,6 @@ def test_search_scholar_success(api_tools, mock_scholar_response):
             "num": 5,
             "tbs": "qdr:d",
             "gl": "us",
-            "location": "New York",
             "hl": "en",
         }
         mock_req.assert_called_once_with(
@@ -291,86 +272,6 @@ def test_search_scholar_exception(api_tools):
         result_json = json.loads(result)
         assert "error" in result_json
         assert "Scholar API error" in result_json["error"]
-
-
-# Reviews Search Tests
-def test_search_reviews_no_api_key():
-    """Calling search_reviews without any API key returns an error message."""
-    tools = SerperTools(api_key=None)
-    result = tools.search_reviews(place_id="ChIJN1t_tDeuEmsRUsoyG83frY4")
-    result_json = json.loads(result)
-    assert "error" in result_json
-    assert "Please provide a Serper API key" in result_json["error"]
-
-
-def test_search_reviews_no_identifiers(api_tools):
-    """Calling search_reviews with no identifiers returns an error message."""
-    result = api_tools.search_reviews()
-    result_json = json.loads(result)
-    assert "error" in result_json
-    assert "Please provide at least one of: place_id, cid, fid, or topic_id" in result_json["error"]
-
-
-def test_search_reviews_with_place_id(api_tools, mock_reviews_response):
-    """A successful reviews search with place_id should work."""
-    with patch("requests.request", return_value=mock_reviews_response) as mock_req:
-        result = api_tools.search_reviews(place_id="ChIJN1t_tDeuEmsRUsoyG83frY4")
-        assert result == mock_reviews_response.text
-
-        expected_payload = {
-            "placeId": "ChIJN1t_tDeuEmsRUsoyG83frY4",
-            "sortBy": "newest",
-            "tbs": "qdr:d",
-            "gl": "us",
-            "location": "New York",
-            "hl": "en",
-        }
-        mock_req.assert_called_once_with(
-            "POST",
-            "https://google.serper.dev/reviews",
-            headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
-            data=json.dumps(expected_payload),
-        )
-
-
-def test_search_reviews_with_cid(api_tools, mock_reviews_response):
-    """A successful reviews search with cid should work."""
-    with patch("requests.request", return_value=mock_reviews_response) as mock_req:
-        result = api_tools.search_reviews(cid="1234567890")
-        assert result == mock_reviews_response.text
-
-        expected_payload = {
-            "cid": "1234567890",
-            "sortBy": "newest",
-            "tbs": "qdr:d",
-            "gl": "us",
-            "location": "New York",
-            "hl": "en",
-        }
-        call_args = mock_req.call_args
-        assert json.loads(call_args[1]["data"]) == expected_payload
-
-
-def test_search_reviews_with_multiple_identifiers(api_tools, mock_reviews_response):
-    """When multiple identifiers are provided, place_id takes precedence."""
-    with patch("requests.request", return_value=mock_reviews_response) as mock_req:
-        result = api_tools.search_reviews(place_id="ChIJN1t_tDeuEmsRUsoyG83frY4", cid="1234567890", fid="9876543210")
-        assert result == mock_reviews_response.text
-
-        # Should only include place_id since it has precedence
-        call_data = json.loads(mock_req.call_args[1]["data"])
-        assert "placeId" in call_data
-        assert "cid" not in call_data
-        assert "fid" not in call_data
-
-
-def test_search_reviews_exception(api_tools):
-    """If requests.request raises during reviews search, should catch and return error."""
-    with patch("requests.request", side_effect=Exception("Reviews API error")):
-        result = api_tools.search_reviews(place_id="ChIJN1t_tDeuEmsRUsoyG83frY4")
-        result_json = json.loads(result)
-        assert "error" in result_json
-        assert "Reviews API error" in result_json["error"]
 
 
 # Webpage Scraping Tests
@@ -402,7 +303,6 @@ def test_scrape_webpage_success(api_tools, mock_scrape_response):
             "includeMarkdown": False,
             "tbs": "qdr:d",
             "gl": "us",
-            "location": "New York",
             "hl": "en",
         }
         mock_req.assert_called_once_with(
@@ -424,7 +324,6 @@ def test_scrape_webpage_with_markdown(api_tools, mock_scrape_response):
             "includeMarkdown": True,
             "tbs": "qdr:d",
             "gl": "us",
-            "location": "New York",
             "hl": "en",
         }
         call_args = mock_req.call_args
@@ -444,12 +343,10 @@ def test_scrape_webpage_exception(api_tools):
 def test_tools_without_optional_params():
     """Test initialization and usage with minimal parameters."""
     tools = SerperTools(api_key="test_key")
-    assert tools.country == "us"
-    assert tools.location is None
+    assert tools.location == "us"
     assert tools.language == "en"
     assert tools.num_results == 10
     assert tools.date_range is None
-    assert tools.sort_reviews_by == "mostRelevant"
 
 
 def test_http_error_handling(api_tools):
