@@ -73,63 +73,40 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
     print(f"📝 Input Message Value: {message}")
 
     print(f"\n📊 Previous Step Content Type: {type(previous_step_content)}")
-    print(
-        f"📊 Previous Step Content Length: {len(str(previous_step_content)) if previous_step_content else 0}"
-    )
 
     # Try to parse if it's structured data
     analysis_results = []
 
     if previous_step_content:
-        print(f"\n🔍 Previous Step Content Preview (first 200 chars):")
-        print(repr(str(previous_step_content)[:200]))
+        print(f"\n🔍 Previous Step Content Preview:")
+        print("Topic: ", previous_step_content.topic, "\n")
+        print("Key Insights: ", previous_step_content.key_insights, "\n")
+        print("Trending Technologies: ", previous_step_content.trending_technologies, "\n")
 
-        if isinstance(previous_step_content, (dict, BaseModel)):
-            analysis_results.append("✅ Received structured data (dict or BaseModel)")
+        analysis_results.append("✅ Received structured data (BaseModel)")
 
-            # If it's a BaseModel, try to access its fields
-            if isinstance(previous_step_content, BaseModel):
+        # If it's a BaseModel, try to access its fields
+        analysis_results.append(
+            f"✅ BaseModel type: {type(previous_step_content).__name__}"
+        )
+        try:
+            model_dict = previous_step_content.model_dump()
+            analysis_results.append(
+                f"✅ Model fields: {list(model_dict.keys())}"
+            )
+
+            # If it's ResearchFindings, extract specific data
+            if hasattr(previous_step_content, "topic"):
                 analysis_results.append(
-                    f"✅ BaseModel type: {type(previous_step_content).__name__}"
+                    f"✅ Research Topic: {previous_step_content.topic}"
                 )
-                try:
-                    model_dict = previous_step_content.model_dump()
-                    analysis_results.append(
-                        f"✅ Model fields: {list(model_dict.keys())}"
-                    )
-
-                    # If it's ResearchFindings, extract specific data
-                    if hasattr(previous_step_content, "topic"):
-                        analysis_results.append(
-                            f"✅ Research Topic: {previous_step_content.topic}"
-                        )
-                    if hasattr(previous_step_content, "confidence_score"):
-                        analysis_results.append(
-                            f"✅ Confidence Score: {previous_step_content.confidence_score}"
-                        )
-
-                except Exception as e:
-                    analysis_results.append(f"❌ Error accessing BaseModel: {e}")
-
-            elif isinstance(previous_step_content, dict):
+            if hasattr(previous_step_content, "confidence_score"):
                 analysis_results.append(
-                    f"✅ Dict keys: {list(previous_step_content.keys())}"
+                    f"✅ Confidence Score: {previous_step_content.confidence_score}"
                 )
-        else:
-            analysis_results.append("❌ Received non-structured data (likely string)")
 
-            # Try to parse as JSON string
-            try:
-                import json
-
-                if isinstance(previous_step_content, str):
-                    parsed = json.loads(previous_step_content)
-                    analysis_results.append("✅ Successfully parsed JSON from string")
-                    analysis_results.append(
-                        f"✅ Parsed keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'Not a dict'}"
-                    )
-            except:
-                analysis_results.append("❌ Could not parse as JSON")
+        except Exception as e:
+            analysis_results.append(f"❌ Error accessing BaseModel: {e}")
 
     # Create enhanced analysis
     enhanced_analysis = f"""
@@ -229,7 +206,6 @@ if __name__ == "__main__":
     print("=== Testing Structured Output Flow with Custom Function Analysis ===")
 
     # Test with simple string input
-    print("\n1. Testing with simple string input:")
     structured_workflow.print_response(
         message="Latest developments in artificial intelligence and machine learning",
         # stream=True,

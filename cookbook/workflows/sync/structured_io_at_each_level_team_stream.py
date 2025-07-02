@@ -200,5 +200,5 @@ if __name__ == "__main__":
     print("=== Testing Structured Output Flow Between Teams ===")
 
     structured_workflow.print_response(
-        message="Latest developments in artificial intelligence and machine learning",
+        message="Latest developments in artificial intelligence and machine learning", stream=True, stream_intermediate_steps=True
     )

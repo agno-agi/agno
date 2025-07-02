@@ -78,9 +78,9 @@ class Workflow:
 
     # Session management
     session_id: Optional[str] = None
+    user_id: Optional[str] = None
     workflow_session_id: Optional[str] = None
     workflow_session_state: Optional[Dict[str, Any]] = None
-    user_id: Optional[str] = None
 
     # Runtime state
     run_id: Optional[str] = None

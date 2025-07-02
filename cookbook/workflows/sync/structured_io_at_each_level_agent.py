@@ -125,9 +125,6 @@ if __name__ == "__main__":
     print("=== Testing Structured Output Flow Between Steps ===")
 
     # Test with simple string input
-    print("\n1. Testing with simple string input:")
     structured_workflow.print_response(
-        message="Latest developments in artificial intelligence and machine learning",
-        stream=True,
-        stream_intermediate_steps=True,
+        message="Latest developments in artificial intelligence and machine learning"
     )
