@@ -278,9 +278,24 @@ class AgentSessionDetailSchema(BaseModel):
 
 
 class TeamSessionDetailSchema(BaseModel):
+    session_id: str
+    session_name: str
+    user_id: Optional[str]
+    team_id: Optional[str]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
-        return cls()
+        session_name = get_session_name(session.to_dict())
+        return cls(
+            session_id=session.session_id,
+            team_id=session.team_id,
+            session_name=session_name,
+            user_id=session.user_id,
+            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
+            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+        )
 
 
 class WorkflowSessionDetailSchema(BaseModel):

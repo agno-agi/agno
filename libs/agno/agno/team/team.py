@@ -6266,7 +6266,7 @@ class Team:
             self.team_session = cast(TeamSession, self.memory.upsert_session(session=session))
         return self.team_session
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
+    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[TeamSession]:
         """Rename the current session and save to storage"""
         if self.session_id is None and session_id is None:
             raise ValueError("Session ID is not initialized")
@@ -6278,7 +6278,7 @@ class Team:
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
-        self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
+        return self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
