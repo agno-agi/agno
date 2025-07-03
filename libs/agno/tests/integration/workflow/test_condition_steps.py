@@ -49,6 +49,127 @@ async def async_evaluator(step_input: StepInput) -> bool:
     return is_tech_topic(step_input)
 
 
+# ============================================================================
+# TESTS (Fast - No Workflow Overhead)
+# ============================================================================
+
+def test_condition_direct_execute_true():
+    """Test Condition.execute() directly when condition is true."""
+    condition = Condition(
+        name="Direct True Condition",
+        evaluator=has_statistics,
+        steps=[fact_check_step]
+    )
+    step_input = StepInput(message="Market shows 40% growth")
+    
+    result = condition.execute(step_input)
+    
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert "Fact check complete" in result[0].content
+
+
+def test_condition_direct_execute_false():
+    """Test Condition.execute() directly when condition is false."""
+    condition = Condition(
+        name="Direct False Condition",
+        evaluator=has_statistics,
+        steps=[fact_check_step]
+    )
+    step_input = StepInput(message="General market overview")
+    
+    result = condition.execute(step_input)
+    
+    assert isinstance(result, list)
+    assert len(result) == 0  # No steps executed
+
+
+def test_condition_direct_boolean_evaluator():
+    """Test Condition with boolean evaluator."""
+    condition = Condition(
+        name="Boolean Condition",
+        evaluator=True,
+        steps=[research_step]
+    )
+    step_input = StepInput(message="test")
+    
+    result = condition.execute(step_input)
+    
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert "Research findings" in result[0].content
+
+
+@pytest.mark.asyncio
+async def test_condition_direct_aexecute():
+    """Test Condition.aexecute() directly."""
+    condition = Condition(
+        name="Direct Async Condition",
+        evaluator=async_evaluator,
+        steps=[research_step]
+    )
+    step_input = StepInput(message="AI technology")
+    
+    result = await condition.aexecute(step_input)
+    
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert "Research findings" in result[0].content
+
+
+def test_condition_direct_execute_stream():
+    """Test Condition.execute_stream() directly."""
+    from agno.run.v2.workflow import WorkflowRunResponse
+    
+    condition = Condition(
+        name="Direct Stream Condition",
+        evaluator=is_tech_topic,
+        steps=[research_step]
+    )
+    step_input = StepInput(message="AI trends")
+    
+    # Mock workflow response for streaming
+    mock_response = WorkflowRunResponse(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+    
+    events = list(condition.execute_stream(step_input, workflow_run_response=mock_response))
+    
+    # Should have started, completed events and step outputs
+    started_events = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
+    completed_events = [e for e in events if isinstance(e, ConditionExecutionCompletedEvent)]
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+    
+    assert len(started_events) == 1
+    assert len(completed_events) == 1
+    assert len(step_outputs) == 1
+    assert started_events[0].condition_result is True
+
+
+def test_condition_direct_multiple_steps():
+    """Test Condition with multiple steps."""
+    condition = Condition(
+        name="Multi Step Condition",
+        evaluator=is_tech_topic,
+        steps=[research_step, analysis_step]
+    )
+    step_input = StepInput(message="AI technology")
+    
+    result = condition.execute(step_input)
+    
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert "Research findings" in result[0].content
+    assert "Analysis of research" in result[1].content
+
+# ============================================================================
+# EXISTING INTEGRATION TESTS (With Workflow)
+# ============================================================================
+
 def test_basic_condition_true(workflow_storage):
     """Test basic condition that evaluates to True."""
     workflow = Workflow(
