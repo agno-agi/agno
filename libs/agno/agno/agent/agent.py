@@ -6163,6 +6163,7 @@ class Agent:
                     if run_response.messages is not None:
                         run_response.messages.append(parser_model_response_message)
                     run_response.content = parser_model_response_message.content
+                    print("HERE", run_response.content)
                     # Convert the response to the structured format if needed
                     self._convert_response_to_structured_format(run_response)
                 else:
