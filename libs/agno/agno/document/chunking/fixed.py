@@ -18,8 +18,6 @@ class FixedSizeChunking(ChunkingStrategy):
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into fixed-size chunks with optional overlap"""
-        print(f"Chunking document: {document.name}, chunk size: {self.chunk_size}, overlap: {self.overlap}")
-        log_info(f"Chunking document: {document.name}, chunk size: {self.chunk_size}, overlap: {self.overlap}")
         content = self.clean_text(document.content)
         content_length = len(content)
         chunked_documents: List[Document] = []
@@ -57,5 +55,4 @@ class FixedSizeChunking(ChunkingStrategy):
             )
             chunk_number += 1
             start = end - self.overlap
-        print(f"Chunked {len(chunked_documents)} documents")
         return chunked_documents

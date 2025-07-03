@@ -19,6 +19,7 @@ class DocumentV2:  # We will rename this to Document
     path: Optional[str] = None
     url: Optional[str] = None
     content: Optional[Union[str, DocumentContent]] = None
+    metadata: Optional[dict] = None
     topics: Optional[List[str]] = None
     config: Optional[CloudStorageConfig] = None
     reader: Optional[Reader] = None
