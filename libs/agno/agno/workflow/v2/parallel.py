@@ -107,7 +107,7 @@ class Parallel:
             all_audio.extend(result.audio or [])
             if result.success is False:
                 has_any_failure = True
-            
+
             # Collect metrics from each parallel step
             step_name = result.step_name or "unknown"
             if result.metrics:
@@ -137,7 +137,7 @@ class Parallel:
                 "step_name": self.name or "Parallel",
                 "executor_type": "parallel",
                 "executor_name": self.name or "Parallel",
-                "parallel_steps": parallel_step_metrics
+                "parallel_steps": parallel_step_metrics,
             }
 
         return StepOutput(
