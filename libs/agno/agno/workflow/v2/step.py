@@ -210,7 +210,7 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
-                            
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -225,7 +225,7 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                         )
-                        
+
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
                     else:
@@ -330,7 +330,7 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
-                            
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -475,7 +475,7 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
-                            
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -611,7 +611,7 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
-                            
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )

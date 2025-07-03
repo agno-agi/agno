@@ -151,7 +151,6 @@ def use_workflow_logger():
     logger = workflow_logger
 
 
-
 def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on

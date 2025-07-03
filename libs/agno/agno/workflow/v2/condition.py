@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -148,18 +148,19 @@ class Condition:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute the condition and its steps with sequential chaining if condition is true"""
-        logger.info(f"Executing condition: {self.name}")
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Evaluate the condition
         condition_result = self._evaluate_condition(step_input)
-
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
+        log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
+            log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             return []
 
+        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results = []
         current_step_input = step_input
         condition_step_outputs = {}
@@ -173,6 +174,8 @@ class Condition:
                     all_results.extend(step_output)
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
+                        logger.info(f"Executing condition step {i + 1}/{len(self.steps)}: {step_name}")
+
                         condition_step_outputs[step_name] = step_output[-1]
 
                         if any(output.stop for output in step_output):
@@ -206,6 +209,7 @@ class Condition:
                 all_results.append(error_output)
                 break
 
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     def execute_stream(

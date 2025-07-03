@@ -11,7 +11,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import log_debug, logger, use_workflow_logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
@@ -144,9 +144,8 @@ class Parallel:
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
-        use_workflow_logger()
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-        
+
         logger.info(f"Executing {len(self.steps)} steps in parallel: {self.name}")
 
         self._prepare_steps()
@@ -215,11 +214,10 @@ class Parallel:
 
         # Aggregate all results into a single StepOutput
         aggregated_result = self._aggregate_results(flattened_results)
-        
+
         # Use workflow logger for parallel completion
-        use_workflow_logger()
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-        
+
         return aggregated_result
 
     def execute_stream(
@@ -360,9 +358,8 @@ class Parallel:
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
-        use_workflow_logger()
         log_debug(f"Async Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-        
+
         logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
 
         self._prepare_steps()
@@ -432,11 +429,10 @@ class Parallel:
 
         # Aggregate all results into a single StepOutput
         aggregated_result = self._aggregate_results(flattened_results)
-        
+
         # Use workflow logger for async parallel completion
-        use_workflow_logger()
         log_debug(f"Async Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-        
+
         return aggregated_result
 
     async def aexecute_stream(

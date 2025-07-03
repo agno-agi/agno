@@ -12,7 +12,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import log_debug, logger, use_workflow_logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -131,7 +131,6 @@ class Loop:
     ) -> List[StepOutput]:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
-        use_workflow_logger()
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
@@ -141,7 +140,6 @@ class Loop:
         iteration = 0
 
         while iteration < self.max_iterations:
-
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
@@ -189,8 +187,6 @@ class Loop:
                     logger.warning(f"End condition evaluation failed: {e}")
                     # Continue with loop if end condition fails
 
-        # Use workflow logger for loop completion
-        use_workflow_logger()
         log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
@@ -356,7 +352,6 @@ class Loop:
     ) -> List[StepOutput]:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
-        use_workflow_logger()
         log_debug(f"Async Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
@@ -366,7 +361,6 @@ class Loop:
         iteration = 0
 
         while iteration < self.max_iterations:
-
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
@@ -417,7 +411,6 @@ class Loop:
                     logger.warning(f"End condition evaluation failed: {e}")
 
         # Use workflow logger for async loop completion
-        use_workflow_logger()
         log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
