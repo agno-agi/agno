@@ -7,7 +7,7 @@ from sqlalchemy import Table
 
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
 
 
@@ -286,6 +286,7 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
+        filter_type: Optional[EvalFilterType] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
