@@ -3,10 +3,10 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
+from agno.team import Team
 
 
 class ParkGuide(BaseModel):
@@ -17,6 +17,7 @@ class ParkGuide(BaseModel):
     best_season_to_visit: str = Field(
         ..., description="The best season to visit the park (e.g., Spring, Summer, Autumn, Winter)."
     )
+
 
 agent = Agent(
     name="National Park Expert",

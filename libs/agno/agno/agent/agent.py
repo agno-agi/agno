@@ -728,27 +728,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = self.parser_model.response(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        self._parse_response_with_parser_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -836,45 +816,10 @@ class Agent:
         ):
             yield event
 
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
-
-                parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
-                )
-                for model_response_event in self.parser_model.response_stream(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                    stream_model_response=False,
-                ):
-                    yield from self._handle_model_response_chunk(
-                        run_response=run_response,
-                        model_response=parser_model_response,
-                        model_response_event=model_response_event,
-                        stream_intermediate_steps=stream_intermediate_steps,
-                    )
-
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    if run_response.messages is not None:
-                        run_response.messages.append(parser_model_response_message)
-                    run_response.content = parser_model_response_message.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-
-                if stream_intermediate_steps:
-                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
-
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        # If a parser model is provided, structure the response separately
+        yield from self._parse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -1213,28 +1158,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = await self.parser_model.aresponse(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    if run_messages.messages is not None:
-                        run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1321,40 +1245,10 @@ class Agent:
         ):
             yield event
 
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_model_response = ModelResponse(content="")
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
-                    run_response, parser_response_format
-                )
-                model_response_stream = self.parser_model.aresponse_stream(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                    stream_model_response=False,
-                )
-                async for model_response_event in model_response_stream:  # type: ignore
-                    for event in self._handle_model_response_chunk(
-                        run_response=run_response,
-                        model_response=parser_model_response,
-                        model_response_event=model_response_event,
-                        stream_intermediate_steps=stream_intermediate_steps,
-                    ):
-                        yield event
-
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    if run_response.messages is not None:
-                        run_response.messages.append(parser_model_response_message)
-                    run_response.content = parser_model_response_message.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        # If a parser model is provided, structure the response separately
+        await self._aparse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -2663,7 +2557,7 @@ class Agent:
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
-                # Case 2: Handle external execution required tools
+            # Case 2: Handle external execution required tools
             elif _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
@@ -6174,6 +6068,154 @@ class Agent:
                     ),
                     self.run_response,
                 )
+
+    def _process_parser_response(
+        self,
+        model_response: ModelResponse,
+        run_messages: RunMessages,
+        parser_model_response: ModelResponse,
+        messages_for_parser_model: list,
+    ) -> None:
+        """Common logic for processing parser model response."""
+        parser_model_response_message: Optional[Message] = None
+        for message in reversed(messages_for_parser_model):
+            if message.role == "assistant":
+                parser_model_response_message = message
+                break
+
+        if parser_model_response_message is not None:
+            run_messages.messages.append(parser_model_response_message)
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
+        else:
+            log_warning("Unable to parse response with parser model")
+
+    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model"""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model stream."""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                model_response_stream = self.parser_model.aresponse_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                    run_response.content = parser_model_response_message.content
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events

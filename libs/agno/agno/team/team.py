@@ -6321,7 +6321,7 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
-        
+
         If the member has an agent_id or team_id, use that if it is not a valid UUID.
         Then if the member has a name, convert that to a URL safe string.
         Then if the member has the default UUID ID, use that.
