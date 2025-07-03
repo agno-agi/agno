@@ -2,21 +2,24 @@
 
 from os import getenv
 
-from web3 import Web3
-
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
+try:
+    from web3 import Web3
+except ImportError:
+    raise ImportError("`web3` not installed. Please install using `pip install web3`")
 
 class EvmTools(Toolkit):
     def __init__(
         self,
         private_key: str,
         rpc_url: str,
+        **kwargs,
     ):
         """Initialise EVM tools."""
 
-        super().__init__(name="evm_tools")
+        super().__init__(name="evm_tools", **kwargs)
 
         self.private_key = private_key or getenv("EVM_PRIVATE_KEY")
         self.rpc_url = rpc_url or getenv("EVM_RPC_URL")
@@ -29,16 +32,17 @@ class EvmTools(Toolkit):
             raise ValueError("RPC Url is needed to interact with EVM blockchain")
         if not self.private_key.startswith("0x"):
             self.private_key = f"0x{self.private_key}"
-        self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
-        self.account = self.w3.eth.account.from_key(self.private_key)
+        self.web3_client = Web3(Web3.HTTPProvider(self.rpc_url))
+        self.account = self.web3_client.eth.account.from_key(self.private_key)
         logger.info(f"Your wallet address is: {self.account.address} ")
+        self.register(self.send_transaction)
 
     def get_max_priority_fee_per_gas(self) -> int:
         """Get the max priority fee per gas for the transaction.
         Returns:
             int : The max priority fee per gas for the transaction
         """
-        max_priority_fee_per_gas = self.w3.to_wei(1, "gwei")
+        max_priority_fee_per_gas = self.web3_client.to_wei(1, "gwei")
         return max_priority_fee_per_gas
 
     def get_max_fee_per_gas(self, max_priority_fee_per_gas: int) -> int:
@@ -48,7 +52,7 @@ class EvmTools(Toolkit):
         Returns:
             int : The max fee per gas for the transaction
         """
-        latest_block = self.w3.eth.get_block("latest")
+        latest_block = self.web3_client.eth.get_block("latest")
         base_fee_per_gas = latest_block.get("baseFeePerGas")
         if base_fee_per_gas is None:
             logger.error("Base fee per gas not found in the latest block.")
@@ -72,18 +76,17 @@ class EvmTools(Toolkit):
                 "from": self.account.address,
                 "to": to_address,
                 "value": amount_in_wei,
-                "nonce": self.w3.eth.get_transaction_count(self.account.address),
+                "nonce": self.web3_client.eth.get_transaction_count(self.account.address),
                 "gas": 21000,
                 "maxFeePerGas": max_fee_per_gas,
                 "maxPriorityFeePerGas": max_priority_fee_per_gas,
-                "chainId": self.w3.eth.chain_id,
+                "chainId": self.web3_client.eth.chain_id,
             }
 
-            transaction = self.w3.eth.account.sign_transaction(transaction_params, self.private_key)
-            transaction_hash = self.w3.eth.send_raw_transaction(transaction.raw_transaction)
+            transaction = self.web3_client.eth.account.sign_transaction(transaction_params, self.private_key)
+            transaction_hash = self.web3_client.eth.send_raw_transaction(transaction.raw_transaction)
             logger.info(f"Ongoing Transaction hash: 0x{transaction_hash.hex()}")
-            transaction_receipt = self.w3.eth.wait_for_transaction_receipt(transaction_hash)
-            print(transaction_receipt)
+            transaction_receipt = self.web3_client.eth.wait_for_transaction_receipt(transaction_hash)
             if transaction_receipt.get("status") == 1:
                 logger.info(f"Transaction successful! Transaction hash: 0x{transaction_hash.hex()}")
                 return f"0x{transaction_hash.hex()}"
