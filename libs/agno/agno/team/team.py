@@ -1,7 +1,6 @@
 import asyncio
 import json
 from collections import ChainMap, defaultdict, deque
-from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from os import getenv
 from textwrap import dedent
@@ -28,7 +27,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -658,9 +656,7 @@ class Team:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-        )
+        self.add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         response_iterator = self._update_memory(
@@ -721,10 +717,7 @@ class Team:
         )
 
         # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-            session_id=session_id,
-        )
+        self.add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         yield from self._update_memory(
@@ -1065,10 +1058,8 @@ class Team:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-            session_id=session_id,
-        )
+        self.add_run_to_session(run_response=run_response)
+
         # 4. Update Team Memory
         async for _ in self._aupdate_memory(
             run_messages=run_messages,
@@ -1129,10 +1120,7 @@ class Team:
             yield event
 
         # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-            session_id=session_id,
-        )
+        self.add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         async for event in self._aupdate_memory(
