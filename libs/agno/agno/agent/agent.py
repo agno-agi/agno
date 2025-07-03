@@ -4966,7 +4966,7 @@ class Agent:
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
+    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[AgentSession]:
         """Rename the current session and save to storage"""
 
         if self.session_id is None and session_id is None:
@@ -4979,7 +4979,7 @@ class Agent:
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
-        self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
+        return self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
     def generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""

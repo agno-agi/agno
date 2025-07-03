@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, or_
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -610,7 +610,7 @@ class PostgresDb(BaseDb):
         component_id: Optional[str] = None,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -648,12 +648,18 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
                     stmt = stmt.where(table.c.agent_id == component_id)
-                if session_title is not None:
-                    stmt = stmt.where(
-                        func.coalesce(
-                            func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
-                        ).ilike(f"%{session_title}%")
-                    )
+
+                # To filter by session_name, check both session_data.session_name and
+                # the run_input of the first run in session.runs
+                if session_name is not None:
+                    session_data_name_condition = func.coalesce(
+                        func.json_extract_path_text(table.c.session_data, "session_name"), ""
+                    ).ilike(f"%{session_name}%")
+                    runs_name_condition = func.coalesce(
+                        func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
+                    ).ilike(f"%{session_name}%")
+                    stmt = stmt.where(or_(session_data_name_condition, runs_name_condition))
+
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -685,7 +691,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -714,7 +720,7 @@ class PostgresDb(BaseDb):
                 session_type=session_type,
                 user_id=user_id,
                 component_id=component_id,
-                session_title=session_title,
+                session_name=session_name,
                 limit=limit,
                 page=page,
                 sort_by=sort_by,

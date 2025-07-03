@@ -1,6 +1,6 @@
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
@@ -22,7 +22,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
         component_id: Optional[str] = Query(default=None, description="Filter sessions by component ID"),
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
-        session_title: Optional[str] = Query(default=None, description="Filter sessions by title"),
+        session_name: Optional[str] = Query(default=None, description="Filter sessions by name"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -32,7 +32,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             session_type=session_type,
             component_id=component_id,
             user_id=user_id,
-            session_title=session_title,
+            session_name=session_name,
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -101,17 +101,17 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def rename_session(
         session_id: str = Path(...),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
-        session_name: str = Query(default=None, description="Session name"),
+        session_name: str = Body(embed=True),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 
         if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session)
+            return AgentSessionDetailSchema.from_session(session)  # type: ignore
         elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session)
+            return TeamSessionDetailSchema.from_session(session)  # type: ignore
         elif session_type == SessionType.WORKFLOW:
-            return WorkflowSessionDetailSchema.from_session(session)
+            return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     return router

@@ -33,12 +33,33 @@ class AppsResponse(BaseModel):
     metrics: Optional[List[ManagerResponse]] = None
 
 
+class AgentSummaryResponse(BaseModel):
+    agent_id: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class TeamSummaryResponse(BaseModel):
+    team_id: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class WorkflowSummaryResponse(BaseModel):
+    workflow_id: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 class ConfigResponse(BaseModel):
     os_id: str
-    name: str
-    description: str
+    name: Optional[str] = None
+    description: Optional[str] = None
     interfaces: List[InterfaceResponse]
     apps: AppsResponse
+    agents: List[AgentSummaryResponse]
+    teams: List[TeamSummaryResponse]
+    workflows: List[WorkflowSummaryResponse]
 
 
 class ModelResponse(BaseModel):
@@ -234,16 +255,16 @@ class AgentSessionDetailSchema(BaseModel):
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
-        session_name = session.session_data.get("session_name", "") if session.session_data else ""
-        if not session_name:
-            session_name = session.runs[0].get("run_data", {}).get("run_input", "") if session.runs else ""
-
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
             workspace_id=None,
             session_id=session.session_id,
-            session_name=session_name,
+            session_name=session.session_data.get("session_name", "")
+            if session.session_data
+            else session.runs[0].get("run_data", {}).get("run_input", "")
+            if session.runs
+            else "",
             agent_id=session.agent_id if session.agent_id else None,
             agent_data=session.agent_data,
             agent_sessions=[],
