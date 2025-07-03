@@ -130,6 +130,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+oceanbase = ["oceanbase"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -230,7 +231,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[oceanbase]"
 ]
 
 # All knowledge
