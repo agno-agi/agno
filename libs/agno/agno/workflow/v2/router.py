@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger
+from agno.utils.log import logger, log_debug
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -145,14 +145,13 @@ class Router:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute the router and its selected steps with sequential chaining"""
-        logger.info(f"Executing router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
-
-        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
+        log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
             return []
@@ -183,7 +182,7 @@ class Router:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
-
+                
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, router_step_outputs
                 )
@@ -200,6 +199,7 @@ class Router:
                 all_results.append(error_output)
                 break
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     def execute_stream(
@@ -212,12 +212,13 @@ class Router:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the router with streaming support"""
-        logger.info(f"Streaming router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
+        log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         # Yield router started event
         yield RouterExecutionStartedEvent(
@@ -306,6 +307,8 @@ class Router:
                 all_results.append(error_output)
                 break
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+
         # Yield router completed event
         yield RouterExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -326,14 +329,13 @@ class Router:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Async execute the router and its selected steps with sequential chaining"""
-        logger.info(f"Async executing router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
-
-        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
+        log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
             return []
@@ -384,6 +386,7 @@ class Router:
                 all_results.append(error_output)
                 break  # Stop on first error
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     async def aexecute_stream(
@@ -396,12 +399,13 @@ class Router:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Async execute the router with streaming support"""
-        logger.info(f"Async streaming router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
+        log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         # Yield router started event
         yield RouterExecutionStartedEvent(
@@ -492,6 +496,8 @@ class Router:
                 all_results.append(error_output)
                 break  # Stop on first error
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+        
         # Yield router completed event
         yield RouterExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
