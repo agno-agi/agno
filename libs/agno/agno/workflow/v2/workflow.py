@@ -186,6 +186,30 @@ class Workflow:
         else:
             return len(self.steps)
 
+    def _aggregate_workflow_metrics(self, step_responses: List[Union[StepOutput, List[StepOutput]]]) -> Dict[str, Any]:
+        """Aggregate metrics from all step responses into workflow metrics"""
+        workflow_metrics = {"total_steps": 0, "steps": {}}
+
+        def process_step_output(step_output: StepOutput):
+            """Process a single step output for metrics"""
+            workflow_metrics["total_steps"] += 1
+
+            # Add step-specific metrics
+            if step_output.step_name and step_output.metrics:
+                workflow_metrics["steps"][step_output.step_name] = step_output.metrics
+
+        # Process all step responses
+        for step_response in step_responses:
+            if isinstance(step_response, list):
+                # Handle List[StepOutput] from workflow components
+                for sub_step_output in step_response:
+                    process_step_output(sub_step_output)
+            else:
+                # Handle single StepOutput
+                process_step_output(step_response)
+
+        return workflow_metrics
+
     def _execute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
     ) -> WorkflowRunResponse:
@@ -275,6 +299,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
+                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
@@ -425,6 +450,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
+                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
@@ -575,6 +601,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
+                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
@@ -729,6 +756,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
+                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one

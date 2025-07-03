@@ -361,6 +361,9 @@ class WorkflowRunResponse:
     # Store actual step execution results as StepOutput objects
     step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
+    # Workflow metrics aggregated from all steps
+    workflow_metrics: Optional[Dict[str, Any]] = None
+
     extra_data: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 

@@ -185,6 +185,9 @@ class StepOutput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
+    # Metrics for this step execution
+    metrics: Optional[Dict[str, Any]] = None
+
     success: bool = True
     error: Optional[str] = None
 
@@ -198,6 +201,7 @@ class StepOutput:
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
+            "metrics": self.metrics,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
@@ -238,6 +242,7 @@ class StepOutput:
             images=images,
             videos=videos,
             audio=audio,
+            metrics=data.get("metrics"),
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),

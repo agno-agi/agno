@@ -97,12 +97,48 @@ class Parallel:
         all_audio = []
         has_any_failure = False
 
+        # Aggregate metrics from all parallel steps
+        aggregated_metrics = {}
+        parallel_step_metrics = {}
+
         for result in step_outputs:
             all_images.extend(result.images or [])
             all_videos.extend(result.videos or [])
             all_audio.extend(result.audio or [])
             if result.success is False:
                 has_any_failure = True
+            
+            # Collect metrics from each parallel step
+            step_name = result.step_name or "unknown"
+            if result.metrics:
+                # If the step already has structured metrics, use them
+                if isinstance(result.metrics, dict) and "metrics" in result.metrics:
+                    parallel_step_metrics[step_name] = result.metrics
+                else:
+                    # Otherwise, create the structure
+                    parallel_step_metrics[step_name] = {
+                        "step_name": step_name,
+                        "executor_type": getattr(result, "executor_type", "unknown"),
+                        "executor_name": getattr(result, "executor_name", "unknown"),
+                        "metrics": result.metrics,
+                    }
+            else:
+                # Even if no metrics, we should still record the step execution
+                parallel_step_metrics[step_name] = {
+                    "step_name": step_name,
+                    "executor_type": getattr(result, "executor_type", "unknown"),
+                    "executor_name": getattr(result, "executor_name", "unknown"),
+                    "metrics": None,
+                }
+
+        # Create aggregated metrics structure
+        if parallel_step_metrics:
+            aggregated_metrics = {
+                "step_name": self.name or "Parallel",
+                "executor_type": "parallel",
+                "executor_name": self.name or "Parallel",
+                "parallel_steps": parallel_step_metrics
+            }
 
         return StepOutput(
             step_name=self.name or "Parallel",
@@ -112,6 +148,7 @@ class Parallel:
             audio=all_audio if all_audio else None,
             success=not has_any_failure,
             stop=early_termination_requested,
+            metrics=aggregated_metrics if aggregated_metrics else None,
         )
 
     def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
