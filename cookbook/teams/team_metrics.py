@@ -21,7 +21,6 @@ team = Team(
     model=OpenAIChat("gpt-4o"),
     members=[stock_searcher],
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 
