@@ -1602,6 +1602,7 @@ class Team:
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
+            self.full_team_session_metrics = self._calculate_full_team_session_metrics(session_messages)
 
     async def _aupdate_memory(
         self,
@@ -1647,6 +1648,7 @@ class Team:
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
+            self.full_team_session_metrics = self._calculate_full_team_session_metrics(session_messages)
 
     def _handle_model_response_stream(
         self,
@@ -3969,12 +3971,23 @@ class Team:
 
         # Get metrics of the team-agent's messages
         for member in self.members:
-            # Only members that ran has memory
+            # Only members with memory
             if member.memory is not None:
+                # Handle instances with AgentMemory
                 if isinstance(member.memory, AgentMemory):
                     for m in member.memory.messages:
                         if m.role == assistant_message_role and m.metrics is not None:
                             current_session_metrics += m.metrics
+                # Handle instances with Memory v2
+                elif isinstance(member.memory, Memory):
+                    if member.memory.runs is not None:
+                        for runs in member.memory.runs.values():
+                            for run in runs:
+                                if run is not None and run.messages is not None:
+                                    for m in run.messages:
+                                        if m.role == assistant_message_role and m.metrics is not None:
+                                            current_session_metrics += m.metrics
+
         return current_session_metrics
 
     def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
