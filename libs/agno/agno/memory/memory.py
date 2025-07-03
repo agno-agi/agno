@@ -116,6 +116,9 @@ class Memory:
     # Whether to clear memories
     clear_memories: bool = False
 
+    # Team context
+    team_context: Optional[TeamContext] = None
+
     debug_mode: bool = False
     version: int = 2
 
@@ -553,14 +556,16 @@ class Memory:
 
     # -*- Session Db Functions
     def read_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
-        """Get an AgentSession from the database."""
+        """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=session_type)
 
-            if session and session.summary:
-                session.summary = SessionSummary.from_dict(session.summary)
+            # if session and session.runs:
+            #     session.runs = [RunResponse.from_dict(run) for run in session.runs]
+            # if session and session.summary:
+            #     session.summary = SessionSummary.from_dict(session.summary)
 
             return session
         except Exception as e:
@@ -574,6 +579,7 @@ class Memory:
         session_copy = deepcopy(session)
         session_copy.summary = deepcopy(session.summary)
 
+        # TODO: Handle all schema conversion inside the db
         session_copy.runs = [run.to_dict() for run in session.runs] if session.runs else None
         session_copy.summary = session.summary.to_dict() if session.summary else None
         session_copy.chat_history = [msg.to_dict() for msg in session.chat_history] if session.chat_history else None

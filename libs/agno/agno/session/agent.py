@@ -81,7 +81,7 @@ class AgentSession:
             summary=data.get("summary"),
         )
 
-    def add_run(self, run: RunResponse, run_data: Dict[str, Any]):
+    def add_run(self, run: RunResponse):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages
@@ -92,7 +92,7 @@ class AgentSession:
         if not self.runs:
             self.runs = []
 
-        self.runs.append({"run": run.to_dict(), "run_data": run_data})
+        self.runs.append(run)
 
         log_debug("Added RunResponse to Agent Session")
 

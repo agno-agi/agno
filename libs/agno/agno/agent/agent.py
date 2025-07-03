@@ -721,7 +721,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update long-term memory
+        # 4. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -735,7 +735,7 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
-        # 6. Save session to short-term memory
+        # 6. Save session to memory
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
@@ -2698,17 +2698,16 @@ class Agent:
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
-        run_data = self._create_run_data()
-        self.agent_session.add_run(run=run_response, run_data=run_data)
+        self.agent_session.add_run(run=run_response)
 
     def set_session_metrics(self, run_messages: RunMessages):
-        # Calculate session metrics
+        """Calculate session metrics"""
+        # Calculate initial metrics
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(
-                run_messages.messages, for_session=True
-            )  # Calculate initial metrics
+            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
+        # Update metrics
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # Update metrics
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
 
     def update_memory(
         self,

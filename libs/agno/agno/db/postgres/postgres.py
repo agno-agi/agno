@@ -10,7 +10,8 @@ from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
-from agno.run.response import RunResponse
+from agno.run.response import Message, RunResponse
+from agno.run.team import TeamRunResponse
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -530,6 +531,7 @@ class PostgresDb(BaseDb):
             Optional[Session]: Session object if found, None otherwise.
         """
         try:
+            session: Optional[Session] = None
             if table is None:
                 table = self.get_table_for_session_type(session_type)
                 if table is None:
@@ -544,11 +546,21 @@ class PostgresDb(BaseDb):
             if session_raw is None:
                 return None
 
-            if table == self.agent_session_table:
-                return AgentSession.from_dict(session_raw)
-            elif table == self.team_session_table:
-                return TeamSession.from_dict(session_raw)
-            elif table == self.workflow_session_table:
+            if session_type == SessionType.AGENT:
+                session = AgentSession.from_dict(session_raw)
+                session.runs = [RunResponse.from_dict(run) for run in session_raw.get("runs", [])]
+                # session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
+                return session
+            elif session_type == SessionType.TEAM:
+                session = TeamSession.from_dict(session_raw)
+                # TODO: Account for runs inside a team that can be RunResponse
+                session.runs = [TeamRunResponse.from_dict(run) for run in session_raw.get("runs", [])]
+                # session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
+                return session
+            elif session_type == SessionType.WORKFLOW:
+                session = WorkflowSession.from_dict(session_raw)
+                session.runs = [RunResponse.from_dict(run) for run in session_raw.get("runs", [])]
+                session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
@@ -838,7 +850,6 @@ class PostgresDb(BaseDb):
                     chat_history=session.chat_history,
                     summary=session.summary,
                     extra_data=session.extra_data,
-                    chat_history=session.chat_history,
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )

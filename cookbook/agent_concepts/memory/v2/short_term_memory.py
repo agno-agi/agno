@@ -5,17 +5,15 @@ from agno.models.openai import OpenAIChat
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url, agent_session_table="test_agent_session_0625")
+db = PostgresDb(db_url=db_url, agent_session_table="test_agent_session_0702")
 
 memory = Memory(db=db)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
-    session_id="test_session_0625_3",
+    session_id="test_session_0702",
     add_history_to_messages=True,
-    store_chat_history=True,
 )
 
 agent.print_response("Tell me a new interesting fact about space")
-print(agent.get_chat_history())
