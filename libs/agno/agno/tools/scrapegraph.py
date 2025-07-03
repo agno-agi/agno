@@ -4,16 +4,11 @@ from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
-from dotenv import load_dotenv
-
 try:
     from scrapegraph_py import Client
     from scrapegraph_py.logger import sgai_logger
 except ImportError:
     raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
-
-# Load environment variables from .env if present
-load_dotenv()
 
 # Set logging level
 sgai_logger.set_logging(level="INFO")
