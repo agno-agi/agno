@@ -1,6 +1,8 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, cast
+
+import numpy as np
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -257,18 +259,55 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids = result.get("ids", [[]])[0]
-        metadata = result.get("metadatas", [{}])[0]
-        documents = result.get("documents", [[]])[0]
-        embeddings = result.get("embeddings")[0]
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
-        distances = result.get("distances", [[]])[0]
+        # Handle ids
+        ids_result = result.get("ids")
+        ids: List[str] = []
+        if ids_result is not None and len(ids_result) > 0:
+            ids = cast(List[str], ids_result[0])
 
-        for idx, distance in enumerate(distances):
-            metadata[idx]["distances"] = distance
+        # Handle metadatas
+        metadatas_result = result.get("metadatas")
+        metadatas: List[Mapping[str, Any]] = []
+        if metadatas_result is not None and len(metadatas_result) > 0:
+            _mm = metadatas_result[0]
+            if isinstance(_mm, list):
+                metadatas = [dict(m) for m in _mm if isinstance(m, Mapping)]
+            else:
+                metadatas = []
 
-        try:
-            for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
+        # Handle documents
+        documents_result = result.get("documents")
+        documents: List[str] = []
+        if documents_result is not None and len(documents_result) > 0:
+            documents = cast(List[str], documents_result[0])
+
+        # Handle embeddings
+        embeddings_result = result.get("embeddings")
+        embeddings: List[Any] = []
+        if embeddings_result is not None and len(embeddings_result) > 0:
+            emb_list = embeddings_result[0]
+            for emb in emb_list:
+                if isinstance(emb, np.ndarray):
+                    embeddings.append(emb.tolist())
+                else:
+                    embeddings.append(list(emb))
+
+        # Handle distances
+        distances_result = result.get("distances")
+        distances: List[float] = []
+        if distances_result is not None and len(distances_result) > 0:
+            distances = cast(List[float], distances_result[0])
+
+        # Annotate the variable for mypy
+        metadata_dict: List[Dict[str, Any]] = [{} for _ in range(len(ids))]
+        for idx, meta in enumerate(metadatas):
+            if idx < len(metadata_dict) and isinstance(meta, dict):
+                metadata_dict[idx].update(meta)
+            if idx < len(distances):
+                metadata_dict[idx]["distance"] = distances[idx]
+
+        for idx, (id_, metadata, document) in enumerate(zip(ids, metadata_dict, documents)):
+            if idx < len(embeddings):
                 search_results.append(
                     Document(
                         id=id_,
@@ -277,8 +316,6 @@ class ChromaDb(VectorDb):
                         embedding=embeddings[idx],
                     )
                 )
-        except Exception as e:
-            logger.error(f"Error building search results: {e}")
 
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
