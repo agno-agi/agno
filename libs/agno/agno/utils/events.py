@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
@@ -25,6 +25,8 @@ from agno.run.response import (
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
+from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
@@ -36,8 +38,6 @@ from agno.run.team import RunResponseStartedEvent as TeamRunResponseStartedEvent
 from agno.run.team import TeamRunResponse
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
-from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
-from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 
 
 def create_team_run_response_started_event(from_run_response: TeamRunResponse) -> TeamRunResponseStartedEvent:

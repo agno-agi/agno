@@ -424,7 +424,9 @@ def test_intermediate_steps_with_parser_model(team_storage):
     assert len(events[TeamRunEvent.run_started]) == 1
     assert len(events[TeamRunEvent.parser_model_response_started]) == 1
     assert len(events[TeamRunEvent.parser_model_response_completed]) == 1
-    assert len(events[TeamRunEvent.run_response_content]) >= 2  # The first model streams, then the parser model has a single content event
+    assert (
+        len(events[TeamRunEvent.run_response_content]) >= 2
+    )  # The first model streams, then the parser model has a single content event
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     assert events[TeamRunEvent.run_response_content][-1].content is not None
@@ -436,11 +438,10 @@ def test_intermediate_steps_with_parser_model(team_storage):
     assert events[TeamRunEvent.run_completed][0].content_type == "Person"
     assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
-    
+
     assert team.run_response.content is not None
     assert team.run_response.content_type == "Person"
     assert team.run_response.content.name == "Elon Musk"
-
 
 
 def test_intermediate_steps_with_member_agents():

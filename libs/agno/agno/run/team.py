@@ -30,7 +30,7 @@ class TeamRunEvent(str, Enum):
 
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
-    
+
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
 

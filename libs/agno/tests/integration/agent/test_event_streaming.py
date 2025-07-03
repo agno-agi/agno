@@ -398,7 +398,7 @@ def test_intermediate_steps_with_structured_output(agent_storage):
     assert events[RunEvent.run_completed][0].content_type == "Person"
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[RunEvent.run_completed][0].content.description) > 1
-    
+
     assert agent.run_response.content is not None
     assert agent.run_response.content_type == "Person"
     assert agent.run_response.content.name == "Elon Musk"
@@ -440,7 +440,9 @@ def test_intermediate_steps_with_parser_model(agent_storage):
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.parser_model_response_started]) == 1
     assert len(events[RunEvent.parser_model_response_completed]) == 1
-    assert len(events[RunEvent.run_response_content]) >= 2  # The first model streams, then the parser model has a single content event
+    assert (
+        len(events[RunEvent.run_response_content]) >= 2
+    )  # The first model streams, then the parser model has a single content event
     assert len(events[RunEvent.run_completed]) == 1
 
     assert events[RunEvent.run_response_content][-1].content is not None
@@ -452,7 +454,7 @@ def test_intermediate_steps_with_parser_model(agent_storage):
     assert events[RunEvent.run_completed][0].content_type == "Person"
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[RunEvent.run_completed][0].content.description) > 1
-    
+
     assert agent.run_response.content is not None
     assert agent.run_response.content_type == "Person"
     assert agent.run_response.content.name == "Elon Musk"

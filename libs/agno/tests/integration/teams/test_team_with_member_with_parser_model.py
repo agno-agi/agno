@@ -2,7 +2,9 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from agno.agent import Agent
 from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.team import Team
 
 
@@ -16,13 +18,18 @@ class ParkGuide(BaseModel):
     )
 
 
-team = Team(
+agent = Agent(
     name="National Park Expert",
-    members=[],
+    model=OpenAIChat(id="gpt-4o"),
     response_model=ParkGuide,
     parser_model=Claude(id="claude-sonnet-4-20250514"),
-    instructions="You have no members, answer directly",
     description="You are an expert on national parks and provide concise guides.",
+)
+
+team = Team(
+    name="National Park Expert",
+    mode="route",
+    members=[agent],
     telemetry=False,
     monitoring=False,
 )

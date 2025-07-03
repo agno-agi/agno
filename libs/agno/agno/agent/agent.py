@@ -3100,7 +3100,7 @@ class Agent:
                     if parse_structured_output:
                         model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(model_response)
-                        
+
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type

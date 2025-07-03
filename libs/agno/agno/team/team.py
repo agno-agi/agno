@@ -1868,7 +1868,12 @@ class Team:
                         self._convert_response_to_structured_format(full_model_response)
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content_type = content_type
-                    else:
+                    elif self._member_response_model is not None:
+                        full_model_response.content = model_response_event.content
+                        self._convert_response_to_structured_format(full_model_response)
+                        content_type = self._member_response_model.__name__  # type: ignore
+                        run_response.content_type = content_type
+                    elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
