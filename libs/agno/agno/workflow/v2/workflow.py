@@ -185,6 +185,7 @@ class Workflow:
         if previous_steps_outputs:
             last_output = list(previous_steps_outputs.values())[-1]
             previous_step_content = last_output.content if last_output else None
+            log_debug(f"Using previous step content from: {list(previous_steps_outputs.keys())[-1]}")
 
         return StepInput(
             message=execution_input.message,
@@ -258,6 +259,7 @@ class Workflow:
 
                     # Update the workflow-level previous_steps_outputs dictionary
                     if isinstance(step_output, list):
+                        log_debug(f"Step returned {len(step_output)} outputs")
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
                             previous_steps_outputs[step_name] = step_output[-1]
@@ -1005,21 +1007,27 @@ class Workflow:
         """Prepare the steps for execution"""
         prepared_steps = []
         if not isinstance(self.steps, Callable):
-            for step in self.steps:
+            for i, step in enumerate(self.steps):
                 if isinstance(step, Callable):
-                    prepared_steps.append(
-                        Step(name=step.__name__, description="User-defined callable step", executor=step)
-                    )
+                    step_name = step.__name__
+                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
                 elif isinstance(step, Agent):
+                    log_debug(f"Step {i + 1}: Agent '{step.name}'")
                     prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
                 elif isinstance(step, Team):
+                    log_debug(f"Step {i + 1}: Team '{step.name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    step_type = type(step).__name__
+                    step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
+                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
             self.steps = prepared_steps
+            log_debug("Step preparation completed")
 
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
@@ -1086,8 +1094,6 @@ class Workflow:
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from storage or create a new one"""
-        log_debug(f"Current session_id: {self.session_id}")
-
         if self.workflow_session is not None and not force:
             if self.session_id is not None and self.workflow_session.session_id == self.session_id:
                 log_debug("Using existing workflow session")
@@ -2422,6 +2428,8 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
+        log_debug("Updating agents and teams with session information")
+
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not isinstance(self.steps, Callable):
             for step in self.steps:

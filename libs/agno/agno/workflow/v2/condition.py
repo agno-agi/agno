@@ -222,14 +222,13 @@ class Condition:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
-        logger.info(f"Streaming condition: {self.name}")
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Evaluate the condition
         condition_result = self._evaluate_condition(step_input)
-
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
+        log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         # Yield condition started event
         yield ConditionExecutionStartedEvent(
@@ -257,6 +256,7 @@ class Condition:
             )
             return
 
+        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results = []
         current_step_input = step_input
         condition_step_outputs = {}
@@ -317,6 +317,8 @@ class Condition:
                 )
                 all_results.append(error_output)
                 break
+        
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
         # Yield condition completed event
         yield ConditionExecutionCompletedEvent(
@@ -338,17 +340,21 @@ class Condition:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Async execute the condition and its steps with sequential chaining"""
-        logger.info(f"Async executing condition: {self.name}")
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Evaluate the condition
         condition_result = await self._aevaluate_condition(step_input)
+        log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         logger.info(f"Condition {self.name} evaluated to: {condition_result}")
 
         if not condition_result:
+            log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             return []
+
+        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
 
         # Chain steps sequentially like Loop does
         all_results = []
@@ -397,6 +403,7 @@ class Condition:
                 all_results.append(error_output)
                 break
 
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     async def aexecute_stream(
@@ -409,14 +416,13 @@ class Condition:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
-        logger.info(f"Async streaming condition: {self.name}")
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Evaluate the condition
         condition_result = await self._aevaluate_condition(step_input)
-
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
+        log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
         # Yield condition started event
         yield ConditionExecutionStartedEvent(
@@ -430,6 +436,7 @@ class Condition:
         )
 
         if not condition_result:
+            log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             # Yield condition completed event for empty case
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -443,6 +450,8 @@ class Condition:
                 step_results=[],
             )
             return
+        
+        log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
 
         # Chain steps sequentially like Loop does
         all_results = []
@@ -506,6 +515,8 @@ class Condition:
                 )
                 all_results.append(error_output)
                 break
+
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
         # Yield condition completed event
         yield ConditionExecutionCompletedEvent(
