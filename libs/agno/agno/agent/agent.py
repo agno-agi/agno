@@ -6775,6 +6775,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
+            response_content_batch: Union[str, JSON, Markdown] = ""
             reasoning_steps: List[ReasoningStep] = []
 
             with Live(console=console) as live_log:
@@ -6827,12 +6828,16 @@ class Agent:
                                     _response_content += resp.content
                                 elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                     try:
-                                        _response_content += JSON(  # type: ignore
+                                        response_content_batch = JSON(  # type: ignore
                                             resp.content.model_dump_json(exclude_none=True), indent=2
                                         )
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
-
+                                else:
+                                    try:
+                                        response_content_batch = JSON(json.dumps(run_response.content), indent=4)
+                                    except Exception as e:
+                                        log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
@@ -6926,15 +6931,21 @@ class Agent:
                         )
                         panels.append(tool_calls_panel)
 
-                    if len(_response_content) > 0:
-                        render = True
-                        # Create panel for response
-                        response_panel = create_panel(
-                            content=response_content_stream,
-                            title=f"Response ({response_timer.elapsed:.1f}s)",
-                            border_style="blue",
-                        )
-                        panels.append(response_panel)
+                response_panel = None
+                # Check if we have any response content to display
+                response_content = (
+                    response_content_stream
+                    if response_content_stream and len(response_content_stream) > 0
+                    else response_content_batch
+                )
+                if response_content:
+                    render = True
+                    response_panel = create_panel(
+                        content=response_content,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
 
@@ -7206,6 +7217,7 @@ class Agent:
             _response_content: str = ""
             _response_thinking: str = ""
             reasoning_steps: List[ReasoningStep] = []
+            response_content_batch: Union[str, JSON, Markdown] = ""
 
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -7258,7 +7270,14 @@ class Agent:
                                 _response_content += resp.content
                             elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                 try:
-                                    _response_content += JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                                    response_content_batch = JSON(
+                                        resp.content.model_dump_json(exclude_none=True), indent=2
+                                    )  # type: ignore
+                                except Exception as e:
+                                    log_warning(f"Failed to convert response to JSON: {e}")
+                            else:
+                                try:
+                                    response_content_batch = JSON(json.dumps(run_response.content), indent=4)
                                 except Exception as e:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
@@ -7356,11 +7375,17 @@ class Agent:
                         panels.append(tool_calls_panel)
                         live_log.update(Group(*panels))
 
-                    if len(_response_content) > 0:
+                    response_panel = None
+                    # Check if we have any response content to display
+                    response_content = (
+                        response_content_stream
+                        if response_content_stream and len(response_content_stream) > 0
+                        else response_content_batch
+                    )
+                    if response_content:
                         render = True
-                        # Create panel for response
                         response_panel = create_panel(
-                            content=response_content_stream,
+                            content=response_content,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
                         )

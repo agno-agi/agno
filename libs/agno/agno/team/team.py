@@ -1448,7 +1448,6 @@ class Team:
         await self._aparse_response_with_parser_model_stream(
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         )
-        
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -2259,7 +2258,9 @@ class Team:
         if self.parser_model is not None:
             if self.response_model is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_team_parser_model_response_started_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
@@ -2293,7 +2294,9 @@ class Team:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_team_parser_model_response_completed_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
 
             else:
                 log_warning("A response model is required to parse the response with a parser model")
@@ -2305,7 +2308,9 @@ class Team:
         if self.parser_model is not None:
             if self.response_model is not None:
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_team_parser_model_response_started_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
@@ -2341,10 +2346,11 @@ class Team:
                     log_warning("Unable to parse response with parser model")
 
                 if stream_intermediate_steps:
-                    yield self._handle_event(create_team_parser_model_response_completed_event(run_response), run_response)
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
             else:
                 log_warning("A response model is required to parse the response with a parser model")
-
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
