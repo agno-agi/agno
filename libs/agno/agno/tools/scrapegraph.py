@@ -13,6 +13,7 @@ except ImportError:
 # Set logging level
 sgai_logger.set_logging(level="INFO")
 
+
 class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
@@ -120,10 +121,10 @@ class ScrapeGraphTools(Toolkit):
         try:
             response = self.client.searchscraper(website_url=url, user_prompt=prompt)
             # If response has a 'result' attribute, return it, else return the whole response
-            if hasattr(response, 'result'):
+            if hasattr(response, "result"):
                 return json.dumps(response.result)
-            elif isinstance(response, dict) and 'result' in response:
-                return json.dumps(response['result'])
+            elif isinstance(response, dict) and "result" in response:
+                return json.dumps(response["result"])
             else:
                 return json.dumps(response)
         except Exception as e:
