@@ -4,7 +4,7 @@ This cookbook demonstrates how to use the Valyu Toolkit for academic and web sea
 Prerequisites:
 - Install: pip install valyu
 - Get API key: https://platform.valyu.network
-- Set environment variable: export VALYU_API_KEY=your_api_key or pass api_key while initializing the toolkit
+- Set environment variable: export VALYU_API_KEY with your api key or pass the api key while initializing the toolkit
 """
 
 from agno.agent import Agent
