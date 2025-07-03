@@ -3102,7 +3102,9 @@ class Agent:
                 if model_response_event.content is not None:
                     if self.should_parse_structured_output:
                         model_response.content = model_response_event.content
+                        print("HERE", model_response.content)
                         self._convert_response_to_structured_format(model_response)
+                        print("HERE", model_response.content)
                         
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content = model_response.content
