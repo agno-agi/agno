@@ -154,8 +154,12 @@ def test_member_metrics_aggregation():
         members=[stock_agent, company_info_agent],
     )
 
+    # Running the team twice to make sure the metrics are aggregated correctly for multiple runs
     team.run(
         "I need information on NVIDIA. Let me know if there are any active Hackernews thread about it, and what is its current stock price."
+    )
+    team.run(
+        "I need information on TSLA. Let me know if there are any active Hackernews thread about it, and what is its current stock price."
     )
 
     # Aggregating metrics for all team members' runs
