@@ -659,7 +659,12 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if component_id is not None:
-                    stmt = stmt.where(table.c.agent_id == component_id)
+                    if session_type == SessionType.AGENT:
+                        stmt = stmt.where(table.c.agent_id == component_id)
+                    elif session_type == SessionType.TEAM:
+                        stmt = stmt.where(table.c.team_id == component_id)
+                    elif session_type == SessionType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id == component_id)
                 if session_title is not None:
                     stmt = stmt.where(
                         func.coalesce(
