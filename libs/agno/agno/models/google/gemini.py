@@ -30,6 +30,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        ThinkingConfig,
         Tool,
     )
     from google.genai.types import (
@@ -80,6 +81,8 @@ class Gemini(Model):
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
     cached_content: Optional[Any] = None
+    thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
+    include_thoughts: Optional[bool] = None  # Include thought summaries in response
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -186,6 +189,15 @@ class Gemini(Model):
             normalized_schema = get_response_schema_for_provider(response_format, "gemini")
             gemini_schema = convert_schema(normalized_schema)
             config["response_schema"] = gemini_schema
+
+        # Add thinking configuration
+        thinking_config_params = {}
+        if self.thinking_budget is not None:
+            thinking_config_params["thinking_budget"] = self.thinking_budget
+        if self.include_thoughts is not None:
+            thinking_config_params["include_thoughts"] = self.include_thoughts
+        if thinking_config_params:
+            config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
@@ -699,9 +711,17 @@ class Gemini(Model):
                 if hasattr(part, "text") and part.text is not None:
                     text_content: Optional[str] = getattr(part, "text")
                     if isinstance(text_content, str):
-                        model_response.content = text_content
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            model_response.reasoning_content = text_content
+                        else:
+                            model_response.content = text_content
                     else:
-                        model_response.content = str(text_content) if text_content is not None else ""
+                        content_str = str(text_content) if text_content is not None else ""
+                        if hasattr(part, "thought") and part.thought:
+                            model_response.reasoning_content = content_str
+                        else:
+                            model_response.content = content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     model_response.image = ImageArtifact(
@@ -775,7 +795,12 @@ class Gemini(Model):
                 for part in response_message.parts:
                     # Extract text if present
                     if hasattr(part, "text") and part.text is not None:
-                        model_response.content = str(part.text) if part.text is not None else ""
+                        text_content = str(part.text) if part.text is not None else ""
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            model_response.reasoning_content = text_content
+                        else:
+                            model_response.content = text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         model_response.image = ImageArtifact(
