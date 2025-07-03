@@ -146,8 +146,6 @@ class Parallel:
         # Use workflow logger for parallel orchestration
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        logger.info(f"Executing {len(self.steps)} steps in parallel: {self.name}")
-
         self._prepare_steps()
 
         def execute_step_with_index(step_with_index):
@@ -230,7 +228,8 @@ class Parallel:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
-        logger.info(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
 
         self._prepare_steps()
 
@@ -338,6 +337,7 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
         # Yield parallel step completed event
         yield ParallelExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -358,9 +358,7 @@ class Parallel:
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
-        log_debug(f"Async Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-
-        logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -431,7 +429,7 @@ class Parallel:
         aggregated_result = self._aggregate_results(flattened_results)
 
         # Use workflow logger for async parallel completion
-        log_debug(f"Async Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         return aggregated_result
 
@@ -445,7 +443,7 @@ class Parallel:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
-        logger.info(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -551,6 +549,8 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+        
         # Yield parallel step completed event
         yield ParallelExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
