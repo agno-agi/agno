@@ -1369,6 +1369,8 @@ class Workflow:
         if console is None:
             from agno.cli.console import console
 
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
+
         # Show workflow info (same as before)
         media_info = []
         if audio:
@@ -1993,6 +1995,8 @@ class Workflow:
 
         if console is None:
             from agno.cli.console import console
+        
+        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         # Show workflow info (same as before)
         media_info = []

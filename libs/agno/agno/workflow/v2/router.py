@@ -219,16 +219,17 @@ class Router:
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
 
-        # Yield router started event
-        yield RouterExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
-        )
+        if stream_intermediate_steps:
+            # Yield router started event
+            yield RouterExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+            )
 
         if not steps_to_execute:
             # Yield router completed event for empty case
@@ -306,18 +307,19 @@ class Router:
                 all_results.append(error_output)
                 break
 
-        # Yield router completed event
-        yield RouterExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
-            executed_steps=len(steps_to_execute),
-            step_results=all_results,
-        )
+        if stream_intermediate_steps:
+            # Yield router completed event
+            yield RouterExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+                executed_steps=len(steps_to_execute),
+                step_results=all_results,
+            )
 
         for result in all_results:
             yield result
@@ -403,16 +405,17 @@ class Router:
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
 
-        # Yield router started event
-        yield RouterExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
-        )
+        if stream_intermediate_steps:
+            # Yield router started event
+            yield RouterExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+            )
 
         if not steps_to_execute:
             # Yield router completed event for empty case
@@ -492,18 +495,19 @@ class Router:
                 all_results.append(error_output)
                 break  # Stop on first error
 
-        # Yield router completed event
-        yield RouterExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
-            executed_steps=len(steps_to_execute),
-            step_results=all_results,
-        )
+        if stream_intermediate_steps:
+            # Yield router completed event
+            yield RouterExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+                executed_steps=len(steps_to_execute),
+                step_results=all_results,
+            )
 
         for result in all_results:
             yield result

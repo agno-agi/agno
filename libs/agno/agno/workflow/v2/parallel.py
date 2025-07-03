@@ -226,16 +226,17 @@ class Parallel:
 
         self._prepare_steps()
 
-        # Yield parallel step started event
-        yield ParallelExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            parallel_step_count=len(self.steps),
-        )
+        if stream_intermediate_steps:
+            # Yield parallel step started event
+            yield ParallelExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                parallel_step_count=len(self.steps),
+            )
 
         def execute_step_stream_with_index(step_with_index):
             """Execute a single step with streaming and preserve its original index"""
@@ -330,17 +331,18 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
-        # Yield parallel step completed event
-        yield ParallelExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            parallel_step_count=len(self.steps),
-            step_results=[aggregated_result],  # Now single aggregated result
-        )
+        if stream_intermediate_steps:
+            # Yield parallel step completed event
+            yield ParallelExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                parallel_step_count=len(self.steps),
+                step_results=[aggregated_result],  # Now single aggregated result
+            )
 
     async def aexecute(
         self,
@@ -433,16 +435,17 @@ class Parallel:
 
         self._prepare_steps()
 
-        # Yield parallel step started event
-        yield ParallelExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            parallel_step_count=len(self.steps),
-        )
+        if stream_intermediate_steps:
+            # Yield parallel step started event
+            yield ParallelExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                parallel_step_count=len(self.steps),
+            )
 
         async def execute_step_stream_async_with_index(step_with_index):
             """Execute a single step with async streaming and preserve its original index"""
@@ -535,14 +538,15 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
-        # Yield parallel step completed event
-        yield ParallelExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            parallel_step_count=len(self.steps),
-            step_results=[aggregated_result],  # Now single aggregated result
-        )
+        if stream_intermediate_steps:
+            # Yield parallel step completed event
+            yield ParallelExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                parallel_step_count=len(self.steps),
+                step_results=[aggregated_result],  # Now single aggregated result
+            )

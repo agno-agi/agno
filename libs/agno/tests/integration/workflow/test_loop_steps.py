@@ -27,25 +27,23 @@ def summary_step(step_input: StepInput) -> StepOutput:
     """Summary step."""
     return StepOutput(step_name="summary", content="Summary of findings", success=True)
 
+
 # ============================================================================
 # TESTS (Fast - No Workflow Overhead)
 # ============================================================================
 
+
 def test_loop_direct_execute():
     """Test Loop.execute() directly without workflow."""
+
     def simple_end_condition(outputs):
         return len(outputs) >= 2
-    
-    loop = Loop(
-        name="Direct Loop",
-        steps=[research_step],
-        end_condition=simple_end_condition,
-        max_iterations=3
-    )
+
+    loop = Loop(name="Direct Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=3)
     step_input = StepInput(message="direct test")
-    
+
     result = loop.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) >= 2  # Should stop when condition is met
     assert all("AI trends" in output.content for output in result)
@@ -54,19 +52,15 @@ def test_loop_direct_execute():
 @pytest.mark.asyncio
 async def test_loop_direct_aexecute():
     """Test Loop.aexecute() directly without workflow."""
+
     def simple_end_condition(outputs):
         return len(outputs) >= 2
-    
-    loop = Loop(
-        name="Direct Async Loop",
-        steps=[research_step],
-        end_condition=simple_end_condition,
-        max_iterations=3
-    )
+
+    loop = Loop(name="Direct Async Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=3)
     step_input = StepInput(message="direct async test")
-    
+
     result = await loop.aexecute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) >= 2
     assert all("AI trends" in output.content for output in result)
@@ -74,19 +68,14 @@ async def test_loop_direct_aexecute():
 
 def test_loop_direct_execute_stream():
     """Test Loop.execute_stream() directly without workflow."""
-    from agno.run.v2.workflow import WorkflowRunResponse, LoopIterationStartedEvent, LoopIterationCompletedEvent
-    
+    from agno.run.v2.workflow import LoopIterationCompletedEvent, LoopIterationStartedEvent, WorkflowRunResponse
+
     def simple_end_condition(outputs):
         return len(outputs) >= 1
-    
-    loop = Loop(
-        name="Direct Stream Loop",
-        steps=[research_step],
-        end_condition=simple_end_condition,
-        max_iterations=2
-    )
+
+    loop = Loop(name="Direct Stream Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=2)
     step_input = StepInput(message="direct stream test")
-    
+
     # Mock workflow response for streaming
     mock_response = WorkflowRunResponse(
         run_id="test-run",
@@ -95,16 +84,16 @@ def test_loop_direct_execute_stream():
         session_id="test-session",
         content="",
     )
-    
+
     events = list(loop.execute_stream(step_input, workflow_run_response=mock_response))
-    
+
     # Should have started, completed, iteration events and step outputs
     started_events = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
     completed_events = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
     iteration_started = [e for e in events if isinstance(e, LoopIterationStartedEvent)]
     iteration_completed = [e for e in events if isinstance(e, LoopIterationCompletedEvent)]
     step_outputs = [e for e in events if isinstance(e, StepOutput)]
-    
+
     assert len(started_events) == 1
     assert len(completed_events) == 1
     assert len(iteration_started) >= 1
@@ -115,53 +104,46 @@ def test_loop_direct_execute_stream():
 
 def test_loop_direct_max_iterations():
     """Test Loop respects max_iterations."""
+
     def never_end_condition(outputs):
         return False  # Never end
-    
-    loop = Loop(
-        name="Max Iterations Loop",
-        steps=[research_step],
-        end_condition=never_end_condition,
-        max_iterations=2
-    )
+
+    loop = Loop(name="Max Iterations Loop", steps=[research_step], end_condition=never_end_condition, max_iterations=2)
     step_input = StepInput(message="max iterations test")
-    
+
     result = loop.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 2  # Should stop at max_iterations
 
 
 def test_loop_direct_no_end_condition():
     """Test Loop without end condition (uses max_iterations only)."""
-    loop = Loop(
-        name="No End Condition Loop",
-        steps=[research_step],
-        max_iterations=3
-    )
+    loop = Loop(name="No End Condition Loop", steps=[research_step], max_iterations=3)
     step_input = StepInput(message="no condition test")
-    
+
     result = loop.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 3  # Should run all iterations
 
 
 def test_loop_direct_multiple_steps():
     """Test Loop with multiple steps per iteration."""
+
     def simple_end_condition(outputs):
         return len(outputs) >= 2  # 2 outputs = 1 iteration (2 steps)
-    
+
     loop = Loop(
         name="Multi Step Loop",
         steps=[research_step, analysis_step],
         end_condition=simple_end_condition,
-        max_iterations=3
+        max_iterations=3,
     )
     step_input = StepInput(message="multi step test")
-    
+
     result = loop.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) >= 2
     # Should have both research and analysis outputs
@@ -170,9 +152,11 @@ def test_loop_direct_multiple_steps():
     assert len(research_outputs) >= 1
     assert len(analysis_outputs) >= 1
 
+
 # ============================================================================
 # INTEGRATION TESTS (With Workflow)
 # ============================================================================
+
 
 def test_basic_loop(workflow_storage):
     """Test basic loop with multiple steps."""

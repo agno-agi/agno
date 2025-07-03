@@ -47,16 +47,17 @@ async def async_streaming_function(step_input: StepInput) -> AsyncIterator[str]:
 # TESTS (Fast - No Workflow Overhead)
 # ============================================================================
 
+
 def test_steps_direct_execute():
     """Test Steps.execute() directly without workflow."""
     step1 = Step(name="step1", executor=step1_function)
     step2 = Step(name="step2", executor=step2_function)
-    
+
     steps = Steps(name="Direct Steps", steps=[step1, step2])
     step_input = StepInput(message="direct test")
-    
+
     result = steps.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 2
     assert "Step1: direct test" in result[0].content
@@ -68,12 +69,12 @@ async def test_steps_direct_aexecute():
     """Test Steps.aexecute() directly without workflow."""
     step1 = Step(name="step1", executor=step1_function)
     step2 = Step(name="step2", executor=step2_function)
-    
+
     steps = Steps(name="Direct Async Steps", steps=[step1, step2])
     step_input = StepInput(message="direct async test")
-    
+
     result = await steps.aexecute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 2
     assert "Step1: direct async test" in result[0].content
@@ -83,13 +84,13 @@ async def test_steps_direct_aexecute():
 def test_steps_direct_execute_stream():
     """Test Steps.execute_stream() directly without workflow."""
     from agno.run.v2.workflow import WorkflowRunResponse
-    
+
     step1 = Step(name="step1", executor=step1_function)
     step2 = Step(name="step2", executor=step2_function)
-    
+
     steps = Steps(name="Direct Stream Steps", steps=[step1, step2])
     step_input = StepInput(message="direct stream test")
-    
+
     # Mock workflow response for streaming
     mock_response = WorkflowRunResponse(
         run_id="test-run",
@@ -98,14 +99,14 @@ def test_steps_direct_execute_stream():
         session_id="test-session",
         content="",
     )
-    
+
     events = list(steps.execute_stream(step_input, mock_response))
-    
+
     # Should have started, completed events and step outputs
     started_events = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
     completed_events = [e for e in events if isinstance(e, StepsExecutionCompletedEvent)]
     step_outputs = [e for e in events if isinstance(e, StepOutput)]
-    
+
     assert len(started_events) == 1
     assert len(completed_events) == 1
     assert len(step_outputs) == 2
@@ -116,9 +117,9 @@ def test_steps_direct_empty():
     """Test Steps with no internal steps."""
     steps = Steps(name="Empty Steps", steps=[])
     step_input = StepInput(message="test")
-    
+
     result = steps.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 1
     assert "No steps to execute" in result[0].content
@@ -129,9 +130,9 @@ def test_steps_direct_single_step():
     step1 = Step(name="step1", executor=step1_function)
     steps = Steps(name="Single Step", steps=[step1])
     step_input = StepInput(message="single test")
-    
+
     result = steps.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 1
     assert "Step1: single test" in result[0].content
@@ -142,12 +143,12 @@ def test_steps_direct_chaining():
     step1 = Step(name="first", executor=lambda x: StepOutput(content="first_output"))
     step2 = Step(name="second", executor=lambda x: StepOutput(content=f"second_{x.previous_step_content}"))
     step3 = Step(name="third", executor=lambda x: StepOutput(content=f"third_{x.previous_step_content}"))
-    
+
     steps = Steps(name="Chaining Steps", steps=[step1, step2, step3])
     step_input = StepInput(message="test")
-    
+
     result = steps.execute(step_input)
-    
+
     assert isinstance(result, list)
     assert len(result) == 3
     assert result[0].content == "first_output"

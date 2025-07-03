@@ -183,16 +183,17 @@ class Steps:
 
         self._prepare_steps()
 
-        # Yield steps execution started event
-        yield StepsExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            steps_count=len(self.steps),
-        )
+        if stream_intermediate_steps:
+            # Yield steps execution started event
+            yield StepsExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                steps_count=len(self.steps),
+            )
 
         if not self.steps:
             yield StepOutput(step_name=self.name or "Steps", content="No steps to execute")
@@ -251,18 +252,19 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
-            # Yield steps execution completed event
-            yield StepsExecutionCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                steps_count=len(self.steps),
-                executed_steps=len(all_results),
-                step_results=all_results,
-            )
+            if stream_intermediate_steps:
+                # Yield steps execution completed event
+                yield StepsExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    steps_count=len(self.steps),
+                    executed_steps=len(all_results),
+                    step_results=all_results,
+                )
 
             for result in all_results:
                 yield result

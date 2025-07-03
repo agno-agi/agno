@@ -214,16 +214,17 @@ class Loop:
         # Prepare steps first
         self._prepare_steps()
 
-        # Yield loop started event
-        yield LoopExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            max_iterations=self.max_iterations,
-        )
+        if stream_intermediate_steps:
+            # Yield loop started event
+            yield LoopExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                max_iterations=self.max_iterations,
+            )
 
         all_results = []
         iteration = 0
@@ -232,17 +233,18 @@ class Loop:
         while iteration < self.max_iterations:
             log_debug(f"Loop iteration {iteration + 1}/{self.max_iterations}")
 
-            # Yield iteration started event
-            yield LoopIterationStartedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                iteration=iteration + 1,
-                max_iterations=self.max_iterations,
-            )
+            if stream_intermediate_steps:
+                # Yield iteration started event
+                yield LoopIterationStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    iteration=iteration + 1,
+                    max_iterations=self.max_iterations,
+                )
 
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
@@ -310,38 +312,40 @@ class Loop:
                 should_continue = False
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
 
-            # Yield iteration completed event
-            yield LoopIterationCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                iteration=iteration + 1,
-                max_iterations=self.max_iterations,
-                iteration_results=iteration_results,
-                should_continue=should_continue,
-            )
+            if stream_intermediate_steps:
+                # Yield iteration completed event
+                yield LoopIterationCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    iteration=iteration + 1,
+                    max_iterations=self.max_iterations,
+                    iteration_results=iteration_results,
+                    should_continue=should_continue,
+                )
 
             iteration += 1
 
             if not should_continue:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
-
-        # Yield loop completed event
-        yield LoopExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            total_iterations=iteration,
-            max_iterations=self.max_iterations,
-            all_results=all_results,
-        )
+        
+        if stream_intermediate_steps:
+            # Yield loop completed event
+            yield LoopExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                total_iterations=iteration,
+                max_iterations=self.max_iterations,
+                all_results=all_results,
+            )
 
         for iteration_results in all_results:
             for step_output in iteration_results:
@@ -440,16 +444,17 @@ class Loop:
         # Prepare steps first
         self._prepare_steps()
 
-        # Yield loop started event
-        yield LoopExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            max_iterations=self.max_iterations,
-        )
+        if stream_intermediate_steps:
+            # Yield loop started event
+            yield LoopExecutionStartedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                max_iterations=self.max_iterations,
+            )
 
         all_results = []
         iteration = 0
@@ -458,17 +463,18 @@ class Loop:
         while iteration < self.max_iterations:
             log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")
 
+            if stream_intermediate_steps:
             # Yield iteration started event
-            yield LoopIterationStartedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                iteration=iteration + 1,
-                max_iterations=self.max_iterations,
-            )
+                yield LoopIterationStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    iteration=iteration + 1,
+                    max_iterations=self.max_iterations,
+                )
 
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
@@ -540,19 +546,20 @@ class Loop:
                 should_continue = False
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
 
+            if stream_intermediate_steps:
             # Yield iteration completed event
-            yield LoopIterationCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                iteration=iteration + 1,
-                max_iterations=self.max_iterations,
-                iteration_results=iteration_results,
-                should_continue=should_continue,
-            )
+                yield LoopIterationCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    iteration=iteration + 1,
+                    max_iterations=self.max_iterations,
+                    iteration_results=iteration_results,
+                    should_continue=should_continue,
+                )
 
             iteration += 1
 
@@ -560,18 +567,19 @@ class Loop:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
 
-        # Yield loop completed event
-        yield LoopExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            total_iterations=iteration,
-            max_iterations=self.max_iterations,
-            all_results=all_results,
-        )
+        if stream_intermediate_steps:
+            # Yield loop completed event
+            yield LoopExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                total_iterations=iteration,
+                max_iterations=self.max_iterations,
+                all_results=all_results,
+            )
 
         for iteration_results in all_results:
             for step_output in iteration_results:
