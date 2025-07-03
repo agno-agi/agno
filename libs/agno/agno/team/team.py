@@ -1648,6 +1648,7 @@ class Team:
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
+            self.full_team_session_metrics = self._calculate_full_team_session_metrics(session_messages)
 
     def _handle_model_response_stream(
         self,
