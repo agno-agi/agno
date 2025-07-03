@@ -206,7 +206,7 @@ class Loop:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
-        log_debug(f"Streaming loop: {self.name} (max_iterations: {self.max_iterations})")
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -327,6 +327,8 @@ class Loop:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
 
+        log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
+
         # Yield loop completed event
         yield LoopExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -352,7 +354,7 @@ class Loop:
     ) -> List[StepOutput]:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
-        log_debug(f"Async Loop Start: {self.name}", center=True, symbol="=")
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -430,7 +432,7 @@ class Loop:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
-        log_debug(f"Async streaming loop: {self.name} (max_iterations: {self.max_iterations})")
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -554,6 +556,8 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
+
+        log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Yield loop completed event
         yield LoopExecutionCompletedEvent(
