@@ -444,7 +444,6 @@ def test_intermediate_steps_with_parser_model(agent_storage):
     assert len(events[RunEvent.run_completed]) == 1
 
     assert events[RunEvent.run_response_content][-1].content is not None
-    print(events[RunEvent.run_response_content][-1])
     assert events[RunEvent.run_response_content][-1].content_type == "Person"
     assert events[RunEvent.run_response_content][-1].content.name == "Elon Musk"
     assert len(events[RunEvent.run_response_content][-1].content.description) > 1
@@ -457,5 +456,3 @@ def test_intermediate_steps_with_parser_model(agent_storage):
     assert agent.run_response.content is not None
     assert agent.run_response.content_type == "Person"
     assert agent.run_response.content.name == "Elon Musk"
-    
-    assert False

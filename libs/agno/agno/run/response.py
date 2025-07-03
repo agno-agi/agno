@@ -213,6 +213,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
+    RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
 }
 
 

@@ -1910,9 +1910,6 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
@@ -2311,9 +2308,6 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
@@ -6162,10 +6156,6 @@ class Agent:
                 if parser_model_response_message is not None:
                     if run_response.messages is not None:
                         run_response.messages.append(parser_model_response_message)
-                    run_response.content = parser_model_response_message.content
-                    print("HERE", run_response.content)
-                    # Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response)
                 else:
                     log_warning("Unable to parse response with parser model")
 
@@ -6212,9 +6202,6 @@ class Agent:
                 if parser_model_response_message is not None:
                     if run_response.messages is not None:
                         run_response.messages.append(parser_model_response_message)
-                    run_response.content = parser_model_response_message.content
-                    # Convert the response to the structured format if needed
-                    self._convert_response_to_structured_format(run_response)
                 else:
                     log_warning("Unable to parse response with parser model")
 

@@ -36,6 +36,8 @@ from agno.run.team import RunResponseStartedEvent as TeamRunResponseStartedEvent
 from agno.run.team import TeamRunResponse
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
+from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 
 
 def create_team_run_response_started_event(from_run_response: TeamRunResponse) -> TeamRunResponseStartedEvent:
@@ -405,7 +407,7 @@ def create_team_run_response_content_event(
 
 
 def create_parser_model_response_started_event(
-    from_run_response: Union[RunResponse, TeamRunResponse],
+    from_run_response: RunResponse,
 ) -> ParserModelResponseStartedEvent:
     return ParserModelResponseStartedEvent(
         session_id=from_run_response.session_id,
@@ -417,12 +419,36 @@ def create_parser_model_response_started_event(
 
 
 def create_parser_model_response_completed_event(
-    from_run_response: Union[RunResponse, TeamRunResponse],
+    from_run_response: RunResponse,
 ) -> ParserModelResponseCompletedEvent:
     return ParserModelResponseCompletedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_parser_model_response_started_event(
+    from_run_response: TeamRunResponse,
+) -> TeamParserModelResponseStartedEvent:
+    return TeamParserModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_parser_model_response_completed_event(
+    from_run_response: TeamRunResponse,
+) -> TeamParserModelResponseCompletedEvent:
+    return TeamParserModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
