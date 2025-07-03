@@ -625,4 +625,45 @@ class AwsBedrock(Model):
             stream_data.extra["tool_ids"] = tool_ids
 
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
-        pass
+        """Parse the provider response delta for streaming.
+        
+        Args:
+            response_delta: The streaming response delta from AWS Bedrock
+            
+        Returns:
+            ModelResponse: The parsed model response delta
+        """
+        model_response = ModelResponse(role="assistant")
+        
+        # Handle contentBlockDelta - text content
+        if "contentBlockDelta" in response_delta:
+            delta = response_delta["contentBlockDelta"]["delta"]
+            if "text" in delta:
+                model_response.content = delta["text"]
+        
+        # Handle contentBlockStart - tool use start
+        elif "contentBlockStart" in response_delta:
+            start = response_delta["contentBlockStart"]["start"]
+            if "toolUse" in start:
+                tool_use = start["toolUse"]
+                model_response.tool_calls = [{
+                    "id": tool_use.get("toolUseId", ""),
+                    "type": "function", 
+                    "function": {
+                        "name": tool_use.get("name", ""),
+                        "arguments": ""  # Will be filled in subsequent deltas
+                    }
+                }]
+        
+        # Handle metadata/usage information
+        elif "metadata" in response_delta or "messageStop" in response_delta:
+            body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
+            if "usage" in body:
+                usage = body["usage"]
+                model_response.response_usage = {
+                    "input_tokens": usage.get("inputTokens", 0),
+                    "output_tokens": usage.get("outputTokens", 0),
+                    "total_tokens": usage.get("totalTokens", 0),
+                }
+        
+        return model_response
