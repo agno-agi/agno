@@ -1199,6 +1199,111 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
+    def delete_user_memory(self, memory_id: str) -> bool:
+        """Delete a user memory from the database.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+        """
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
+
+                return success
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            return False
+
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found with ids: {memory_ids}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memories: {e}")
+
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            table = self.get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    select(
+                        table.c.user_id,
+                        func.count(table.c.memory_id).label("total_memories"),
+                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                    )
+                    .where(table.c.user_id.is_not(None))
+                    .group_by(table.c.user_id)
+                    .order_by(func.max(table.c.last_updated).desc())
+                )
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [
+                    {
+                        "user_id": record.user_id,  # type: ignore
+                        "total_memories": record.total_memories,
+                        "last_memory_updated_at": record.last_memory_updated_at,
+                    }
+                    for record in result
+                ], total_count
+
+        except Exception as e:
+            log_debug(f"Exception getting user memory stats: {e}")
+            return [], 0
+
     # -- Metrics methods --
 
     def _get_all_sessions_for_metrics_calculation(
@@ -1387,42 +1492,38 @@ class PostgresDb(BaseDb):
                 raise ValueError("Knowledge table was not provided on initialization")
 
             log_info(f"Getting knowledge table: {self.knowledge_table_name}")
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name,
-                table_type="knowledge_documents",
-                db_schema=self.db_schema,
+            self.knowledge_table = self.get_or_create_table(
+                table_name=self.knowledge_table_name, table_type="knowledge_sources", db_schema=self.db_schema
             )
 
         return self.knowledge_table
 
-    def delete_knowledge_document(self, document_id: str):
-        """Delete a knowledge document from the database.
-
-        Args:
-            document_id (str): The ID of the document to delete.
-        """
-        table = self._get_knowledge_table()
+    def delete_knowledge_source(self, id: str):
+        table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == document_id)
+            stmt = table.delete().where(table.c.id == id)
             sess.execute(stmt)
             sess.commit()
         return
 
-    def get_document_status(self, document_id: str) -> Optional[str]:
-        table = self._get_knowledge_table()
+    def get_source_status(self, id: str) -> Optional[str]:
+        table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = select(table.c.status).where(table.c.id == document_id)
+            stmt = select(table.c.status).where(table.c.id == id)
             result = sess.execute(stmt).fetchone()
             return result._mapping["status"]
 
-    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
-        table = self._get_knowledge_table()
+    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        print(f"Getting knowledge source: {id}, {table}")
         with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == document_id)
+            stmt = select(table).where(table.c.id == id)
             result = sess.execute(stmt).fetchone()
+            if result is None:
+                return None
             return KnowledgeRow.model_validate(result._mapping)
 
-    def get_knowledge_documents(
+    def get_knowledge_sources(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -1461,7 +1562,7 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt).fetchall()
             return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
-    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
         """Upsert a knowledge document in the database.
 
         Args:

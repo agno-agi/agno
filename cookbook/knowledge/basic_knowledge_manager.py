@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.document_v2 import DocumentV2
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.source import DocumentV2
 from agno.vectordb.pgvector import PgVector
 
 # Create Knowledge Instance

@@ -1,6 +1,6 @@
 from agno.agent import Agent
-from agno.document.document_v2 import DocumentV2
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.source import DocumentV2
 from agno.models.openai import OpenAIChat
 from agno.vectordb.pgvector import PgVector
 
@@ -50,11 +50,9 @@ knowledge = Knowledge(
 
 # Add a generic URL to the knowledge base
 knowledge.add_document(
-    DocumentV2(
-        name="Generic URL",
-        url="https://community.agno.com/t/can-agno-work-with-qwen-llm/1391",
-        metadata={"user_tag": "URL sources"},
-    ),
+    name="Generic URL",
+    url="https://community.agno.com/t/can-agno-work-with-qwen-llm/1391",
+    metadata={"user_tag": "URL sources"},
 )
 
 

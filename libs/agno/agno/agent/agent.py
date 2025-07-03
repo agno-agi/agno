@@ -321,9 +321,9 @@ class Agent:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
-    # Debug level: 1 = basic, 2 = detailed
-    debug_level: Literal[1, 2] = 1
 
+    # monitoring=True logs Agent information to agno.com for monitoring
+    monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
@@ -4779,7 +4779,7 @@ class Agent:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.num_sources
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(

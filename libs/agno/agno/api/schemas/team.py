@@ -3,7 +3,6 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel
 
 
-
 class TeamRunCreate(BaseModel):
     """Data sent to API to create a Team Run"""
 

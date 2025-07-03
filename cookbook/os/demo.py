@@ -2,7 +2,9 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.local_document_store import LocalDocumentStore
+from agno.document.local_store import LocalStore
+from agno.eval.accuracy import AccuracyEval
+from agno.eval.performance import PerformanceEval
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -23,7 +25,7 @@ db = PostgresDb(
 # Setup the memory
 memory = Memory(db=db)
 
-document_store = LocalDocumentStore(
+store = LocalStore(
     name="local_document_store",
     description="Local document store",
     storage_path="tmp/documents",
@@ -50,16 +52,16 @@ document_db = PostgresDb(
 knowledge1 = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
-    document_store=document_store,
-    documents_db=document_db,
+    store=store,
+    sources_db=document_db,
     vector_store=vector_store_1,
 )
 
 knowledge2 = Knowledge(
     name="My Knowledge Base 2",
     description="A simple knowledge base 2",
-    document_store=document_store,
-    documents_db=document_db,
+    # document_store=document_store,
+    sources_db=document_db,
     vector_store=vector_store_2,
 )
 

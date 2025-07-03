@@ -15,7 +15,7 @@ knowledge_base = PDFKnowledgeBase(
     reader=PDFReader(chunk=True, chunk_size=100),
 )
 # Load the knowledge base
-knowledge_base.load(recreate=False)
+knowledge_base.load(recreate=True)
 
 # Create an agent with the knowledge base
 agent = Agent(

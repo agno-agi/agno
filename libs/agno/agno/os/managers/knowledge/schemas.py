@@ -1,10 +1,10 @@
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 
-from fastapi import UploadFile
 from pydantic import BaseModel
 
 
-class DocumentResponseSchema(BaseModel):
+class SourceResponseSchema(BaseModel):
     id: str
     name: Optional[str] = None
     description: Optional[str] = None
@@ -14,5 +14,16 @@ class DocumentResponseSchema(BaseModel):
     metadata: Optional[dict] = None
     access_count: Optional[int] = None
     status: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ReaderSchema(BaseModel):
+    id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ConfigResponseSchema(BaseModel):
+    readers: Optional[List[ReaderSchema]] = None
+    filters: Optional[List[str]] = None
