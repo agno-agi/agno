@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,7 @@ class BaseDb(ABC):
         workflow_session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         learning_table: Optional[str] = None,
+        metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
@@ -33,6 +35,7 @@ class BaseDb(ABC):
             and not workflow_session_table
             and not user_memory_table
             and not learning_table
+            and not metrics_table
             and not eval_table
             and not knowledge_table
         ):
@@ -43,6 +46,7 @@ class BaseDb(ABC):
         self.workflow_session_table_name = workflow_session_table
         self.user_memory_table_name = user_memory_table
         self.learning_table_name = learning_table
+        self.metrics_table_name = metrics_table
         self.eval_table_name = eval_table
         self.knowledge_table_name = knowledge_table
 
@@ -212,6 +216,18 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
+        raise NotImplementedError
+
+    # --- Metrics Table ---
+
+    @abstractmethod
+    def get_metrics_raw(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+    ) -> Tuple[List[Any], Optional[int]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def calculate_metrics(self) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge Table ---

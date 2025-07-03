@@ -556,8 +556,6 @@ class Memory:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=session_type)
-            if session and session.runs:
-                session.runs = [RunResponse.from_dict(run) for run in session.runs]
 
             if session and session.summary:
                 session.summary = SessionSummary.from_dict(session.summary)

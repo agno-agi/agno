@@ -357,6 +357,9 @@ class RunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+        if "run" in data:
+            data = data.pop("run")
+
         events = data.pop("events", None)
         events = [run_response_event_from_dict(event) for event in events] if events else None
 

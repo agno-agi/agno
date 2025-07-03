@@ -3,7 +3,7 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -91,6 +91,30 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": String, "nullable": True},
 }
 
+METRICS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "date": {"type": Date, "nullable": False},
+    "aggregation_period": {"type": String, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "_unique_constraints": [
+        {
+            "name": "uq_metrics_date_period",
+            "columns": ["date", "aggregation_period"],
+        }
+    ],
+}
+
 LEARNING_TABLE_SCHEMA = {}
 
 
@@ -106,10 +130,11 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     schemas = {
         "agent_sessions": AGENT_SESSION_TABLE_SCHEMA,
-        "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
-        "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
+        "metrics": METRICS_TABLE_SCHEMA,
+        "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
+        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
         "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
