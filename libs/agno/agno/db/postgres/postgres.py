@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, or_
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -622,7 +622,7 @@ class PostgresDb(BaseDb):
         component_id: Optional[str] = None,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -665,16 +665,21 @@ class PostgresDb(BaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
-                if session_title is not None:
-                    stmt = stmt.where(
-                        func.coalesce(
-                            func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
-                        ).ilike(f"%{session_title}%")
-                    )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
+
+                # To filter by session_name, check both session_data.session_name and
+                # the run_input of the first run in session.runs
+                if session_name is not None:
+                    session_data_name_condition = func.coalesce(
+                        func.json_extract_path_text(table.c.session_data, "session_name"), ""
+                    ).ilike(f"%{session_name}%")
+                    runs_name_condition = func.coalesce(
+                        func.json_extract_path_text(table.c.runs, "0", "run_data", "run_input"), ""
+                    ).ilike(f"%{session_name}%")
+                    stmt = stmt.where(or_(session_data_name_condition, runs_name_condition))
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -702,7 +707,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -731,7 +736,7 @@ class PostgresDb(BaseDb):
                 session_type=session_type,
                 user_id=user_id,
                 component_id=component_id,
-                session_title=session_title,
+                session_name=session_name,
                 limit=limit,
                 page=page,
                 sort_by=sort_by,
@@ -1691,18 +1696,25 @@ class PostgresDb(BaseDb):
             )
         return self.knowledge_table
 
-    def delete_knowledge_document(self, knowledge_id: str):
+    def delete_knowledge_document(self, document_id: str):
         table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == knowledge_id)
+            stmt = table.delete().where(table.c.id == document_id)
             sess.execute(stmt)
             sess.commit()
         return
 
-    def get_knowledge_document(self, knowledge_id: str) -> Optional[KnowledgeRow]:
+    def get_document_status(self, document_id: str) -> Optional[str]:
         table = self.get_knowledge_table()
         with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == knowledge_id)
+            stmt = select(table.c.status).where(table.c.id == document_id)
+            result = sess.execute(stmt).fetchone()
+            return result._mapping["status"]
+
+    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+        table = self.get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.id == document_id)
             result = sess.execute(stmt).fetchone()
             return KnowledgeRow.model_validate(result._mapping)
 
@@ -1757,10 +1769,32 @@ class PostgresDb(BaseDb):
         try:
             table = self.get_knowledge_table()
             with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(knowledge_row.model_dump())
+                # Only include fields that are not None in the update
+                update_fields = {
+                    k: v
+                    for k, v in {
+                        "name": knowledge_row.name,
+                        "description": knowledge_row.description,
+                        "metadata": knowledge_row.metadata,
+                        "type": knowledge_row.type,
+                        "size": knowledge_row.size,
+                        "linked_to": knowledge_row.linked_to,
+                        "access_count": knowledge_row.access_count,
+                        "status": knowledge_row.status,
+                        "created_at": knowledge_row.created_at,
+                        "updated_at": knowledge_row.updated_at,
+                    }.items()
+                    if v is not None
+                }
+
+                stmt = (
+                    postgresql.insert(table)
+                    .values(knowledge_row.model_dump())
+                    .on_conflict_do_update(index_elements=["id"], set_=update_fields)
+                )
                 sess.execute(stmt)
                 sess.commit()
-            return
+            return knowledge_row
         except Exception as e:
             log_error(f"Error upserting knowledge document: {e}")
             return None
@@ -1857,7 +1891,7 @@ class PostgresDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get all eval runs from the database as raw dictionaries.
@@ -1872,7 +1906,7 @@ class PostgresDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
-            eval_type (Optional[EvalType]): The type of eval to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow, all).
 
         Returns:
@@ -1893,8 +1927,8 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
-                if eval_type is not None:
-                    stmt = stmt.where(table.c.eval_type == eval_type)
+                if eval_type is not None and len(eval_type) > 0:
+                    stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:
                     if filter_type == EvalFilterType.AGENT:
                         stmt = stmt.where(table.c.agent_id.is_not(None))
@@ -1939,7 +1973,7 @@ class PostgresDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
     ) -> List[EvalRunRecord]:
         """Get all eval runs from the database.
@@ -1954,7 +1988,7 @@ class PostgresDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
-            eval_type (Optional[EvalType]): The type of eval to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
 
         Returns:
@@ -2017,7 +2051,9 @@ class PostgresDb(BaseDb):
         try:
             table = self.get_eval_table()
             with self.Session() as sess, sess.begin():
-                stmt = table.update().where(table.c.run_id == eval_run_id).values(name=name)
+                stmt = (
+                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                )
                 sess.execute(stmt)
                 sess.commit()
 

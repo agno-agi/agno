@@ -7,7 +7,7 @@ from sqlalchemy import Table
 
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
 
 
@@ -104,7 +104,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -118,7 +118,7 @@ class BaseDb(ABC):
         session_type: SessionType,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
-        session_title: Optional[str] = None,
+        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -233,7 +233,13 @@ class BaseDb(ABC):
     # --- Knowledge Table ---
 
     @abstractmethod
-    def get_knowledge_document(self, knowledge_id: str):
+    def get_document_status(self, document_id: str) -> Optional[str]:
+        """Get the status of a knowledge document by ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge document by ID."""
         raise NotImplementedError
 
     @abstractmethod
@@ -244,14 +250,17 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge documents from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_knowledge_document(self):
+    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+        """Upsert a knowledge document in the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def delete_knowledge_document(self):
+    def delete_knowledge_document(self, document_id: str):
+        """Delete a knowledge document by ID."""
         raise NotImplementedError
 
     # --- Eval Table ---
@@ -276,7 +285,8 @@ class BaseDb(ABC):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
+        filter_type: Optional[EvalFilterType] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
@@ -292,7 +302,7 @@ class BaseDb(ABC):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
     ) -> List[EvalRunRecord]:
         raise NotImplementedError
 

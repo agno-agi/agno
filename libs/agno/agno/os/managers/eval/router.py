@@ -1,11 +1,23 @@
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.db.base import BaseDb
 from agno.eval.schemas import EvalFilterType, EvalType
 from agno.os.managers.eval.schemas import DeleteEvalRunsRequest, EvalSchema, UpdateEvalRunRequest
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+
+
+def parse_eval_types_filter(
+    eval_types: Optional[str] = Query(default=None, description="Comma-separated eval types"),
+) -> Optional[List[EvalType]]:
+    """Parse a comma-separated string of eval types into a list of EvalType enums"""
+    if not eval_types:
+        return None
+    try:
+        return [EvalType(item.strip()) for item in eval_types.split(",")]
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
@@ -15,8 +27,8 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
         model_id: Optional[str] = Query(default=None, description="Model ID"),
-        eval_type: Optional[EvalType] = Query(default=None, description="Eval type"),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type"),
+        eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -31,7 +43,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             team_id=team_id,
             workflow_id=workflow_id,
             model_id=model_id,
-            eval_type=eval_type,
+            eval_type=eval_types,
             filter_type=filter_type,
         )
 

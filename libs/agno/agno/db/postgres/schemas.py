@@ -75,6 +75,7 @@ EVAL_TABLE_SCHEMA = {
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
@@ -88,6 +89,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "access_count": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "status": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

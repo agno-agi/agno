@@ -1,9 +1,9 @@
 import json
 from dataclasses import asdict
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
@@ -14,6 +14,7 @@ from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,
+    AgentSummaryResponse,
     AppsResponse,
     ConfigResponse,
     InterfaceResponse,
@@ -22,8 +23,10 @@ from agno.os.schema import (
     SessionSchema,
     TeamResponse,
     TeamSessionDetailSchema,
+    TeamSummaryResponse,
     WorkflowResponse,
     WorkflowRunRequest,
+    WorkflowSummaryResponse,
 )
 from agno.os.utils import (
     get_agent_by_id,
@@ -195,6 +198,26 @@ def get_base_router(
                 for interface in os.interfaces
             ],
             apps=app_response,
+            agents=[
+                AgentSummaryResponse(agent_id=agent.agent_id, name=agent.name, description=agent.description)
+                for agent in os.agents
+            ]
+            if os.agents
+            else [],
+            teams=[
+                TeamSummaryResponse(team_id=team.team_id, name=team.name, description=team.description)
+                for team in os.teams
+            ]
+            if os.teams
+            else [],
+            workflows=[
+                WorkflowSummaryResponse(
+                    workflow_id=workflow.workflow_id, name=workflow.name, description=workflow.description
+                )
+                for workflow in os.workflows
+            ]
+            if os.workflows
+            else [],
         )
 
     # -- Agent routes ---
@@ -469,7 +492,7 @@ def get_base_router(
     async def rename_agent_session(
         agent_id: str,
         session_id: str,
-        session_name: str = Query(default=None, description="Session name"),
+        session_name: str = Body(embed=True),
     ):
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -477,9 +500,7 @@ def get_base_router(
         if agent.memory is None or agent.memory.db is None:
             raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
 
-        session = agent.memory.db.rename_session(
-            session_id=session_id, session_type=SessionType.AGENT, session_name=session_name
-        )
+        session = agent.rename_session(session_id=session_id, session_name=session_name)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
@@ -618,7 +639,7 @@ def get_base_router(
     async def get_team_sessions(
         team_id: str,
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
-        session_title: Optional[str] = Query(default=None, description="Filter sessions by title"),
+        session_name: Optional[str] = Query(default=None, description="Filter sessions by name"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -635,7 +656,7 @@ def get_base_router(
             session_type=SessionType.TEAM,
             component_id=team_id,
             user_id=user_id,
-            session_title=session_title,
+            session_name=session_name,
             limit=limit,
             page=page,
             sort_by=sort_by,

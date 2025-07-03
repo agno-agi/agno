@@ -18,12 +18,15 @@ class DocumentV2:  # We will rename this to Document
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
-    content: Optional[DocumentContent] = None
+    content: Optional[Union[str, DocumentContent]] = None
     metadata: Optional[dict] = None
     topics: Optional[List[str]] = None
     config: Optional[CloudStorageConfig] = None
     reader: Optional[Reader] = None
     size: Optional[int] = None
+    status: Optional[str] = None
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
 
 
 # readers: List[Reader] = [

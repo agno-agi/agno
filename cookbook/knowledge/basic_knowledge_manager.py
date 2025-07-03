@@ -1,3 +1,4 @@
+from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.document.document_v2 import DocumentV2
 from agno.knowledge.knowledge import Knowledge
@@ -18,45 +19,65 @@ knowledge = Knowledge(
     documents_db=documents_db,
 )
 
-# ---  Sample 1: Add a single document from path ---
-knowledge.add_document(paths="tmp/cv_1.pdf")
-
-# --- Sample 2: Add a single document from DocumentV2 ---
-knowledge.add_document(
-    DocumentV2(
-        name="CV2",
-        paths=["tmp/cv_2.pdf"],
-        metadata={"user_tag": "Engineering candidates"},
-    )
+agent = Agent(
+    name="My Agent",
+    description="Agno 2.0 Agent Implementation",
+    knowledge=knowledge,
+    search_knowledge=True,
+    debug_mode=True,
 )
 
-# --- Sample 3: Add multiple documents from paths ---
-knowledge.add_documents(paths=["tmp/cv_1.pdf", "tmp/cv_2.pdf"])
-
-# --- Sample 4: Add multiple documents from DocumentV2 ---
-knowledge.add_documents(
-    [
-        DocumentV2(
-            name="CV1",
-            paths=["tmp/cv_1.pdf"],
-            metadata={"user_tag": "Engineering candidates"},
-        ),
-        DocumentV2(
-            name="CV2",
-            paths=["tmp/cv_2.pdf"],
-            metadata={"user_tag": "Engineering candidates"},
-        ),
-    ]
+agent.print_response(
+    "Give me a list of questions in the CYS questionnaire.",
+    markdown=True,
 )
 
-# --- Sample 5: Add multiple documents from a mix of paths and DocumentV2 ---
-knowledge.add_documents(
-    [
-        "tmp/cv_1.pdf",
-        DocumentV2(
-            name="CV2",
-            paths=["tmp/cv_2.pdf"],
-            metadata={"user_tag": "Engineering candidates"},
-        ),
-    ]
-)
+
+# document = DocumentV2(
+#     id="f3aa7a8f-e9ff-444e-b02c-e0945238f16b", name="CV1", status="Completed"
+# )
+# knowledge._load_document(document)
+
+# knowledge.add_document(document)
+# # ---  Sample 1: Add a single document from path ---
+# knowledge.add_document(path="tmp/cv_1.pdf")
+
+# # --- Sample 2: Add a single document from DocumentV2 ---
+# knowledge.add_document(
+#     DocumentV2(
+#         name="CV2",
+#         paths=["tmp/cv_2.pdf"],
+#         metadata={"user_tag": "Engineering candidates"},
+#     )
+# )
+
+# # --- Sample 3: Add multiple documents from paths ---
+# knowledge.add_documents(paths=["tmp/cv_1.pdf", "tmp/cv_2.pdf"])
+
+# # --- Sample 4: Add multiple documents from DocumentV2 ---
+# knowledge.add_documents(
+#     [
+#         DocumentV2(
+#             name="CV1",
+#             paths=["tmp/cv_1.pdf"],
+#             metadata={"user_tag": "Engineering candidates"},
+#         ),
+#         DocumentV2(
+#             name="CV2",
+#             paths=["tmp/cv_2.pdf"],
+#             metadata={"user_tag": "Engineering candidates"},
+#         ),
+#     ]
+# )
+
+# # --- Sample 5: Add multiple documents from a mix of paths and DocumentV2 ---
+# knowledge.add_documents(
+#     [
+#         "tmp/cv_1.pdf",
+#         DocumentV2(
+#             name="CV2",
+#             paths=["tmp/cv_2.pdf"],
+#             metadata={"user_tag": "Engineering candidates"},
+#         ),
+#     ]
+# )

@@ -32,11 +32,15 @@ class CSVReader(Reader):
                 logger.info(f"Reading: {file}")
                 file_content = file.open(newline="", mode="r", encoding="utf-8")
             else:
-                logger.info(f"Reading retrieved file: {file.name}")
+                logger.info(f"Reading retrieved file: {name or file.name}")
                 file.seek(0)
                 file_content = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
-            csv_name = name or Path(file.name).stem if isinstance(file, Path) else file.name.split(".")[0]
+            csv_name = name or (
+                Path(file.name).stem
+                if isinstance(file, Path)
+                else (getattr(file, "name", "csv_file").split(".")[0] if hasattr(file, "name") else "csv_file")
+            )
             csv_content = ""
             with file_content as csvfile:
                 csv_reader = csv.reader(csvfile, delimiter=delimiter, quotechar=quotechar)
@@ -57,7 +61,7 @@ class CSVReader(Reader):
                 return chunked_documents
             return documents
         except Exception as e:
-            logger.error(f"Error reading: {file.name if isinstance(file, IO) else file}: {e}")
+            logger.error(f"Error reading: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}")
             return []
 
     async def async_read(
@@ -93,7 +97,11 @@ class CSVReader(Reader):
                 file.seek(0)
                 file_content_io = io.StringIO(file.read().decode("utf-8"))  # type: ignore
 
-            csv_name = name or Path(file.name).stem if isinstance(file, Path) else file.name.split(".")[0]
+            csv_name = name or (
+                Path(file.name).stem
+                if isinstance(file, Path)
+                else (getattr(file, "name", "csv_file").split(".")[0] if hasattr(file, "name") else "csv_file")
+            )
 
             file_content_io.seek(0)
             csv_reader = csv.reader(file_content_io, delimiter=delimiter, quotechar=quotechar)
@@ -135,7 +143,9 @@ class CSVReader(Reader):
 
             return documents
         except Exception as e:
-            logger.error(f"Error reading async: {file.name if isinstance(file, IO) else file}: {e}")
+            logger.error(
+                f"Error reading async: {getattr(file, 'name', str(file)) if isinstance(file, IO) else file}: {e}"
+            )
             return []
 
 

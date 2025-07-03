@@ -2,6 +2,7 @@ from typing import List
 
 from agno.document.base import Document
 from agno.document.chunking.strategy import ChunkingStrategy
+from agno.utils.log import log_info
 
 
 class FixedSizeChunking(ChunkingStrategy):
@@ -17,7 +18,6 @@ class FixedSizeChunking(ChunkingStrategy):
 
     def chunk(self, document: Document) -> List[Document]:
         """Split document into fixed-size chunks with optional overlap"""
-        print(f"Chunking document: {document.name}, chunk size: {self.chunk_size}, overlap: {self.overlap}")
         content = self.clean_text(document.content)
         content_length = len(content)
         chunked_documents: List[Document] = []

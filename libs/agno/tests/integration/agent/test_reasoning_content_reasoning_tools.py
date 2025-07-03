@@ -58,9 +58,9 @@ def test_reasoning_content_from_reasoning_tools_streaming():
     # Check the agent's run_response directly after streaming is complete
     assert hasattr(streaming_agent, "run_response"), "Agent should have run_response after streaming"
     assert streaming_agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(streaming_agent.run_response, "reasoning_content"), (
-        "Response should have reasoning_content attribute"
-    )
+    assert hasattr(
+        streaming_agent.run_response, "reasoning_content"
+    ), "Response should have reasoning_content attribute"
     assert streaming_agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
     assert len(streaming_agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
     assert streaming_agent.run_response.extra_data.reasoning_steps is not None

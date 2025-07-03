@@ -20,8 +20,8 @@ class TextReader(Reader):
                 file_name = name or file.stem
                 file_contents = file.read_text("utf-8")
             else:
-                log_info(f"Reading uploaded file: {file.name}")
                 file_name = name or file.name.split(".")[0]
+                log_info(f"Reading uploaded file: {file_name}")
                 file.seek(0)
                 file_contents = file.read().decode("utf-8")
 
