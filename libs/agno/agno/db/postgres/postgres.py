@@ -2028,7 +2028,9 @@ class PostgresDb(BaseDb):
         try:
             table = self.get_eval_table()
             with self.Session() as sess, sess.begin():
-                stmt = table.update().where(table.c.run_id == eval_run_id).values(name=name)
+                stmt = (
+                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                )
                 sess.execute(stmt)
                 sess.commit()
 
