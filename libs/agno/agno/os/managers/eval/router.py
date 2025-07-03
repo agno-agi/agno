@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -15,13 +15,26 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
         model_id: Optional[str] = Query(default=None, description="Model ID"),
-        eval_type: Optional[EvalType] = Query(default=None, description="Eval type"),
+        eval_type: Optional[str] = Query(
+            default=None, description="Eval type(s) - comma separated (e.g., accuracy,performance,reliability)"
+        ),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type"),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[EvalSchema]:
+        # Parse comma-separated eval_type string into list of EvalType enums
+        #  accuracy,performance,reliability -> [EvalType.ACCURACY, EvalType.PERFORMANCE, EvalType.RELIABILITY]
+
+        parsed_eval_types: Optional[List[EvalType]] = None
+        if eval_type:
+            try:
+                eval_type_strings = [t.strip() for t in eval_type.split(",") if t.strip()]
+                parsed_eval_types = [EvalType(eval_type_str) for eval_type_str in eval_type_strings]
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=f"Invalid eval_type value: {e}")
+
         eval_runs, total_count = db.get_eval_runs_raw(
             limit=limit,
             page=page,
@@ -31,7 +44,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             team_id=team_id,
             workflow_id=workflow_id,
             model_id=model_id,
-            eval_type=eval_type,
+            eval_type=parsed_eval_types,
             filter_type=filter_type,
         )
 

@@ -285,7 +285,7 @@ class BaseDb(ABC):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError
 
@@ -301,7 +301,7 @@ class BaseDb(ABC):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[EvalType] = None,
+        eval_type: Optional[List[EvalType]] = None,
     ) -> List[EvalRunRecord]:
         raise NotImplementedError
 
