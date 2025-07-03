@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger, log_debug
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -182,7 +182,7 @@ class Router:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
-                
+
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, router_step_outputs
                 )
@@ -497,7 +497,7 @@ class Router:
                 break  # Stop on first error
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        
+
         # Yield router completed event
         yield RouterExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",

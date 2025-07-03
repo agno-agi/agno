@@ -230,7 +230,6 @@ class Parallel:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-
         self._prepare_steps()
 
         # Yield parallel step started event
@@ -550,7 +549,7 @@ class Parallel:
         yield aggregated_result
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
-        
+
         # Yield parallel step completed event
         yield ParallelExecutionCompletedEvent(
             run_id=workflow_run_response.run_id or "",

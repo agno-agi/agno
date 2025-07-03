@@ -317,7 +317,7 @@ class Condition:
                 )
                 all_results.append(error_output)
                 break
-        
+
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
         # Yield condition completed event
@@ -450,7 +450,7 @@ class Condition:
                 step_results=[],
             )
             return
-        
+
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
 
         # Chain steps sequentially like Loop does

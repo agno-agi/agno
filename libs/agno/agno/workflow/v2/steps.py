@@ -112,7 +112,7 @@ class Steps:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute all steps in sequence and return the final result"""
-        logger.info(f"Executing {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -127,7 +127,7 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Executing sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
                 step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
@@ -148,14 +148,14 @@ class Steps:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
-
-                logger.info(f"Sequential step {step_name} completed")
+                log_debug(f"Steps {self.name}: Step {step_name} completed successfully")
 
                 # Update input for next step with proper chaining
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, steps_step_outputs
                 )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             return all_results
 
         except Exception as e:
@@ -179,7 +179,7 @@ class Steps:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
-        logger.info(f"Streaming {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -206,7 +206,7 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Streaming sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
                 # Stream step execution
@@ -251,6 +251,7 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             # Yield steps execution completed event
             yield StepsExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -281,7 +282,7 @@ class Steps:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute all steps in sequence asynchronously and return the final result"""
-        logger.info(f"Async executing {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -296,7 +297,7 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Async executing sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
                 step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
@@ -325,6 +326,7 @@ class Steps:
                     current_step_input, step_output, steps_step_outputs
                 )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             return all_results
 
         except Exception as e:
@@ -348,7 +350,7 @@ class Steps:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
-        logger.info(f"Async streaming {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -375,7 +377,7 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Async streaming sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
                 # Stream step execution
@@ -420,6 +422,7 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             # Yield steps execution completed event
             yield StepsExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
