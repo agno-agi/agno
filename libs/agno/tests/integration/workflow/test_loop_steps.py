@@ -53,6 +53,7 @@ def test_basic_loop(workflow_storage):
     assert len(response.step_responses) == 1
     assert "AI trends" in response.content
 
+
 def test_loop_with_parallel(workflow_storage):
     """Test loop with parallel steps."""
 
@@ -87,6 +88,7 @@ def test_loop_with_parallel(workflow_storage):
     summary_step_output = response.step_responses[0][1]  # First step's second output
     assert "Summary of findings" in summary_step_output.content
 
+
 def test_loop_streaming(workflow_storage):
     """Test loop with streaming events."""
     workflow = Workflow(
@@ -112,6 +114,7 @@ def test_loop_streaming(workflow_storage):
     assert len(loop_completed) == 1
     assert len(workflow_completed) == 1
 
+
 def test_parallel_loop_streaming(workflow_storage):
     """Test parallel steps in loop with streaming."""
     workflow = Workflow(
@@ -130,6 +133,7 @@ def test_parallel_loop_streaming(workflow_storage):
     events = list(workflow.run(message="test", stream=True))
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
+
 
 @pytest.mark.asyncio
 async def test_async_loop(workflow_storage):
@@ -154,6 +158,7 @@ async def test_async_loop(workflow_storage):
     response = await workflow.arun(message="test")
     assert isinstance(response, WorkflowRunResponse)
     assert "AI trends" in response.content
+
 
 @pytest.mark.asyncio
 async def test_async_parallel_loop(workflow_storage):

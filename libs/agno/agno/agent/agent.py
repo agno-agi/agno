@@ -328,7 +328,7 @@ class Agent:
     debug_mode: bool = False
     # Debug level: 1 = basic, 2 = detailed
     debug_level: Literal[1, 2] = 1
-    
+
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
@@ -655,7 +655,7 @@ class Agent:
             from copy import deepcopy
 
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
@@ -885,7 +885,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -904,7 +904,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -922,7 +922,7 @@ class Agent:
 
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1330,7 +1330,7 @@ class Agent:
 
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -4600,7 +4600,7 @@ class Agent:
     def get_user_message(
         self,
         *,
-        message: Optional[Union[str, List]],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4736,7 +4736,7 @@ class Agent:
     def get_run_messages(
         self,
         *,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         session_id: str,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4863,6 +4863,14 @@ class Agent:
                 user_message = Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+        # 4.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role=self.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
         # Add user message to run_messages
         if user_message is not None:
             run_messages.user_message = user_message
@@ -6639,7 +6647,7 @@ class Agent:
 
     def print_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -7070,7 +7078,7 @@ class Agent:
 
     async def aprint_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         messages: Optional[List[Union[Dict, Message]]] = None,
         session_id: Optional[str] = None,

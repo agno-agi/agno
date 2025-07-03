@@ -3,9 +3,9 @@
 import pytest
 
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2 import Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
+
 
 # Helper functions
 def research_step(step_input: StepInput) -> StepOutput:
@@ -15,7 +15,7 @@ def research_step(step_input: StepInput) -> StepOutput:
 
 def analysis_step(step_input: StepInput) -> StepOutput:
     """Analysis step."""
-    return StepOutput(step_name="analysis_step", content=f"Analysis of research data", success=True)
+    return StepOutput(step_name="analysis_step", content="Analysis of research data", success=True)
 
 
 def report_step(step_input: StepInput) -> StepOutput:
@@ -35,6 +35,7 @@ Available Steps: {list(step_input.previous_steps_outputs.keys())}"""
 
     return StepOutput(step_name="report_step", content=report, success=True)
 
+
 def test_basic_access(workflow_storage):
     """Test basic access to previous steps."""
     workflow = Workflow(
@@ -52,6 +53,7 @@ def test_basic_access(workflow_storage):
     assert "research_step" in report.content
     assert "analysis_step" in report.content
 
+
 def test_streaming_access(workflow_storage):
     """Test streaming with multiple step access."""
     workflow = Workflow(
@@ -65,6 +67,7 @@ def test_streaming_access(workflow_storage):
     assert len(completed_events) == 1
     assert "Report:" in completed_events[0].content
 
+
 @pytest.mark.asyncio
 async def test_async_access(workflow_storage):
     """Test async execution with multiple step access."""
@@ -76,6 +79,7 @@ async def test_async_access(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_responses) == 3
     assert "Report:" in response.content
+
 
 @pytest.mark.asyncio
 async def test_async_streaming_access(workflow_storage):

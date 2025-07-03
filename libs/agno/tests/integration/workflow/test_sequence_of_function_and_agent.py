@@ -5,10 +5,7 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 
-from agno.agent import Agent
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
-from agno.team import Team
 from agno.workflow.v2 import StepInput, StepOutput, Workflow
 
 
@@ -28,6 +25,7 @@ def test_basic_sequence(workflow_storage):
     assert len(response.step_responses) == 2
     assert "Second: First: test" in response.content
 
+
 def test_function_and_agent_sequence(workflow_storage, test_agent):
     """Test sequence with function and agent."""
 
@@ -41,6 +39,7 @@ def test_function_and_agent_sequence(workflow_storage, test_agent):
     assert len(response.step_responses) == 2
     assert response.step_responses[1].success
 
+
 def test_function_and_team_sequence(workflow_storage, test_team):
     """Test sequence with function and team."""
 
@@ -53,6 +52,7 @@ def test_function_and_team_sequence(workflow_storage, test_team):
     assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_responses) == 2
     assert response.step_responses[1].success
+
 
 def test_function_streaming_sequence(workflow_storage):
     """Test streaming sequence."""
@@ -69,6 +69,7 @@ def test_function_streaming_sequence(workflow_storage):
     assert len(completed_events) == 1
     assert any("Start" in str(e.content) for e in step_events)
 
+
 @pytest.mark.asyncio
 async def test_async_function_sequence(workflow_storage):
     """Test async sequence."""
@@ -82,6 +83,7 @@ async def test_async_function_sequence(workflow_storage):
     response = await workflow.arun(message="test")
     assert isinstance(response, WorkflowRunResponse)
     assert "Async: test" in response.content
+
 
 @pytest.mark.asyncio
 async def test_async_function_streaming(workflow_storage):
@@ -101,6 +103,7 @@ async def test_async_function_streaming(workflow_storage):
 
     assert len(completed_events) == 1
     assert any("Start" in str(e.content) for e in step_events)
+
 
 def test_mixed_sequence(workflow_storage, test_agent, test_team):
     """Test sequence with function, agent, and team."""

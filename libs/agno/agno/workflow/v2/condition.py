@@ -1,6 +1,6 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import log_debug, logger
+from agno.utils.log import logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -48,11 +48,11 @@ class Condition:
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
-        from agno.workflow.v2.parallel import Parallel
-        from agno.workflow.v2.step import Step
         from agno.workflow.v2.loop import Loop
-        from agno.workflow.v2.steps import Steps
+        from agno.workflow.v2.parallel import Parallel
         from agno.workflow.v2.router import Router
+        from agno.workflow.v2.step import Step
+        from agno.workflow.v2.steps import Steps
 
         prepared_steps = []
         for step in self.steps:
@@ -101,7 +101,6 @@ class Condition:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,
@@ -175,10 +174,18 @@ class Condition:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} completed")
@@ -275,12 +282,22 @@ class Condition:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
                         # Use last output
                         condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
@@ -344,10 +361,18 @@ class Condition:
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
                         condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
                 else:
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
 
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.info(f"Condition step {step_name} async completed")
@@ -446,12 +471,22 @@ class Condition:
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step[0], condition_step_outputs
                         )
                     else:
                         # Use last output
                         condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )

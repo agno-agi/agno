@@ -2,9 +2,7 @@
 
 import pytest
 
-from agno.agent import Agent
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2 import Workflow
 from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.step import Step
@@ -45,6 +43,7 @@ def test_basic_parallel(workflow_storage):
     assert "Output A" in parallel_output.content
     assert "Output B" in parallel_output.content
 
+
 def test_parallel_streaming(workflow_storage):
     """Test parallel execution with streaming."""
     workflow = Workflow(
@@ -57,6 +56,7 @@ def test_parallel_streaming(workflow_storage):
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
     assert completed_events[0].content is not None
+
 
 def test_parallel_with_agent(workflow_storage, test_agent):
     """Test parallel execution with agent step."""
@@ -74,6 +74,7 @@ def test_parallel_with_agent(workflow_storage, test_agent):
     assert isinstance(parallel_output, StepOutput)
     assert "Output A" in parallel_output.content
 
+
 @pytest.mark.asyncio
 async def test_async_parallel(workflow_storage):
     """Test async parallel execution."""
@@ -86,6 +87,7 @@ async def test_async_parallel(workflow_storage):
     response = await workflow.arun(message="test")
     assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_responses) == 2
+
 
 @pytest.mark.asyncio
 async def test_async_parallel_streaming(workflow_storage):

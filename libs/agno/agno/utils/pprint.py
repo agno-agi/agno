@@ -75,10 +75,12 @@ def pprint_run_response(
                 ):
                     if isinstance(resp.content, BaseModel):
                         try:
-                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            json_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"
                         streaming_response_content += resp.content
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore

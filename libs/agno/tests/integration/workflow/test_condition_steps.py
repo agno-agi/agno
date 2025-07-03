@@ -9,7 +9,6 @@ from agno.run.v2.workflow import (
     WorkflowCompletedEvent,
     WorkflowRunResponse,
 )
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2 import Condition, Parallel, Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -49,6 +48,7 @@ async def async_evaluator(step_input: StepInput) -> bool:
     """Async evaluator."""
     return is_tech_topic(step_input)
 
+
 def test_basic_condition_true(workflow_storage):
     """Test basic condition that evaluates to True."""
     workflow = Workflow(
@@ -66,6 +66,7 @@ def test_basic_condition_true(workflow_storage):
     assert len(response.step_responses[1]) == 1
     assert "Fact check complete" in response.step_responses[1][0].content
 
+
 def test_basic_condition_false(workflow_storage):
     """Test basic condition that evaluates to False."""
     workflow = Workflow(
@@ -80,6 +81,7 @@ def test_basic_condition_false(workflow_storage):
 
     # The step_responses will be empty due to the error
     assert len(response.step_responses) == 0
+
 
 def test_parallel_with_conditions(workflow_storage):
     """Test parallel containing multiple conditions."""
@@ -106,6 +108,7 @@ def test_parallel_with_conditions(workflow_storage):
     assert "SUCCESS: analysis_step" in parallel_output.content
     assert "SUCCESS: fact_check_step" in parallel_output.content
 
+
 def test_condition_streaming(workflow_storage):
     """Test condition with streaming."""
     workflow = Workflow(
@@ -126,6 +129,7 @@ def test_condition_streaming(workflow_storage):
     assert len(workflow_completed) == 1
     assert condition_started[0].condition_result is True
 
+
 def test_condition_error_handling(workflow_storage):
     """Test condition error handling."""
 
@@ -142,6 +146,7 @@ def test_condition_error_handling(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
     assert response.status == RunStatus.error
     assert "Evaluator failed" in response.content
+
 
 def test_nested_conditions(workflow_storage):
     """Test nested conditions."""
@@ -165,6 +170,7 @@ def test_nested_conditions(workflow_storage):
     # research_step + inner condition result
     assert len(outer_condition) == 2
 
+
 @pytest.mark.asyncio
 async def test_async_condition(workflow_storage):
     """Test async condition."""
@@ -179,6 +185,7 @@ async def test_async_condition(workflow_storage):
     assert len(response.step_responses) == 1
     assert isinstance(response.step_responses[0], list)
     assert len(response.step_responses[0]) == 1
+
 
 @pytest.mark.asyncio
 async def test_async_condition_streaming(workflow_storage):

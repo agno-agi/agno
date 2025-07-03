@@ -561,8 +561,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -629,7 +627,7 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.parent_team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
@@ -661,7 +659,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -679,7 +677,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -696,7 +694,7 @@ class Team:
 
     def run(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1073,7 +1071,7 @@ class Team:
     @overload
     async def arun(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1091,7 +1089,7 @@ class Team:
     @overload
     async def arun(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1108,7 +1106,7 @@ class Team:
 
     async def arun(
         self,
-        message: Union[str, List, Dict, Message],
+        message: Union[str, List, Dict, Message, BaseModel],
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -2201,7 +2199,7 @@ class Team:
 
     def print_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
@@ -2268,7 +2266,7 @@ class Team:
 
     def _print_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -2550,7 +2548,7 @@ class Team:
 
     def _print_response_stream(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3066,7 +3064,7 @@ class Team:
 
     async def aprint_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
@@ -3133,7 +3131,7 @@ class Team:
 
     async def _aprint_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3413,7 +3411,7 @@ class Team:
 
     async def _aprint_response_stream(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         console: Optional[Any] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -4019,7 +4017,11 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode, debug_level=self.debug_level
+            model=reasoning_model,
+            monitoring=self.monitoring,
+            telemetry=self.telemetry,
+            debug_mode=self.debug_mode,
+            debug_level=self.debug_level,
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -4779,8 +4781,9 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
@@ -5075,7 +5078,7 @@ class Team:
         *,
         session_id: str,
         user_id: Optional[str] = None,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -5157,7 +5160,7 @@ class Team:
 
     def _get_user_message(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -6183,6 +6186,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -6190,6 +6198,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
@@ -6208,10 +6220,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):

@@ -8,7 +8,6 @@ from agno.agent.agent import Agent
 from agno.run.base import RunStatus
 from agno.run.response import RunResponseEvent
 from agno.run.v2.workflow import WorkflowCompletedEvent
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow, WorkflowRunResponse
 
@@ -62,6 +61,7 @@ def test_simple_custom_execution_non_streaming(workflow_storage):
     assert response.status == RunStatus.completed
     assert "Custom execution processed: Test message" in response.content
 
+
 def test_agent_based_custom_execution_non_streaming(workflow_storage):
     """Test custom execution function using an agent (non-streaming)."""
 
@@ -86,6 +86,7 @@ def test_agent_based_custom_execution_non_streaming(workflow_storage):
     assert response.status == RunStatus.completed
     assert "Agent analysis of: AI trends" in response.content
 
+
 def test_multi_step_custom_execution_non_streaming(workflow_storage):
     """Test custom execution function that simulates multiple steps."""
 
@@ -97,9 +98,7 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
         research_results = f"Research on {message}: Found key insights about trends and developments."
 
         # Simulate analysis step
-        analysis_results = (
-            f"Analysis based on research: {research_results[:50]}... Key findings include market growth."
-        )
+        analysis_results = f"Analysis based on research: {research_results[:50]}... Key findings include market growth."
 
         # Simulate final content creation
         final_content = (
@@ -123,6 +122,7 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
     assert "Technology market analysis" in response.content
     assert "Research on Technology market analysis" in response.content
 
+
 def test_custom_execution_streaming(workflow_storage):
     """Test custom execution function with streaming."""
 
@@ -134,8 +134,8 @@ def test_custom_execution_streaming(workflow_storage):
 
         # Yield intermediate steps
         yield f"Starting analysis of: {message}"
-        yield f"Gathering research data..."
-        yield f"Processing insights..."
+        yield "Gathering research data..."
+        yield "Processing insights..."
 
         # Yield final result
         yield f"Complete analysis for {message}: Comprehensive insights and recommendations."
@@ -159,6 +159,7 @@ def test_custom_execution_streaming(workflow_storage):
     assert len(completed_events) == 1
     assert "Complete analysis for AI market trends" in completed_events[0].content
 
+
 def test_custom_execution_with_error_handling(workflow_storage):
     """Test custom execution function error handling."""
 
@@ -180,6 +181,7 @@ def test_custom_execution_with_error_handling(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
     assert response.status == RunStatus.completed  # Now completed since we handle the error
     assert "Custom execution failed!" in response.content
+
 
 def test_custom_execution_with_workflow_access(workflow_storage):
     """Test custom execution function accessing workflow properties."""
@@ -203,6 +205,7 @@ def test_custom_execution_with_workflow_access(workflow_storage):
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Workflow 'Workflow-Aware Custom Execution' processed message: Test workflow access" in response.content
+
 
 def test_custom_execution_with_execution_input_properties(workflow_storage):
     """Test custom execution function accessing execution input properties."""
@@ -245,6 +248,7 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
     assert "Message Data:" in response.content
     assert "test_user" in str(response.content)
 
+
 async def test_async_custom_execution_non_streaming(workflow_storage):
     """Test async custom execution function (non-streaming)."""
 
@@ -272,6 +276,7 @@ async def test_async_custom_execution_non_streaming(workflow_storage):
     assert response.status == RunStatus.completed
     assert "Async custom execution processed: Async test message" in response.content
 
+
 async def test_async_custom_execution_streaming(workflow_storage):
     """Test async custom execution function with streaming."""
 
@@ -284,9 +289,9 @@ async def test_async_custom_execution_streaming(workflow_storage):
         # Yield intermediate steps
         yield f"Async: Starting analysis of: {message}"
         await asyncio.sleep(0.01)
-        yield f"Async: Gathering research data..."
+        yield "Async: Gathering research data..."
         await asyncio.sleep(0.01)
-        yield f"Async: Processing insights..."
+        yield "Async: Processing insights..."
         await asyncio.sleep(0.01)
 
         # Yield final result
@@ -310,6 +315,7 @@ async def test_async_custom_execution_streaming(workflow_storage):
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
     assert "Async: Complete analysis for Async AI trends" in completed_events[0].content
+
 
 def test_custom_execution_return_types(workflow_storage):
     """Test custom execution function with different return types."""
@@ -338,6 +344,7 @@ def test_custom_execution_return_types(workflow_storage):
     assert "'status': 'success'" in response.content
     assert "'message': 'Dict test'" in response.content
 
+
 def test_custom_execution_complex_workflow_simulation(workflow_storage):
     """Test custom execution that simulates a complex multi-agent workflow."""
 
@@ -352,19 +359,19 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
         research_phase += "- Gathered expert opinions\n\n"
 
         # Simulate analysis phase
-        analysis_phase = f"Analysis Phase Results:\n"
+        analysis_phase = "Analysis Phase Results:\n"
         analysis_phase += f"- Processed research on {topic}\n"
         analysis_phase += "- Generated insights and patterns\n"
         analysis_phase += "- Ranked findings by importance\n\n"
 
         # Simulate content creation phase
-        content_phase = f"Content Creation Phase:\n"
+        content_phase = "Content Creation Phase:\n"
         content_phase += f"- Created comprehensive report on {topic}\n"
         content_phase += "- Structured findings into actionable insights\n"
         content_phase += "- Prepared executive summary\n\n"
 
         # Final output
-        final_output = f"COMPREHENSIVE ANALYSIS REPORT\n\n"
+        final_output = "COMPREHENSIVE ANALYSIS REPORT\n\n"
         final_output += f"Topic: {topic}\n\n"
         final_output += research_phase + analysis_phase + content_phase
         final_output += "CONCLUSION: Analysis complete with actionable recommendations."
@@ -388,6 +395,7 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
     assert "Content Creation Phase" in response.content
     assert "Artificial Intelligence Market Trends" in response.content
 
+
 def test_custom_execution_with_none_return(workflow_storage):
     """Test custom execution function that returns None."""
 
@@ -407,6 +415,7 @@ def test_custom_execution_with_none_return(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
     assert response.status == RunStatus.completed
     # Content might be empty or have a default message
+
 
 def test_custom_execution_with_empty_string_return(workflow_storage):
     """Test custom execution function that returns empty string."""

@@ -63,9 +63,9 @@ class Loop:
         from agno.team.team import Team
         from agno.workflow.v2.condition import Condition
         from agno.workflow.v2.parallel import Parallel
+        from agno.workflow.v2.router import Router
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.steps import Steps
-        from agno.workflow.v2.router import Router
 
         prepared_steps = []
         for step in self.steps:
@@ -115,7 +115,6 @@ class Loop:
 
         return StepInput(
             message=step_input.message,
-            message_data=step_input.message_data,
             previous_step_content=previous_step_content,
             previous_steps_outputs=updated_previous_steps_outputs,
             workflow_message=step_input.workflow_message,
@@ -158,11 +157,19 @@ class Loop:
                     if step_output:  # Add last output to loop tracking
                         step_name = getattr(step, "name", f"step_{i + 1}")
                         loop_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     # Single StepOutput
                     iteration_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     loop_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 # Update step input for next step
                 current_step_input = self._update_step_input_from_outputs(
@@ -221,6 +228,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             log_debug(f"Loop iteration {iteration + 1}/{self.max_iterations}")
@@ -265,12 +273,24 @@ class Loop:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     if len(step_outputs_for_iteration) == 1:
                         loop_step_outputs[step_name] = step_outputs_for_iteration[0]
+
+                        if step_outputs_for_iteration[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
+                            break  # Break out of step loop
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_iteration[0], loop_step_outputs
                         )
                     else:
                         # Use last output
                         loop_step_outputs[step_name] = step_outputs_for_iteration[-1]
+
+                        if any(output.stop for output in step_outputs_for_iteration):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
+                            break  # Break out of step loop
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_iteration, loop_step_outputs
                         )
@@ -286,6 +306,10 @@ class Loop:
                     log_debug(f"End condition returned: {should_break}, should_continue: {should_continue}")
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
+
+            if early_termination:
+                should_continue = False
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
 
             # Yield iteration completed event
             yield LoopIterationCompletedEvent(
@@ -358,11 +382,19 @@ class Loop:
                     if step_output:  # Add last output to loop tracking
                         step_name = getattr(step, "name", f"step_{i + 1}")
                         loop_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            break
                 else:
                     # Single StepOutput
                     iteration_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     loop_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                 # Update step input for next step
                 current_step_input = self._update_step_input_from_outputs(
@@ -423,6 +455,7 @@ class Loop:
 
         all_results = []
         iteration = 0
+        early_termination = False
 
         while iteration < self.max_iterations:
             log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")
@@ -468,12 +501,24 @@ class Loop:
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     if len(step_outputs_for_iteration) == 1:
                         loop_step_outputs[step_name] = step_outputs_for_iteration[0]
+
+                        if step_outputs_for_iteration[0].stop:
+                            logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
+                            break  # Break out of step loop
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_iteration[0], loop_step_outputs
                         )
                     else:
                         # Use last output
                         loop_step_outputs[step_name] = step_outputs_for_iteration[-1]
+
+                        if any(output.stop for output in step_outputs_for_iteration):
+                            logger.info(f"Early termination requested by step {step_name}")
+                            early_termination = True
+                            break  # Break out of step loop
+
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_iteration, loop_step_outputs
                         )
@@ -492,6 +537,10 @@ class Loop:
                     log_debug(f"End condition returned: {should_break}, should_continue: {should_continue}")
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
+
+            if early_termination:
+                should_continue = False
+                log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
 
             # Yield iteration completed event
             yield LoopIterationCompletedEvent(
