@@ -430,18 +430,19 @@ class Condition:
             )
 
         if not condition_result:
-            # Yield condition completed event for empty case
-            yield ConditionExecutionCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                condition_result=False,
-                executed_steps=0,
-                step_results=[],
-            )
+            if stream_intermediate_steps:
+                # Yield condition completed event for empty case
+                yield ConditionExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=False,
+                    executed_steps=0,
+                    step_results=[],
+                )
             return
 
         # Chain steps sequentially like Loop does
