@@ -31,7 +31,13 @@ from agno.run.v2.workflow import (
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.team.team import Team
-from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (
+    log_debug,
+    logger,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+    use_workflow_logger,
+)
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.loop import Loop
 from agno.workflow.v2.parallel import Parallel
@@ -130,27 +136,40 @@ class Workflow:
     def _set_debug(self) -> None:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            use_workflow_logger()
+
             self.debug_mode = True
-            set_log_level_to_debug()
+            set_log_level_to_debug(source_type="workflow")
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not isinstance(self.steps, Callable):
                 for step in self.steps:
                     # TODO: Handle properly steps inside other primitives
-
-                    # Propagate to step executors (agents/teams)
-                    if hasattr(step, "active_executor") and step.active_executor:
-                        executor = step.active_executor
-                        if hasattr(executor, "debug_mode"):
-                            executor.debug_mode = True
-
-                        # If it's a team, propagate to all members
-                        if hasattr(executor, "members"):
-                            for member in executor.members:
-                                if hasattr(member, "debug_mode"):
-                                    member.debug_mode = True
+                    self._propagate_debug_to_step(step)
         else:
-            set_log_level_to_info()
+            set_log_level_to_info(source_type="workflow")
+
+    def _propagate_debug_to_step(self, step):
+        """Recursively propagate debug mode to steps and nested primitives"""
+        # Handle direct Step objects
+        if hasattr(step, "active_executor") and step.active_executor:
+            executor = step.active_executor
+            if hasattr(executor, "debug_mode"):
+                executor.debug_mode = True
+
+            # If it's a team, propagate to all members
+            if hasattr(executor, "members"):
+                for member in executor.members:
+                    if hasattr(member, "debug_mode"):
+                        member.debug_mode = True
+
+        # Handle nested primitives - check both 'steps' and 'choices' attributes
+        for attr_name in ["steps", "choices"]:
+            if hasattr(step, attr_name):
+                attr_value = getattr(step, attr_name)
+                if attr_value and isinstance(attr_value, list):
+                    for nested_step in attr_value:
+                        self._propagate_debug_to_step(nested_step)
 
     def _create_step_input(
         self,
@@ -166,6 +185,7 @@ class Workflow:
         if previous_steps_outputs:
             last_output = list(previous_steps_outputs.values())[-1]
             previous_step_content = last_output.content if last_output else None
+            log_debug(f"Using previous step content from: {list(previous_steps_outputs.keys())[-1]}")
 
         return StepInput(
             message=execution_input.message,
@@ -239,6 +259,7 @@ class Workflow:
 
                     # Update the workflow-level previous_steps_outputs dictionary
                     if isinstance(step_output, list):
+                        log_debug(f"Step returned {len(step_output)} outputs")
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
                             previous_steps_outputs[step_name] = step_output[-1]
@@ -928,6 +949,8 @@ class Workflow:
         stream_intermediate_steps: bool = False,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+        self._set_debug()
+
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
         log_debug(f"Stream: {stream}")
 
@@ -984,21 +1007,27 @@ class Workflow:
         """Prepare the steps for execution"""
         prepared_steps = []
         if not isinstance(self.steps, Callable):
-            for step in self.steps:
+            for i, step in enumerate(self.steps):
                 if isinstance(step, Callable):
-                    prepared_steps.append(
-                        Step(name=step.__name__, description="User-defined callable step", executor=step)
-                    )
+                    step_name = step.__name__
+                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
                 elif isinstance(step, Agent):
+                    log_debug(f"Step {i + 1}: Agent '{step.name}'")
                     prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
                 elif isinstance(step, Team):
+                    log_debug(f"Step {i + 1}: Team '{step.name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    step_type = type(step).__name__
+                    step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
+                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
             self.steps = prepared_steps
+            log_debug("Step preparation completed")
 
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
@@ -1065,8 +1094,6 @@ class Workflow:
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from storage or create a new one"""
-        log_debug(f"Current session_id: {self.session_id}")
-
         if self.workflow_session is not None and not force:
             if self.session_id is not None and self.workflow_session.session_id == self.session_id:
                 log_debug("Using existing workflow session")
@@ -1289,7 +1316,7 @@ class Workflow:
                                     step_panel = create_panel(
                                         content=Markdown(formatted_content) if markdown else formatted_content,
                                         title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                        border_style="green",
+                                        border_style="orange3",
                                     )
                                     console.print(step_panel)
                         else:
@@ -1299,7 +1326,7 @@ class Workflow:
                                 step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
                                     title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
                                 console.print(step_panel)
 
@@ -1308,7 +1335,7 @@ class Workflow:
                     step_panel = create_panel(
                         content=Markdown(workflow_response.content) if markdown else workflow_response.content,
                         title="Custom Function (Completed)",
-                        border_style="green",
+                        border_style="orange3",
                     )
                     console.print(step_panel)
 
@@ -1356,7 +1383,7 @@ class Workflow:
         show_step_details: bool = True,
         console: Optional[Any] = None,
     ) -> None:
-        """Print workflow execution with clean streaming - green step blocks displayed once"""
+        """Print workflow execution with clean streaming - orange step blocks displayed once"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -1468,14 +1495,14 @@ class Workflow:
                                 }
                             )
 
-                        # Print the final step result in green (only once)
+                        # Print the final step result in orange (only once)
                         if show_step_details and current_step_content and not step_started_printed:
                             live_log.update(status, refresh=True)
 
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title=f"Step {step_index + 1}: {step_name} (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
@@ -1652,7 +1679,7 @@ class Workflow:
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title="Custom Function (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
@@ -1728,11 +1755,11 @@ class Workflow:
                                 if is_callable_function:
                                     title = "Custom Function (Streaming...)"
 
-                                # Show the streaming content live in green panel
+                                # Show the streaming content live in orange panel
                                 live_step_panel = create_panel(
                                     content=Markdown(current_step_content) if markdown else current_step_content,
                                     title=title,
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
 
                                 # Create group with status and current step content
@@ -1914,7 +1941,7 @@ class Workflow:
                                     step_panel = create_panel(
                                         content=Markdown(formatted_content) if markdown else formatted_content,
                                         title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                        border_style="green",
+                                        border_style="orange3",
                                     )
                                     console.print(step_panel)
                         else:
@@ -1924,7 +1951,7 @@ class Workflow:
                                 step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
                                     title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
                                 console.print(step_panel)
 
@@ -1933,7 +1960,7 @@ class Workflow:
                     step_panel = create_panel(
                         content=Markdown(workflow_response.content) if markdown else workflow_response.content,
                         title="Custom Function (Completed)",
-                        border_style="green",
+                        border_style="orange3",
                     )
                     console.print(step_panel)
 
@@ -1981,7 +2008,7 @@ class Workflow:
         show_step_details: bool = True,
         console: Optional[Any] = None,
     ) -> None:
-        """Print workflow execution with clean streaming - green step blocks displayed once"""
+        """Print workflow execution with clean streaming - orange step blocks displayed once"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -2093,14 +2120,14 @@ class Workflow:
                                 }
                             )
 
-                        # Print the final step result in green (only once)
+                        # Print the final step result in orange (only once)
                         if show_step_details and current_step_content and not step_started_printed:
                             live_log.update(status, refresh=True)
 
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title=f"Step {step_index + 1}: {step_name} (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
@@ -2250,7 +2277,7 @@ class Workflow:
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title="Custom Function (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
                             console.print(final_step_panel)
                             step_started_printed = True
@@ -2326,11 +2353,11 @@ class Workflow:
                                 if is_callable_function:
                                     title = "Custom Function (Streaming...)"
 
-                                # Show the streaming content live in green panel
+                                # Show the streaming content live in orange panel
                                 live_step_panel = create_panel(
                                     content=Markdown(current_step_content) if markdown else current_step_content,
                                     title=title,
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
 
                                 # Create group with status and current step content
@@ -2401,6 +2428,8 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
+        log_debug("Updating agents and teams with session information")
+
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not isinstance(self.steps, Callable):
             for step in self.steps:

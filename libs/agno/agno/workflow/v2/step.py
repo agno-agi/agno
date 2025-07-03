@@ -15,7 +15,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponseEvent,
 )
 from agno.team import Team
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.workflow.v2.types import StepInput, StepOutput
 
 StepExecutor = Callable[
@@ -158,7 +158,6 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
-                log_debug(f"Step {self.name} attempt {attempt + 1}/{self.max_retries + 1}")
                 if self._executor_type == "function":
                     if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
                         self.active_executor
@@ -206,6 +205,12 @@ class Step:
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
+                        # Switch to appropriate logger based on executor type
+                        if self._executor_type == "agent":
+                            use_agent_logger()
+                        elif self._executor_type == "team":
+                            use_team_logger()
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -220,14 +225,14 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                         )
+
+                        # Switch back to workflow logger after execution
+                        use_workflow_logger()
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
                 step_output = self._process_step_output(response)
-
-                log_debug(f"Step {self.name} completed successfully on attempt {attempt + 1}")
-                log_debug(f"Step Execute End: {self.name}", center=True, symbol="*")
 
                 return step_output
 
@@ -320,6 +325,12 @@ class Step:
                     )
 
                     if self._executor_type in ["agent", "team"]:
+                        # Switch to appropriate logger based on executor type
+                        if self._executor_type == "agent":
+                            use_agent_logger()
+                        elif self._executor_type == "team":
+                            use_team_logger()
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -459,6 +470,12 @@ class Step:
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
+                        # Switch to appropriate logger based on executor type
+                        if self._executor_type == "agent":
+                            use_agent_logger()
+                        elif self._executor_type == "team":
+                            use_team_logger()
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
@@ -589,6 +606,12 @@ class Step:
                     )
 
                     if self._executor_type in ["agent", "team"]:
+                        # Switch to appropriate logger based on executor type
+                        if self._executor_type == "agent":
+                            use_agent_logger()
+                        elif self._executor_type == "team":
+                            use_team_logger()
+
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
                         )
