@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import SessionType
-from agno.os.utils import format_team_tools, format_tools
+from agno.os.utils import format_team_tools, format_tools, get_session_name
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 
@@ -221,10 +221,10 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
+        session_name = get_session_name(session)
         return cls(
             session_id=session.get("session_id", ""),
-            session_name=session.get("session_data", {}).get("session_name", "")
-            or session["runs"][0].get("run_data", {}).get("run_input", ""),
+            session_name=session_name,
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,

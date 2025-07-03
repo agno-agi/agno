@@ -12,6 +12,20 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
+def get_session_name(session: Dict[str, Any]) -> str:
+    """Get the session name from the given session dictionary"""
+    session_data = session.get("session_data")
+    if session_data is not None and session_data.get("session_name") is not None:
+        return session_data["session_name"]
+    elif session["runs"][0].get("run_data") is not None:
+        return session["runs"][0]["run_data"].get("run_input")
+    else:
+        for message in session["runs"][0]["messages"]:
+            if message["role"] == "user":
+                return message["content"]
+    return ""
+
+
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
