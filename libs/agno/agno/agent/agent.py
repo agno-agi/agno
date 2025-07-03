@@ -676,7 +676,7 @@ class Agent:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response
+        return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
@@ -2978,8 +2978,9 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
         # Determine reasoning completed
@@ -3046,8 +3047,9 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             ):
                 yield event
 
@@ -3085,6 +3087,7 @@ class Agent:
         model_response: ModelResponse,
         model_response_event: Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent],
         reasoning_state: Optional[Dict[str, Any]] = None,
+        parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
@@ -3100,11 +3103,9 @@ class Agent:
 
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if self.should_parse_structured_output:
+                    if parse_structured_output:
                         model_response.content = model_response_event.content
-                        print("HERE", model_response.content)
                         self._convert_response_to_structured_format(model_response)
-                        print("HERE", model_response.content)
                         
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content = model_response.content
@@ -6149,6 +6150,7 @@ class Agent:
                         run_response=run_response,
                         model_response=parser_model_response,
                         model_response_event=model_response_event,
+                        parse_structured_output=True,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
 
@@ -6196,6 +6198,7 @@ class Agent:
                         run_response=run_response,
                         model_response=parser_model_response,
                         model_response_event=model_response_event,
+                        parse_structured_output=True,
                         stream_intermediate_steps=stream_intermediate_steps,
                     ):
                         yield event

@@ -440,13 +440,14 @@ def test_intermediate_steps_with_parser_model(agent_storage):
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.parser_model_response_started]) == 1
     assert len(events[RunEvent.parser_model_response_completed]) == 1
-    assert len(events[RunEvent.run_response_content]) == 2  # One for the original content, one for the parser model response
+    assert len(events[RunEvent.run_response_content]) >= 2  # The first model streams, then the parser model has a single content event
     assert len(events[RunEvent.run_completed]) == 1
 
-    assert events[RunEvent.run_response_content][0].content is not None
-    assert events[RunEvent.run_response_content][0].content_type == "Person"
-    assert events[RunEvent.run_response_content][0].content.name == "Elon Musk"
-    assert len(events[RunEvent.run_response_content][0].content.description) > 1
+    assert events[RunEvent.run_response_content][-1].content is not None
+    print(events[RunEvent.run_response_content][-1])
+    assert events[RunEvent.run_response_content][-1].content_type == "Person"
+    assert events[RunEvent.run_response_content][-1].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_response_content][-1].content.description) > 1
 
     assert events[RunEvent.run_completed][0].content is not None
     assert events[RunEvent.run_completed][0].content_type == "Person"
