@@ -194,7 +194,7 @@ class WorkflowRunRequest(BaseModel):
 
 class SessionSchema(BaseModel):
     session_id: str
-    title: str
+    session_name: str
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -202,7 +202,8 @@ class SessionSchema(BaseModel):
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         return cls(
             session_id=session.get("session_id", ""),
-            title=session["runs"][0].get("run_data", {}).get("run_input", ""),
+            session_name=session.get("session_data", {}).get("session_name", "")
+            or session["runs"][0].get("run_data", {}).get("run_input", ""),
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -222,6 +223,7 @@ class AgentSessionDetailSchema(BaseModel):
     agent_session_id: str
     workspace_id: Optional[str]
     session_id: str
+    session_name: str
     agent_id: Optional[str]
     agent_data: Optional[dict]
     agent_sessions: list
@@ -232,11 +234,16 @@ class AgentSessionDetailSchema(BaseModel):
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
+        session_name = session.session_data.get("session_name", "") if session.session_data else ""
+        if not session_name:
+            session_name = session.runs[0].get("run_data", {}).get("run_input", "") if session.runs else ""
+
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
             workspace_id=None,
             session_id=session.session_id,
+            session_name=session_name,
             agent_id=session.agent_id if session.agent_id else None,
             agent_data=session.agent_data,
             agent_sessions=[],
