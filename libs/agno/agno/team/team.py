@@ -741,7 +741,10 @@ class Team:
                 run_response,
             )
 
-        # 4. Save session to storage
+        # 5. Calculate session metrics
+        self.set_session_metrics(run_messages)
+
+        # 6. Save session to storage
         self.save_session(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1074,14 +1077,14 @@ class Team:
         ):
             pass
 
-        # 5. Save session to storage
+        # 5. Calculate session metrics
+        self.set_session_metrics(run_messages)
+
+        # 6. Save session to storage
         self.save_session(session_id=session_id, user_id=user_id)
 
-        # 6. Parse team response model
+        # 7. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
-
-        # 7. Log Team Run
-        await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
@@ -1144,11 +1147,11 @@ class Team:
                 create_team_run_response_completed_event(from_run_response=run_response), run_response
             )
 
-        # 5. Save session to storage
-        self.save_session(session_id=session_id, user_id=user_id)
+        # 5. Calculate session metrics
+        self.set_session_metrics(run_messages)
 
-        # 6. Log Team Run
-        await self._alog_team_run(session_id=session_id, user_id=user_id)
+        # 6. Save session to storage
+        self.save_session(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
