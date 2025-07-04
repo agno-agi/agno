@@ -226,13 +226,19 @@ Agno agents are designed for performance and while we do share some benchmarks a
 
 Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
 
-## Cursor Setup
+## Complete Documentation Index
+
+For LLMs and AI assistants to understand and navigate Agno's complete documentation, we provide an [LLMs.txt](https://docs.agno.com/llms.txt) or [LLMs-Full.txt](https://docs.agno.com/llms-full.txt) file.
+
+This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
+
+### Cursor Setup
 
 When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
 
-1. In Cursor, go to the settings or preferences section.
-2. Find the section to manage documentation sources.
-3. Add `https://docs.agno.com` to the list of documentation URLs.
+1. In Cursor, go to the "Cursor Settings" menu.
+2. Find the "Indexing & Docs" section.
+3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
 4. Save the changes.
 
 Now, Cursor will have access to the Agno documentation.

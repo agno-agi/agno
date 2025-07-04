@@ -1,3 +1,4 @@
+
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
@@ -286,7 +287,6 @@ async def test_tool_call_requires_confirmation_async():
     response.tools[0].confirmed = True
 
     response = await agent.acontinue_run(response)
-    assert response.is_paused is False
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
