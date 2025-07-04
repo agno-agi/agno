@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunResponse, RunStatus
+from agno.run.team import TeamRunResponse
 from agno.session.summarizer import SessionSummary, SessionSummaryResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -38,7 +39,7 @@ class TeamSession:
     # List of all messages in the session
     chat_history: Optional[list[Message]] = None
     # List of all runs in the session
-    runs: Optional[list[RunResponse]] = None
+    runs: Optional[list[TeamRunResponse]] = None
     # Summary of the session
     summary: Optional[Dict[str, Any]] = None
 
@@ -66,7 +67,7 @@ class TeamSession:
         # TODO: Account for runs inside a team that can be RunResponse
         runs = data.get("runs")
         if runs is not None and isinstance(runs[0], dict):
-            runs = [RunResponse.from_dict(run) for run in runs]
+            runs = [TeamRunResponse.from_dict(run) for run in runs]
 
         chat_history = data.get("chat_history")
         if chat_history is not None and isinstance(chat_history[0], dict):

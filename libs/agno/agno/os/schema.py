@@ -323,6 +323,7 @@ class RunSchema(BaseModel):
     run_review: Optional[dict]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
+    events: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
@@ -339,6 +340,7 @@ class RunSchema(BaseModel):
             run_response_format=run_response_format,
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
+            events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
             if run_dict.get("run", {}).get("created_at") is not None
             else None,
@@ -346,6 +348,7 @@ class RunSchema(BaseModel):
 
     @classmethod
     def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
+        breakpoint()
         run_input = get_run_input(run_response.to_dict())
         run_response_format = "text" if run_response.content_type == "str" else "json"
         return cls(
@@ -358,6 +361,7 @@ class RunSchema(BaseModel):
             run_response_format=run_response_format,
             metrics=run_response.metrics,
             messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
+            events=[event.to_dict() for event in run_response.events] if run_response.events else None,
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at is not None
             else None,
@@ -376,6 +380,8 @@ class RunSchema(BaseModel):
             run_input=run_input,
             run_response_format=run_response_format,
             metrics=run_response.metrics,
+            messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
+            events=[event.to_dict() for event in run_response.events] if run_response.events else None,
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at
             else None,
