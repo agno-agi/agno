@@ -1445,9 +1445,10 @@ class Team:
             yield event
 
         # If a parser model is provided, structure the response separately
-        await self._aparse_response_with_parser_model_stream(
+        async for event in self._aparse_response_with_parser_model_stream(
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        )
+        ):
+            yield event
 
         # 3. Add the run to memory
         self._add_run_to_memory(

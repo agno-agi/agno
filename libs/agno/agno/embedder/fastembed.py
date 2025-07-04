@@ -7,7 +7,7 @@ try:
     import numpy as np
 
 except ImportError:
-    raise ImportError("numpy not installed, use pip install numpy")
+    raise ImportError("numpy not installed, use `pip install numpy`")
 
 
 try:
