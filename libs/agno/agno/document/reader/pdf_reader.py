@@ -147,7 +147,9 @@ class PDFReader(BasePDFReader):
                 )
             )
         if self.chunk:
+            log_info(f"Chunking documents: {len(documents)}")
             return self._build_chunked_documents(documents)
+        log_info(f"Returning {len(documents)} documents")
         return documents
 
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:

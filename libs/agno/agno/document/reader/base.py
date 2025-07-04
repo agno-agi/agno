@@ -15,13 +15,26 @@ class Reader:
     chunk_size: int = 5000
     separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
     chunking_strategy: Optional[ChunkingStrategy] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
 
     def __init__(
-        self, chunk: bool = True, chunk_size: int = 5000, chunking_strategy: Optional[ChunkingStrategy] = None
+        self,
+        chunk: bool = True,
+        chunk_size: int = 5000,
+        separators: Optional[List[str]] = None,
+        chunking_strategy: Optional[ChunkingStrategy] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         self.chunk = chunk
         self.chunk_size = chunk_size
+        self.separators = (
+            separators if separators is not None else ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "]
+        )
         self.chunking_strategy = chunking_strategy
+        self.name = name
+        self.description = description
 
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError

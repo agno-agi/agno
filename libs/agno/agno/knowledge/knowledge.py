@@ -51,6 +51,8 @@ class Knowledge:
         if self.document_store is not None:
             self.document_store.read_from_store = True
 
+        self.construct_readers()
+
     def search(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
@@ -239,16 +241,17 @@ class Knowledge:
         elif isinstance(document.content, DocumentContent):
             if document.content.type:
                 log_info(f"Document content type: {document.content.type}")
+                if isinstance(document.content.content, bytes):
+                    content_io = io.BytesIO(document.content.content)
+                else:
+                    content_io = document.content.content
 
-                if "pdf" in document.content.type:
-                    read_documents = self._process_pdf_content(document)
-                elif "csv" in document.content.type:
-                    read_documents = self._process_csv_content(document)
-                elif any(ext in document.content.type for ext in ["docx", "doc", "word"]):
-                    read_documents = self._process_docx_content(document)
+                reader = self._select_reader(document.content.type)
+                if reader:
+                    read_documents = reader.read(content_io, name=document.name)
                 else:
                     log_warning(f"Unsupported content type: {document.content.type}")
-                    return
+                    return []
 
                 # Process each document in the list
                 for read_document in read_documents:
@@ -271,12 +274,29 @@ class Knowledge:
 
         self._update_document_status(document.id, "Completed")
 
-    def _load_from_topics(self): ...
+    def _load_from_topics(self, document: DocumentV2):
+        log_info(f"Adding document from topics: {document.topics}")
+
+        for topic in document.topics:
+            self._add_to_documents_db(
+                DocumentV2(
+                    id=str(uuid4()),
+                    name=topic,
+                    metadata=document.metadata,
+                    reader=document.reader,
+                    status="Processing" if document.reader else "Failed: No reader provided",
+                    content=DocumentContent(
+                        type="Topic",
+                    ),
+                )
+            )
 
     def _load_from_cloud_storage(self): ...
 
     def _load_document(self, document: DocumentV2) -> None:
-        self._add_to_documents_db(document)
+        print(f"Loading document: {document.reader}")
+        if document.path or document.url or document.content:
+            self._add_to_documents_db(document)
 
         if document.path:
             self._load_from_path(document)
@@ -288,13 +308,28 @@ class Knowledge:
             self._load_from_content(document)
 
         if document.topics:
-            if document.reader is None:
-                log_warning("No reader provided for topics")
-            else:
-                self._load_from_topics(id, document)
+            self._load_from_topics(document)
 
         # if document.config:
         #     self._load_from_cloud_storage(id, document)
+
+    def patch_document(self, document: DocumentV2):
+        if self.documents_db is not None:
+            document_row = self.documents_db.get_knowledge_document(document.id)
+            if document_row is None:
+                log_warning(f"Document not found: {document.id}")
+                return
+            # Only update fields that are not None
+            if document.name is not None:
+                document_row.name = document.name
+            if document.description is not None:
+                document_row.description = document.description
+            if document.metadata is not None:
+                document_row.metadata = document.metadata
+            document_row.updated_at = int(time.time())
+            self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
+        else:
+            log_warning("No documents db provided")
 
     def add_document(
         self,
@@ -360,6 +395,8 @@ class Knowledge:
         if self.documents_db is None:
             raise ValueError("No documents db provided")
         document_row = self.documents_db.get_knowledge_document(document_id)
+        if document_row is None:
+            return None
         document = DocumentV2(
             id=document_row.id,
             name=document_row.name,
@@ -417,9 +454,11 @@ class Knowledge:
             self.vector_store.delete_by_source_id(document_id)
 
     def remove_all_documents(self):
-        if self.document_store is None:
-            raise ValueError("No document store provided")
-        return self.document_store.delete_all_documents()
+        if self.document_store is not None:
+            self.document_store.delete_all_documents()
+        documents, _ = self.get_documents()
+        for document in documents:
+            self.remove_document(document.id)
 
     def _add_to_documents_db(self, document: DocumentV2):
         if self.documents_db:
@@ -432,7 +471,11 @@ class Knowledge:
                 description=document.description if document.description else "",
                 metadata=document.metadata,
                 type=document.content.type if document.content else None,
-                size=document.size if document.size else len(document.content.content) if document.content else None,
+                size=document.size
+                if document.size
+                else len(document.content.content)
+                if document.content.content
+                else None,
                 linked_to=self.name,
                 access_count=0,
                 status=document.status if document.status else "Processing",
@@ -489,6 +532,34 @@ class Knowledge:
     # --- Readers Setup ---
 
     # TODO: Rework these into a map we can use for selection, but also return to API.
+    def _generate_reader_key(self, reader: Reader) -> str:
+        if reader.name:
+            return f"{reader.name.lower().replace(' ', '_')}"
+        else:
+            return f"{reader.__class__.__name__.lower().replace(' ', '_')}"
+
+    def construct_readers(self):
+        self.readers = {
+            self._generate_reader_key(self.pdf_reader): self.pdf_reader,
+            self._generate_reader_key(self.csv_reader): self.csv_reader,
+            self._generate_reader_key(self.docx_reader): self.docx_reader,
+            self._generate_reader_key(self.json_reader): self.json_reader,
+            self._generate_reader_key(self.markdown_reader): self.markdown_reader,
+            self._generate_reader_key(self.text_reader): self.text_reader,
+            self._generate_reader_key(self.url_reader): self.url_reader,
+            self._generate_reader_key(self.website_reader): self.website_reader,
+            self._generate_reader_key(self.firecrawl_reader): self.firecrawl_reader,
+            self._generate_reader_key(self.youtube_reader): self.youtube_reader,
+            self._generate_reader_key(self.csv_url_reader): self.csv_url_reader,
+        }
+
+    def add_reader(self, reader: Reader):
+        self.readers[self._generate_reader_key(reader)] = reader
+        return reader
+
+    def get_readers(self) -> List[Reader]:
+        return self.readers
+
     def _select_reader(self, extension: str) -> Reader:
         log_info(f"Selecting reader for extension: {extension}")
         extension = extension.lower()
@@ -518,6 +589,12 @@ class Knowledge:
             return self.csv_url_reader
         else:
             return self.url_reader
+        
+    def get_filters(self) -> List[str]:
+        return [
+            "filter_tag_1",
+            "filter_tag2",
+        ]
 
     # --- File Readers ---
     @cached_property
@@ -528,34 +605,34 @@ class Knowledge:
     @cached_property
     def csv_reader(self) -> CSVReader:
         """CSV reader - lazy loaded and cached."""
-        return CSVReader()
+        return CSVReader(name="CSV Reader", description="Reads CSV files")
 
     @cached_property
     def docx_reader(self) -> DocxReader:
         """Docx reader - lazy loaded and cached."""
-        return DocxReader()
+        return DocxReader(name="Docx Reader", description="Reads Docx files")
 
     @cached_property
     def json_reader(self) -> JSONReader:
         """JSON reader - lazy loaded and cached."""
-        return JSONReader()
+        return JSONReader(name="JSON Reader", description="Reads JSON files")
 
     @cached_property
     def markdown_reader(self) -> MarkdownReader:
         """Markdown reader - lazy loaded and cached."""
-        return MarkdownReader()
+        return MarkdownReader(name="Markdown Reader", description="Reads Markdown files")
 
     @cached_property
     def text_reader(self) -> TextReader:
         """Txt reader - lazy loaded and cached."""
-        return TextReader()
+        return TextReader(name="Text Reader", description="Reads Text files")
 
     # --- URL Readers ---
 
     @cached_property
     def website_reader(self) -> WebsiteReader:
         """Website reader - lazy loaded and cached."""
-        return WebsiteReader()
+        return WebsiteReader(name="Website Reader", description="Reads Website files")
 
     @cached_property
     def firecrawl_reader(self) -> FirecrawlReader:
@@ -563,64 +640,29 @@ class Knowledge:
         return FirecrawlReader(
             api_key=os.getenv("FIRECRAWL_API_KEY"),
             mode="crawl",
+            name="Firecrawl Reader",
+            description="Crawls websites",
         )
 
     @cached_property
     def url_reader(self) -> URLReader:
         """URL reader - lazy loaded and cached."""
-        return URLReader()
+        return URLReader(name="URL Reader", description="Reads URLs")
 
     @cached_property
     def pdf_url_reader(self) -> PDFUrlReader:
         """PDF URL reader - lazy loaded and cached."""
-        return PDFUrlReader()
+        return PDFUrlReader(name="PDF URL Reader", description="Reads PDF URLs")
 
     @cached_property
     def youtube_reader(self) -> YouTubeReader:
         """YouTube reader - lazy loaded and cached."""
-        return YouTubeReader()
+        return YouTubeReader(name="YouTube Reader", description="Reads YouTube videos")
 
     @cached_property
     def csv_url_reader(self) -> CSVUrlReader:
         """CSV URL reader - lazy loaded and cached."""
-        return CSVUrlReader()
-
-    # --- Content Processing ---
-
-    def _process_pdf_content(self, document: DocumentV2) -> List[Document]:
-        """Process PDF content"""
-
-        # Convert bytes to BytesIO for the reader
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        read_documents = self.pdf_reader.read(content_io, name=document.name)
-        return read_documents
-
-    def _process_csv_content(self, document: DocumentV2) -> List[Document]:
-        """Process CSV content"""
-        # Convert bytes to BytesIO for the reader
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        log_info(f"Processing CSV content: {document.name}")
-        read_documents = self.csv_reader.read(content_io, name=document.name)
-        return read_documents
-
-    def _process_docx_content(self, document: DocumentV2) -> List[Document]:
-        """Process DOCX content"""
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        log_info(f"Processing DOCX content: {document.name}")
-        read_documents = self.docx_reader.read(content_io, name=document.name)
-        return read_documents
+        return CSVUrlReader(name="CSV URL Reader", description="Reads CSV URLs")
 
 
 # -- Unused for now. Will revisit when we do async and optimizations ---

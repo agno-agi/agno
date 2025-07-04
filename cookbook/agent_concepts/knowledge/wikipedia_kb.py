@@ -6,7 +6,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Create a knowledge base with the PDFs from the data/pdfs directory
 knowledge_base = WikipediaKnowledgeBase(
-    topics=["Manchester United", "Real Madrid"],
+    topics=["Real Madrid"],
     # Table name: ai.wikipedia_documents
     vector_db=PgVector(
         table_name="wikipedia_documents",

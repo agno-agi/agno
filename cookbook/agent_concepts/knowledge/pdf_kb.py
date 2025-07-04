@@ -6,16 +6,16 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Create a knowledge base with the PDFs from the data/pdfs directory
 knowledge_base = PDFKnowledgeBase(
-    path="tmp/",
+    path="tmp/manual.pdf",
     vector_db=PgVector(
         table_name="pdf_documents",
         # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
         db_url=db_url,
     ),
-    reader=PDFReader(chunk=True, chunk_size=100),
+    reader=PDFReader(chunk=True, chunk_size=1000),
 )
 # Load the knowledge base
-knowledge_base.load(recreate=False)
+knowledge_base.load(recreate=True, upsert=True)
 
 # Create an agent with the knowledge base
 agent = Agent(

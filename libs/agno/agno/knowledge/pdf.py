@@ -22,6 +22,7 @@ class PDFKnowledgeBase(AgentKnowledge):
             raise ValueError("Path is not set")
 
         if isinstance(self.path, list):
+            log_info(f"File is a list: {self.path}")
             for item in self.path:
                 if isinstance(item, dict) and "path" in item:
                     # Handle path with metadata
@@ -37,6 +38,7 @@ class PDFKnowledgeBase(AgentKnowledge):
                                 doc.meta_data.update(config)  # type: ignore
                         yield documents
         else:
+            log_info(f"File is a directory")
             # Handle single path
             _pdf_path = Path(self.path)
             if _pdf_path.is_dir():
@@ -44,6 +46,7 @@ class PDFKnowledgeBase(AgentKnowledge):
                     if _pdf.name not in self.exclude_files:
                         yield self.reader.read(pdf=_pdf)
             elif self._is_valid_pdf(_pdf_path):
+                log_info(f"File is valid: {_pdf_path}")
                 yield self.reader.read(pdf=_pdf_path)
 
     def _is_valid_pdf(self, path: Path) -> bool:

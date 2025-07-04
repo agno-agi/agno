@@ -317,6 +317,7 @@ class Agent:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics

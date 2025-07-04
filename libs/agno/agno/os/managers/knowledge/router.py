@@ -1,13 +1,13 @@
 import json
 import math
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
 from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.knowledge.schemas import DocumentResponseSchema
+from agno.os.managers.knowledge.schemas import ConfigResponseSchema, DocumentResponseSchema, ReaderSchema
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.utils.log import log_info
 
@@ -19,14 +19,23 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         name: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
         url: Optional[str] = Form(None),
-        metadata: Optional[str] = Form(None, description="JSON string of metadata dict or list of dicts"),
+        metadata: Optional[str] = Form(None, description="JSON metadata"),
         file: Optional[UploadFile] = File(None),
+        reader_id: Optional[str] = Form(None),
     ):
         log_info(f"Uploading documents: {name}, {description}, {url}, {metadata}")
         # # Generate ID immediately
         document_id = str(uuid4())
         log_info(f"Document ID: {document_id}")
         # # Read the content once and store it
+
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as a simple key-value pair
+                parsed_metadata = {"value": metadata} if metadata != "string" else None
         if file:
             content_bytes = await file.read()
         else:
@@ -43,7 +52,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         log_info(f"Parsed URLs: {parsed_urls}")
         # # Parse metadata with proper error handling
         parsed_metadata = None
-        if metadata and metadata.strip():
+        if metadata:
             try:
                 parsed_metadata = json.loads(metadata)
             except json.JSONDecodeError:
@@ -69,11 +78,44 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
         # Add the processing task to background tasks
-        background_tasks.add_task(process_document, knowledge, document_id, document)
+        background_tasks.add_task(process_document, knowledge, document_id, document, reader_id)
 
         # Return immediately with the ID
         return {"document_id": document_id, "status": "processing"}
 
+    @router.patch("/documents/{document_id}", status_code=200)
+    async def edit_document(
+        document_id: str = Path(..., description="Document ID"),
+        name: Optional[str] = Form(None),
+        description: Optional[str] = Form(None),
+        metadata: Optional[str] = Form(None, description="JSON metadata"),
+        reader_id: Optional[str] = Form(None),
+    ):
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as a simple key-value pair
+                parsed_metadata = {"value": metadata} if metadata != "string" else None
+        document = DocumentV2(
+            id=document_id,
+            name=name,
+            description=description,
+            metadata=parsed_metadata,
+        )
+        if reader_id:
+            if reader_id in knowledge.readers:
+                document.reader = knowledge.readers[reader_id]
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
+        knowledge.patch_document(document)
+        return {"status": "success"}
+    
+    
+    
+    
+    
     @router.get("/documents", response_model=PaginatedResponse[DocumentResponseSchema], status_code=200)
     def get_documents(
         limit: Optional[int] = Query(default=20, description="Number of documents to return"),
@@ -143,9 +185,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             id=document_id,
         )
 
-    @router.delete("/documents/", status_code=200)
+    @router.delete("/documents", status_code=200)
     def delete_all_documents():
         log_info(f"Deleting all documents")
+        knowledge.remove_all_documents()
         return "success"
 
     @router.get("/documents/{document_id}/status", status_code=200)
@@ -153,16 +196,26 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         log_info(f"Getting document status: {document_id}")
         return knowledge.get_document_status(document_id=document_id)
 
+    @router.get("/config", status_code=200)
+    def get_config() -> ConfigResponseSchema:
+        readers = knowledge.get_readers()
+        return ConfigResponseSchema(
+            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers.items()],
+            filters=knowledge.get_filters(),
+        )
+
     return router
 
 
-def process_document(knowledge: Knowledge, document_id: str, document: DocumentV2):
+def process_document(knowledge: Knowledge, document_id: str, document: DocumentV2, reader_id: Optional[str] = None):
     """Background task to process the document"""
     print(f"Processing document {document_id}")
     try:
         # Set the document ID
         document.id = document_id
         # Process the document
+        if reader_id:
+            document.reader = knowledge.readers[reader_id]
         knowledge.add_document(document)
         print(f"Document {document_id} processed successfully")
     except Exception as e:
