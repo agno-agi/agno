@@ -1997,7 +1997,7 @@ class Team:
                             )
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -2013,7 +2013,7 @@ class Team:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state is not None and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_team_reasoning_started_event(
                                     from_run_response=run_response,
@@ -2254,7 +2254,7 @@ class Team:
             log_warning("A response model is required to parse the response with a parser model")
 
     def _parse_response_with_parser_model_stream(
-        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
@@ -2304,7 +2304,7 @@ class Team:
                 log_warning("A response model is required to parse the response with a parser model")
 
     async def _aparse_response_with_parser_model_stream(
-        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:

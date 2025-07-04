@@ -3263,7 +3263,7 @@ class Agent:
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -3276,7 +3276,7 @@ class Agent:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_reasoning_started_event(from_run_response=run_response), run_response
                             )
@@ -6835,7 +6835,7 @@ class Agent:
                                         log_warning(f"Failed to convert response to JSON: {e}")
                                 else:
                                     try:
-                                        response_content_batch = JSON(json.dumps(run_response.content), indent=4)
+                                        response_content_batch = JSON(json.dumps(resp.content), indent=4)
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
@@ -6935,7 +6935,9 @@ class Agent:
                 # Check if we have any response content to display
                 response_content = (
                     response_content_stream
-                    if response_content_stream and len(response_content_stream) > 0
+                    if response_content_stream
+                    and isinstance(response_content_stream, str)
+                    and len(response_content_stream) > 0
                     else response_content_batch
                 )
                 if response_content:
@@ -7100,7 +7102,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
@@ -7277,7 +7279,7 @@ class Agent:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             else:
                                 try:
-                                    response_content_batch = JSON(json.dumps(run_response.content), indent=4)
+                                    response_content_batch = JSON(json.dumps(resp.content), indent=4)
                                 except Exception as e:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
@@ -7379,7 +7381,7 @@ class Agent:
                     # Check if we have any response content to display
                     response_content = (
                         response_content_stream
-                        if response_content_stream and len(response_content_stream) > 0
+                        if response_content_stream and isinstance(response_content_stream, str) and len(response_content_stream) > 0
                         else response_content_batch
                     )
                     if response_content:
@@ -7541,7 +7543,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
