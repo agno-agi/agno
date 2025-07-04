@@ -13,6 +13,15 @@ from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
 
+def get_run_input(run_dict: Dict[str, Any]) -> str:
+    """Get the run input from the given run dictionary"""
+    if run_dict.get("messages") is not None:
+        for message in run_dict["messages"]:
+            if message.get("role") == "user":
+                return message.get("content", "")
+    return ""
+
+
 def get_session_name(session: Dict[str, Any]) -> str:
     """Get the session name from the given session dictionary"""
     session_data = session.get("session_data")
