@@ -62,6 +62,16 @@ class TeamSession:
         if data is None or data.get("session_id") is None:
             log_warning("TeamSession is missing session_id")
             return None
+
+        # TODO: Account for runs inside a team that can be RunResponse
+        runs = data.get("runs")
+        if runs is not None and isinstance(runs[0], dict):
+            runs = [RunResponse.from_dict(run) for run in runs]
+
+        chat_history = data.get("chat_history")
+        if chat_history is not None and isinstance(chat_history[0], dict):
+            chat_history = [Message.from_dict(msg) for msg in chat_history]
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             team_id=data.get("team_id"),
@@ -73,8 +83,8 @@ class TeamSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=data.get("chat_history"),
-            runs=data.get("runs"),
+            chat_history=chat_history,
+            runs=runs,
             summary=data.get("summary"),
         )
 
@@ -298,7 +308,7 @@ class TeamSession:
                 last_updated=datetime.now(),
             )
             self.summary = session_summary
-            log_debug(f"Session summary created", center=True)
+            log_debug("Session summary created", center=True)
             return session_summary
 
         # Handle string responses
@@ -313,7 +323,7 @@ class TeamSession:
                         summary=parsed_summary.summary, topics=parsed_summary.topics, last_updated=datetime.now()
                     )
                     self.summary = session_summary
-                    log_debug(f"Session summary created", center=True)
+                    log_debug("Session summary created", center=True)
                     return session_summary
                 else:
                     log_warning("Failed to parse session summary response")
@@ -329,7 +339,7 @@ class TeamSession:
         session_summary_prompt: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        log_debug(f"Creating session summary", center=True)
+        log_debug("Creating session summary", center=True)
         if session_summary_model is None:
             return None
 
@@ -345,7 +355,7 @@ class TeamSession:
         session_summary_prompt: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        log_debug(f"Creating session summary", center=True)
+        log_debug("Creating session summary", center=True)
         if session_summary_model is None:
             return None
 

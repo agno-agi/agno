@@ -10,8 +10,6 @@ from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
-from agno.run.response import Message, RunResponse
-from agno.run.team import TeamRunResponse
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -93,8 +91,197 @@ class PostgresDb(BaseDb):
 
     # -- DB methods --
 
-    # TODO: should also check column types, indexes
-    def is_valid_table(self, table_name: str, table_type: str, db_schema: str) -> bool:
+    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
+        """Apply sorting to the given SQLAlchemy statement.
+
+        Args:
+            stmt: The SQLAlchemy statement to modify
+            table: The table being queried
+            sort_by: The field to sort by
+            sort_order: The sort order ('asc' or 'desc')
+
+        Returns:
+            The modified statement with sorting applied
+        """
+        if sort_by is None or not hasattr(table.c, sort_by):
+            log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
+            return stmt
+
+        # Apply the given sorting
+        sort_column = getattr(table.c, sort_by)
+        if sort_order and sort_order == "asc":
+            return stmt.order_by(sort_column.asc())
+        else:
+            return stmt.order_by(sort_column.desc())
+
+    def _create_schema(self, db_schema: str) -> None:
+        """Create the database schema if it doesn't exist.
+
+        Args:
+            db_schema (str): The definition of the database schema to create
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                log_debug(f"Creating schema if not exists: {db_schema}")
+                sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
+        except Exception as e:
+            log_warning(f"Could not create schema {db_schema}: {e}")
+
+    def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+        """
+        Create a table with the appropriate schema based on the table type.
+
+        Args:
+            table_name (str): Name of the table to create
+            db_schema (str): Database schema name
+
+        Returns:
+            Table: SQLAlchemy Table object
+        """
+        try:
+            table_schema = get_table_schema_definition(table_type)
+
+            log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
+
+            columns, indexes, unique_constraints = [], [], []
+            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+
+            # Get the columns, indexes, and unique constraints from the table schema
+            for col_name, col_config in table_schema.items():
+                column_args = [col_name, col_config["type"]()]
+                column_kwargs = {}
+                if col_config.get("primary_key", False):
+                    column_kwargs["primary_key"] = True
+                if "nullable" in col_config:
+                    column_kwargs["nullable"] = col_config["nullable"]
+                if col_config.get("index", False):
+                    indexes.append(col_name)
+                if col_config.get("unique", False):
+                    column_kwargs["unique"] = True
+                    unique_constraints.append(col_name)
+                columns.append(Column(*column_args, **column_kwargs))
+
+            # Create the table object
+            table_metadata = MetaData(schema=db_schema)
+            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+
+            # Add multi-column unique constraints
+            for constraint in schema_unique_constraints:
+                constraint_name = constraint["name"]
+                constraint_columns = constraint["columns"]
+                table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
+
+            # Add indexes to the table definition
+            for idx_col in indexes:
+                idx_name = f"idx_{table_name}_{idx_col}"
+                table.append_constraint(Index(idx_name, idx_col))
+
+            self._create_schema(db_schema=db_schema)
+
+            # Create table
+            table_without_indexes = Table(
+                table_name,
+                MetaData(schema=db_schema),
+                *[c.copy() for c in table.columns],
+                *[c for c in table.constraints if not isinstance(c, Index)],
+                schema=db_schema,
+            )
+            table_without_indexes.create(self.db_engine, checkfirst=True)
+
+            # Create indexes
+            for idx in table.indexes:
+                try:
+                    log_debug(f"Creating index: {idx.name}")
+
+                    # Check if index already exists
+                    with self.Session() as sess:
+                        exists_query = text(
+                            "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
+                        )
+                        exists = (
+                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                            is not None
+                        )
+                        if exists:
+                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            continue
+
+                    idx.create(self.db_engine)
+
+                except Exception as e:
+                    log_warning(f"Error creating index {idx.name}: {e}")
+
+            log_info(f"Successfully created table {db_schema}.{table_name}")
+            return table
+
+        except Exception as e:
+            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            raise
+
+    def _get_table_for_session_type(self, session_type: SessionType) -> Optional[Table]:
+        """Map the given session type into the appropriate table.
+        If the table has not been created yet, handle its creation.
+
+        Args:
+            session_type (Optional[SessionType]): The type of session to get the table for.
+
+        Returns:
+            Optional[Table]: The table for the given session type.
+        """
+        if session_type == SessionType.AGENT:
+            if self.agent_session_table_name is None:
+                raise ValueError("Agent session table was not provided on initialization")
+            self.agent_session_table = self._get_or_create_table(
+                table_name=self.agent_session_table_name,
+                table_type="agent_sessions",
+                db_schema=self.db_schema,
+            )
+            return self.agent_session_table
+
+        elif session_type == SessionType.TEAM:
+            if self.team_session_table_name is None:
+                raise ValueError("Team session table was not provided on initialization")
+            self.team_session_table = self._get_or_create_table(
+                table_name=self.team_session_table_name,
+                table_type="team_sessions",
+                db_schema=self.db_schema,
+            )
+            return self.team_session_table
+
+        elif session_type == SessionType.WORKFLOW:
+            if self.workflow_session_table_name is None:
+                raise ValueError("Workflow session table was not provided on initialization")
+            self.workflow_session_table = self._get_or_create_table(
+                table_name=self.workflow_session_table_name,
+                table_type="workflow_sessions",
+                db_schema=self.db_schema,
+            )
+            return self.workflow_session_table
+
+    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+        """
+        Check if the table exists and is valid, else create it.
+
+        Returns:
+            Table: SQLAlchemy Table object representing the schema.
+        """
+
+        if not self._table_exists(table_name=table_name, db_schema=db_schema):
+            return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
+
+        if not self._is_valid_table(table_name=table_name, table_type=table_type, db_schema=db_schema):
+            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+
+        try:
+            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
+            log_debug(f"Loaded existing table {db_schema}.{table_name}")
+            return table
+
+        except Exception as e:
+            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            raise
+
+    def _is_valid_table(self, table_name: str, table_type: str, db_schema: str) -> bool:
         """
         Check if the existing table has the expected column names.
 
@@ -126,9 +313,9 @@ class PostgresDb(BaseDb):
             log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
             return False
 
-    def table_exists(self, table_name: str, db_schema: str) -> bool:
+    def _table_exists(self, table_name: str, db_schema: str) -> bool:
         """
-        Check if the given table exists in the given schema.
+        Check if a table with the given name exists in the given schema.
 
         Returns:
             bool: True if the table exists, False otherwise.
@@ -148,205 +335,65 @@ class PostgresDb(BaseDb):
             log_error(f"Error checking if table exists: {e}")
             return False
 
-    def create_schema(self, db_schema: str) -> None:
-        """Create the database schema if it doesn't exist."""
-        try:
-            with self.Session() as sess, sess.begin():
-                log_debug(f"Creating schema if not exists: {db_schema}")
-                sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
-        except Exception as e:
-            log_warning(f"Could not create schema {db_schema}: {e}")
-
-    def create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
-        """
-        Create a table with the appropriate schema based on the table name.
-
-        Args:
-            table_name (str): Name of the table to create
-            db_schema (str): Database schema name
-
-        Returns:
-            Table: SQLAlchemy Table object
-        """
-        try:
-            table_schema = get_table_schema_definition(table_type)
-
-            log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
-
-            columns, indexes, unique_constraints = [], [], []
-            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
-
-            for col_name, col_config in table_schema.items():
-                column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
-
-                if col_config.get("primary_key", False):
-                    column_kwargs["primary_key"] = True
-                if "nullable" in col_config:
-                    column_kwargs["nullable"] = col_config["nullable"]
-                if col_config.get("index", False):
-                    indexes.append(col_name)
-                if col_config.get("unique", False):
-                    column_kwargs["unique"] = True
-                    unique_constraints.append(col_name)
-
-                columns.append(Column(*column_args, **column_kwargs))
-
-            # Create the table object
-            table_metadata = MetaData(schema=db_schema)
-            table = Table(table_name, table_metadata, *columns, schema=db_schema)
-
-            # Add multi-column unique constraints
-            for constraint in schema_unique_constraints:
-                constraint_name = constraint["name"]
-                constraint_columns = constraint["columns"]
-                table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
-
-            # Add indexes to the table definition
-            for idx_col in indexes:
-                idx_name = f"idx_{table_name}_{idx_col}"
-                table.append_constraint(Index(idx_name, idx_col))
-
-            # TODO: do we want this?
-            self.create_schema(db_schema=db_schema)
-
-            # Create table
-            table_without_indexes = Table(
-                table_name,
-                MetaData(schema=db_schema),
-                *[c.copy() for c in table.columns],
-                *[c for c in table.constraints if not isinstance(c, Index)],
-                schema=db_schema,
-            )
-            table_without_indexes.create(self.db_engine, checkfirst=True)
-
-            # Create indexes
-            for idx in table.indexes:
-                try:
-                    idx_name = idx.name
-                    log_debug(f"Creating index: {idx_name}")
-
-                    # Check if index already exists
-                    with self.Session() as sess:
-                        exists_query = text(
-                            "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
-                        )
-                        exists = (
-                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx_name}).scalar()
-                            is not None
-                        )
-
-                    if not exists:
-                        idx.create(self.db_engine)
-                    else:
-                        log_debug(f"Index {idx_name} already exists in {db_schema}.{table_name}, skipping creation")
-
-                except Exception as e:
-                    log_warning(f"Error creating index {idx.name}: {e}")
-
-            log_info(f"Successfully created table {db_schema}.{table_name}")
-            return table
-
-        except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
-            raise
-
-    def get_table_for_session_type(self, session_type: Optional[SessionType] = None) -> Optional[Table]:
-        """Map the given session type into the appropriate table.
-        If the table has not been created yet, handle its creation.
-
-        Args:
-            session_type (Optional[SessionType]): The type of session to get the table for.
-
-        Returns:
-            Optional[Table]: The table for the given session type.
-        """
-        log_debug(f"Getting table for session type: {session_type}")
-        if session_type is None:
-            return None
-
-        if session_type == SessionType.AGENT:
-            if not hasattr(self, "agent_session_table"):
-                if self.agent_session_table_name is None:
-                    raise ValueError("Agent session table was not provided on initialization")
-            self.agent_session_table = self.get_or_create_table(
-                table_name=self.agent_session_table_name, table_type="agent_sessions", db_schema=self.db_schema
-            )
-            return self.agent_session_table
-
-        elif session_type == SessionType.TEAM:
-            if not hasattr(self, "team_session_table"):
-                if self.team_session_table_name is None:
-                    raise ValueError("Team session table was not provided on initialization")
-            self.team_session_table = self.get_or_create_table(
-                table_name=self.team_session_table_name, table_type="team_sessions", db_schema=self.db_schema
-            )
-            return self.team_session_table
-
-        elif session_type == SessionType.WORKFLOW:
-            if not hasattr(self, "workflow_session_table"):
-                if self.workflow_session_table_name is None:
-                    raise ValueError("Workflow session table was not provided on initialization")
-            self.workflow_session_table = self.get_or_create_table(
-                table_name=self.workflow_session_table_name,
-                table_type="workflow_sessions",
-                db_schema=self.db_schema,
-            )
-            return self.workflow_session_table
-
-    def get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
-        """
-        Check if the table exists and is valid, else create it.
-
-        Returns:
-            Table: SQLAlchemy Table object representing the schema.
-        """
-
-        if not self.table_exists(table_name=table_name, db_schema=db_schema):
-            return self.create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
-
-        if not self.is_valid_table(table_name=table_name, table_type=table_type, db_schema=db_schema):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
-
-        try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
-            log_debug(f"Loaded existing table {db_schema}.{table_name}")
-            return table
-
-        except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
-            raise
-
-    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
-        """Apply sorting to the given SQLAlchemy statement.
-
-        Args:
-            stmt: The SQLAlchemy statement to modify
-            table: The table being queried
-            sort_by: The field to sort by
-            sort_order: The sort order ('asc' or 'desc')
-
-        Returns:
-            The modified statement with sorting applied
-        """
-        if sort_by is None or not hasattr(table.c, sort_by):
-            log_debug(f"Invalid sort field '{sort_by}', will not apply any sorting")
-            return stmt
-
-        # Apply the given sorting
-        sort_column = getattr(table.c, sort_by)
-        if sort_order and sort_order == "asc":
-            return stmt.order_by(sort_column.asc())
-        else:
-            return stmt.order_by(sort_column.desc())
-
     # -- Session methods --
 
-    def _get_first_or_latest_session_date(self, latest: bool = False) -> Optional[int]:
-        """Get the session with the earliest or latest created_at timestamp.
+    def _get_all_sessions_for_metrics_calculation(
+        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
 
         Args:
-            latest: If True, return the latest session; if False, return the earliest session
+            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
+            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of session dictionaries with session_type field.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            cols = ["user_id", "session_data", "runs", "created_at"]
+            select_statements = []
+
+            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
+                try:
+                    table = self._get_table_for_session_type(session_type)
+
+                    # Add session_type as a literal column
+                    if table is not None:
+                        table_cols = [
+                            *[table.c[col] for col in cols],
+                            literal(session_type.value).label("session_type"),
+                        ]
+                        select_statements.append(select(*table_cols))
+
+                except ValueError:
+                    continue
+
+            if not select_statements:
+                return []
+
+            union_stmt = union_all(*select_statements)
+            subquery = union_stmt.subquery()
+            stmt = select(subquery)
+
+            if start_timestamp is not None:
+                stmt = stmt.where(subquery.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                stmt = stmt.where(subquery.c.created_at <= end_timestamp)
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).fetchall()
+                return [record._mapping for record in result]
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return []
+
+    def _get_oldest_session_date(self) -> Optional[int]:
+        """Get the session (of any type) with the min created_at timestamp.
 
         Returns:
             Timestamp of the session, or None if no sessions exist or on error.
@@ -354,24 +401,21 @@ class PostgresDb(BaseDb):
         try:
             tables = []
             for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
-                table = self.get_table_for_session_type(session_type=session_type)
+                table = self._get_table_for_session_type(session_type=session_type)
                 if table is not None:
                     tables.append(select(table.c.created_at))
             if not tables:
                 return None
 
             union_stmt = union_all(*tables)
-            if latest:
-                stmt = select(func.max(union_stmt.c.created_at))
-            else:
-                stmt = select(func.min(union_stmt.c.created_at))
+            stmt = select(func.min(union_stmt.c.created_at))
 
             with self.Session() as sess:
                 result = sess.execute(stmt).scalar()
                 return result
 
         except Exception as e:
-            log_error(f"Error getting first session date: {e}")
+            log_error(f"Error getting latest session: {e}")
             return None
 
     def delete_session(
@@ -381,18 +425,22 @@ class PostgresDb(BaseDb):
         table: Optional[Table] = None,
     ) -> None:
         """
-        Delete a Session from the database.
+        Delete a session from the database.
 
         Args:
-            table (Table): Table to delete from.
             session_id (str): ID of the session to delete
+            session_type (SessionType): Type of session to delete. If not provided, the table must be provided.
+            table (Table): Table to delete from. If not provided, the session type must be provided.
 
         Raises:
+            ValueError: If no table and no session type are provided, or if the table is not found.
             Exception: If an error occurs during deletion.
         """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError("No table found")
 
@@ -414,6 +462,10 @@ class PostgresDb(BaseDb):
         Args:
             session_types (List[SessionType]): The types of sessions to delete.
             session_ids (List[str]): The IDs of the sessions to delete.
+
+        Raises:
+            ValueError: If the session_types and session_ids lists have different lengths.
+            Exception: If an error occurs during deletion.
         """
         if len(session_types) != len(session_ids):
             raise ValueError("session_types and session_ids lists must have the same length")
@@ -422,7 +474,7 @@ class PostgresDb(BaseDb):
             # Group session_ids by their corresponding table
             table_to_session_ids = {}
             for session_type, session_id in zip(session_types, session_ids):
-                table = self.get_table_for_session_type(session_type)
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError(f"Table not found for session type: {session_type}")
 
@@ -455,10 +507,14 @@ class PostgresDb(BaseDb):
             session_type (SessionType): The type of session to get runs for.
 
         Returns:
-            List[Dict[str, Any]]: List of run dictionaries.
+            Optional[List[Dict[str, Any]]]: List of run dictionaries, or None if no runs are found.
+
+        Raises:
+            ValueError: If the table is not found.
+            Exception: If an error occurs during retrieval.
         """
         try:
-            table = self.get_table_for_session_type(session_type)
+            table = self._get_table_for_session_type(session_type)
             if table is None:
                 raise ValueError(f"Table not found for session type: {session_type}")
 
@@ -487,13 +543,20 @@ class PostgresDb(BaseDb):
         Args:
             session_id (str): The ID of the session to get.
             session_type (SessionType): The type of session to get.
+            table (Table): Table to read from. If not provided, the session type must be provided.
 
         Returns:
             Optional[Dict[str, Any]]: The session as a raw dictionary, or None if not found.
+
+        Raises:
+            ValueError: If no table and no session type are provided, or if the table is not found.
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError(f"Table not found for session type: {session_type}")
 
@@ -519,7 +582,7 @@ class PostgresDb(BaseDb):
         table: Optional[Table] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         """
-        Read a Session from the database.
+        Read a session from the database.
 
         Args:
             table (Table): Table to read from.
@@ -531,9 +594,10 @@ class PostgresDb(BaseDb):
             Optional[Session]: Session object if found, None otherwise.
         """
         try:
-            session: Optional[Session] = None
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError(f"Table not found for session type: {session_type}")
 
@@ -547,73 +611,15 @@ class PostgresDb(BaseDb):
                 return None
 
             if session_type == SessionType.AGENT:
-                session = AgentSession.from_dict(session_raw)
-                session.runs = [RunResponse.from_dict(run) for run in session_raw.get("runs", [])]
-                # session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
-                return session
+                return AgentSession.from_dict(session_raw)
             elif session_type == SessionType.TEAM:
-                session = TeamSession.from_dict(session_raw)
-                # TODO: Account for runs inside a team that can be RunResponse
-                session.runs = [TeamRunResponse.from_dict(run) for run in session_raw.get("runs", [])]
-                # session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
-                return session
+                return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
-                session = WorkflowSession.from_dict(session_raw)
-                session.runs = [RunResponse.from_dict(run) for run in session_raw.get("runs", [])]
-                session.chat_history = [Message.from_dict(msg) for msg in session_raw.get("chat_history", [])]
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
             return None
-
-    def _get_all_sessions_for_metrics_calculation(
-        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
-        Args:
-            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
-            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
-        Returns:
-            List[Dict[str, Any]]: List of session dictionaries with session_type field.
-        """
-        try:
-            cols = ["user_id", "session_data", "runs", "created_at"]
-            select_statements = []
-
-            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
-                try:
-                    table = self.get_table_for_session_type(session_type)
-                    # Add session_type as a literal column
-                    if table is not None:
-                        table_cols = [
-                            *[table.c[col] for col in cols],
-                            literal(session_type.value).label("session_type"),
-                        ]
-                        select_statements.append(select(*table_cols))
-                except ValueError:
-                    continue
-
-            if not select_statements:
-                return []
-
-            union_stmt = union_all(*select_statements)
-            subquery = union_stmt.subquery()
-            stmt = select(subquery)
-
-            if start_timestamp is not None:
-                stmt = stmt.where(subquery.c.created_at >= start_timestamp)
-            if end_timestamp is not None:
-                stmt = stmt.where(subquery.c.created_at <= end_timestamp)
-
-            with self.Session() as sess:
-                result = sess.execute(stmt).fetchall()
-                return [record._mapping for record in result]
-
-        except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
-            return []
 
     def get_sessions_raw(
         self,
@@ -645,11 +651,13 @@ class PostgresDb(BaseDb):
             sort_order (Optional[str]): The sort order. Defaults to None.
 
         Returns:
-            Tuple[List[Dict[str, Any]], int]: List of Session objects matching the criteria and the total number of sessions.
+            Tuple[List[Dict[str, Any]], int]: List of sessions matching the criteria and the total number of sessions.
         """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError("No table found")
 
@@ -725,10 +733,15 @@ class PostgresDb(BaseDb):
 
         Returns:
             List[Session]: List of Session objects matching the criteria.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError("No table found")
 
@@ -764,7 +777,20 @@ class PostgresDb(BaseDb):
         limit: Optional[int] = 3,
         table: Optional[Table] = None,
     ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession]]:
-        """Get the most recent sessions for the given entity."""
+        """Get the most recent sessions for the given entity.
+
+        Args:
+            session_type (SessionType): The type of session to get.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
+            limit (Optional[int]): The maximum number of sessions to return. Defaults to 3.
+            table (Table): Table to read from.
+
+        Returns:
+            List[Session]: List of Session objects matching the criteria.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         return self.get_sessions(session_type=session_type, component_id=component_id, limit=limit, table=table)
 
     def get_all_session_ids(
@@ -778,16 +804,22 @@ class PostgresDb(BaseDb):
         Get all session IDs. Can filter by user_id and entity_id.
 
         Args:
+            session_type (SessionType): The type of session to get.
             table (Table): Table to read from.
             user_id (Optional[str]): The ID of the user to filter by.
             entity_id (Optional[str]): The ID of the agent / workflow to filter by.
 
         Returns:
             List[str]: List of session IDs matching the criteria.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                if session_type is None:
+                    raise ValueError("Session type is required when no table is provided")
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError("No table found")
 
@@ -798,6 +830,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 if entity_id is not None:
                     stmt = stmt.where(table.c.agent_id == entity_id)
+
                 stmt = stmt.order_by(table.c.created_at.desc())
 
                 rows = sess.execute(stmt).fetchall()
@@ -810,9 +843,24 @@ class PostgresDb(BaseDb):
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Table] = None
     ) -> Optional[Session]:
+        """
+        Rename a session in the database.
+
+        Args:
+            session_id (str): The ID of the session to rename.
+            session_type (SessionType): The type of session to rename.
+            session_name (str): The new name for the session.
+            table (Table): Table to read from.
+
+        Returns:
+            Optional[Session]: The renamed session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during renaming.
+        """
         try:
             if table is None:
-                table = self.get_table_for_session_type(session_type)
+                table = self._get_table_for_session_type(session_type)
                 if table is None:
                     raise ValueError(f"Table not found for session type: {session_type}")
 
@@ -836,22 +884,30 @@ class PostgresDb(BaseDb):
             return None
 
     def upsert_agent_session_raw(self, session: AgentSession, table: Optional[Table] = None) -> Optional[dict]:
+        """
+        Insert or update an agent session in the database.
+
+        Args:
+            session (AgentSession): The session data to upsert.
+            table (Table): Table to upsert into.
+
+        Returns:
+            Optional[dict]: The upserted session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             if table is None:
-                table = self.get_table_for_session_type(SessionType.AGENT)
+                table = self._get_table_for_session_type(SessionType.AGENT)
                 if table is None:
                     raise ValueError("Agent session table not found")
 
-            # # TODO: runs should always be a list of RunResponse. Remove this once that's implemented.
-            # if session.runs and isinstance(session.runs[0], RunResponse):
-            #     runs = [run.to_dict() for run in session.runs if isinstance(run, RunResponse)]
-            # else:
-            #     runs = session.runs
-
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            # Calculated fields
             chat_history = (
                 [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
             )
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
             summary = session.summary.to_dict() if session.summary else None
 
             with self.Session() as sess, sess.begin():
@@ -869,8 +925,6 @@ class PostgresDb(BaseDb):
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
-
-                # TODO: Review the conflict params
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
@@ -897,17 +951,31 @@ class PostgresDb(BaseDb):
             return None
 
     def upsert_team_session_raw(self, session: TeamSession, table: Optional[Table] = None) -> Optional[dict]:
+        """
+        Insert or update a team session in the database.
+
+        Args:
+            session (TeamSession): The session data to upsert.
+            table (Table): Table to upsert into.
+
+        Returns:
+            Optional[dict]: The upserted session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             if table is None:
-                table = self.get_table_for_session_type(SessionType.TEAM)
+                table = self._get_table_for_session_type(SessionType.TEAM)
                 if table is None:
                     raise ValueError("Team session table not found")
 
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            # Calculated fields
             chat_history = (
                 [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
             )
-            summary = session.summary.to_dict() if session.summary else None
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            summary = session.summary if session.summary else None
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -924,7 +992,6 @@ class PostgresDb(BaseDb):
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
-                # TODO: Review the conflict params
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
@@ -951,17 +1018,31 @@ class PostgresDb(BaseDb):
             return None
 
     def upsert_workflow_session_raw(self, session: WorkflowSession, table: Optional[Table] = None) -> Optional[dict]:
+        """
+        Insert or update a workflow session in the database.
+
+        Args:
+            session (WorkflowSession): The session data to upsert.
+            table (Table): Table to upsert into.
+
+        Returns:
+            Optional[dict]: The upserted session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             if table is None:
-                table = self.get_table_for_session_type(SessionType.WORKFLOW)
+                table = self._get_table_for_session_type(SessionType.WORKFLOW)
                 if table is None:
                     raise ValueError("Workflow session table not found")
 
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            # Calculated fields
             chat_history = (
                 [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
             )
-            summary = session.summary.to_dict() if session.summary else None
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            summary = session.summary if session.summary else None
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -977,7 +1058,6 @@ class PostgresDb(BaseDb):
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
-                # TODO: Review the conflict params
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
@@ -1004,7 +1084,7 @@ class PostgresDb(BaseDb):
 
     def upsert_session_raw(self, session: Session) -> Optional[dict]:
         """
-        Insert or update a Session in the database.
+        Insert or update a session in the database.
 
         Args:
             session (Session): The session data to upsert.
@@ -1028,7 +1108,13 @@ class PostgresDb(BaseDb):
 
     def upsert_session(self, session: Session) -> Optional[Session]:
         """
-        Insert or update a Session in the database.
+        Insert or update a session in the database.
+
+        Args:
+            session (Session): The session data to upsert.
+
+        Returns:
+            Optional[Session]: The upserted session, or None if operation failed.
         """
         session_raw = self.upsert_session_raw(session=session)
         if session_raw is None:
@@ -1043,28 +1129,88 @@ class PostgresDb(BaseDb):
 
     # -- Memory methods --
 
-    def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from the database."""
+    def _get_user_memory_table(self) -> Table:
+        """Get or create the user memory table.
+
+        Returns:
+            Table: The user memory table.
+        """
+        if not hasattr(self, "user_memory_table"):
+            if self.user_memory_table_name is None:
+                raise ValueError("User memory table was not provided on initialization")
+
+            log_info(f"Getting user memory table: {self.user_memory_table_name}")
+            self.user_memory_table = self._get_or_create_table(
+                table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
+            )
+
+        return self.user_memory_table
+
+    def delete_user_memory(self, memory_id: str) -> bool:
+        """Delete a user memory from the database.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
-            table = self.get_user_memory_table()
+            table = self._get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
+
+                return success
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            return False
+
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
+        """Delete user memories from the database.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found with ids: {memory_ids}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memories: {e}")
+
+    def get_all_memory_topics(self) -> List[str]:
+        """Get all memory topics from the database.
+
+        Returns:
+            List[str]: List of memory topics.
+        """
+        try:
+            table = self._get_user_memory_table()
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
                 return [record[0] for record in result]
+
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
             return []
-
-    def get_user_memory_table(self) -> Table:
-        """Get or create the user memory table."""
-        if not hasattr(self, "user_memory_table"):
-            if self.user_memory_table_name is None:
-                raise ValueError("User memory table was not provided on initialization")
-            log_info(f"Getting user memory table: {self.user_memory_table_name}")
-            self.user_memory_table = self.get_or_create_table(
-                table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
-            )
-        return self.user_memory_table
 
     def get_user_memory_raw(self, memory_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
         """Get a memory from the database as a raw dictionary.
@@ -1078,9 +1224,8 @@ class PostgresDb(BaseDb):
         """
         try:
             if table is None:
-                table = self.get_user_memory_table()
+                table = self._get_user_memory_table()
 
-            # TODO: Review if we need to use begin() for read operations
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
                 result = sess.execute(stmt).fetchone()
@@ -1105,7 +1250,7 @@ class PostgresDb(BaseDb):
         """
         try:
             if table is None:
-                table = self.get_user_memory_table()
+                table = self._get_user_memory_table()
 
             memory_raw = self.get_user_memory_raw(memory_id=memory_id, table=table)
             if memory_raw is None:
@@ -1151,14 +1296,17 @@ class PostgresDb(BaseDb):
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: The memories as raw dictionaries and the total number of memories.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_user_memory_table()
+                table = self._get_user_memory_table()
 
-            # TODO: Review if we need to use begin() for read operations
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
                 # Filtering
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
@@ -1227,10 +1375,13 @@ class PostgresDb(BaseDb):
 
         Returns:
             List[MemoryRow]: The memories as MemoryRow objects.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_user_memory_table()
+                table = self._get_user_memory_table()
 
             user_memories_raw, total_count = self.get_user_memories_raw(
                 user_id=user_id,
@@ -1262,6 +1413,73 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from table: {e}")
             return []
 
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            table = self._get_user_memory_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    select(
+                        table.c.user_id,
+                        func.count(table.c.memory_id).label("total_memories"),
+                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                    )
+                    .where(table.c.user_id.is_not(None))
+                    .group_by(table.c.user_id)
+                    .order_by(func.max(table.c.last_updated).desc())
+                )
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [
+                    {
+                        "user_id": record.user_id,  # type: ignore
+                        "total_memories": record.total_memories,
+                        "last_memory_updated_at": record.last_memory_updated_at,
+                    }
+                    for record in result
+                ], total_count
+
+        except Exception as e:
+            log_debug(f"Exception getting user memory stats: {e}")
+            return [], 0
+
     def upsert_user_memory_raw(self, memory: MemoryRow, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
         """Upsert a user memory in the database, and return the upserted memory as a raw dictionary.
 
@@ -1274,7 +1492,7 @@ class PostgresDb(BaseDb):
         """
         try:
             if table is None:
-                table = self.get_user_memory_table()
+                table = self._get_user_memory_table()
 
             with self.Session() as sess, sess.begin():
                 if memory.id is None:
@@ -1317,9 +1535,12 @@ class PostgresDb(BaseDb):
 
         Returns:
             Optional[UserMemory]: The upserted user memory, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
         """
         try:
-            table = self.get_user_memory_table()
+            table = self._get_user_memory_table()
 
             user_memory_raw = self.upsert_user_memory_raw(memory=memory, table=table)
             if user_memory_raw is None:
@@ -1338,34 +1559,18 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting user memory: {e}")
             return None
 
-    def delete_user_memory(self, memory_id: str) -> bool:
-        """Delete a user memory from the database.
-
-        Returns:
-            bool: True if deletion was successful, False otherwise.
-        """
-        try:
-            table = self.get_user_memory_table()
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.memory_id == memory_id)
-                result = sess.execute(delete_stmt)
-
-                success = result.rowcount > 0
-                if success:
-                    log_debug(f"Successfully deleted user memory id: {memory_id}")
-                else:
-                    log_debug(f"No user memory found with id: {memory_id}")
-
-                return success
-
-        except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
-            return False
-
     # -- Metrics methods --
 
     def _bulk_upsert_metrics(self, table: Table, metrics_records: list[dict]) -> list[dict]:
+        """Bulk upsert metrics into the database.
+
+        Args:
+            table (Table): The table to upsert into.
+            metrics_records (list[dict]): The metrics records to upsert.
+
+        Returns:
+            list[dict]: The upserted metrics records.
+        """
         if not metrics_records:
             return []
 
@@ -1390,7 +1595,15 @@ class PostgresDb(BaseDb):
         return results
 
     def _calculate_date_metrics(self, date_to_process: date, sessions_data: dict) -> dict:
-        """Calculate metrics for the given single date"""
+        """Calculate metrics for the given single date.
+
+        Args:
+            date_to_process (date): The date to calculate metrics for.
+            sessions_data (dict): The sessions data to calculate metrics for.
+
+        Returns:
+            dict: The calculated metrics.
+        """
         metrics = {
             "users_count": 0,
             "agent_sessions_count": 0,
@@ -1430,8 +1643,8 @@ class PostgresDb(BaseDb):
                 metrics[runs_count_key] += len(session.get("runs", []))
                 if runs := session.get("runs", []):
                     for run in runs:
-                        if model_id := run.get("run", {}).get("model"):
-                            model_provider = run["run"].get("model_provider", "")
+                        if model_id := run.get("model"):
+                            model_provider = run.get("model_provider", "")
                             model_counts[f"{model_id}:{model_provider}"] = (
                                 model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                             )
@@ -1462,6 +1675,9 @@ class PostgresDb(BaseDb):
 
     def _fetch_all_sessions_data(self, dates_to_process: list[date]) -> Optional[dict]:
         """Return all session data for the given dates, for all session types.
+
+        Args:
+            dates_to_process (list[date]): The dates to fetch session data for.
 
         Returns:
             dict: A dictionary with dates as keys and session data as values, for all session types.
@@ -1497,7 +1713,14 @@ class PostgresDb(BaseDb):
         return all_sessions_data
 
     def _get_dates_to_calculate_metrics_for(self, starting_date: date) -> list[date]:
-        """Return the list of dates to calculate metrics for."""
+        """Return the list of dates to calculate metrics for.
+
+        Args:
+            starting_date (date): The starting date to calculate metrics for.
+
+        Returns:
+            list[date]: The list of dates to calculate metrics for.
+        """
         today = datetime.now(timezone.utc).date()
         days_diff = (today - starting_date).days + 1
         if days_diff <= 0:
@@ -1510,6 +1733,12 @@ class PostgresDb(BaseDb):
         1. If there are metrics records, return the date of the first day without a complete metrics record.
         2. If there are no metrics records, return the date of the first recorded session.
         3. If there are no metrics records and no sessions records, return None.
+
+        Args:
+            table (Table): The table to get the starting date for.
+
+        Returns:
+            Optional[date]: The starting date for which metrics calculation is needed.
         """
         with self.Session() as sess:
             stmt = select(table).order_by(table.c.date.desc()).limit(1)
@@ -1524,7 +1753,7 @@ class PostgresDb(BaseDb):
 
             # 2. No metrics records. Return the date of the first recorded session.
             else:
-                first_session_date = self._get_first_or_latest_session_date(latest=False)
+                first_session_date = self._get_oldest_session_date()
 
                 # 3. No metrics records and no sessions records. Return None.
                 if not first_session_date:
@@ -1533,7 +1762,14 @@ class PostgresDb(BaseDb):
                 return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
     def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics."""
+        """Calculate metrics for all dates without complete metrics.
+
+        Returns:
+            Optional[list[dict]]: The calculated metrics.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
         try:
             table = self.get_metrics_table()
 
@@ -1576,14 +1812,20 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_metrics_table(self) -> Table:
-        """Get or create the metrics table."""
+        """Get or create the metrics table.
+
+        Returns:
+            Table: The metrics table.
+        """
         if not hasattr(self, "metrics_table"):
             if self.metrics_table_name is None:
                 raise ValueError("Metrics table was not provided on initialization")
+
             log_info(f"Getting metrics table: {self.metrics_table_name}")
-            self.metrics_table = self.get_or_create_table(
+            self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
             )
+
         return self.metrics_table
 
     def get_metrics_raw(
@@ -1597,6 +1839,9 @@ class PostgresDb(BaseDb):
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             table = self.get_metrics_table()
@@ -1621,101 +1866,34 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting metrics: {e}")
             return [], None
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        try:
-            table = self.get_user_memory_table()
-
-            with self.Session() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
-                result = sess.execute(delete_stmt)
-                if result.rowcount == 0:
-                    log_debug(f"No user memories found with ids: {memory_ids}")
-
-        except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
-
-    def get_user_memory_stats(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memories stats.
-
-        Args:
-            limit (Optional[int]): The maximum number of user stats to return.
-            page (Optional[int]): The page number.
-
-        Returns:
-            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
-
-        Example:
-        (
-            [
-                {
-                    "user_id": "123",
-                    "total_memories": 10,
-                    "last_memory_updated_at": 1714560000,
-                },
-            ],
-            total_count: 1,
-        )
-        """
-        try:
-            table = self.get_user_memory_table()
-
-            with self.Session() as sess, sess.begin():
-                stmt = (
-                    select(
-                        table.c.user_id,
-                        func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
-                    )
-                    .where(table.c.user_id.is_not(None))
-                    .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
-                )
-
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
-
-                # Pagination
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = sess.execute(stmt).fetchall()
-                if not result:
-                    return [], 0
-
-                return [
-                    {
-                        "user_id": record.user_id,  # type: ignore
-                        "total_memories": record.total_memories,
-                        "last_memory_updated_at": record.last_memory_updated_at,
-                    }
-                    for record in result
-                ], total_count
-
-        except Exception as e:
-            log_debug(f"Exception getting user memory stats: {e}")
-            return [], 0
-
     # -- Knowledge methods --
 
-    def get_knowledge_table(self) -> Table:
-        """Get or create the knowledge table."""
+    def _get_knowledge_table(self) -> Table:
+        """Get or create the knowledge table.
+
+        Returns:
+            Table: The knowledge table.
+        """
         if not hasattr(self, "knowledge_table"):
             if self.knowledge_table_name is None:
                 raise ValueError("Knowledge table was not provided on initialization")
+
             log_info(f"Getting knowledge table: {self.knowledge_table_name}")
-            self.knowledge_table = self.get_or_create_table(
-                table_name=self.knowledge_table_name, table_type="knowledge_documents", db_schema=self.db_schema
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge_documents",
+                db_schema=self.db_schema,
             )
+
         return self.knowledge_table
 
     def delete_knowledge_document(self, document_id: str):
-        table = self.get_knowledge_table()
+        """Delete a knowledge document from the database.
+
+        Args:
+            document_id (str): The ID of the document to delete.
+        """
+        table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == document_id)
             sess.execute(stmt)
@@ -1723,14 +1901,14 @@ class PostgresDb(BaseDb):
         return
 
     def get_document_status(self, document_id: str) -> Optional[str]:
-        table = self.get_knowledge_table()
+        table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = select(table.c.status).where(table.c.id == document_id)
             result = sess.execute(stmt).fetchone()
             return result._mapping["status"]
 
     def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
-        table = self.get_knowledge_table()
+        table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = select(table).where(table.c.id == document_id)
             result = sess.execute(stmt).fetchone()
@@ -1754,7 +1932,7 @@ class PostgresDb(BaseDb):
         Returns:
             List[KnowledgeRow]: The knowledge documents.
         """
-        table = self.get_knowledge_table()
+        table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = select(table)
 
@@ -1785,7 +1963,7 @@ class PostgresDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
         """
         try:
-            table = self.get_knowledge_table()
+            table = self._get_knowledge_table()
             with self.Session() as sess, sess.begin():
                 # Only include fields that are not None in the update
                 update_fields = {
@@ -1819,21 +1997,37 @@ class PostgresDb(BaseDb):
 
     # -- Eval methods --
 
-    def get_eval_table(self) -> Table:
-        """Get or create the eval table."""
+    def _get_eval_table(self) -> Table:
+        """Get or create the eval table.
+
+        Returns:
+            Table: The eval table.
+        """
         if not hasattr(self, "eval_table"):
             if self.eval_table_name is None:
                 raise ValueError("Eval table was not provided on initialization")
+
             log_info(f"Getting eval table: {self.eval_table_name}")
-            self.eval_table = self.get_or_create_table(
+            self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
             )
+
         return self.eval_table
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        """Create an EvalRunRecord in the database."""
+        """Create an EvalRunRecord in the database.
+
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
         try:
-            table = self.get_eval_table()
+            table = self._get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
@@ -1849,6 +2043,27 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating eval run: {e}")
             return None
 
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): List of eval run IDs to delete.
+        """
+        try:
+            table = self._get_eval_table()
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
+                else:
+                    log_debug(f"Deleted {result.rowcount} eval runs")
+
+        except Exception as e:
+            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise
+
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
         """Get an eval run from the database as a raw dictionary.
 
@@ -1860,7 +2075,7 @@ class PostgresDb(BaseDb):
         """
         try:
             if table is None:
-                table = self.get_eval_table()
+                table = self._get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1886,7 +2101,7 @@ class PostgresDb(BaseDb):
         """
         try:
             if table is None:
-                table = self.get_eval_table()
+                table = self._get_eval_table()
 
             eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id, table=table)
             if eval_run_raw is None:
@@ -1929,10 +2144,13 @@ class PostgresDb(BaseDb):
 
         Returns:
             List[Dict[str, Any]]: The eval runs as raw dictionaries.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_eval_table()
+                table = self._get_eval_table()
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -2011,10 +2229,13 @@ class PostgresDb(BaseDb):
 
         Returns:
             List[EvalRunRecord]: The eval runs.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             if table is None:
-                table = self.get_eval_table()
+                table = self._get_eval_table()
 
             eval_runs_raw, total_count = self.get_eval_runs_raw(
                 limit=limit,
@@ -2038,36 +2259,21 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception getting eval runs: {e}")
             return []
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from the database.
-
-        Args:
-            eval_run_ids (List[str]): List of eval run IDs to delete.
-        """
-        try:
-            table = self.get_eval_table()
-
-            with self.Session() as sess, sess.begin():
-                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
-                result = sess.execute(stmt)
-                if result.rowcount == 0:
-                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
-                else:
-                    log_debug(f"Deleted {result.rowcount} eval runs")
-
-        except Exception as e:
-            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
-
     def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+
+        Returns:
+            Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during update.
         """
         try:
-            table = self.get_eval_table()
+            table = self._get_eval_table()
             with self.Session() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))

@@ -40,7 +40,7 @@ class AgentSession:
     # List of all messages in the session
     chat_history: Optional[list[Message]] = None
     # List of all runs in the session
-    runs: Optional[list[Dict[str, Any]]] = None
+    runs: Optional[List[RunResponse]] = None
     # Summary of the session
     summary: Optional[SessionSummary] = None
 
@@ -64,6 +64,15 @@ class AgentSession:
         if data is None or data.get("session_id") is None:
             log_warning("AgentSession is missing session_id")
             return None
+
+        runs = data.get("runs")
+        if runs is not None and isinstance(runs[0], dict):
+            runs = [RunResponse.from_dict(run) for run in runs]
+
+        chat_history = data.get("chat_history")
+        if chat_history is not None and isinstance(chat_history[0], dict):
+            chat_history = [Message.from_dict(msg) for msg in chat_history]
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             agent_id=data.get("agent_id"),
@@ -76,14 +85,13 @@ class AgentSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=data.get("chat_history"),
-            runs=data.get("runs"),
+            chat_history=chat_history,
+            runs=runs,
             summary=data.get("summary"),
         )
 
     def add_run(self, run: RunResponse):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
-
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
@@ -301,7 +309,7 @@ class AgentSession:
                 last_updated=datetime.now(),
             )
             self.summary = session_summary
-            log_debug(f"Session summary created", center=True)
+            log_debug("Session summary created", center=True)
             return session_summary
 
         # Handle string responses
@@ -316,7 +324,7 @@ class AgentSession:
                         summary=parsed_summary.summary, topics=parsed_summary.topics, last_updated=datetime.now()
                     )
                     self.summary = session_summary
-                    log_debug(f"Session summary created", center=True)
+                    log_debug("Session summary created", center=True)
                     return session_summary
                 else:
                     log_warning("Failed to parse session summary response")
@@ -332,7 +340,7 @@ class AgentSession:
         session_summary_prompt: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        log_debug(f"Creating session summary", center=True)
+        log_debug("Creating session summary", center=True)
         if session_summary_model is None:
             return None
 
@@ -348,7 +356,7 @@ class AgentSession:
         session_summary_prompt: Optional[str] = None,
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
-        log_debug(f"Creating session summary", center=True)
+        log_debug("Creating session summary", center=True)
         if session_summary_model is None:
             return None
 
