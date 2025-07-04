@@ -230,8 +230,14 @@ class Team:
     add_memory_references: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
+    # Session summary model
+    session_summary_model: Optional[Model] = None
+    # Session summary prompt
+    session_summary_prompt: Optional[str] = None
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
+    # If True, the team stores the chat history in the memory
+    store_chat_history: bool = False
 
     # --- Team History ---
     # If True, enable the team history (Deprecated in favor of add_history_to_messages)
@@ -331,6 +337,7 @@ class Team:
         add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
+        store_chat_history: bool = False,
         enable_team_history: bool = False,
         add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
@@ -412,7 +419,7 @@ class Team:
         self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_references = add_session_summary_references
-
+        self.store_chat_history = store_chat_history
         self.enable_team_history = enable_team_history
         self.add_history_to_messages = add_history_to_messages
         self.num_of_interactions_from_history = num_of_interactions_from_history
@@ -1479,11 +1486,11 @@ class Team:
     ) -> Iterator[TeamRunResponseEvent]:
         yield from self._make_memories_and_summaries(run_messages, session_id, user_id)
 
-        session_messages: List[Message] = []
-        for run in self.memory.runs.get(session_id, []):  # type: ignore
-            if run.messages is not None:
-                for m in run.messages:
-                    session_messages.append(m)
+        # session_messages: List[Message] = []
+        # for run in self.memory.runs.get(session_id, []):  # type: ignore
+        #     if run.messages is not None:
+        #         for m in run.messages:
+        #             session_messages.append(m)
 
     async def _aupdate_memory(
         self,
@@ -1885,15 +1892,27 @@ class Team:
             user_message_str = (
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
-            if self.enable_user_memories and user_message_str is not None and user_message_str:
+            if self.enable_user_memories and user_message_str is not None:
                 futures.append(
-                    executor.submit(self.memory.create_user_memories, message=user_message_str, user_id=user_id)
+                    executor.submit(
+                        self.memory.create_user_memories,
+                        message=user_message_str,
+                        user_id=user_id,
+                        team_id=self.team_id,
+                    )
                 )
 
             # Update the session summary if needed
             if self.enable_session_summaries:
+                if self.session_summary_model is None:
+                    self.session_summary_model = self.model
+
                 futures.append(
-                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                    executor.submit(
+                        self.team_session.create_session_summary,
+                        session_summary_model=self.session_summary_model,
+                        session_summary_prompt=self.session_summary_prompt,
+                    )
                 )
 
             if futures:
@@ -1930,8 +1949,15 @@ class Team:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
-            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
+            if self.session_summary_model is None:
+                self.session_summary_model = self.model
 
+            tasks.append(
+                self.team_session.acreate_session_summary(
+                    session_summary_model=self.session_summary_model,
+                    session_summary_prompt=self.session_summary_prompt,
+                )
+            )
         if tasks:
             if self.stream_intermediate_steps:
                 yield self._handle_event(
@@ -4769,44 +4795,41 @@ class Team:
             system_message_content += "</attached_media>\n\n"
 
         # Then add memories to the system prompt
-        if self.memory:
-            if isinstance(self.memory, Memory) and self.add_memory_references:
-                if not user_id:
-                    user_id = "default"
-                user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
-                if user_memories and len(user_memories) > 0:
-                    system_message_content += (
-                        "You have access to memories from previous interactions with the user that you can use:\n\n"
-                    )
-                    system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in user_memories:  # type: ignore
-                        system_message_content += f"\n- {_memory.memory}"
-                    system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                    system_message_content += (
-                        "Note: this information is from previous interactions and may be updated in this conversation. "
-                        "You should always prefer information from this conversation over the past memories.\n\n"
-                    )
-                else:
-                    system_message_content += (
-                        "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the user yet.\n"
-                    )
+        if self.memory and self.add_memory_references:
+            if not user_id:
+                user_id = "default"
+            user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
+            if user_memories and len(user_memories) > 0:
+                system_message_content += (
+                    "You have access to memories from previous interactions with the user that you can use:\n\n"
+                )
+                system_message_content += "<memories_from_previous_interactions>"
+                for _memory in user_memories:  # type: ignore
+                    system_message_content += f"\n- {_memory.memory}"
+                system_message_content += "\n</memories_from_previous_interactions>\n\n"
+                system_message_content += (
+                    "Note: this information is from previous interactions and may be updated in this conversation. "
+                    "You should always prefer information from this conversation over the past memories.\n\n"
+                )
+            else:
+                system_message_content += (
+                    "You have the capability to retain memories from previous interactions with the user, "
+                    "but have not had any interactions with the user yet.\n"
+                )
 
-                if self.enable_agentic_memory:
-                    system_message_content += (
-                        "You have access to the `update_user_memory` tool.\n"
-                        "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                        "Memories should include details that could personalize ongoing interactions with the user.\n"
-                        "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                        "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                        "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
-                    )
+            if self.enable_agentic_memory:
+                system_message_content += (
+                    "You have access to the `update_user_memory` tool.\n"
+                    "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                    "Memories should include details that could personalize ongoing interactions with the user.\n"
+                    "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                    "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                    "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
+                )
 
             # Then add a summary of the interaction to the system prompt
-            if isinstance(self.memory, Memory) and self.add_session_summary_references:
-                if not user_id:
-                    user_id = "default"
-                session_summary: SessionSummary = self.memory.summaries.get(user_id, {}).get(session_id, None)  # type: ignore
+            if self.add_session_summary_references:
+                session_summary: SessionSummary = self.team_session.get_session_summary()  # type: ignore
                 if session_summary is not None:
                     system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"
@@ -4906,7 +4929,7 @@ class Team:
         if self.enable_team_history or self.add_history_to_messages:
             from copy import deepcopy
 
-            history = self.memory.get_messages_from_last_n_runs(
+            history = self.team_session.get_messages_from_last_n_runs(
                 session_id=session_id,
                 last_n=self.num_history_runs,
                 skip_role=self.system_message_role,
@@ -6258,12 +6281,10 @@ class Team:
             session = self.get_team_session(session_id=session_id, user_id=user_id)
             # Update the session_data with the latest data
             # session.session_data = self.get_team_session_data()
-            # if self.store_chat_history:
-            #     session.chat_history = session.get_chat_history()
+            if self.store_chat_history:
+                session.chat_history = session.get_chat_history()
 
             self.memory.upsert_session(session=session)
-
-            self.team_session = cast(TeamSession, self.memory.upsert_session(session=session))
         return self.team_session
 
     def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[TeamSession]:
@@ -6462,6 +6483,18 @@ class Team:
                 if self.team_session is None:
                     raise Exception("Failed to create new TeamSession in storage")
         return self.session_id
+
+    def get_chat_history(self) -> List[Message]:
+        """Read the chat history from the session"""
+        from agno.db.base import SessionType
+
+        # If the chat history is already set, return it
+        if self.team_session is not None and self.team_session.chat_history is not None:
+            return self.team_session.chat_history
+        # Else read from the db
+        if self.memory is not None and self.memory.db is not None:
+            return self.memory.read_chat_history(session_id=self.session_id, session_type=SessionType.TEAM)
+        return []
 
     def get_messages_for_session(
         self, session_id: Optional[str] = None, user_id: Optional[str] = None

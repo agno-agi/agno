@@ -2,23 +2,24 @@ from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
+from agno.team.team import Team
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url, agent_session_table="test_agent_session_0702")
+db = PostgresDb(db_url=db_url, team_session_table="team_sessions")
 
 memory = Memory(db=db)
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+
+team = Team(
+    members=[agent],
     memory=memory,
-    session_id="chat_history_0702_1",
-    instructions="You are a helpful assistant that can answer questions about space and oceans.",
-    add_history_to_messages=True,
+    session_id="team_chat_history",
     store_chat_history=True,
 )
 
-agent.print_response("Tell me a new interesting fact about space")
-agent.print_response("Tell me a new interesting fact about oceans")
+team.print_response("Tell me a new interesting fact about space")
+# team.print_response("Tell me a new interesting fact about oceans")
 
-print(agent.get_chat_history())
+print(team.get_chat_history())

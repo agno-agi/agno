@@ -3147,13 +3147,16 @@ class Agent:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
 
-            # Create user memories from single message
-            if self.enable_user_memories and run_messages.user_message is not None:
+            # Create user memories
+            user_message_str = (
+                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+            )
+            if self.enable_user_memories and user_message_str is not None:
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
                         self.memory.create_user_memories,
-                        message=run_messages.user_message.get_content_string(),
+                        message=user_message_str,
                         user_id=user_id,
                         agent_id=self.agent_id,
                     )
