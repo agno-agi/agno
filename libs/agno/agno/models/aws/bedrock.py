@@ -222,18 +222,27 @@ class AwsBedrock(Model):
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
-                    formatted_message["content"].extend(
-                        [
-                            {
-                                "toolUse": {
-                                    "toolUseId": tool_call["id"],
-                                    "name": tool_call["function"]["name"],
-                                    "input": json.loads(tool_call["function"]["arguments"]),
-                                }
+                    tool_use_content = []
+                    for tool_call in message.tool_calls:
+                        try:
+                            # Parse arguments with error handling for empty or invalid JSON
+                            arguments = tool_call["function"]["arguments"]
+                            if not arguments or arguments.strip() == "":
+                                tool_input = {}
+                            else:
+                                tool_input = json.loads(arguments)
+                        except (json.JSONDecodeError, KeyError) as e:
+                            log_warning(f"Failed to parse tool call arguments: {e}")
+                            tool_input = {}
+                        
+                        tool_use_content.append({
+                            "toolUse": {
+                                "toolUseId": tool_call["id"],
+                                "name": tool_call["function"]["name"],
+                                "input": tool_input,
                             }
-                            for tool_call in message.tool_calls
-                        ]
-                    )
+                        })
+                    formatted_message["content"].extend(tool_use_content)
                 else:
                     formatted_message["content"].append({"text": message.content})
 
@@ -441,7 +450,7 @@ class AwsBedrock(Model):
 
     # Overwrite the default from the base model
     def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
+        self, messages: List[Message], function_call_results: List[Message], **kwargs
     ) -> None:
         """
         Handle the results of function calls.
@@ -449,14 +458,21 @@ class AwsBedrock(Model):
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
+            **kwargs: Additional arguments including tool_ids.
         """
         if function_call_results:
+            tool_ids = kwargs.get("tool_ids", [])
             tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
+                # Use tool_call_id from message if tool_ids list is insufficient
+                tool_id = (
+                    tool_ids[_fc_message_index] 
+                    if _fc_message_index < len(tool_ids) 
+                    else _fc_message.tool_call_id
+                )
                 tool_result = {
-                    "toolUseId": tool_ids[_fc_message_index],
+                    "toolUseId": tool_id,
                     "content": [{"json": {"result": _fc_message.content}}],
                 }
                 tool_result_content.append({"toolResult": tool_result})
