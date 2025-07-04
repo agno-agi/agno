@@ -27,6 +27,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
     WorkflowStartedEvent,
+    WorkflowRunEvent,
 )
 from agno.storage.base import Storage
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
@@ -98,7 +99,7 @@ class Workflow:
     stream_intermediate_steps: bool = False
 
     store_events: bool = False
-    events_to_skip: Optional[List[Union["WorkflowRunEvent", str]]] = None
+    events_to_skip: Optional[List[WorkflowRunEvent]] = None
 
     def __init__(
         self,
@@ -115,7 +116,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[Any]] = None,
+        events_to_skip: Optional[List[WorkflowRunEvent]] = None
     ):
         self.workflow_id = workflow_id
         self.name = name
