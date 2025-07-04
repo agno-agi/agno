@@ -332,7 +332,7 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
-        
+
         if stream_intermediate_steps:
             # Yield loop completed event
             yield LoopExecutionCompletedEvent(
@@ -464,7 +464,7 @@ class Loop:
             log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")
 
             if stream_intermediate_steps:
-            # Yield iteration started event
+                # Yield iteration started event
                 yield LoopIterationStartedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
@@ -547,7 +547,7 @@ class Loop:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
 
             if stream_intermediate_steps:
-            # Yield iteration completed event
+                # Yield iteration completed event
                 yield LoopIterationCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",

@@ -77,6 +77,7 @@ def step_b(step_input: StepInput) -> StepOutput:
 # STEP EVENTS TESTS
 # ============================================================================
 
+
 def test_step_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Step events with stream_intermediate_steps=False."""
     workflow = Workflow(
@@ -212,6 +213,7 @@ async def test_step_events_async_with_stream_intermediate_steps_true(workflow_st
 # STEPS EVENTS TESTS
 # ============================================================================
 
+
 def test_steps_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Steps events with stream_intermediate_steps=False."""
     workflow = Workflow(
@@ -302,6 +304,7 @@ async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_s
 # PARALLEL EVENTS TESTS
 # ============================================================================
 
+
 def test_parallel_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Parallel events with stream_intermediate_steps=False."""
     workflow = Workflow(
@@ -387,6 +390,7 @@ async def test_parallel_events_async_with_stream_intermediate_steps_true(workflo
 # ============================================================================
 # LOOP EVENTS TESTS
 # ============================================================================
+
 
 def test_loop_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Loop events with stream_intermediate_steps=False."""
@@ -482,6 +486,7 @@ async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_st
 # CONDITION EVENTS TESTS
 # ============================================================================
 
+
 def test_condition_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Condition events with stream_intermediate_steps=False."""
     workflow = Workflow(
@@ -566,6 +571,7 @@ async def test_condition_events_async_with_stream_intermediate_steps_true(workfl
 # ============================================================================
 # ROUTER EVENTS TESTS
 # ============================================================================
+
 
 def test_router_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Router events with stream_intermediate_steps=False."""
@@ -663,6 +669,7 @@ async def test_router_events_async_with_stream_intermediate_steps_true(workflow_
 # COMPREHENSIVE WORKFLOW TESTS
 # ============================================================================
 
+
 def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=True."""
     workflow = Workflow(
@@ -748,6 +755,7 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     assert len(loop_events) >= 2  # Started + completed
     assert len(workflow_events) == 2  # Started + completed
 
+
 def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=False."""
     workflow = Workflow(
@@ -780,7 +788,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(work
     # Should only have workflow events, NO intermediate component events
     assert "WorkflowStartedEvent" in event_types
     assert "WorkflowCompletedEvent" in event_types
-    
+
     # NO intermediate events should be present
     assert "StepStartedEvent" not in event_types
     assert "StepCompletedEvent" not in event_types
@@ -796,7 +804,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(work
     # Should have workflow start/complete and step outputs only
     workflow_events = [e for e in events if isinstance(e, (WorkflowStartedEvent, WorkflowCompletedEvent))]
     step_outputs = [e for e in events if isinstance(e, StepOutput)]
-    
+
     assert len(workflow_events) == 2  # Started + completed
     assert len(step_outputs) >= 1  # At least one aggregated output from the workflow
 
@@ -832,7 +840,7 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     # Should only have workflow events, NO intermediate component events
     assert "WorkflowStartedEvent" in event_types
     assert "WorkflowCompletedEvent" in event_types
-    
+
     # NO intermediate events should be present
     assert "StepStartedEvent" not in event_types
     assert "StepCompletedEvent" not in event_types
@@ -846,6 +854,6 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     # Should have workflow start/complete and step outputs only
     workflow_events = [e for e in events if isinstance(e, (WorkflowStartedEvent, WorkflowCompletedEvent))]
     step_outputs = [e for e in events if isinstance(e, StepOutput)]
-    
+
     assert len(workflow_events) == 2  # Started + completed
     assert len(step_outputs) >= 1  # At least one aggregated output from the workflow

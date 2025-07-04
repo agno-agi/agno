@@ -624,7 +624,7 @@ class Step:
                 yield final_response
 
                 if stream_intermediate_steps:
-                # Emit StepCompletedEvent
+                    # Emit StepCompletedEvent
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
                         workflow_name=workflow_run_response.workflow_name or "",

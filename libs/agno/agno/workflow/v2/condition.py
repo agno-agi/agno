@@ -507,7 +507,7 @@ class Condition:
                 )
                 all_results.append(error_output)
                 break
-        
+
         if stream_intermediate_steps:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(

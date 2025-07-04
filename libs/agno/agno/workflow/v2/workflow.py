@@ -90,6 +90,9 @@ class Workflow:
     workflow_session: Optional[WorkflowSessionV2] = None
     debug_mode: Optional[bool] = False
 
+    store_events: bool = False
+    events_to_skip: Optional[List[Union["WorkflowRunEvent", str]]] = None
+
     def __init__(
         self,
         workflow_id: Optional[str] = None,
@@ -101,6 +104,8 @@ class Workflow:
         workflow_session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
+        store_events: bool = False,
+        events_to_skip: Optional[List[Any]] = None,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -111,6 +116,8 @@ class Workflow:
         self.workflow_session_state = workflow_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.store_events = store_events
+        self.events_to_skip = events_to_skip or []
 
     def initialize_workflow(self):
         if self.workflow_id is None:
@@ -126,6 +133,29 @@ class Workflow:
             self.storage.mode = "workflow_v2"
 
         self._update_workflow_session_state()
+
+    def _handle_event(self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse) -> None:
+        """Handle workflow events for storage - similar to Team._handle_event"""
+        if not self.store_events:
+            return
+
+        # Check if this event type should be skipped
+        if self.events_to_skip:
+            event_type = event.event
+            for skip_event in self.events_to_skip:
+                if isinstance(skip_event, str):
+                    if event_type == skip_event:
+                        return
+                else:
+                    # It's a WorkflowRunEvent enum
+                    if event_type == skip_event.value:
+                        return
+
+        # Store the event
+        if workflow_run_response.events is None:
+            workflow_run_response.events = []
+
+        workflow_run_response.events.append(event)
 
     def _set_debug(self) -> None:
         """Set debug mode and configure logging"""
@@ -316,12 +346,15 @@ class Workflow:
         """Execute a specific pipeline by name with event streaming"""
 
         workflow_run_response.status = RunStatus.running
-        yield WorkflowStartedEvent(
+
+        workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
+        self._handle_event(workflow_started_event, workflow_run_response)
+        yield workflow_started_event
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
@@ -377,6 +410,10 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         step_index=i,
                     ):
+                        # Handle events 
+                        if isinstance(event, WorkflowRunResponseEvent):
+                            self._handle_event(event, workflow_run_response)
+
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -416,7 +453,6 @@ class Workflow:
                         else:
                             # Yield other internal events
                             yield event
-
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -461,7 +497,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
 
         # Yield workflow completed event
-        yield WorkflowCompletedEvent(
+        workflow_completed_event = WorkflowCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             content=workflow_run_response.content,
             workflow_name=workflow_run_response.workflow_name,
@@ -470,6 +506,8 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,
             extra_data=workflow_run_response.extra_data,
         )
+        self._handle_event(workflow_completed_event, workflow_run_response)
+        yield workflow_completed_event
 
         # Store the completed workflow response
         if self.workflow_session:
@@ -1995,7 +2033,7 @@ class Workflow:
 
         if console is None:
             from agno.cli.console import console
-        
+
         stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         # Show workflow info (same as before)
