@@ -44,7 +44,7 @@ def create_mock_response(results=None, status_code=200):
     """Helper to create a mock response object matching the SDK structure."""
     mock_response = Mock()
     mock_response.results = []
-    
+
     if results:
         for result_data in results:
             mock_result = Mock()
@@ -52,7 +52,7 @@ def create_mock_response(results=None, status_code=200):
             mock_result.status_code = result_data.get("status_code", status_code)
             mock_result.content_parsed = result_data.get("content_parsed")
             mock_response.results.append(mock_result)
-    
+
     return mock_response
 
 
@@ -97,10 +97,23 @@ class TestSearchGoogle:
         """Test successful Google search."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content": {"results": {"organic": [{"title": "Test Result", "url": "https://example.com", "desc": "Test description", "pos": 1}]}},
-                "status_code": 200
-            }]
+            results=[
+                {
+                    "content": {
+                        "results": {
+                            "organic": [
+                                {
+                                    "title": "Test Result",
+                                    "url": "https://example.com",
+                                    "desc": "Test description",
+                                    "pos": 1,
+                                }
+                            ]
+                        }
+                    },
+                    "status_code": 200,
+                }
+            ]
         )
         mock_oxylabs_client.google.scrape_search.return_value = mock_response
 
@@ -110,11 +123,7 @@ class TestSearchGoogle:
         result = tools.search_google(query="test query", domain_code="com")
 
         # Assert
-        mock_oxylabs_client.google.scrape_search.assert_called_once_with(
-            query="test query",
-            domain="com",
-            parse=True
-        )
+        mock_oxylabs_client.google.scrape_search.assert_called_once_with(query="test query", domain="com", parse=True)
 
         result_data = json.loads(result)
         assert result_data["tool"] == "search_google"
@@ -151,10 +160,12 @@ class TestGetAmazonProduct:
         """Test successful Amazon product lookup."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content": {"title": "Test Product", "price": 29.99, "currency": "USD", "rating": 4.5},
-                "status_code": 200
-            }]
+            results=[
+                {
+                    "content": {"title": "Test Product", "price": 29.99, "currency": "USD", "rating": 4.5},
+                    "status_code": 200,
+                }
+            ]
         )
         mock_oxylabs_client.amazon.scrape_product.return_value = mock_response
 
@@ -164,11 +175,7 @@ class TestGetAmazonProduct:
         result = tools.get_amazon_product(asin="B08N5WRWNW", domain_code="com")
 
         # Assert
-        mock_oxylabs_client.amazon.scrape_product.assert_called_once_with(
-            query="B08N5WRWNW",
-            domain="com",
-            parse=True
-        )
+        mock_oxylabs_client.amazon.scrape_product.assert_called_once_with(query="B08N5WRWNW", domain="com", parse=True)
 
         result_data = json.loads(result)
         assert result_data["tool"] == "get_amazon_product"
@@ -194,10 +201,14 @@ class TestSearchAmazonProducts:
         """Test successful Amazon search."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content": {"results": {"organic": [{"title": "Test Product", "asin": "B08N5WRWNW", "price": 29.99}]}},
-                "status_code": 200
-            }]
+            results=[
+                {
+                    "content": {
+                        "results": {"organic": [{"title": "Test Product", "asin": "B08N5WRWNW", "price": 29.99}]}
+                    },
+                    "status_code": 200,
+                }
+            ]
         )
         mock_oxylabs_client.amazon.scrape_search.return_value = mock_response
 
@@ -208,9 +219,7 @@ class TestSearchAmazonProducts:
 
         # Assert
         mock_oxylabs_client.amazon.scrape_search.assert_called_once_with(
-            query="wireless headphones",
-            domain="com",
-            parse=True
+            query="wireless headphones", domain="com", parse=True
         )
 
         result_data = json.loads(result)
@@ -237,10 +246,7 @@ class TestScrapeWebsite:
         """Test successful website scraping."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content": "<html><body>Test Content</body></html>",
-                "status_code": 200
-            }]
+            results=[{"content": "<html><body>Test Content</body></html>", "status_code": 200}]
         )
         mock_oxylabs_client.universal.scrape_url.return_value = mock_response
 
@@ -251,9 +257,7 @@ class TestScrapeWebsite:
 
         # Assert
         mock_oxylabs_client.universal.scrape_url.assert_called_once_with(
-            url="https://example.com",
-            render=None,
-            parse=True
+            url="https://example.com", render=None, parse=True
         )
 
         result_data = json.loads(result)
@@ -276,10 +280,7 @@ class TestScrapeWebsite:
         """Test website scraping with JavaScript rendering."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content": "<html><body>Rendered Content</body></html>",
-                "status_code": 200
-            }]
+            results=[{"content": "<html><body>Rendered Content</body></html>", "status_code": 200}]
         )
         mock_oxylabs_client.universal.scrape_url.return_value = mock_response
 
@@ -320,10 +321,25 @@ class TestResponseFormatting:
         """Test response formatting with parsed content."""
         # Arrange
         mock_response = create_mock_response(
-            results=[{
-                "content_parsed": Mock(results=Mock(raw={"organic": [{"title": "Test", "url": "https://example.com", "desc": "Test description", "pos": 1}]})),
-                "status_code": 200
-            }]
+            results=[
+                {
+                    "content_parsed": Mock(
+                        results=Mock(
+                            raw={
+                                "organic": [
+                                    {
+                                        "title": "Test",
+                                        "url": "https://example.com",
+                                        "desc": "Test description",
+                                        "pos": 1,
+                                    }
+                                ]
+                            }
+                        )
+                    ),
+                    "status_code": 200,
+                }
+            ]
         )
         mock_oxylabs_client.google.scrape_search.return_value = mock_response
 

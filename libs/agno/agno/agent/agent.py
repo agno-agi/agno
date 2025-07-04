@@ -7382,7 +7382,9 @@ class Agent:
                     # Check if we have any response content to display
                     response_content = (
                         response_content_stream
-                        if response_content_stream and isinstance(response_content_stream, str) and len(response_content_stream) > 0
+                        if response_content_stream
+                        and isinstance(response_content_stream, str)
+                        and len(response_content_stream) > 0
                         else response_content_batch
                     )
                     if response_content:
