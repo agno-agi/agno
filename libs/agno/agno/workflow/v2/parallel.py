@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -97,10 +97,6 @@ class Parallel:
         all_audio = []
         has_any_failure = False
 
-        # Aggregate metrics from all parallel steps
-        aggregated_metrics = {}
-        parallel_step_metrics = {}
-
         for result in step_outputs:
             all_images.extend(result.images or [])
             all_videos.extend(result.videos or [])
@@ -108,8 +104,30 @@ class Parallel:
             if result.success is False:
                 has_any_failure = True
 
-            # Collect metrics from each parallel step
+        # Extract metrics using the dedicated method
+        aggregated_metrics = self._extract_metrics_from_response(step_outputs)
+
+        return StepOutput(
+            step_name=self.name or "Parallel",
+            content=aggregated_content,
+            images=all_images if all_images else None,
+            videos=all_videos if all_videos else None,
+            audio=all_audio if all_audio else None,
+            success=not has_any_failure,
+            stop=early_termination_requested,
+            metrics=aggregated_metrics,
+        )
+
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Dict[str, Any]]:
+        """Extract and aggregate metrics from parallel step outputs"""
+        if not step_outputs:
+            return None
+
+        parallel_step_metrics = {}
+
+        for result in step_outputs:
             step_name = result.step_name or "unknown"
+
             if result.metrics:
                 # If the step already has structured metrics, use them
                 if isinstance(result.metrics, dict) and "metrics" in result.metrics:
@@ -133,23 +151,14 @@ class Parallel:
 
         # Create aggregated metrics structure
         if parallel_step_metrics:
-            aggregated_metrics = {
+            return {
                 "step_name": self.name or "Parallel",
                 "executor_type": "parallel",
                 "executor_name": self.name or "Parallel",
                 "parallel_steps": parallel_step_metrics,
             }
 
-        return StepOutput(
-            step_name=self.name or "Parallel",
-            content=aggregated_content,
-            images=all_images if all_images else None,
-            videos=all_videos if all_videos else None,
-            audio=all_audio if all_audio else None,
-            success=not has_any_failure,
-            stop=early_termination_requested,
-            metrics=aggregated_metrics if aggregated_metrics else None,
-        )
+        return None
 
     def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
         """Build aggregated content from multiple step outputs"""
