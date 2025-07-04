@@ -78,6 +78,7 @@ class Workflow:
 
     # Session management
     session_id: Optional[str] = None
+    session_name: Optional[str] = None
     user_id: Optional[str] = None
     workflow_session_id: Optional[str] = None
     workflow_session_state: Optional[Dict[str, Any]] = None
@@ -101,6 +102,7 @@ class Workflow:
         storage: Optional[Storage] = None,
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         workflow_session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
@@ -113,6 +115,7 @@ class Workflow:
         self.storage = storage
         self.steps = steps
         self.session_id = session_id
+        self.session_name = session_name        
         self.workflow_session_state = workflow_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
@@ -829,6 +832,7 @@ class Workflow:
                 "workflow_id": self.workflow_id,
                 "run_id": self.run_id,
                 "session_id": self.session_id,
+                "session_name": self.session_name,
             }
         )
         if self.name:
