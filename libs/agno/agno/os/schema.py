@@ -260,7 +260,6 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name(session.to_dict())
-        breakpoint()
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
