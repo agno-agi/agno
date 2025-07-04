@@ -188,7 +188,7 @@ class Workflow:
     def _create_step_input(
         self,
         execution_input: WorkflowExecutionInput,
-        previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
+        previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
         shared_images: Optional[List[Image]] = None,
         shared_videos: Optional[List[Video]] = None,
         shared_audio: Optional[List[Audio]] = None,
@@ -196,14 +196,14 @@ class Workflow:
         """Helper method to create StepInput with enhanced data flow support"""
 
         previous_step_content = None
-        if previous_steps_outputs:
-            last_output = list(previous_steps_outputs.values())[-1]
+        if previous_step_outputs:
+            last_output = list(previous_step_outputs.values())[-1]
             previous_step_content = last_output.content if last_output else None
 
         return StepInput(
             message=execution_input.message,
             previous_step_content=previous_step_content,
-            previous_steps_outputs=previous_steps_outputs,
+            previous_step_outputs=previous_step_outputs,
             workflow_message=execution_input.message,
             images=shared_images or [],
             videos=shared_videos or [],
@@ -246,7 +246,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -262,7 +262,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -270,17 +270,17 @@ class Workflow:
 
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Update the workflow-level previous_steps_outputs dictionary
+                    # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
-                            previous_steps_outputs[step_name] = step_output[-1]
+                            previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
                                 logger.info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
-                        previous_steps_outputs[step_name] = step_output
+                        previous_step_outputs[step_name] = step_output
                         if step_output.stop:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
@@ -380,7 +380,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -398,7 +398,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -421,8 +421,8 @@ class Workflow:
                             step_output = event
                             collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_steps_outputs dictionary
-                            previous_steps_outputs[step_name] = step_output
+                            # Update the workflow-level previous_step_outputs dictionary
+                            previous_step_outputs[step_name] = step_output
 
                             if step_output.stop:
                                 logger.info(f"Early termination requested by step {step_name}")
@@ -554,7 +554,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -570,7 +570,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -578,17 +578,17 @@ class Workflow:
 
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Update the workflow-level previous_steps_outputs dictionary
+                    # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
-                            previous_steps_outputs[step_name] = step_output[-1]
+                            previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
                                 logger.info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
-                        previous_steps_outputs[step_name] = step_output
+                        previous_step_outputs[step_name] = step_output
                         if step_output.stop:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
@@ -689,7 +689,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -707,7 +707,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -726,8 +726,8 @@ class Workflow:
                             step_output = event
                             collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_steps_outputs dictionary
-                            previous_steps_outputs[step_name] = step_output
+                            # Update the workflow-level previous_step_outputs dictionary
+                            previous_step_outputs[step_name] = step_output
 
                             if step_output.stop:
                                 logger.info(f"Early termination requested by step {step_name}")

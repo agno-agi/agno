@@ -90,7 +90,9 @@ for event in step_workflow.run(
 ):
     # Filter out RunResponseContentEvent from printing to reduce noise
     if not isinstance(event, RunResponseContentEvent):
-        print(f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}")
+        print(
+            f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
+        )
 
 print(f"\nStep workflow completed!")
 print(
