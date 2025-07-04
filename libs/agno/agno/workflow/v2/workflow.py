@@ -115,7 +115,7 @@ class Workflow:
         self.storage = storage
         self.steps = steps
         self.session_id = session_id
-        self.session_name = session_name        
+        self.session_name = session_name
         self.workflow_session_state = workflow_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
@@ -413,7 +413,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         step_index=i,
                     ):
-                        # Handle events 
+                        # Handle events
                         if isinstance(event, WorkflowRunResponseEvent):
                             self._handle_event(event, workflow_run_response)
 

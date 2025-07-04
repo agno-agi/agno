@@ -60,6 +60,24 @@ class BaseWorkflowRunResponseEvent:
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        # Handle StepOutput fields that contain Message objects
+        if hasattr(self, "step_responses") and self.step_responses is not None:
+            _dict["step_responses"] = [step.to_dict() for step in self.step_responses]
+
+        if hasattr(self, "step_response") and self.step_response is not None:
+            _dict["step_response"] = self.step_response.to_dict()
+
+        if hasattr(self, "iteration_results") and self.iteration_results is not None:
+            _dict["iteration_results"] = [step.to_dict() for step in self.iteration_results]
+
+        if hasattr(self, "all_results") and self.all_results is not None:
+            _dict["all_results"] = [[step.to_dict() for step in iteration] for iteration in self.all_results]
+
+        if hasattr(self, "step_results") and self.step_results is not None:
+            _dict["step_results"] = [step.to_dict() for step in self.step_results]
+
+        return _dict
+
     def to_json(self) -> str:
         import json
 
@@ -385,6 +403,7 @@ class WorkflowRunResponse:
                 "audio",
                 "response_audio",
                 "step_responses",
+                "events",
             ]
         }
 
@@ -422,5 +441,8 @@ class WorkflowRunResponse:
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         return _dict
