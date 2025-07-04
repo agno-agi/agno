@@ -91,6 +91,12 @@ class Workflow:
     workflow_session: Optional[WorkflowSessionV2] = None
     debug_mode: Optional[bool] = False
 
+    # --- Workflow Streaming ---
+    # Stream the response from the Workflow
+    stream: Optional[bool] = None
+    # Stream the intermediate steps from the Workflow
+    stream_intermediate_steps: bool = False
+
     store_events: bool = False
     events_to_skip: Optional[List[Union["WorkflowRunEvent", str]]] = None
 
@@ -106,6 +112,8 @@ class Workflow:
         workflow_session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[Any]] = None,
     ):
@@ -121,6 +129,8 @@ class Workflow:
         self.debug_mode = debug_mode
         self.store_events = store_events
         self.events_to_skip = events_to_skip or []
+        self.stream = stream
+        self.stream_intermediate_steps = stream_intermediate_steps
 
     def initialize_workflow(self):
         if self.workflow_id is None:
@@ -881,6 +891,15 @@ class Workflow:
         self._set_debug()
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
+
+        # Use simple defaults
+        stream = stream or self.stream or False
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+
+        # Can't have stream_intermediate_steps if stream is False
+        if not stream:
+            stream_intermediate_steps = False
+
         log_debug(f"Stream: {stream}")
         log_debug(f"Total steps: {self._get_step_count()}")
 
@@ -971,6 +990,24 @@ class Workflow:
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
+
+        # Use stream override value when necessary
+        if stream is None:
+            stream = False if self.stream is None else self.stream
+
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = (
+                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
+            )
+
+        # Use simple defaults
+        stream = stream or self.stream or False
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+
+        # Can't have stream_intermediate_steps if stream is False
+        if not stream:
+            stream_intermediate_steps = False
+
         log_debug(f"Stream: {stream}")
 
         # Set user_id and session_id if provided
@@ -1205,6 +1242,9 @@ class Workflow:
             show_step_details: Whether to show individual step outputs
             console: Rich console instance (optional)
         """
+
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+        stream = stream or self.stream or False
 
         if stream:
             self._print_response_stream(
