@@ -253,12 +253,14 @@ class AgentSessionDetailSchema(BaseModel):
     response_latency_avg: Optional[float]
     total_tokens: Optional[int]
     metrics: Optional[dict]
+    chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name(session.to_dict())
+        breakpoint()
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -274,6 +276,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            chat_history=[message.to_dict() for message in session.chat_history] if session.chat_history else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
