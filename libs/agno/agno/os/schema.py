@@ -348,7 +348,6 @@ class RunSchema(BaseModel):
 
     @classmethod
     def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
-        breakpoint()
         run_input = get_run_input(run_response.to_dict())
         run_response_format = "text" if run_response.content_type == "str" else "json"
         return cls(
