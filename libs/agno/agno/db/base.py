@@ -9,6 +9,9 @@ from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 
 
 class SessionType(str, Enum):
@@ -53,24 +56,32 @@ class BaseDb(ABC):
     # --- Base ---
 
     @abstractmethod
-    def create_schema(self, db_schema: str) -> None:
+    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
         raise NotImplementedError
 
     @abstractmethod
-    def create_table(self) -> None:
+    def _create_schema(self, db_schema: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Table]:
+    def _create_table(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def table_exists(self, table_name: str, db_schema: str) -> bool:
+    def _get_table_for_session_type(self, session_type: SessionType) -> Optional[Table]:
         raise NotImplementedError
 
-    # @abstractmethod
-    # def upgrade_schema(self) -> None:
-    #     raise NotImplementedError
+    @abstractmethod
+    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Table]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _is_valid_table(self, table_name: str, table_type: str, db_schema: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def _table_exists(self, table_name: str, db_schema: str) -> bool:
+        raise NotImplementedError
 
     # --- Sessions Table ---
 
@@ -141,6 +152,18 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def upsert_agent_session_raw(self, session: AgentSession) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_team_session_raw(self, session: TeamSession) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_session_raw(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
 
@@ -151,15 +174,15 @@ class BaseDb(ABC):
     # --- User Memory Table ---
 
     @abstractmethod
-    def get_all_memory_topics(self) -> List[str]:
-        raise NotImplementedError
-
-    @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def delete_user_memories(self, memory_ids: List[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_all_memory_topics(self) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
@@ -221,13 +244,13 @@ class BaseDb(ABC):
     # --- Metrics Table ---
 
     @abstractmethod
-    def get_metrics_raw(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
-    ) -> Tuple[List[Any], Optional[int]]:
+    def calculate_metrics(self) -> Optional[Any]:
         raise NotImplementedError
 
     @abstractmethod
-    def calculate_metrics(self) -> Optional[Any]:
+    def get_metrics_raw(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+    ) -> Tuple[List[Any], Optional[int]]:
         raise NotImplementedError
 
     # --- Knowledge Table ---
@@ -264,6 +287,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Eval Table ---
+
+    @abstractmethod
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        raise NotImplementedError
 
     @abstractmethod
     def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
@@ -304,10 +335,6 @@ class BaseDb(ABC):
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
     ) -> List[EvalRunRecord]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod

@@ -12,8 +12,14 @@ memory = Memory(db=db)
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
-    session_id="short_term_memory",
+    session_id="chat_history",
+    instructions="You are a helpful assistant that can answer questions about space and oceans.",
     add_history_to_messages=True,
+    store_chat_history=True,
 )
 
 agent.print_response("Tell me a new interesting fact about space")
+print(agent.get_chat_history())
+
+agent.print_response("Tell me a new interesting fact about oceans")
+print(agent.get_chat_history())

@@ -47,7 +47,6 @@ from agno.run.response import (
 )
 from agno.run.team import TeamRunResponseEvent
 from agno.session import AgentSession
-from agno.session.summarizer import SessionSummarizer
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -114,8 +113,13 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
-    # Session summarizer
-    summary_manager: Optional[SessionSummarizer] = None
+    # If True, the agent creates/updates session summaries at the end of runs
+    enable_session_summaries: bool = False
+    # If True, the agent adds a reference to the session summaries in the response
+    add_session_summary_references: Optional[bool] = None
+    # Model and prompt used to create session summaries
+    session_summary_model: Optional[Model] = None
+    session_summary_prompt: Optional[str] = None
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -133,12 +137,10 @@ class Agent:
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
     add_memory_references: Optional[bool] = None
-    # If True, the agent creates/updates session summaries at the end of runs
-    enable_session_summaries: bool = False
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
+    # If True, stores the flat list of messages in the chat_history field of the session
+    store_chat_history: bool = False
 
     # --- Agent History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
@@ -354,6 +356,7 @@ class Agent:
         retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         extra_data: Optional[Dict[str, Any]] = None,
+        store_chat_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
@@ -436,6 +439,7 @@ class Agent:
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
+        self.store_chat_history = store_chat_history
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -717,7 +721,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update long-term memory
+        # 4. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -731,7 +735,7 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
-        # 6. Save session to short-term memory
+        # 6. Save session to memory
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
@@ -2694,17 +2698,17 @@ class Agent:
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
-        run_data = self._create_run_data()
-        self.agent_session.add_run(run=run_response, run_data=run_data)
+        if self.agent_session is not None:
+            self.agent_session.add_run(run=run_response)
 
     def set_session_metrics(self, run_messages: RunMessages):
-        # Calculate session metrics
+        """Calculate session metrics"""
+        # Calculate initial metrics
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(
-                run_messages.messages, for_session=True
-            )  # Calculate initial metrics
+            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
+        # Update metrics
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # Update metrics
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
 
     def update_memory(
         self,
@@ -3144,13 +3148,16 @@ class Agent:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
 
-            # Create user memories from single message
-            if self.enable_user_memories and run_messages.user_message is not None:
+            # Create user memories
+            user_message_str = (
+                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+            )
+            if self.enable_user_memories and user_message_str is not None:
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
                         self.memory.create_user_memories,
-                        message=run_messages.user_message.get_content_string(),
+                        message=user_message_str,
                         user_id=user_id,
                         agent_id=self.agent_id,
                     )
@@ -3190,17 +3197,14 @@ class Agent:
             # Create session summary
             if self.enable_session_summaries:
                 log_debug("Creating session summary.")
-                if self.summary_manager is None:
-                    self.summary_manager = SessionSummarizer(model=self.model)
-                # Set the model on the summary_manager if it is not set
-                elif self.summary_manager.model is None:
-                    self.summary_manager.model = self.model
+                if self.session_summary_model is None:
+                    self.session_summary_model = self.model
+
                 futures.append(
                     executor.submit(
                         self.agent_session.create_session_summary,
-                        session_id=session_id,
-                        user_id=user_id,
-                        summary_manager=self.summary_manager,
+                        session_summary_model=self.session_summary_model,
+                        session_summary_prompt=self.session_summary_prompt,
                     )
                 )
 
@@ -3269,13 +3273,14 @@ class Agent:
         # Create session summary
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
-            if self.summary_manager is None:
-                self.summary_manager = SessionSummarizer(model=self.model)
-            # Set the model on the summary_manager if it is not set
-            elif self.summary_manager.model is None:
-                self.summary_manager.model = self.model
+            if self.session_summary_model is None:
+                self.session_summary_model = self.model
             tasks.append(
-                self.agent_session.acreate_session_summary(session_id=session_id, summary_manager=self.summary_manager)
+                self.agent_session.acreate_session_summary(
+                    session_id=session_id,
+                    session_summary_model=self.session_summary_model,
+                    session_summary_prompt=self.session_summary_prompt,
+                )
             )
 
         if tasks:
@@ -3765,6 +3770,8 @@ class Agent:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
             # Update the session_data with the latest data
             session.session_data = self.get_agent_session_data()
+            if self.store_chat_history:
+                session.chat_history = session.get_chat_history()
 
             self.memory.upsert_session(session=session)
 
@@ -3820,6 +3827,16 @@ class Agent:
             self.memory.clear()
         self.session_id = str(uuid4())
         self.load_session(force=True)
+
+    def get_chat_history(self) -> List[Message]:
+        """Read the chat history from the session"""
+        # If the chat history is already set, return it
+        if self.agent_session is not None and self.agent_session.chat_history is not None:
+            return self.agent_session.chat_history
+        # Else read from the db
+        if self.memory is not None and self.memory.db is not None:
+            return self.memory.read_chat_history(session_id=self.session_id, session_type=SessionType.AGENT)
+        return []
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""

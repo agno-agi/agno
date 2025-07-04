@@ -478,7 +478,7 @@ def get_base_router(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
+        return [RunSchema.from_run_response(run) for run in session.runs]  # type: ignore
 
     @router.get("/agents/{agent_id}", response_model=AgentResponse)
     async def get_agent(agent_id: str):
@@ -707,7 +707,7 @@ def get_base_router(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
+        return [RunSchema.from_team_run_response(run) for run in session.runs]  # type: ignore
 
     @router.get("/teams/{team_id}", response_model=TeamResponse)
     async def get_team(team_id: str):
@@ -718,18 +718,18 @@ def get_base_router(
         return TeamResponse.from_team(team)
 
     @router.post("/teams/{team_id}/sessions/{session_id}/rename", response_model=TeamSessionDetailSchema)
-    async def rename_team_session(team_id: str, session_id: str, session_name: str) -> TeamSessionDetailSchema:
+    async def rename_team_session(
+        team_id: str,
+        session_id: str,
+        session_name: str = Body(embed=True),
+    ) -> TeamSessionDetailSchema:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if team.memory is None or team.memory.db is None:
             raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
 
-        session = team.memory.db.rename_session(
-            session_id=session_id,
-            session_type=SessionType.TEAM,
-            session_name=session_name,
-        )
+        session = team.rename_session(session_id=session_id, session_name=session_name)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 

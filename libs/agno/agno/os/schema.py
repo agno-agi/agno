@@ -7,7 +7,9 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import SessionType
-from agno.os.utils import format_team_tools, format_tools
+from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 
@@ -221,10 +223,10 @@ class SessionSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
+        session_name = get_session_name(session)
         return cls(
             session_id=session.get("session_id", ""),
-            session_name=session.get("session_data", {}).get("session_name", "")
-            or session["runs"][0].get("run_data", {}).get("run_input", ""),
+            session_name=session_name,
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -245,26 +247,27 @@ class AgentSessionDetailSchema(BaseModel):
     workspace_id: Optional[str]
     session_id: str
     session_name: str
+    session_summary: Optional[dict]
     agent_id: Optional[str]
     agent_data: Optional[dict]
     agent_sessions: list
     response_latency_avg: Optional[float]
     total_tokens: Optional[int]
+    metrics: Optional[dict]
+    chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
+        session_name = get_session_name(session.to_dict())
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
             workspace_id=None,
             session_id=session.session_id,
-            session_name=session.session_data.get("session_name", "")
-            if session.session_data
-            else session.runs[0].get("run_data", {}).get("run_input", "")
-            if session.runs
-            else "",
+            session_name=session_name,
+            session_summary=session.summary.to_dict() if session.summary else None,
             agent_id=session.agent_id if session.agent_id else None,
             agent_data=session.agent_data,
             agent_sessions=[],
@@ -272,15 +275,36 @@ class AgentSessionDetailSchema(BaseModel):
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
+            metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            chat_history=[message.to_dict() for message in session.chat_history] if session.chat_history else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
 
 
 class TeamSessionDetailSchema(BaseModel):
+    session_id: str
+    session_name: str
+    user_id: Optional[str]
+    team_id: Optional[str]
+    session_summary: Optional[dict]
+    metrics: Optional[dict]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
-        return cls()
+        session_name = get_session_name(session.to_dict())
+        return cls(
+            session_id=session.session_id,
+            team_id=session.team_id,
+            session_name=session_name,
+            session_summary=session.summary if session.summary else None,
+            user_id=session.user_id,
+            metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
+            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+        )
 
 
 class WorkflowSessionDetailSchema(BaseModel):
@@ -291,30 +315,75 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 class RunSchema(BaseModel):
     run_id: str
-    agent_session_id: str
+    agent_session_id: Optional[str]
     workspace_id: Optional[str]
     user_id: Optional[str]
-    run_data: dict
+    run_input: Optional[str]
+    run_response_format: Optional[str]
     run_review: Optional[dict]
+    metrics: Optional[dict]
+    messages: Optional[List[dict]]
+    events: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
+        run_input = get_run_input(run_dict)
+        run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
             agent_session_id=run_dict.get("session_id", ""),
             workspace_id=None,
             user_id=None,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_dict["run"]["created_at"], tz=timezone.utc)
-            if run_dict["run"]["created_at"] is not None
+            run_input=run_input,
+            run_response_format=run_response_format,
+            metrics=run_dict.get("metrics", {}),
+            messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
+            events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
+            created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
+            if run_dict.get("run", {}).get("created_at") is not None
             else None,
-            run_data={
-                **run_dict["run"],
-                "run_input": run_dict.get("run_data", {}).get("run_input", {}),
-                "run_functions": run_dict.get("run_data", {}).get("run_functions", {}),
-                "run_response_format": run_dict.get("run_data", {}).get("run_response_format", "text"),
-            },
+        )
+
+    @classmethod
+    def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
+        run_input = get_run_input(run_response.to_dict())
+        run_response_format = "text" if run_response.content_type == "str" else "json"
+        return cls(
+            run_id=run_response.run_id or "",
+            agent_session_id=None,
+            workspace_id=None,
+            user_id=None,
+            run_review=None,
+            run_input=run_input,
+            run_response_format=run_response_format,
+            metrics=run_response.metrics,
+            messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
+            events=[event.to_dict() for event in run_response.events] if run_response.events else None,
+            created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
+            if run_response.created_at is not None
+            else None,
+        )
+
+    @classmethod
+    def from_team_run_response(cls, run_response: TeamRunResponse) -> "RunSchema":
+        run_input = get_run_input(run_response.to_dict())
+        run_response_format = "text" if run_response.content_type == "str" else "json"
+        return cls(
+            run_id=run_response.run_id or "",
+            agent_session_id=None,
+            workspace_id=None,
+            user_id=None,
+            run_review=None,
+            run_input=run_input,
+            run_response_format=run_response_format,
+            metrics=run_response.metrics,
+            messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
+            events=[event.to_dict() for event in run_response.events] if run_response.events else None,
+            created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
+            if run_response.created_at
+            else None,
         )
 
 
@@ -323,8 +392,10 @@ class TeamRunSchema(BaseModel):
     team_session_id: str
     workspace_id: Optional[str]
     user_id: Optional[str]
-    run_data: dict
+    run_input: Optional[str]
+    run_response_format: Optional[str]
     run_review: Optional[dict]
+    metrics: Optional[dict]
     created_at: Optional[datetime]
 
     @classmethod
@@ -334,8 +405,10 @@ class TeamRunSchema(BaseModel):
             team_session_id=run_response.get("session_id", ""),
             workspace_id=None,
             user_id=None,
-            run_data=run_response,
+            run_input="",
+            run_response_format="",
             run_review=None,
+            metrics=run_response.get("metrics", {}),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,
@@ -346,8 +419,10 @@ class WorkflowRunSchema(BaseModel):
     run_id: str
     workspace_id: Optional[str]
     user_id: Optional[str]
-    run_data: dict
+    run_input: Optional[str]
+    run_response_format: Optional[str]
     run_review: Optional[dict]
+    metrics: Optional[dict]
     created_at: Optional[datetime]
 
     @classmethod
@@ -356,8 +431,10 @@ class WorkflowRunSchema(BaseModel):
             run_id=run_response.get("run_id", ""),
             workspace_id=None,
             user_id=None,
-            run_data=run_response,
+            run_input="",
+            run_response_format="",
             run_review=None,
+            metrics=run_response.get("metrics", {}),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,

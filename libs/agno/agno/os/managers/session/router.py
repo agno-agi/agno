@@ -78,7 +78,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     ) -> Union[List[RunSchema], List[TeamRunSchema]]:
         runs = db.get_runs_raw(session_id=session_id, session_type=session_type)
         if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found or has no runs")
 
         if session_type == SessionType.AGENT:
             return [RunSchema.from_dict(run) for run in runs]  # type: ignore

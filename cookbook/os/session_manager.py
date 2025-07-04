@@ -5,14 +5,22 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.os import AgentOS
 from agno.os.managers.session import SessionManager
+from agno.team import Team
 
 # Setup the database and memory
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url, agent_session_table="agent_sessions")
+db = PostgresDb(
+    db_url=db_url,
+    agent_session_table="agent_sessions",
+    team_session_table="team_sessions",
+)
 memory = Memory(db=db)
 
 # Sessions of this agent will be stored (it has memory)
 basic_agent = Agent(memory=memory, enable_user_memories=True, agent_id="basic")
+basic_team = Team(
+    team_id="basic", members=[basic_agent], memory=memory, enable_user_memories=True
+)
 
 
 # Setup the AgentOS

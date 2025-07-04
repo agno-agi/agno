@@ -210,9 +210,9 @@ def test_tool_call_requires_confirmation_memory_footprint():
     response = agent.run("What is the weather in Tokyo?", session_id=session_id)
 
     assert len(agent.memory.runs[session_id]) == 1, "There should be one run in the memory"
-    assert (
-        len(agent.memory.runs[session_id][0].messages) == 3
-    ), "There should be three messages in the run (system, user, assistant)"
+    assert len(agent.memory.runs[session_id][0].messages) == 3, (
+        "There should be three messages in the run (system, user, assistant)"
+    )
 
     assert response.is_paused
 
@@ -224,9 +224,9 @@ def test_tool_call_requires_confirmation_memory_footprint():
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
     assert len(agent.memory.runs[session_id]) == 1, "There should be one run in the memory"
-    assert (
-        len(agent.memory.runs[session_id][0].messages) == 5
-    ), "There should be five messages in the run (system, user, assistant, tool call, assistant)"
+    assert len(agent.memory.runs[session_id][0].messages) == 5, (
+        "There should be five messages in the run (system, user, assistant, tool call, assistant)"
+    )
 
 
 def test_tool_call_requires_confirmation_stream():

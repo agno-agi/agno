@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict, dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -8,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
 from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.timer import Timer
 
 
 class MessageReferences(BaseModel):
@@ -120,6 +118,10 @@ class Message(BaseModel):
             else:
                 return json.dumps(self.content)
         return ""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Message":
+        return cls(**data)
 
     def to_dict(self) -> Dict[str, Any]:
         """Returns the message as a dictionary."""

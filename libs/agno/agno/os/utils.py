@@ -5,11 +5,35 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.models.message import Message
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
+
+
+def get_run_input(run_dict: Dict[str, Any]) -> str:
+    """Get the run input from the given run dictionary"""
+    if run_dict.get("messages") is not None:
+        for message in run_dict["messages"]:
+            if message.get("role") == "user":
+                return message.get("content", "")
+    return ""
+
+
+def get_session_name(session: Dict[str, Any]) -> str:
+    """Get the session name from the given session dictionary"""
+    session_data = session.get("session_data")
+    if session_data is not None and session_data.get("session_name") is not None:
+        return session_data["session_name"]
+    else:
+        for message in session["runs"][0]["messages"]:
+            if isinstance(message, Message):
+                message = message.to_dict()
+            if message["role"] == "user":
+                return message["content"]
+    return ""
 
 
 def process_image(file: UploadFile) -> Image:

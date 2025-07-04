@@ -2,7 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.document_v2 import DocumentV2
 from agno.document.local_document_store import LocalDocumentStore
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.performance import PerformanceEval

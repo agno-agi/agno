@@ -116,6 +116,9 @@ class Memory:
     # Whether to clear memories
     clear_memories: bool = False
 
+    # Team context
+    team_context: Optional[TeamContext] = None
+
     debug_mode: bool = False
     version: int = 2
 
@@ -411,6 +414,8 @@ class Memory:
         self,
         message: Optional[str] = None,
         messages: Optional[List[Message]] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         user_id: Optional[str] = None,
         refresh_from_db: bool = True,
     ) -> str:
@@ -551,15 +556,11 @@ class Memory:
 
     # -*- Session Db Functions
     def read_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
-        """Get an AgentSession from the database."""
+        """Get a Session from the database."""
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=session_type)
-
-            if session and session.summary:
-                session.summary = SessionSummary.from_dict(session.summary)
-
             return session
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -572,9 +573,6 @@ class Memory:
         session_copy = deepcopy(session)
         session_copy.summary = deepcopy(session.summary)
 
-        session_copy.runs = session.runs
-        session_copy.summary = session.summary.to_dict() if session.summary else None
-
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -582,6 +580,16 @@ class Memory:
         except Exception as e:
             log_warning(f"Error upserting session into db: {e}")
             return None
+
+    # -*- Chat History Functions
+    def read_chat_history(self, session_id: str, session_type: SessionType) -> Optional[List[Message]]:
+        """Read the chat history from the session"""
+        if not self.db:
+            raise ValueError("Db not initialized")
+        session = self.read_session(session_id=session_id, session_type=session_type)
+        if session and session.chat_history:
+            return [Message.from_dict(msg) for msg in session.chat_history]
+        return None
 
     # -*- Utility Functions
     # TODO: Remove this function from memory

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from email.message import Message
 from typing import Any, Dict, Mapping, Optional
 
+from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.utils.log import log_warning
 
@@ -55,6 +55,14 @@ class WorkflowSession:
             log_warning("WorkflowSession is missing session_id")
             return None
 
+        chat_history = data.get("chat_history")
+        if chat_history is not None and isinstance(chat_history[0], dict):
+            chat_history = [Message.from_dict(msg) for msg in chat_history]
+
+        runs = data.get("runs")
+        if runs is not None and isinstance(runs[0], dict):
+            runs = [RunResponse.from_dict(run) for run in runs]
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             workflow_id=data.get("workflow_id"),
@@ -64,7 +72,7 @@ class WorkflowSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=data.get("chat_history"),
-            runs=data.get("runs"),
+            chat_history=chat_history,
+            runs=runs,
             summary=data.get("summary"),
         )
