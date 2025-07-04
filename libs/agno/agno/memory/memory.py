@@ -561,12 +561,6 @@ class Memory:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=session_type)
-
-            # if session and session.runs:
-            #     session.runs = [RunResponse.from_dict(run) for run in session.runs]
-            # if session and session.summary:
-            #     session.summary = SessionSummary.from_dict(session.summary)
-
             return session
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
@@ -578,11 +572,6 @@ class Memory:
 
         session_copy = deepcopy(session)
         session_copy.summary = deepcopy(session.summary)
-
-        # TODO: Handle all schema conversion inside the db
-        session_copy.runs = [run.to_dict() for run in session.runs] if session.runs else None
-        session_copy.summary = session.summary.to_dict() if session.summary else None
-        session_copy.chat_history = [msg.to_dict() for msg in session.chat_history] if session.chat_history else None
 
         try:
             if not self.db:

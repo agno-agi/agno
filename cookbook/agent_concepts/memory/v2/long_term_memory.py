@@ -7,8 +7,8 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 db = PostgresDb(
     db_url=db_url,
-    agent_session_table="agent_session",
-    user_memory_table="user_memories_0702",
+    agent_session_table="agent_sessions",
+    user_memory_table="user_memories",
 )
 
 memory = Memory(db=db)
@@ -16,7 +16,7 @@ memory = Memory(db=db)
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     memory=memory,
-    session_id="long_term_memory_0702",
+    session_id="long_term_memory",
     enable_user_memories=True,
 )
 

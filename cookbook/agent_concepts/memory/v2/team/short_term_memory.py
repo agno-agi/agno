@@ -6,7 +6,7 @@ from agno.team.team import Team
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url, team_session_table="test_team_session_0702")
+db = PostgresDb(db_url=db_url, team_session_table="team_sessions")
 
 memory = Memory(db=db)
 
@@ -15,8 +15,8 @@ agent = Agent(name="test_agent", model=OpenAIChat(id="gpt-4o-mini"))
 team = Team(
     members=[agent],
     memory=memory,
-    session_id="test_team_session_0702",
-    # add_history_to_messages=True,
+    session_id="team_short_term_memory",
+    add_history_to_messages=True,
 )
 
 team.print_response("Tell me a new interesting fact about space")
