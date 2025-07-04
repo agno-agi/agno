@@ -144,6 +144,17 @@ class Step:
             self.active_executor = self.executor
             self._executor_type = "function"
 
+    def _extract_metrics_from_response(self, response: Union[RunResponse, TeamRunResponse]) -> Optional[Dict[str, Any]]:
+        """Extract metrics from agent or team response"""
+        if hasattr(response, "metrics") and response.metrics:
+            return {
+                "step_name": self.name,
+                "executor_type": self._executor_type,
+                "executor_name": self.executor_name,
+                "metrics": response.metrics,
+            }
+        return None
+
     def execute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> StepOutput:
@@ -682,6 +693,9 @@ class Step:
         videos = getattr(response, "videos", None)
         audio = getattr(response, "audio", None)
 
+        # Extract metrics from response
+        metrics = self._extract_metrics_from_response(response)
+
         return StepOutput(
             step_name=self.name,
             step_id=self.step_id,
@@ -692,6 +706,7 @@ class Step:
             images=images,
             videos=videos,
             audio=audio,
+            metrics=metrics,
         )
 
     def _convert_function_result_to_response(self, result: Any) -> RunResponse:

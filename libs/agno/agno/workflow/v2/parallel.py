@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -104,6 +104,9 @@ class Parallel:
             if result.success is False:
                 has_any_failure = True
 
+        # Extract metrics using the dedicated method
+        aggregated_metrics = self._extract_metrics_from_response(step_outputs)
+
         return StepOutput(
             step_name=self.name or "Parallel",
             content=aggregated_content,
@@ -112,7 +115,56 @@ class Parallel:
             audio=all_audio if all_audio else None,
             success=not has_any_failure,
             stop=early_termination_requested,
+            metrics=aggregated_metrics,
         )
+
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Dict[str, Any]]:
+        """Extract and aggregate metrics from parallel step outputs"""
+        if not step_outputs:
+            return None
+
+        parallel_step_metrics = {}
+
+        for result in step_outputs:
+            step_name = result.step_name or "unknown"
+
+            # Create clean step metrics for parallel steps
+            if result.metrics:
+                # If the step already has structured metrics, extract the actual metrics
+                if isinstance(result.metrics, dict) and "metrics" in result.metrics:
+                    actual_metrics = result.metrics.get("metrics")
+                    executor_type = result.metrics.get("executor_type", "unknown")
+                    executor_name = result.metrics.get("executor_name", "unknown")
+                else:
+                    actual_metrics = result.metrics
+                    executor_type = getattr(result, "executor_type", "unknown")
+                    executor_name = getattr(result, "executor_name", "unknown")
+
+                parallel_step_metrics[step_name] = {
+                    "step_name": step_name,
+                    "executor_type": executor_type,
+                    "executor_name": executor_name,
+                    "metrics": actual_metrics,
+                }
+            else:
+                # Even if no metrics, record the step execution
+                parallel_step_metrics[step_name] = {
+                    "step_name": step_name,
+                    "executor_type": getattr(result, "executor_type", "unknown"),
+                    "executor_name": getattr(result, "executor_name", "unknown"),
+                    "metrics": None,
+                }
+
+        # Create aggregated metrics structure for parallel execution
+        if parallel_step_metrics:
+            return {
+                "step_name": self.name or "Parallel",
+                "executor_type": "parallel",
+                "executor_name": self.name or "Parallel",
+                "parallel_steps": parallel_step_metrics,
+            }
+
+        return None
 
     def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
         """Build aggregated content from multiple step outputs"""

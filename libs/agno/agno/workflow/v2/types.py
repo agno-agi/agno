@@ -185,6 +185,9 @@ class StepOutput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
+    # Metrics for this step execution
+    metrics: Optional[Dict[str, Any]] = None
+
     success: bool = True
     error: Optional[str] = None
 
@@ -198,6 +201,7 @@ class StepOutput:
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
+            "metrics": self.metrics,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
@@ -238,7 +242,82 @@ class StepOutput:
             images=images,
             videos=videos,
             audio=audio,
+            metrics=data.get("metrics"),
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),
+        )
+
+
+@dataclass
+class StepMetrics:
+    """Metrics for a single step execution"""
+
+    step_name: str
+    executor_type: str  # "agent", "team", etc.
+    executor_name: str
+
+    # For regular steps: actual metrics data
+    metrics: Optional[Dict[str, Any]] = None
+
+    # For parallel steps: nested step metrics
+    parallel_steps: Optional[Dict[str, "StepMetrics"]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary - only include relevant fields"""
+        result = {
+            "step_name": self.step_name,
+            "executor_type": self.executor_type,
+            "executor_name": self.executor_name,
+        }
+
+        # Only include the relevant field based on executor type
+        if self.executor_type == "parallel" and self.parallel_steps:
+            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}
+        elif self.executor_type != "parallel":
+            # For non-parallel steps, include metrics (even if None)
+            result["metrics"] = self.metrics
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StepMetrics":
+        """Create StepMetrics from dictionary"""
+
+        # Parse nested parallel steps if they exist
+        parallel_steps = None
+        if "parallel_steps" in data and data["parallel_steps"] is not None:
+            parallel_steps = {name: cls.from_dict(step_data) for name, step_data in data["parallel_steps"].items()}
+
+        return cls(
+            step_name=data["step_name"],
+            executor_type=data["executor_type"],
+            executor_name=data["executor_name"],
+            metrics=data.get("metrics") if data.get("executor_type") != "parallel" else None,
+            parallel_steps=parallel_steps,
+        )
+
+
+@dataclass
+class WorkflowMetrics:
+    """Complete metrics for a workflow execution"""
+
+    total_steps: int
+    steps: Dict[str, StepMetrics]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "total_steps": self.total_steps,
+            "steps": {name: step.to_dict() for name, step in self.steps.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowMetrics":
+        """Create WorkflowMetrics from dictionary"""
+        steps = {name: StepMetrics.from_dict(step_data) for name, step_data in data["steps"].items()}
+
+        return cls(
+            total_steps=data["total_steps"],
+            steps=steps,
         )
