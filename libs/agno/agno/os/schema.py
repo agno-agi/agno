@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
+from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -338,6 +339,24 @@ class RunSchema(BaseModel):
             metrics=run_dict.get("metrics", {}),
             created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
             if run_dict.get("run", {}).get("created_at") is not None
+            else None,
+        )
+
+    @classmethod
+    def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
+        run_input = get_run_input(run_response.to_dict())
+        run_response_format = "text" if run_response.content_type == "str" else "json"
+        return cls(
+            run_id=run_response.run_id or "",
+            agent_session_id=None,
+            workspace_id=None,
+            user_id=None,
+            run_review=None,
+            run_input=run_input,
+            run_response_format=run_response_format,
+            metrics=run_response.metrics,
+            created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
+            if run_response.created_at is not None
             else None,
         )
 

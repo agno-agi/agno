@@ -478,7 +478,7 @@ def get_base_router(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
+        return [RunSchema.from_run_response(run) for run in session.runs]  # type: ignore
 
     @router.get("/agents/{agent_id}", response_model=AgentResponse)
     async def get_agent(agent_id: str):
