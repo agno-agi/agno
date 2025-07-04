@@ -1,16 +1,8 @@
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from textwrap import dedent
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
-from agno.models.base import Model
-from agno.models.message import Message
-from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.prompts import get_json_output_prompt
-from agno.utils.string import parse_response_model_str
 
 
 @dataclass

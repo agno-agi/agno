@@ -117,7 +117,7 @@ class Agent:
     enable_session_summaries: bool = False
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
-    # Session summary model and prompt
+    # Model and prompt used to create session summaries
     session_summary_model: Optional[Model] = None
     session_summary_prompt: Optional[str] = None
 
@@ -139,7 +139,7 @@ class Agent:
     add_memory_references: Optional[bool] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # If True, stores a flat list of messages in the memory
+    # If True, stores the flat list of messages in the chat_history field of the session
     store_chat_history: bool = False
 
     # --- Agent History ---
@@ -2698,7 +2698,8 @@ class Agent:
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
-        self.agent_session.add_run(run=run_response)
+        if self.agent_session is not None:
+            self.agent_session.add_run(run=run_response)
 
     def set_session_metrics(self, run_messages: RunMessages):
         """Calculate session metrics"""
