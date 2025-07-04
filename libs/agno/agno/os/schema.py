@@ -322,6 +322,7 @@ class RunSchema(BaseModel):
     run_response_format: Optional[str]
     run_review: Optional[dict]
     metrics: Optional[dict]
+    messages: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
@@ -337,6 +338,7 @@ class RunSchema(BaseModel):
             run_input=run_input,
             run_response_format=run_response_format,
             metrics=run_dict.get("metrics", {}),
+            messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
             if run_dict.get("run", {}).get("created_at") is not None
             else None,
@@ -355,6 +357,7 @@ class RunSchema(BaseModel):
             run_input=run_input,
             run_response_format=run_response_format,
             metrics=run_response.metrics,
+            messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at is not None
             else None,
