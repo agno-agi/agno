@@ -81,10 +81,10 @@ def route_team(team_storage, memory):
 @pytest.fixture
 def route_team_with_members(team_storage, agent_storage, memory):
     """Create a route team with storage and memory for testing."""
-    
+
     def get_weather(city: str) -> str:
         return f"The weather in {city} is sunny."
-    
+
     def get_open_restaurants(city: str) -> str:
         return f"The open restaurants in {city} are: {', '.join(['Restaurant 1', 'Restaurant 2', 'Restaurant 3'])}"
 
@@ -107,6 +107,7 @@ def route_team_with_members(team_storage, agent_storage, memory):
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
         enable_user_memories=True,
     )
+
 
 @pytest.mark.asyncio
 async def test_run_history_persistence(route_team, team_storage, memory):
@@ -182,8 +183,10 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     # Clear memory for this specific test case
     memory.clear()
 
-    # First request 
-    await route_team_with_members.arun("I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id)
+    # First request
+    await route_team_with_members.arun(
+        "I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
+    )
 
     agent_session = agent_storage.read(session_id=session_id)
 
@@ -191,14 +194,18 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     assert stored_memory_data is not None, "Memory data not found in stored session."
 
     agent_runs = stored_memory_data["runs"]
-    
-    assert len(agent_runs[-1]["messages"]) == 7, "Only system message, user message, two tool calls (and results), and response"
+
+    assert len(agent_runs[-1]["messages"]) == 7, (
+        "Only system message, user message, two tool calls (and results), and response"
+    )
 
     first_user_message_content = agent_runs[0]["messages"][1]["content"]
     assert "I'm traveling to Tokyo, what is the weather and open restaurants?" in first_user_message_content
 
-    # Second request 
-    await route_team_with_members.arun("I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id)
+    # Second request
+    await route_team_with_members.arun(
+        "I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
+    )
 
     agent_session = agent_storage.read(session_id=session_id)
 
@@ -206,11 +213,15 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     assert stored_memory_data is not None, "Memory data not found in stored session."
 
     agent_runs = stored_memory_data["runs"]
-    
+
     assert len(agent_runs[-1]["messages"]) == 13, "Full history of messages"
 
     # Third request (to the member directly)
-    await route_team_with_members.members[0].arun("Write me a report about all the places I have requested information about", user_id=user_id, session_id=session_id)
+    await route_team_with_members.members[0].arun(
+        "Write me a report about all the places I have requested information about",
+        user_id=user_id,
+        session_id=session_id,
+    )
 
     agent_session = agent_storage.read(session_id=session_id)
 
@@ -218,10 +229,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     assert stored_memory_data is not None, "Memory data not found in stored session."
 
     agent_runs = stored_memory_data["runs"]
-    
+
     assert len(agent_runs[-1]["messages"]) == 15, "Full history of messages"
-
-
 
 
 @pytest.mark.asyncio
