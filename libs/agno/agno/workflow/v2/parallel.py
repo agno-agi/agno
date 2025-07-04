@@ -128,20 +128,26 @@ class Parallel:
         for result in step_outputs:
             step_name = result.step_name or "unknown"
 
+            # Create clean step metrics for parallel steps
             if result.metrics:
-                # If the step already has structured metrics, use them
+                # If the step already has structured metrics, extract the actual metrics
                 if isinstance(result.metrics, dict) and "metrics" in result.metrics:
-                    parallel_step_metrics[step_name] = result.metrics
+                    actual_metrics = result.metrics.get("metrics")
+                    executor_type = result.metrics.get("executor_type", "unknown")
+                    executor_name = result.metrics.get("executor_name", "unknown")
                 else:
-                    # Otherwise, create the structure
-                    parallel_step_metrics[step_name] = {
-                        "step_name": step_name,
-                        "executor_type": getattr(result, "executor_type", "unknown"),
-                        "executor_name": getattr(result, "executor_name", "unknown"),
-                        "metrics": result.metrics,
-                    }
+                    actual_metrics = result.metrics
+                    executor_type = getattr(result, "executor_type", "unknown")
+                    executor_name = getattr(result, "executor_name", "unknown")
+
+                parallel_step_metrics[step_name] = {
+                    "step_name": step_name,
+                    "executor_type": executor_type,
+                    "executor_name": executor_name,
+                    "metrics": actual_metrics,
+                }
             else:
-                # Even if no metrics, we should still record the step execution
+                # Even if no metrics, record the step execution
                 parallel_step_metrics[step_name] = {
                     "step_name": step_name,
                     "executor_type": getattr(result, "executor_type", "unknown"),
@@ -149,7 +155,7 @@ class Parallel:
                     "metrics": None,
                 }
 
-        # Create aggregated metrics structure
+        # Create aggregated metrics structure for parallel execution
         if parallel_step_metrics:
             return {
                 "step_name": self.name or "Parallel",

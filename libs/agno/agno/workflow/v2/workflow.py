@@ -38,7 +38,7 @@ from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
-from agno.workflow.v2.types import StepInput, StepOutput, WorkflowExecutionInput
+from agno.workflow.v2.types import StepInput, StepMetrics, StepOutput, WorkflowExecutionInput, WorkflowMetrics
 
 WorkflowSteps = Union[
     Callable[
@@ -186,17 +186,32 @@ class Workflow:
         else:
             return len(self.steps)
 
-    def _aggregate_workflow_metrics(self, step_responses: List[Union[StepOutput, List[StepOutput]]]) -> Dict[str, Any]:
-        """Aggregate metrics from all step responses into workflow metrics"""
-        workflow_metrics = {"total_steps": 0, "steps": {}}
+    def _convert_dict_to_step_metrics(self, step_name: str, metrics_dict: Dict[str, Any]) -> StepMetrics:
+        """Convert dictionary metrics to StepMetrics object"""
+        return StepMetrics.from_dict(
+            {
+                "step_name": step_name,
+                "executor_type": metrics_dict.get("executor_type", "unknown"),
+                "executor_name": metrics_dict.get("executor_name", "unknown"),
+                "metrics": metrics_dict.get("metrics"),
+                "parallel_steps": metrics_dict.get("parallel_steps"),
+            }
+        )
+
+    def _aggregate_workflow_metrics(self, step_responses: List[Union[StepOutput, List[StepOutput]]]) -> WorkflowMetrics:
+        """Aggregate metrics from all step responses into structured workflow metrics"""
+        steps_dict = {}
+        total_steps = 0
 
         def process_step_output(step_output: StepOutput):
             """Process a single step output for metrics"""
-            workflow_metrics["total_steps"] += 1
+            nonlocal total_steps
+            total_steps += 1
 
             # Add step-specific metrics
             if step_output.step_name and step_output.metrics:
-                workflow_metrics["steps"][step_output.step_name] = step_output.metrics
+                step_metrics = self._convert_dict_to_step_metrics(step_output.step_name, step_output.metrics)
+                steps_dict[step_output.step_name] = step_metrics
 
         # Process all step responses
         for step_response in step_responses:
@@ -208,7 +223,10 @@ class Workflow:
                 # Handle single StepOutput
                 process_step_output(step_response)
 
-        return workflow_metrics
+        return WorkflowMetrics(
+            total_steps=total_steps,
+            steps=steps_dict,
+        )
 
     def _execute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
