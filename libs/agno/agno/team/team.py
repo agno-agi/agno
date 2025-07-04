@@ -50,6 +50,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
+    create_team_parser_model_response_completed_event,
+    create_team_parser_model_response_started_event,
     create_team_reasoning_completed_event,
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
@@ -217,6 +219,10 @@ class Team:
     # --- Structured output ---
     # Response model for the team response
     response_model: Optional[Type[BaseModel]] = None
+    # Provide a secondary model to parse the response from the primary model
+    parser_model: Optional[Model] = None
+    # Provide a prompt for the parser model
+    parser_model_prompt: Optional[str] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
@@ -276,6 +282,8 @@ class Team:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
     # monitoring=True logs Team information to agno.com for monitoring
@@ -327,6 +335,8 @@ class Team:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
+        parser_model: Optional[Model] = None,
+        parser_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
         memory: Optional[Union[TeamMemory, Memory]] = None,
@@ -352,6 +362,7 @@ class Team:
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
+        debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
@@ -407,6 +418,8 @@ class Team:
         self.tool_hooks = tool_hooks
 
         self.response_model = response_model
+        self.parser_model = parser_model
+        self.parser_model_prompt = parser_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
@@ -445,6 +458,10 @@ class Team:
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
         self.monitoring = monitoring
@@ -482,7 +499,7 @@ class Team:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response
+        return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def _set_team_id(self) -> str:
         if self.team_id is None:
@@ -492,7 +509,7 @@ class Team:
     def _set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug(source_type="team")
+            set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
 
@@ -516,6 +533,7 @@ class Team:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
+            member.debug_level = self.debug_level
         if self.show_tool_calls:
             member.show_tool_calls = True
         if self.markdown:
@@ -540,8 +558,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -607,7 +623,7 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
+            if isinstance(self.memory, Memory) and self.parent_team_id is not None:
                 self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
 
@@ -763,7 +779,9 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -940,6 +958,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )
 
+        # If a parser model is provided, structure the response separately
+        self._parse_response_with_parser_model(model_response, run_messages)
+
         #  Update TeamRunResponse
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1013,6 +1034,11 @@ class Team:
             stream_intermediate_steps=stream_intermediate_steps,
         )
 
+        # If a parser model is provided, structure the response separately
+        yield from self._parse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -1029,9 +1055,6 @@ class Team:
             user_id=user_id,
         )
 
-        # 5. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(
                 create_team_run_response_completed_event(
@@ -1040,10 +1063,10 @@ class Team:
                 run_response,
             )
 
-        # 6. Save session to storage
+        # 5. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 7. Log Team Run
+        # 6. Log Team Run
         self._log_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1168,7 +1191,9 @@ class Team:
 
         # Configure the model for runs
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -1343,6 +1368,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )  # type: ignore
 
+        # If a parser model is provided, structure the response separately
+        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+
         # Update TeamRunResponse
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1416,6 +1444,11 @@ class Team:
         ):
             yield event
 
+        # If a parser model is provided, structure the response separately
+        await self._aparse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -1433,18 +1466,15 @@ class Team:
         ):
             yield event
 
-        # 5. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(
                 create_team_run_response_completed_event(from_run_response=run_response), run_response
             )
 
-        # 6. Save session to storage
+        # 5. Save session to storage
         self.write_to_storage(session_id=session_id, user_id=user_id)
 
-        # 7. Log Team Run
+        # 6. Log Team Run
         await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
@@ -1596,6 +1626,7 @@ class Team:
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
+            self.full_team_session_metrics = self._calculate_full_team_session_metrics(session_messages)
 
     async def _aupdate_memory(
         self,
@@ -1641,6 +1672,7 @@ class Team:
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
+            self.full_team_session_metrics = self._calculate_full_team_session_metrics(session_messages)
 
     def _handle_model_response_stream(
         self,
@@ -1675,8 +1707,9 @@ class Team:
                 run_response=run_response,
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
             )
 
         # 3. Update TeamRunResponse
@@ -1755,8 +1788,9 @@ class Team:
                 run_response=run_response,
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
             ):
                 yield chunk
 
@@ -1808,8 +1842,9 @@ class Team:
         run_response: TeamRunResponse,
         full_model_response: ModelResponse,
         model_response_event: Union[ModelResponse, TeamRunResponseEvent, RunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
+        parse_structured_output: bool = False,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
@@ -1829,12 +1864,17 @@ class Team:
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if self.should_parse_structured_output:
+                    if parse_structured_output:
                         full_model_response.content = model_response_event.content
+                        self._convert_response_to_structured_format(full_model_response)
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content_type = content_type
+                    elif self._member_response_model is not None:
+                        full_model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(full_model_response)
-                    else:
+                        content_type = self._member_response_model.__name__  # type: ignore
+                        run_response.content_type = content_type
+                    elif isinstance(model_response_event.content, str):
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
@@ -1957,7 +1997,7 @@ class Team:
                             )
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -1973,7 +2013,7 @@ class Team:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state is not None and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_team_reasoning_started_event(
                                     from_run_response=run_response,
@@ -2120,14 +2160,14 @@ class Team:
                     create_team_memory_update_completed_event(from_run_response=self.run_response), self.run_response
                 )
 
-    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, self.model)
+    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -2137,7 +2177,7 @@ class Team:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode:
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -2153,6 +2193,166 @@ class Team:
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
+
+    def _process_parser_response(
+        self,
+        model_response: ModelResponse,
+        run_messages: RunMessages,
+        parser_model_response: ModelResponse,
+        messages_for_parser_model: list,
+    ) -> None:
+        """Common logic for processing parser model response."""
+        parser_model_response_message: Optional[Message] = None
+        for message in reversed(messages_for_parser_model):
+            if message.role == "assistant":
+                parser_model_response_message = message
+                break
+
+        if parser_model_response_message is not None:
+            run_messages.messages.append(parser_model_response_message)
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
+        else:
+            log_warning("Unable to parse response with parser model")
+
+    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_model_stream(
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model"""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                run_response.content = parser_model_response.content
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model_stream(
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model stream."""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                model_response_stream = self.parser_model.aresponse_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                run_response.content = parser_model_response.content
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
@@ -3963,12 +4163,23 @@ class Team:
 
         # Get metrics of the team-agent's messages
         for member in self.members:
-            # Only members that ran has memory
+            # Only members with memory
             if member.memory is not None:
+                # Handle instances with AgentMemory
                 if isinstance(member.memory, AgentMemory):
                     for m in member.memory.messages:
                         if m.role == assistant_message_role and m.metrics is not None:
                             current_session_metrics += m.metrics
+                # Handle instances with Memory v2
+                elif isinstance(member.memory, Memory):
+                    if member.memory.runs is not None:
+                        for runs in member.memory.runs.values():
+                            for run in runs:
+                                if run is not None and run.messages is not None:
+                                    for m in run.messages:
+                                        if m.role == assistant_message_role and m.metrics is not None:
+                                            current_session_metrics += m.metrics
+
         return current_session_metrics
 
     def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
@@ -3987,7 +4198,11 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
+            model=reasoning_model,
+            monitoring=self.monitoring,
+            telemetry=self.telemetry,
+            debug_mode=self.debug_mode,
+            debug_level=self.debug_level,
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -4135,6 +4350,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4355,6 +4571,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4745,8 +4962,9 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
@@ -5235,6 +5453,46 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
 
+    def get_messages_for_parser_model(
+        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        from agno.utils.prompts import get_json_output_prompt
+
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided user message."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
+
+    def get_messages_for_parser_model_stream(
+        self, run_response: TeamRunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        from agno.utils.prompts import get_json_output_prompt
+
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
+        ]
+
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -5539,39 +5797,6 @@ class Team:
         if not files:
             files = []
 
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
-
         def run_member_agents(
             task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
@@ -5590,7 +5815,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5701,7 +5928,9 @@ class Team:
             self.memory = cast(TeamMemory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5798,6 +6027,41 @@ class Team:
 
         return run_member_agents_func
 
+    def _determine_team_context(
+        self, session_id: str, images: List[Image], videos: List[Video], audio: List[Audio]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        if isinstance(self.memory, TeamMemory):
+            self.memory = cast(TeamMemory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str()
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str()
+                if context_images := self.memory.get_team_context_images():
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos():
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio():
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        else:
+            self.memory = cast(Memory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
+                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        return team_context_str, team_member_interactions_str
+
     def get_transfer_task_function(
         self,
         session_id: str,
@@ -5819,39 +6083,6 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            if isinstance(self.memory, TeamMemory):
-                self.memory = cast(TeamMemory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str()
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                    if context_images := self.memory.get_team_context_images():
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos():
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio():
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            else:
-                self.memory = cast(Memory, self.memory)
-                team_context_str = None
-                if self.enable_agentic_context:
-                    team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-                team_member_interactions_str = None
-                if self.share_member_interactions:
-                    team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                    if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                        images.extend([Image.from_artifact(img) for img in context_images])
-                    if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                        videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                    if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                        audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
 
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5876,7 +6107,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -6012,7 +6245,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -6146,6 +6381,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -6153,6 +6393,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
@@ -6171,10 +6415,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):

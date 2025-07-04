@@ -72,6 +72,8 @@ def test_get_member_id():
     assert Team(members=[member])._get_member_id(member) == "123"
     member = Agent(name="Test Agent", agent_id=str(uuid.uuid4()))
     assert Team(members=[member])._get_member_id(member) == "test-agent"
+    member = Agent(agent_id=str(uuid.uuid4()))
+    assert Team(members=[member])._get_member_id(member) == member.agent_id
 
     member = Agent(name="Test Agent")
     inner_team = Team(name="Test Team", members=[member])
@@ -80,3 +82,5 @@ def test_get_member_id():
     assert Team(members=[inner_team])._get_member_id(inner_team) == "123"
     inner_team = Team(name="Test Team", team_id=str(uuid.uuid4()), members=[member])
     assert Team(members=[inner_team])._get_member_id(inner_team) == "test-team"
+    inner_team = Team(team_id=str(uuid.uuid4()), members=[member])
+    assert Team(members=[inner_team])._get_member_id(inner_team) == inner_team.team_id

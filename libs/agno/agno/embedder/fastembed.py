@@ -1,8 +1,14 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-
 from agno.embedder.base import Embedder
 from agno.utils.log import logger
+
+try:
+    import numpy as np
+
+except ImportError:
+    raise ImportError("numpy not installed, use pip install numpy")
+
 
 try:
     from fastembed import TextEmbedding  # type: ignore
@@ -22,6 +28,8 @@ class FastEmbedEmbedder(Embedder):
         model = TextEmbedding(model_name=self.id)
         embeddings = model.embed(text)
         embedding_list = list(embeddings)[0]
+        if isinstance(embedding_list, np.ndarray):
+            return embedding_list.tolist()
 
         try:
             return list(embedding_list)

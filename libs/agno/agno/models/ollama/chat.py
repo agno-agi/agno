@@ -94,12 +94,7 @@ class Ollama(Model):
         Returns:
             Dict[str, Any]: The API kwargs for the model.
         """
-        base_params = {
-            "format": self.format,
-            "options": self.options,
-            "keep_alive": self.keep_alive,
-            "request_params": self.request_params,
-        }
+        base_params = {"format": self.format, "options": self.options, "keep_alive": self.keep_alive}
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
@@ -111,7 +106,7 @@ class Ollama(Model):
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:

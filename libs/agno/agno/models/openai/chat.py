@@ -211,7 +211,7 @@ class OpenAIChat(Model):
             request_params.update(self.request_params)
 
         if request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {request_params}")
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -369,7 +369,6 @@ class OpenAIChat(Model):
         except Exception as e:
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
 
     async def ainvoke(
         self,
