@@ -118,7 +118,9 @@ def test_condition_direct_execute_stream():
         content="",
     )
 
-    events = list(condition.execute_stream(step_input, workflow_run_response=mock_response))
+    events = list(
+        condition.execute_stream(step_input, workflow_run_response=mock_response, stream_intermediate_steps=True)
+    )
 
     # Should have started, completed events and step outputs
     started_events = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
@@ -217,7 +219,7 @@ def test_condition_streaming(workflow_storage):
         steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
     )
 
-    events = list(workflow.run(message="AI trends", stream=True))
+    events = list(workflow.run(message="AI trends", stream=True, stream_intermediate_steps=True))
 
     # Verify event types
     condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
@@ -297,7 +299,7 @@ async def test_async_condition_streaming(workflow_storage):
     )
 
     events = []
-    async for event in await workflow.arun(message="AI technology", stream=True):
+    async for event in await workflow.arun(message="AI technology", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]

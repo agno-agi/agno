@@ -83,7 +83,7 @@ class MCPTools(Toolkit):
         super().__init__(name="MCPTools", **kwargs)
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
-        # beacuse tools are not available until `initialize()` is called.
+        # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
 

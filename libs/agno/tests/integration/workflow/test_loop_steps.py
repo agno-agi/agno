@@ -85,7 +85,7 @@ def test_loop_direct_execute_stream():
         content="",
     )
 
-    events = list(loop.execute_stream(step_input, workflow_run_response=mock_response))
+    events = list(loop.execute_stream(step_input, workflow_run_response=mock_response, stream_intermediate_steps=True))
 
     # Should have started, completed, iteration events and step outputs
     started_events = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
@@ -234,7 +234,7 @@ def test_loop_streaming(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True))
+    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
 
     loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
     loop_completed = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
@@ -260,7 +260,7 @@ def test_parallel_loop_streaming(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True))
+    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
 

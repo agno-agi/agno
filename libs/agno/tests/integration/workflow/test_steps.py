@@ -100,7 +100,7 @@ def test_steps_direct_execute_stream():
         content="",
     )
 
-    events = list(steps.execute_stream(step_input, mock_response))
+    events = list(steps.execute_stream(step_input, mock_response, stream_intermediate_steps=True))
 
     # Should have started, completed events and step outputs
     started_events = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -193,7 +193,7 @@ def test_steps_streaming(workflow_storage):
         steps=[steps_sequence],
     )
 
-    events = list(workflow.run(message="stream test", stream=True))
+    events = list(workflow.run(message="stream test", stream=True, stream_intermediate_steps=True))
 
     # Check for required events
     steps_started = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -244,7 +244,7 @@ async def test_async_steps_streaming(workflow_storage):
     )
 
     events = []
-    async for event in await workflow.arun(message="async stream test", stream=True):
+    async for event in await workflow.arun(message="async stream test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check that we have events
