@@ -5,6 +5,7 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.models.message import Message
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -17,10 +18,10 @@ def get_session_name(session: Dict[str, Any]) -> str:
     session_data = session.get("session_data")
     if session_data is not None and session_data.get("session_name") is not None:
         return session_data["session_name"]
-    elif session["runs"][0].get("run_data") is not None:
-        return session["runs"][0]["run_data"].get("run_input")
     else:
         for message in session["runs"][0]["messages"]:
+            if isinstance(message, Message):
+                message = message.to_dict()
             if message["role"] == "user":
                 return message["content"]
     return ""

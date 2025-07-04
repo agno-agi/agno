@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.os.utils import format_team_tools, format_tools, get_session_name
+from agno.run.team import TeamRunResponse
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 
@@ -255,16 +256,13 @@ class AgentSessionDetailSchema(BaseModel):
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
+        session_name = get_session_name(session.to_dict())
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
             workspace_id=None,
             session_id=session.session_id,
-            session_name=session.session_data.get("session_name", "")
-            if session.session_data
-            else session.runs[0].get("run_data", {}).get("run_input", "")
-            if session.runs
-            else "",
+            session_name=session_name,
             agent_id=session.agent_id if session.agent_id else None,
             agent_data=session.agent_data,
             agent_sessions=[],
@@ -306,7 +304,7 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 class RunSchema(BaseModel):
     run_id: str
-    agent_session_id: str
+    agent_session_id: Optional[str]
     workspace_id: Optional[str]
     user_id: Optional[str]
     run_data: dict
@@ -321,15 +319,29 @@ class RunSchema(BaseModel):
             workspace_id=None,
             user_id=None,
             run_review=None,
-            created_at=datetime.fromtimestamp(run_dict["run"]["created_at"], tz=timezone.utc)
-            if run_dict["run"]["created_at"] is not None
+            created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
+            if run_dict.get("run", {}).get("created_at") is not None
             else None,
             run_data={
-                **run_dict["run"],
+                **run_dict.get("run", {}),
                 "run_input": run_dict.get("run_data", {}).get("run_input", {}),
                 "run_functions": run_dict.get("run_data", {}).get("run_functions", {}),
                 "run_response_format": run_dict.get("run_data", {}).get("run_response_format", "text"),
             },
+        )
+
+    @classmethod
+    def from_team_run_response(cls, run_response: TeamRunResponse) -> "RunSchema":
+        return cls(
+            run_id=run_response.run_id or "",
+            agent_session_id=None,
+            workspace_id=None,
+            user_id=None,
+            run_review=None,
+            created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
+            if run_response.created_at
+            else None,
+            run_data={**run_response.to_dict()},
         )
 
 

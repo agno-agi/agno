@@ -707,7 +707,7 @@ def get_base_router(
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_dict(run) for run in session.runs]  # type: ignore
+        return [RunSchema.from_team_run_response(run) for run in session.runs]  # type: ignore
 
     @router.get("/teams/{team_id}", response_model=TeamResponse)
     async def get_team(team_id: str):
