@@ -842,11 +842,17 @@ class PostgresDb(BaseDb):
                 if table is None:
                     raise ValueError("Agent session table not found")
 
-            # TODO: runs should always be a list of RunResponse. Remove this once that's implemented.
-            if session.runs and isinstance(session.runs[0], RunResponse):
-                runs = [run.to_dict() for run in session.runs if isinstance(run, RunResponse)]
-            else:
-                runs = session.runs
+            # # TODO: runs should always be a list of RunResponse. Remove this once that's implemented.
+            # if session.runs and isinstance(session.runs[0], RunResponse):
+            #     runs = [run.to_dict() for run in session.runs if isinstance(run, RunResponse)]
+            # else:
+            #     runs = session.runs
+
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            chat_history = (
+                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
+            )
+            summary = session.summary.to_dict() if session.summary else None
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -857,8 +863,8 @@ class PostgresDb(BaseDb):
                     runs=runs,
                     agent_data=session.agent_data,
                     session_data=session.session_data,
-                    chat_history=session.chat_history,
-                    summary=session.summary,
+                    chat_history=chat_history,
+                    summary=summary,
                     extra_data=session.extra_data,
                     created_at=session.created_at,
                     updated_at=session.created_at,
@@ -873,8 +879,8 @@ class PostgresDb(BaseDb):
                         user_id=session.user_id,
                         agent_data=session.agent_data,
                         session_data=session.session_data,
-                        chat_history=session.chat_history,
-                        summary=session.summary,
+                        chat_history=chat_history,
+                        summary=summary,
                         extra_data=session.extra_data,
                         runs=runs,
                         updated_at=int(time.time()),
@@ -897,18 +903,24 @@ class PostgresDb(BaseDb):
                 if table is None:
                     raise ValueError("Team session table not found")
 
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            chat_history = (
+                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
+            )
+            summary = session.summary.to_dict() if session.summary else None
+
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
                     team_id=session.team_id,
                     team_session_id=session.team_session_id,
                     user_id=session.user_id,
-                    runs=session.runs,
+                    runs=runs,
                     team_data=session.team_data,
                     session_data=session.session_data,
-                    summary=session.summary,
+                    summary=summary,
                     extra_data=session.extra_data,
-                    chat_history=session.chat_history,
+                    chat_history=chat_history,
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
@@ -921,10 +933,10 @@ class PostgresDb(BaseDb):
                         user_id=session.user_id,
                         team_data=session.team_data,
                         session_data=session.session_data,
-                        summary=session.summary,
+                        summary=summary,
                         extra_data=session.extra_data,
-                        runs=session.runs,
-                        chat_history=session.chat_history,
+                        runs=runs,
+                        chat_history=chat_history,
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)
@@ -945,6 +957,12 @@ class PostgresDb(BaseDb):
                 if table is None:
                     raise ValueError("Workflow session table not found")
 
+            runs = [run.to_dict() for run in session.runs] if session.runs else None
+            chat_history = (
+                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
+            )
+            summary = session.summary.to_dict() if session.summary else None
+
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
@@ -953,9 +971,9 @@ class PostgresDb(BaseDb):
                     runs=session.runs,
                     workflow_data=session.workflow_data,
                     session_data=session.session_data,
-                    summary=session.summary,
+                    summary=summary,
                     extra_data=session.extra_data,
-                    chat_history=session.chat_history,
+                    chat_history=chat_history,
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
@@ -969,8 +987,8 @@ class PostgresDb(BaseDb):
                         session_data=session.session_data,
                         summary=session.summary,
                         extra_data=session.extra_data,
-                        runs=session.runs,
-                        chat_history=session.chat_history,
+                        runs=runs,
+                        chat_history=chat_history,
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)

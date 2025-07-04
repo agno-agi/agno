@@ -493,10 +493,6 @@ class Team:
         else:
             set_log_level_to_info(source_type="team")
 
-    # def _set_storage_mode(self) -> None:
-    #     if self.storage is not None:
-    #         self.storage.mode = "team"
-
     def _set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
 
@@ -586,7 +582,6 @@ class Team:
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
-        # self._set_storage_mode()
 
         # Set debug mode
         self._set_debug()
@@ -604,6 +599,7 @@ class Team:
             self.memory = Memory()
         elif not self._memory_deepcopy_done:
             # We store a copy of memory to ensure different team instances reference unique memory copy
+            # TODO: Do we still need this
             # if isinstance(self.memory, Memory):
             #     self.memory = deepcopy(self.memory)
             self._memory_deepcopy_done = True
@@ -1486,12 +1482,6 @@ class Team:
     ) -> Iterator[TeamRunResponseEvent]:
         yield from self._make_memories_and_summaries(run_messages, session_id, user_id)
 
-        # session_messages: List[Message] = []
-        # for run in self.memory.runs.get(session_id, []):  # type: ignore
-        #     if run.messages is not None:
-        #         for m in run.messages:
-        #             session_messages.append(m)
-
     async def _aupdate_memory(
         self,
         run_messages: RunMessages,
@@ -1500,13 +1490,6 @@ class Team:
     ):
         async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id):
             yield event
-
-        session_messages: List[Message] = []
-        if self.memory.runs:
-            for run in self.memory.runs.get(session_id, []):
-                if run.messages is not None:
-                    for m in run.messages:
-                        session_messages.append(m)
 
     def _handle_model_response_stream(
         self,
@@ -2353,22 +2336,26 @@ class Team:
                         )
                         panels.append(citations_panel)
 
-                # if self.memory is not None and isinstance(self.memory, Memory):
-                #     if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
-                #         memory_panel = create_panel(
-                #             content=Text("Memories updated"),
-                #             title="Memories",
-                #             border_style="green",
-                #         )
-                #         panels.append(memory_panel)
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
 
-                #     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
-                #         summary_panel = create_panel(
-                #             content=Text("Session summary updated"),
-                #             title="Session Summary",
-                #             border_style="green",
-                #         )
-                #         panels.append(summary_panel)
+                    if (
+                        self.team_session is not None
+                        and self.team_session.summary is not None
+                        and self.enable_session_summaries
+                    ):
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
 
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
@@ -2676,24 +2663,28 @@ class Team:
                     panels.append(citations_panel)
                     live_console.update(Group(*panels))
 
-            # if self.memory is not None and isinstance(self.memory, Memory):
-            #     if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
-            #         memory_panel = create_panel(
-            #             content=Text("Memories updated"),
-            #             title="Memories",
-            #             border_style="green",
-            #         )
-            #         panels.append(memory_panel)
-            #         live_console.update(Group(*panels))
+            if self.memory is not None and isinstance(self.memory, Memory):
+                if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                    memory_panel = create_panel(
+                        content=Text("Memories updated"),
+                        title="Memories",
+                        border_style="green",
+                    )
+                    panels.append(memory_panel)
+                    live_console.update(Group(*panels))
 
-            #     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
-            #         summary_panel = create_panel(
-            #             content=Text("Session summary updated"),
-            #             title="Session Summary",
-            #             border_style="green",
-            #         )
-            #         panels.append(summary_panel)
-            #         live_console.update(Group(*panels))
+                if (
+                    self.team_session is not None
+                    and self.team_session.summary is not None
+                    and self.enable_session_summaries
+                ):
+                    summary_panel = create_panel(
+                        content=Text("Session summary updated"),
+                        title="Session Summary",
+                        border_style="green",
+                    )
+                    panels.append(summary_panel)
+                    live_console.update(Group(*panels))
 
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
@@ -3212,22 +3203,26 @@ class Team:
                         )
                         panels.append(citations_panel)
 
-                # if self.memory is not None and isinstance(self.memory, Memory):
-                #     if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
-                #         memory_panel = create_panel(
-                #             content=Text("Memories updated"),
-                #             title="Memories",
-                #             border_style="green",
-                #         )
-                #         panels.append(memory_panel)
+                if self.memory is not None and isinstance(self.memory, Memory):
+                    if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                        memory_panel = create_panel(
+                            content=Text("Memories updated"),
+                            title="Memories",
+                            border_style="green",
+                        )
+                        panels.append(memory_panel)
 
-                #     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
-                #         summary_panel = create_panel(
-                #             content=Text("Session summary updated"),
-                #             title="Session Summary",
-                #             border_style="green",
-                #         )
-                #         panels.append(summary_panel)
+                    if (
+                        self.team_session is not None
+                        and self.team_session.summary is not None
+                        and self.enable_session_summaries
+                    ):
+                        summary_panel = create_panel(
+                            content=Text("Session summary updated"),
+                            title="Session Summary",
+                            border_style="green",
+                        )
+                        panels.append(summary_panel)
 
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
@@ -3467,24 +3462,28 @@ class Team:
                     panels.append(citations_panel)
                     live_console.update(Group(*panels))
 
-            # if self.memory is not None and isinstance(self.memory, Memory):
-            #     if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
-            #         memory_panel = create_panel(
-            #             content=Text("Memories updated"),
-            #             title="Memories",
-            #             border_style="green",
-            #         )
-            #         panels.append(memory_panel)
-            #         live_console.update(Group(*panels))
+            if self.memory is not None and isinstance(self.memory, Memory):
+                if self.memory.memory_manager is not None and self.memory.memory_manager.memories_updated:
+                    memory_panel = create_panel(
+                        content=Text("Memories updated"),
+                        title="Memories",
+                        border_style="green",
+                    )
+                    panels.append(memory_panel)
+                    live_console.update(Group(*panels))
 
-            #     if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
-            #         summary_panel = create_panel(
-            #             content=Text("Session summary updated"),
-            #             title="Session Summary",
-            #             border_style="green",
-            #         )
-            #         panels.append(summary_panel)
-            #         live_console.update(Group(*panels))
+                if (
+                    self.team_session is not None
+                    and self.team_session.summary is not None
+                    and self.enable_session_summaries
+                ):
+                    summary_panel = create_panel(
+                        content=Text("Session summary updated"),
+                        title="Session Summary",
+                        border_style="green",
+                    )
+                    panels.append(summary_panel)
+                    live_console.update(Group(*panels))
 
             # Final update to remove the "Thinking..." status
             panels = [p for p in panels if not isinstance(p, Status)]
@@ -6265,7 +6264,7 @@ class Team:
             user_id=user_id,
             team_session_id=self.team_session_id,
             team_data=self._get_team_data(),
-            # session_data=self.get_team_session_data(),
+            session_data=self.get_team_session_data(),
             extra_data=self.extra_data,
             created_at=int(time()),
         )
@@ -6280,7 +6279,7 @@ class Team:
         if self.memory is not None and self.memory.db is not None:
             session = self.get_team_session(session_id=session_id, user_id=user_id)
             # Update the session_data with the latest data
-            # session.session_data = self.get_team_session_data()
+            session.session_data = self.get_team_session_data()
             if self.store_chat_history:
                 session.chat_history = session.get_chat_history()
 
@@ -6393,62 +6392,6 @@ class Team:
                 merge_dictionaries(session.extra_data, self.extra_data)
             # Update the current extra_data with the extra_data from the database which is updated in place
             self.extra_data = session.extra_data
-
-        # if session.memory is not None:
-        #     if "runs" in session.memory:
-        #         try:
-        #             if self.memory.runs is None:
-        #                 self.memory.runs = {}
-        #             self.memory.runs[session.session_id] = []
-        #             for run in session.memory["runs"]:
-        #                 run_session_id = run["session_id"]
-        #                 if "team_id" in run:
-        #                     self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
-        #                 else:
-        #                     self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
-        #         except Exception as e:
-        #             log_warning(f"Failed to load runs from memory: {e}")
-        #     if "team_context" in session.memory:
-        #         from agno.memory.memory import TeamContext
-
-        #         try:
-        #             self.memory.team_context = {
-        #                 session_id: TeamContext.from_dict(team_context)
-        #                 for session_id, team_context in session.memory["team_context"].items()
-        #             }
-        #         except Exception as e:
-        #             log_warning(f"Failed to load team context: {e}")
-        # if "memories" in session.memory:
-        #     if self.memory.memories is not None:
-        #         pass
-        #     else:
-        #         from agno.memory.memory import UserMemory as UserMemoryV2
-
-        #         try:
-        #             self.memory.memories = {
-        #                 user_id: {
-        #                     memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
-        #                 }
-        #                 for user_id, user_memories in session.memory["memories"].items()
-        #             }
-        #         except Exception as e:
-        #             log_warning(f"Failed to load user memories: {e}")
-        # if "summaries" in session.memory:
-        #     if self.memory.summaries is not None:
-        #         pass
-        #     else:
-        #         from agno.memory.memory import SessionSummary as SessionSummaryV2
-
-        #         try:
-        #             self.memory.summaries = {
-        #                 user_id: {
-        #                     session_id: SessionSummaryV2.from_dict(summary)
-        #                     for session_id, summary in user_session_summaries.items()
-        #                 }
-        #                 for user_id, user_session_summaries in session.memory["summaries"].items()
-        #             }
-        #         except Exception as e:
-        #             log_warning(f"Failed to load session summaries: {e}")
         log_debug(f"-*- TeamSession loaded: {session.session_id}")
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -6529,12 +6472,8 @@ class Team:
         if session_id is None:
             raise ValueError("Session ID is required")
 
-        if isinstance(self.memory, Memory):
-            user_id = user_id if user_id is not None else self.user_id
-            if user_id is None:
-                user_id = "default"
-            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
-        raise ValueError(f"Memory type {type(self.memory)} not supported")
+        # TODO: Add a db call to get the session summary
+        return self.team_session.get_session_summary(session_id=session_id, user_id=user_id)
 
     def get_user_memories(self, user_id: Optional[str] = None):
         """Get the user memories for the given user ID."""
@@ -7074,7 +7013,7 @@ class Team:
             team_data["mode"] = self.mode
         return team_data
 
-    def _get_session_data(self) -> Dict[str, Any]:
+    def get_team_session_data(self) -> Dict[str, Any]:
         session_data: Dict[str, Any] = {}
         if self.session_name is not None:
             session_data["session_name"] = self.session_name
@@ -7113,7 +7052,7 @@ class Team:
             team_session_id=self.team_session_id,
             memory=memory_dict,
             team_data=self._get_team_data(),
-            session_data=self._get_session_data(),
+            session_data=self.get_team_session_data(),
             extra_data=self.extra_data,
             created_at=int(time()),
         )
