@@ -395,6 +395,46 @@ workflow.print_response("Create a comprehensive analysis of sustainable technolo
 
 ## Advanced Features
 
+### Early Stopping
+
+Workflows can be terminated early when certain conditions are met, preventing unnecessary processing and ensuring safety gates work properly. Any step can trigger early termination by returning `StepOutput(stop=True)`.
+
+![Early Stop Workflows](/cookbook/workflows/assets/early_stop.png)
+
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def security_gate(step_input: StepInput) -> StepOutput:
+    """Security gate that stops deployment if vulnerabilities found"""
+    security_result = step_input.previous_step_content or ""
+    
+    if "VULNERABLE" in security_result.upper():
+        return StepOutput(
+            content="🚨 SECURITY ALERT: Critical vulnerabilities detected. Deployment blocked.",
+            stop=True  # Stop the entire workflow
+        )
+    else:
+        return StepOutput(
+            content="✅ Security check passed. Proceeding with deployment...",
+            stop=False
+        )
+
+# Secure deployment pipeline
+workflow = Workflow(
+    name="Secure Deployment Pipeline",
+    steps=[
+        Step(name="Security Scan", agent=security_scanner),
+        Step(name="Security Gate", executor=security_gate),  # May stop here
+        Step(name="Deploy Code", agent=code_deployer),       # Only if secure
+        Step(name="Setup Monitoring", agent=monitoring_agent), # Only if deployed
+    ]
+)
+
+# Test with vulnerable code - workflow stops at security gate
+workflow.print_response("Scan this code: exec(input('Enter command: '))")
+```
+
 ### Streaming Support
 
 This adds support for having streaming event-based information for your workflows:
