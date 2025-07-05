@@ -61,7 +61,7 @@ class StepInput:
     message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     previous_step_content: Optional[Any] = None
-    previous_steps_outputs: Optional[Dict[str, "StepOutput"]] = None
+    previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
     workflow_message: Optional[str] = None  # Original workflow message
 
     # Media inputs
@@ -87,9 +87,9 @@ class StepInput:
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
         """Get output from a specific previous step by name"""
-        if not self.previous_steps_outputs:
+        if not self.previous_step_outputs:
             return None
-        return self.previous_steps_outputs.get(step_name)
+        return self.previous_step_outputs.get(step_name)
 
     def get_step_content(self, step_name: str) -> Optional[str]:
         """Get content from a specific previous step by name"""
@@ -98,11 +98,11 @@ class StepInput:
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
-        if not self.previous_steps_outputs:
+        if not self.previous_step_outputs:
             return ""
 
         content_parts = []
-        for step_name, output in self.previous_steps_outputs.items():
+        for step_name, output in self.previous_step_outputs.items():
             if output.content:
                 content_parts.append(f"=== {step_name} ===\n{output.content}")
 
@@ -110,10 +110,10 @@ class StepInput:
 
     def get_last_step_content(self) -> Optional[str]:
         """Get content from the most recent step (for backward compatibility)"""
-        if not self.previous_steps_outputs:
+        if not self.previous_step_outputs:
             return None
 
-        last_output = list(self.previous_steps_outputs.values())[-1] if self.previous_steps_outputs else None
+        last_output = list(self.previous_step_outputs.values())[-1] if self.previous_step_outputs else None
         return last_output.content if last_output else None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -148,16 +148,16 @@ class StepInput:
         else:
             previous_step_content_str = str(self.previous_step_content) if self.previous_step_content else None
 
-        # Convert previous_steps_outputs to serializable format (keep existing logic)
+        # Convert previous_step_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
-        if self.previous_steps_outputs:
-            for step_name, output in self.previous_steps_outputs.items():
+        if self.previous_step_outputs:
+            for step_name, output in self.previous_step_outputs.items():
                 previous_steps_dict[step_name] = output.to_dict()
 
         return {
             "message": message_dict,
             "workflow_message": workflow_message_dict,
-            "previous_steps_outputs": previous_steps_dict,
+            "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,

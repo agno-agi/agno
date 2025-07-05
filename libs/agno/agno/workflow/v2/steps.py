@@ -92,16 +92,16 @@ class Steps:
             step_audio = step_outputs.audio or []
             previous_step_content = step_outputs.content
 
-        updated_previous_steps_outputs = {}
-        if step_input.previous_steps_outputs:
-            updated_previous_steps_outputs.update(step_input.previous_steps_outputs)
+        updated_previous_step_outputs = {}
+        if step_input.previous_step_outputs:
+            updated_previous_step_outputs.update(step_input.previous_step_outputs)
         if steps_step_outputs:
-            updated_previous_steps_outputs.update(steps_step_outputs)
+            updated_previous_step_outputs.update(steps_step_outputs)
 
         return StepInput(
             message=step_input.message,
             previous_step_content=previous_step_content,
-            previous_steps_outputs=updated_previous_steps_outputs,
+            previous_step_outputs=updated_previous_step_outputs,
             workflow_message=step_input.workflow_message,
             images=current_images + step_images,
             videos=current_videos + step_videos,

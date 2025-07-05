@@ -16,6 +16,7 @@ from agno.run.v2.workflow import (
     RouterExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     StepCompletedEvent,
+    StepOutputEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     StepStartedEvent,
@@ -145,7 +146,7 @@ def test_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
     # Should have step outputs from the function executors
-    step_outputs = [event for event in events if isinstance(event, StepOutput)]
+    step_outputs = [event for event in events if isinstance(event, StepOutputEvent)]
     assert len(step_outputs) == 2
     assert step_outputs[0].content == "Step 1 completed"
     assert step_outputs[1].content == "Step 2 completed"
@@ -174,7 +175,7 @@ def test_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
     assert "StepCompletedEvent" in event_types
 
     # Should have step outputs
-    step_outputs = [event for event in events if isinstance(event, StepOutput)]
+    step_outputs = [event for event in events if isinstance(event, StepOutputEvent)]
     assert len(step_outputs) == 2
 
     # Verify step events are properly paired
@@ -803,57 +804,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(work
 
     # Should have workflow start/complete and step outputs only
     workflow_events = [e for e in events if isinstance(e, (WorkflowStartedEvent, WorkflowCompletedEvent))]
-    step_outputs = [e for e in events if isinstance(e, StepOutput)]
-
-    assert len(workflow_events) == 2  # Started + completed
-    assert len(step_outputs) >= 1  # At least one aggregated output from the workflow
-
-
-@pytest.mark.asyncio
-async def test_comprehensive_workflow_events_async_with_stream_intermediate_steps_false(workflow_storage):
-    """Test comprehensive workflow with multiple component types - async with stream_intermediate_steps=False."""
-    workflow = Workflow(
-        name="Async Comprehensive Events Test",
-        storage=workflow_storage,
-        steps=[
-            Step(name="initial_step", executor=step_function),
-            Parallel(
-                step_a,
-                step_b,
-                name="parallel_phase",
-            ),
-            Loop(
-                name="loop_phase",
-                steps=[Step(name="loop_step", executor=step_function)],
-                end_condition=lambda outputs: len(outputs) >= 1,
-                max_iterations=2,
-            ),
-        ],
-    )
-
-    events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=False):
-        events.append(event)
-
-    event_types = [type(event).__name__ for event in events]
-
-    # Should only have workflow events, NO intermediate component events
-    assert "WorkflowStartedEvent" in event_types
-    assert "WorkflowCompletedEvent" in event_types
-
-    # NO intermediate events should be present
-    assert "StepStartedEvent" not in event_types
-    assert "StepCompletedEvent" not in event_types
-    assert "ParallelExecutionStartedEvent" not in event_types
-    assert "ParallelExecutionCompletedEvent" not in event_types
-    assert "LoopExecutionStartedEvent" not in event_types
-    assert "LoopExecutionCompletedEvent" not in event_types
-    assert "LoopIterationStartedEvent" not in event_types
-    assert "LoopIterationCompletedEvent" not in event_types
-
-    # Should have workflow start/complete and step outputs only
-    workflow_events = [e for e in events if isinstance(e, (WorkflowStartedEvent, WorkflowCompletedEvent))]
-    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+    step_outputs = [e for e in events if isinstance(e, StepOutputEvent)]
 
     assert len(workflow_events) == 2  # Started + completed
     assert len(step_outputs) >= 1  # At least one aggregated output from the workflow

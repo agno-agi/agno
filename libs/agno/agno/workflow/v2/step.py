@@ -163,7 +163,7 @@ class Step:
 
         log_debug(f"Executor type: {self._executor_type}")
 
-        if step_input.previous_steps_outputs:
+        if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Execute with retries
@@ -212,7 +212,7 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.previous_steps_outputs,
+                        step_input.previous_step_outputs,
                     )
 
                     # Execute agent or team with media
@@ -265,7 +265,7 @@ class Step:
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
-        if step_input.previous_steps_outputs:
+        if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Emit StepStartedEvent
@@ -328,7 +328,7 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.previous_steps_outputs,
+                        step_input.previous_step_outputs,
                     )
 
                     if self._executor_type in ["agent", "team"]:
@@ -402,7 +402,7 @@ class Step:
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
 
-        if step_input.previous_steps_outputs:
+        if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Execute with retries
@@ -467,7 +467,7 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.previous_steps_outputs,
+                        step_input.previous_step_outputs,
                     )
 
                     # Execute agent or team with media
@@ -518,7 +518,7 @@ class Step:
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
-        if step_input.previous_steps_outputs:
+        if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         if stream_intermediate_steps:
@@ -599,7 +599,7 @@ class Step:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
                         step_input.message,
-                        step_input.previous_steps_outputs,
+                        step_input.previous_step_outputs,
                     )
 
                     if self._executor_type in ["agent", "team"]:
@@ -666,12 +666,12 @@ class Step:
     def _prepare_message(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
-        previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
+        previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
     ) -> Union[str, list, Dict[str, Any], BaseModel]:
         """Prepare the primary input by combining message and previous step outputs"""
 
-        if previous_steps_outputs and self._executor_type in ["agent", "team"]:
-            last_output = list(previous_steps_outputs.values())[-1] if previous_steps_outputs else None
+        if previous_step_outputs and self._executor_type in ["agent", "team"]:
+            last_output = list(previous_step_outputs.values())[-1] if previous_step_outputs else None
             if last_output and last_output.content:
                 return last_output.content
 
