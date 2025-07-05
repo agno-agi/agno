@@ -23,6 +23,8 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
 
 Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-step AI processes. Unlike traditional linear workflows, you can now create sophisticated branching logic, parallel execution, and dynamic routing based on content analysis.
 
+![Workflows 2.0 flow](/cookbook/workflows/assets/workflows_v2_flow.png)
+
 ### Key Features
 
 - 🔄 **Flexible Execution**: Sequential, parallel, conditional, and loop-based execution
