@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -11,8 +11,9 @@ from agno.agent.agent import Agent, RunResponse
 from agno.app.playground.utils import process_audio, process_document, process_image, process_video
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponseErrorEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
@@ -42,9 +43,8 @@ async def agent_chat_response_streamer(
             run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -73,12 +73,11 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            run_response_chunk = cast(TeamRunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
         )
         yield error_response.to_json()
         return
@@ -261,7 +260,7 @@ def get_async_router(
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
-        workflow_input: Optional[Dict[str, Any]] = Form(None),
+        workflow_input: Optional[str] = Form(None),
     ):
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -298,6 +297,13 @@ def get_async_router(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             if not workflow_input:
                 raise HTTPException(status_code=400, detail="Workflow input is required")
+
+            # Parse workflow_input into a dict if it is a valid JSON
+            try:
+                parsed_workflow_input = json.loads(workflow_input)
+                workflow_input = parsed_workflow_input
+            except json.JSONDecodeError:
+                pass
 
         if agent:
             agent.monitoring = bool(monitor)
@@ -348,10 +354,16 @@ def get_async_router(
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in await workflow_instance.arun(**(workflow_input or {}))),
-                    media_type="text/event-stream",
-                )
+                if isinstance(workflow_input, dict):
+                    return StreamingResponse(
+                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(**workflow_input)),
+                        media_type="text/event-stream",
+                    )
+                else:
+                    return StreamingResponse(
+                        (json.dumps(asdict(result)) for result in await workflow_instance.arun(workflow_input)),  # type: ignore
+                        media_type="text/event-stream",
+                    )
         else:
             if agent:
                 run_response = cast(
@@ -383,6 +395,9 @@ def get_async_router(
                 workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                 workflow_instance.user_id = user_id
                 workflow_instance.session_name = None
-                return (await workflow_instance.arun(**(workflow_input or {}))).to_dict()
+                if isinstance(workflow_input, dict):
+                    return (await workflow_instance.arun(**workflow_input)).to_dict()
+                else:
+                    return (await workflow_instance.arun(workflow_input)).to_dict()  # type: ignore
 
     return router

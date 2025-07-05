@@ -75,6 +75,10 @@ def get_session_title(session: Union[AgentSession, TeamSession]) -> str:
                                     return content
 
             except Exception as e:
+                import traceback
+
+                traceback.print_exc(limit=3)
+
                 logger.error(f"Error parsing chat: {e}")
 
     return "Unnamed session"

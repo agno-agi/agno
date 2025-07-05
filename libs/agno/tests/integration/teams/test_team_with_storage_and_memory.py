@@ -4,9 +4,11 @@ import uuid
 
 import pytest
 
+from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.anthropic.claude import Claude
+from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
@@ -72,6 +74,37 @@ def route_team(team_storage, memory):
         members=[],
         storage=team_storage,
         memory=memory,
+        enable_user_memories=True,
+    )
+
+
+@pytest.fixture
+def route_team_with_members(team_storage, agent_storage, memory):
+    """Create a route team with storage and memory for testing."""
+
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
+    def get_open_restaurants(city: str) -> str:
+        return f"The open restaurants in {city} are: {', '.join(['Restaurant 1', 'Restaurant 2', 'Restaurant 3'])}"
+
+    travel_agent = Agent(
+        name="Travel Agent",
+        model=Gemini(id="gemini-2.0-flash-001"),
+        storage=agent_storage,
+        memory=memory,
+        add_history_to_messages=True,
+        role="Search the web for travel information. Don't call multiple tools at once. First get weather, then restaurants.",
+        tools=[get_weather, get_open_restaurants],
+    )
+    return Team(
+        name="Route Team",
+        mode="route",
+        model=Gemini(id="gemini-2.0-flash-001"),
+        members=[travel_agent],
+        storage=team_storage,
+        memory=memory,
+        instructions="Route a single question to the travel agent. Don't make multiple requests.",
         enable_user_memories=True,
     )
 
@@ -142,6 +175,65 @@ async def test_run_session_summary(route_team, team_storage, memory):
 
 
 @pytest.mark.asyncio
+async def test_member_run_history_persistence(route_team_with_members, agent_storage, memory):
+    """Test that all runs within a member's session are persisted in storage."""
+    user_id = "john@example.com"
+    session_id = "session_123"
+
+    # Clear memory for this specific test case
+    memory.clear()
+
+    # First request
+    await route_team_with_members.arun(
+        "I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
+    )
+
+    agent_session = agent_storage.read(session_id=session_id)
+
+    stored_memory_data = agent_session.memory
+    assert stored_memory_data is not None, "Memory data not found in stored session."
+
+    agent_runs = stored_memory_data["runs"]
+
+    assert len(agent_runs[-1]["messages"]) == 7, (
+        "Only system message, user message, two tool calls (and results), and response"
+    )
+
+    first_user_message_content = agent_runs[0]["messages"][1]["content"]
+    assert "I'm traveling to Tokyo, what is the weather and open restaurants?" in first_user_message_content
+
+    # Second request
+    await route_team_with_members.arun(
+        "I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
+    )
+
+    agent_session = agent_storage.read(session_id=session_id)
+
+    stored_memory_data = agent_session.memory
+    assert stored_memory_data is not None, "Memory data not found in stored session."
+
+    agent_runs = stored_memory_data["runs"]
+
+    assert len(agent_runs[-1]["messages"]) == 13, "Full history of messages"
+
+    # Third request (to the member directly)
+    await route_team_with_members.members[0].arun(
+        "Write me a report about all the places I have requested information about",
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+    agent_session = agent_storage.read(session_id=session_id)
+
+    stored_memory_data = agent_session.memory
+    assert stored_memory_data is not None, "Memory data not found in stored session."
+
+    agent_runs = stored_memory_data["runs"]
+
+    assert len(agent_runs[-1]["messages"]) == 15, "Full history of messages"
+
+
+@pytest.mark.asyncio
 async def test_multi_user_multi_session_route_team(route_team, team_storage, memory):
     """Test multi-user multi-session route team with storage and memory."""
     # Define user and session IDs
@@ -204,3 +296,46 @@ async def test_multi_user_multi_session_route_team(route_team, team_storage, mem
     user_3_sessions = team_storage.get_all_sessions(user_id=user_3_id)
     assert len(user_3_sessions) == 1
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
+
+
+@pytest.mark.asyncio
+async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
+    """Test multi-user multi-session route team with storage and memory."""
+    # Define user and session IDs
+    user_id = "user_1@example.com"
+    session_id = "session_123"
+
+    route_team.mode = "coordinate"
+    route_team.members = [
+        Agent(
+            name="Answers small questions",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            storage=agent_storage,
+        ),
+        Agent(
+            name="Answers big questions",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            storage=agent_storage,
+        ),
+    ]
+
+    # Should create a new team session and agent session
+    await route_team.arun(
+        "Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id
+    )
+
+    team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
+    assert len(team_sessions) == 1
+    assert team_sessions[0].session_id == session_id
+    assert team_sessions[0].user_id == user_id
+    assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
+
+    agent_sessions = agent_storage.get_all_sessions()
+    # Single shared session for both agents
+    assert len(agent_sessions) == 1
+    assert agent_sessions[0].session_id == session_id
+    assert agent_sessions[0].user_id == user_id
+    assert len(agent_sessions[0].memory["runs"]) == 2
+    assert agent_sessions[0].memory["runs"][0]["session_id"] == session_id
+    assert agent_sessions[0].memory["runs"][1]["session_id"] == session_id
+    assert agent_sessions[0].memory["runs"][0]["run_id"] != agent_sessions[0].memory["runs"][1]["run_id"]

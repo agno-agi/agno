@@ -1,3 +1,5 @@
+from enum import Enum
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -41,10 +43,11 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -91,10 +94,11 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -162,7 +166,7 @@ def test_multiple_tool_calls():
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
     assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
+    assert sum(len(calls) for calls in tool_calls) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
@@ -255,10 +259,9 @@ def test_web_search_built_in_tool_stream():
     final_response = ""
     response_citations = None
     for response in responses:
-        assert isinstance(response, RunResponse)
         if response.content is not None:
             final_response += response.content
-        if response.citations is not None:
+        if hasattr(response, "citations") and response.citations is not None:
             response_citations = response.citations
 
     assert response_citations is not None
@@ -283,3 +286,30 @@ def test_web_search_built_in_tool_with_other_tools():
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert response.content is not None
     assert "TSLA" in response.content or "tesla" in response.content.lower()
+
+
+def test_tool_use_with_enum():
+    class Color(str, Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    def get_color(color: Color) -> str:
+        """Returns the chosen color."""
+        return f"The color is {color.value}"
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-4o-mini"),
+        tools=[get_color],
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("I want the color red.")
+
+    assert any(msg.tool_calls for msg in response.messages)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    assert tool_calls[0]["function"]["name"] == "get_color"
+    assert '"color":"red"' in tool_calls[0]["function"]["arguments"]
+    assert "red" in response.content

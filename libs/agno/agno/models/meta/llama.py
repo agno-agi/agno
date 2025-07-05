@@ -10,7 +10,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
 
 try:
@@ -126,7 +126,7 @@ class Llama(Model):
             )
         return AsyncLlamaAPIClient(**client_params)
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -161,6 +161,8 @@ class Llama(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -200,7 +202,7 @@ class Llama(Model):
         return self.get_client().chat.completions.create(
             model=self.id,
             messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
-            **self.get_request_kwargs(tools=tools, response_format=response_format),
+            **self.get_request_params(tools=tools, response_format=response_format),
         )
 
     async def ainvoke(
@@ -217,7 +219,7 @@ class Llama(Model):
         return await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
-            **self.get_request_kwargs(tools=tools, response_format=response_format),
+            **self.get_request_params(tools=tools, response_format=response_format),
         )
 
     def invoke_stream(
@@ -236,7 +238,7 @@ class Llama(Model):
                 model=self.id,
                 messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
                 stream=True,
-                **self.get_request_kwargs(tools=tools, response_format=response_format),
+                **self.get_request_params(tools=tools, response_format=response_format),
             )  # type: ignore
         except Exception as e:
             log_error(f"Error from Llama API: {e}")
@@ -258,7 +260,7 @@ class Llama(Model):
                 model=self.id,
                 messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
                 stream=True,
-                **self.get_request_kwargs(tools=tools, response_format=response_format),
+                **self.get_request_params(tools=tools, response_format=response_format),
             )
             async for chunk in async_stream:  # type: ignore
                 yield chunk  # type: ignore

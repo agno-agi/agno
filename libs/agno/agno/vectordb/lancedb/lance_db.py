@@ -331,7 +331,7 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        self.insert(documents)
+        self.insert(documents, filters=filters)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         await self.async_insert(documents, filters)

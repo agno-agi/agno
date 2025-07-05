@@ -313,9 +313,10 @@ def test_get_meeting_recordings_success(zoom_tools):
 
 def test_delete_meeting_success(zoom_tools):
     """Test successful meeting deletion"""
-    with patch.object(ZoomTools, "get_access_token", return_value="test_token"), patch(
-        "requests.delete"
-    ) as mock_delete:
+    with (
+        patch.object(ZoomTools, "get_access_token", return_value="test_token"),
+        patch("requests.delete") as mock_delete,
+    ):
         mock_delete.return_value.status_code = 204
         mock_delete.return_value.raise_for_status = MagicMock()
 

@@ -35,8 +35,10 @@ def mock_crawler_run_config():
 @pytest.fixture
 def crawl4ai_tools():
     """Create a Crawl4aiTools instance with default settings."""
-    with patch("agno.tools.crawl4ai.AsyncWebCrawler"), patch("agno.tools.crawl4ai.BrowserConfig"), patch(
-        "agno.tools.crawl4ai.CrawlerRunConfig"
+    with (
+        patch("agno.tools.crawl4ai.AsyncWebCrawler"),
+        patch("agno.tools.crawl4ai.BrowserConfig"),
+        patch("agno.tools.crawl4ai.CrawlerRunConfig"),
     ):
         return Crawl4aiTools()
 
@@ -44,8 +46,10 @@ def crawl4ai_tools():
 @pytest.fixture
 def custom_crawl4ai_tools():
     """Create a Crawl4aiTools instance with custom settings."""
-    with patch("agno.tools.crawl4ai.AsyncWebCrawler"), patch("agno.tools.crawl4ai.BrowserConfig"), patch(
-        "agno.tools.crawl4ai.CrawlerRunConfig"
+    with (
+        patch("agno.tools.crawl4ai.AsyncWebCrawler"),
+        patch("agno.tools.crawl4ai.BrowserConfig"),
+        patch("agno.tools.crawl4ai.CrawlerRunConfig"),
     ):
         return Crawl4aiTools(
             max_length=2000,
@@ -145,9 +149,10 @@ def test_crawl_with_search_query(crawl4ai_tools, mock_async_crawler, mock_browse
     mock_async_crawler.arun = AsyncMock(return_value=mock_result)
 
     # Mock the imports that happen inside _build_config
-    with patch("crawl4ai.content_filter_strategy.BM25ContentFilter") as mock_bm25, patch(
-        "crawl4ai.markdown_generation_strategy.DefaultMarkdownGenerator"
-    ) as mock_markdown_gen:
+    with (
+        patch("crawl4ai.content_filter_strategy.BM25ContentFilter") as mock_bm25,
+        patch("crawl4ai.markdown_generation_strategy.DefaultMarkdownGenerator") as mock_markdown_gen,
+    ):
         # Execute with search query
         result = crawl4ai_tools.crawl("https://example.com", search_query="machine learning")
 
@@ -270,9 +275,10 @@ def test_crawl_no_readable_content(crawl4ai_tools, mock_async_crawler):
 def test_pruning_configuration(mock_async_crawler, mock_browser_config, mock_crawler_run_config):
     """Test pruning filter configuration."""
     # Mock the imports that happen inside _build_config
-    with patch("crawl4ai.content_filter_strategy.PruningContentFilter") as mock_pruning, patch(
-        "crawl4ai.markdown_generation_strategy.DefaultMarkdownGenerator"
-    ) as mock_markdown_gen:
+    with (
+        patch("crawl4ai.content_filter_strategy.PruningContentFilter") as mock_pruning,
+        patch("crawl4ai.markdown_generation_strategy.DefaultMarkdownGenerator") as mock_markdown_gen,
+    ):
         # Create toolkit with pruning enabled
         toolkit = Crawl4aiTools(use_pruning=True, pruning_threshold=0.6)
 

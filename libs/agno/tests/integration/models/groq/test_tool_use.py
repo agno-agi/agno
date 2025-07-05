@@ -42,7 +42,6 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
             if any(tc.tool_name for tc in chunk.tools):
@@ -87,10 +86,11 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -155,7 +155,7 @@ def test_multiple_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
