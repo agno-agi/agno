@@ -334,6 +334,31 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
 
 
+@dataclass
+class StepOutputEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when a step produces output - replaces direct StepOutput yielding"""
+
+    event: str = "StepOutput"
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Primary output
+    content: Optional[str] = None
+
+    # Media outputs
+    images: Optional[List[ImageArtifact]] = None
+    videos: Optional[List[VideoArtifact]] = None
+    audio: Optional[List[AudioArtifact]] = None
+
+    # Execution metadata
+    success: bool = True
+    error: Optional[str] = None
+    stop: bool = False
+
+    # Store actual step execution result as StepOutput object
+    step_output: Optional["StepOutput"] = None  # noqa: F821
+
+
 # Union type for all workflow run response events
 WorkflowRunResponseEvent = Union[
     WorkflowStartedEvent,
@@ -352,6 +377,9 @@ WorkflowRunResponseEvent = Union[
     ConditionExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     RouterExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
+    StepsExecutionCompletedEvent,
+    StepOutputEvent,
 ]
 
 
@@ -382,7 +410,7 @@ class WorkflowRunResponse:
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunResponseEvent]] = None
-      
+
     # Workflow metrics aggregated from all steps
     workflow_metrics: Optional["WorkflowMetrics"] = None
 

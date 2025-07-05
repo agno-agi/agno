@@ -1,6 +1,10 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponseContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.response import (
+    RunResponseContentEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
+)
 from agno.run.v2.workflow import WorkflowRunEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
@@ -83,8 +87,12 @@ for event in step_workflow.run(
     stream_intermediate_steps=True,
 ):
     # Filter out RunResponseContentEvent from printing to reduce noise
-    if not isinstance(event, RunResponseContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent):
-        print(f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}")
+    if not isinstance(
+        event, RunResponseContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent
+    ):
+        print(
+            f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
+        )
 
 print(f"\nStep workflow completed!")
 print(
@@ -115,7 +123,10 @@ parallel_workflow = Workflow(
         mode="workflow_v2",
     ),
     store_events=True,
-    events_to_skip=[WorkflowRunEvent.parallel_execution_started, WorkflowRunEvent.parallel_execution_completed],
+    events_to_skip=[
+        WorkflowRunEvent.parallel_execution_started,
+        WorkflowRunEvent.parallel_execution_completed,
+    ],
 )
 
 print("Running Parallel workflow...")
@@ -126,7 +137,9 @@ for event in parallel_workflow.run(
 ):
     # Filter out RunResponseContentEvent from printing
     if not isinstance(event, RunResponseContentEvent):
-        print(f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}")
+        print(
+            f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
+        )
 
 print(f"Parallel workflow stored {len(parallel_workflow.run_response.events)} events")
 print_stored_events(parallel_workflow, "Parallel Workflow")

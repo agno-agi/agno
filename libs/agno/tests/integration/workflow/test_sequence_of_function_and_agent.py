@@ -5,7 +5,7 @@ from typing import AsyncIterator, Iterator
 
 import pytest
 
-from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
+from agno.run.v2.workflow import StepOutputEvent, WorkflowCompletedEvent, WorkflowRunResponse
 from agno.workflow.v2 import StepInput, StepOutput, Workflow
 
 
@@ -63,7 +63,7 @@ def test_function_streaming_sequence(workflow_storage):
     workflow = Workflow(name="Streaming", storage=workflow_storage, steps=[streaming_step])
 
     events = list(workflow.run(message="test", stream=True))
-    step_events = [e for e in events if isinstance(e, StepOutput)]
+    step_events = [e for e in events if isinstance(e, StepOutputEvent)]
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
 
     assert len(completed_events) == 1
@@ -98,7 +98,7 @@ async def test_async_function_streaming(workflow_storage):
     async for event in await workflow.arun(message="test", stream=True):
         events.append(event)
 
-    step_events = [e for e in events if isinstance(e, StepOutput)]
+    step_events = [e for e in events if isinstance(e, StepOutputEvent)]
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
 
     assert len(completed_events) == 1
