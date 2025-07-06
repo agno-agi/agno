@@ -156,7 +156,7 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
                     )
                 }
                 if value_type == "ARRAY":
-                    placeholder_properties["example_key"].items = {}
+                    placeholder_properties["example_key"].items = {}  # type: ignore
 
                 return Schema(
                     type=Type.OBJECT,
