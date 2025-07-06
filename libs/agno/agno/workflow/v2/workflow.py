@@ -1491,6 +1491,8 @@ class Workflow:
                     )
                     console.print(summary_panel)
 
+                live_log.update("")
+
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
@@ -1907,6 +1909,8 @@ class Workflow:
 
                 response_timer.stop()
 
+                live_log.update("")
+
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
@@ -2117,6 +2121,8 @@ class Workflow:
                         border_style="blue",
                     )
                     console.print(summary_panel)
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
@@ -2533,6 +2539,8 @@ class Workflow:
                                 live_log.update(group)
 
                 response_timer.stop()
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
