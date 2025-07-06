@@ -328,12 +328,12 @@ class Function(BaseModel):
         if isasyncgenfunction(func):
             return func
         # Don't wrap callables that are already wrapped with validate_call
-        elif getattr(func, "wrapped_for_validation", False):
+        elif getattr(func, "_wrapped_for_validation", False):
             return func
         # Wrap the callable with validate_call
         else:
             wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-            wrapped.wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
             return wrapped
 
     def process_schema_for_strict(self):
