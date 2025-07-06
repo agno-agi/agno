@@ -1,4 +1,5 @@
 from typing import List
+import asyncio
 
 from agno.agent.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -136,6 +137,6 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     print("=== Testing with deep tech topic ===")
-    workflow.print_response(
+    asyncio.run(workflow.aprint_response(
         "Latest developments in artificial intelligence and machine learning and deep tech research trends"
-    )
+    ))
