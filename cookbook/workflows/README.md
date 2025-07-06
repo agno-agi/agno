@@ -496,6 +496,77 @@ workflow = Workflow(
 > - `step_input.workflow_message` - Access the original workflow input message
 > - `step_input.previous_step_content` - Get content from immediate previous step
 
+### Event Storage and Filtering
+
+Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunResponse` and in the `runs` column in your `Workflow's Session DB`
+
+**Key Features:**
+
+- **`store_events=True`**: Automatically stores all workflow events in the database
+- **`events_to_skip=[]`**: Filter out specific event types to reduce storage and noise
+- **Persistent Storage**: Events are stored in your configured storage backend (SQLite, PostgreSQL, etc.)
+- **Post-Execution Access**: Access all stored events via `workflow.run_response.events`
+
+**Available Events to Skip:**
+```python
+from agno.run.v2.workflow import WorkflowRunEvent
+
+# Common events you might want to skip
+events_to_skip = [
+    WorkflowRunEvent.workflow_started,
+    WorkflowRunEvent.workflow_completed,
+    WorkflowRunEvent.step_started,
+    WorkflowRunEvent.step_completed,
+    WorkflowRunEvent.parallel_execution_started,
+    WorkflowRunEvent.parallel_execution_completed,
+    WorkflowRunEvent.condition_execution_started,
+    WorkflowRunEvent.condition_execution_completed,
+    WorkflowRunEvent.loop_execution_started,
+    WorkflowRunEvent.loop_execution_completed,
+    WorkflowRunEvent.router_execution_started,
+    WorkflowRunEvent.router_execution_completed,
+]
+```
+
+**When to use:**
+- **Debugging**: Store all events to analyze workflow execution flow
+- **Audit Trails**: Keep records of all workflow activities for compliance
+- **Performance Analysis**: Analyze timing and execution patterns
+- **Error Investigation**: Review event sequences leading to failures
+- **Noise Reduction**: Skip verbose events like `step_started` to focus on results
+
+**Example Use Cases:**
+```python
+# store everything
+debug_workflow = Workflow(
+    name="Debug Workflow",
+    store_events=True,
+    steps=[...]
+)
+
+# store only important events
+production_workflow = Workflow(
+    name="Production Workflow", 
+    store_events=True,
+    events_to_skip=[
+        WorkflowRunEvent.step_started,
+        WorkflowRunEvent.parallel_execution_started,
+        # keep step_completed and workflow_completed
+    ],
+    steps=[...]
+)
+
+# No event storage
+fast_workflow = Workflow(
+    name="Fast Workflow",
+    store_events=False,  
+    steps=[...]
+)
+```
+
+**See Examples**:
+- [`store_events_and_events_to_skip_in_a_workflow.py`](/cookbook/workflows/sync/06_workflows_advanced_concepts/store_events_and_events_to_skip_in_a_workflow.py)
+
 ### Streaming Support
 
 This adds support for having streaming event-based information for your workflows:
