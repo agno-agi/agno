@@ -360,6 +360,8 @@ class RunSchema(BaseModel):
             workspace_id=None,
             user_id=None,
             run_review=None,
+            content=run_response.content,
+            reasoning_content=run_response.reasoning_content,
             run_input=run_input,
             run_response_format=run_response_format,
             metrics=run_response.metrics,
@@ -380,8 +382,10 @@ class RunSchema(BaseModel):
             workspace_id=None,
             user_id=None,
             run_review=None,
+            content=run_response.content,
             run_input=run_input,
             run_response_format=run_response_format,
+            reasoning_content=run_response.reasoning_content,
             metrics=run_response.metrics,
             messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
             events=[event.to_dict() for event in run_response.events] if run_response.events else None,
@@ -396,6 +400,8 @@ class TeamRunSchema(BaseModel):
     team_session_id: str
     workspace_id: Optional[str]
     user_id: Optional[str]
+    content: Optional[str]
+    reasoning_content: Optional[str]
     run_input: Optional[str]
     run_response_format: Optional[str]
     run_review: Optional[dict]
@@ -409,6 +415,8 @@ class TeamRunSchema(BaseModel):
             team_session_id=run_response.get("session_id", ""),
             workspace_id=None,
             user_id=None,
+            content=run_response.get("content", ""),
+            reasoning_content=run_response.get("reasoning_content", ""),
             run_input="",
             run_response_format="",
             run_review=None,
