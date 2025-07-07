@@ -246,7 +246,7 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
-    def format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
         """
         Format a list of messages into the format expected by OpenAI.
         """
@@ -519,7 +519,7 @@ class OpenAIChat(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=self.format_messages(messages),
+                messages=self._format_messages(messages),
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
