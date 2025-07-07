@@ -75,9 +75,12 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.patch("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
         try:
-            eval_run = db.update_eval_run_name(eval_run_id=eval_run_id, name=request.name)
+            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to update eval run: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
+
+        if not eval_run:
+            raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
         return EvalSchema.from_dict(eval_run)
 

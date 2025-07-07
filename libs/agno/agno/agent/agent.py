@@ -6981,9 +6981,7 @@ class Agent:
             if self.memory.db is None:
                 return "Memory not available"
 
-            selected_sessions = self.memory.db.get_recent_sessions(
-                session_type=SessionType.AGENT, limit=num_history_sessions
-            )
+            selected_sessions = self.memory.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
 
             all_messages = []
             seen_message_pairs = set()

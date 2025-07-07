@@ -9,9 +9,6 @@ from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
-from agno.session.agent import AgentSession
-from agno.session.team import TeamSession
-from agno.session.workflow import WorkflowSession
 
 
 class SessionType(str, Enum):
@@ -56,14 +53,6 @@ class BaseDb(ABC):
     # --- Base ---
 
     @abstractmethod
-    def _apply_sorting(self, stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def _create_schema(self, db_schema: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
     def _create_table(self) -> None:
         raise NotImplementedError
 
@@ -75,14 +64,6 @@ class BaseDb(ABC):
     def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Table]:
         raise NotImplementedError
 
-    @abstractmethod
-    def _is_valid_table(self, table_name: str, table_type: str, db_schema: str) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _table_exists(self, table_name: str, db_schema: str) -> bool:
-        raise NotImplementedError
-
     # --- Sessions Table ---
 
     @abstractmethod
@@ -91,10 +72,6 @@ class BaseDb(ABC):
 
     @abstractmethod
     def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_runs_raw(self, session_id: str, session_type: SessionType) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -138,33 +115,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_recent_sessions(
-        self, session_type: SessionType, component_id: Optional[str] = None, limit: Optional[int] = None
-    ) -> List[str]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_all_session_ids(self, session_type: SessionType, entity_id: Optional[str] = None) -> List[str]:
-        raise NotImplementedError
-
-    @abstractmethod
     def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_agent_session_raw(self, session: AgentSession) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_team_session_raw(self, session: TeamSession) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_session_raw(self, session: Session) -> Optional[Session]:
         raise NotImplementedError
 
     @abstractmethod
@@ -338,5 +289,5 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update_eval_run_name(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
