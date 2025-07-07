@@ -484,3 +484,64 @@ class WorkflowRunResponse:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         return _dict
+
+    def to_json(self) -> str:
+        import json
+
+        _dict = self.to_dict()
+        return json.dumps(_dict, indent=2)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunResponse":
+        # Import here to avoid circular import
+        from agno.workflow.v2.step import StepOutput
+
+        messages = data.pop("messages", [])
+        messages = [Message.model_validate(message) for message in messages] if messages else None
+
+        step_responses = data.pop("step_responses", [])
+        parsed_step_responses: List["StepOutput"] = []
+        if step_responses:
+            for step_output_dict in step_responses:
+                # Reconstruct StepOutput from dict
+                parsed_step_responses.append(StepOutput.from_dict(step_output_dict))
+
+        extra_data = data.pop("extra_data", None)
+
+        images = data.pop("images", [])
+        images = [ImageArtifact.model_validate(image) for image in images] if images else None
+
+        videos = data.pop("videos", [])
+        videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
+
+        audio = data.pop("audio", [])
+        audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
+
+        response_audio = data.pop("response_audio", None)
+        response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+
+        events = data.pop("events", [])
+
+        return cls(
+            messages=messages,
+            step_responses=parsed_step_responses,
+            extra_data=extra_data,
+            images=images,
+            videos=videos,
+            audio=audio,
+            response_audio=response_audio,
+            events=events,
+            **data,
+        )
+
+    def get_content_as_string(self, **kwargs) -> str:
+        import json
+
+        from pydantic import BaseModel
+
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, BaseModel):
+            return self.content.model_dump_json(exclude_none=True, **kwargs)
+        else:
+            return json.dumps(self.content, **kwargs)

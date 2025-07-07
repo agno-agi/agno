@@ -1,4 +1,3 @@
-
 import asyncio
 
 from agno.agent.agent import Agent
@@ -145,9 +144,11 @@ if __name__ == "__main__":
     )
 
     try:
-        asyncio.run(workflow.aprint_response(
-            message="Comprehensive analysis of climate change research",
-        ))
+        asyncio.run(
+            workflow.aprint_response(
+                message="Comprehensive analysis of climate change research",
+            )
+        )
     except Exception as e:
         print(f"❌ Error: {e}")
     print()

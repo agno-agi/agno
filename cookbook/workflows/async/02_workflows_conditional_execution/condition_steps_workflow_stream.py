@@ -110,11 +110,13 @@ if __name__ == "__main__":
     print("=" * 50)
 
     try:
-        asyncio.run(basic_workflow.aprint_response(
-            message="Recent breakthroughs in quantum computing",
-            stream=True,
-            stream_intermediate_steps=True,
-        ))
+        asyncio.run(
+            basic_workflow.aprint_response(
+                message="Recent breakthroughs in quantum computing",
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        )
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback

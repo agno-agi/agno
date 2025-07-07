@@ -1,5 +1,5 @@
-from typing import List, Optional
 import asyncio
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -170,10 +170,12 @@ if __name__ == "__main__":
         resolution="1920x1080",
     )
 
-    asyncio.run(media_workflow.aprint_response(
-        message="Create an image of magical forest for a movie scene",
-        markdown=True,
-    ))
+    asyncio.run(
+        media_workflow.aprint_response(
+            message="Create an image of magical forest for a movie scene",
+            markdown=True,
+        )
+    )
 
     # print("\n=== Example 2: Video Generation (using message_data) ===")
     # video_request = MediaRequest(

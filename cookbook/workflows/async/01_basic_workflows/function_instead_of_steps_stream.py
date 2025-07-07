@@ -55,11 +55,11 @@ async def custom_execution_function(
         
         Please create a detailed, actionable content plan.
     """
-    
+
     async for response in await content_planner.arun(
         planning_prompt, stream=True, stream_intermediate_steps=True
     ):
-        yield response 
+        yield response
 
 
 # Create and use workflow
@@ -74,8 +74,10 @@ if __name__ == "__main__":
         ),
         steps=custom_execution_function,
     )
-    asyncio.run(content_creation_workflow.aprint_response(
-        message="AI trends in 2024",
-        stream=True,
-        stream_intermediate_steps=True,
-    ))
+    asyncio.run(
+        content_creation_workflow.aprint_response(
+            message="AI trends in 2024",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )

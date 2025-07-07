@@ -1,5 +1,5 @@
-from typing import List
 import asyncio
+from typing import List
 
 from agno.agent.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -98,6 +98,8 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    asyncio.run(workflow.aprint_response(
-        "Latest developments in artificial intelligence and machine learning"
-    ))
+    asyncio.run(
+        workflow.aprint_response(
+            "Latest developments in artificial intelligence and machine learning"
+        )
+    )

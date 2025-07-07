@@ -148,11 +148,13 @@ if __name__ == "__main__":
     )
 
     try:
-        asyncio.run(workflow.aprint_response(
-            message="Latest AI developments in machine learning",
-            stream=True,
-            stream_intermediate_steps=True,
-        ))
+        asyncio.run(
+            workflow.aprint_response(
+                message="Latest AI developments in machine learning",
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        )
     except Exception as e:
         print(f"❌ Error: {e}")
     print()

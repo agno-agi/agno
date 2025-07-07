@@ -61,7 +61,9 @@ if __name__ == "__main__":
         steps=[article_creation_sequence],
     )
 
-    asyncio.run(article_workflow.aprint_response(
-        message="Write an article about the benefits of renewable energy",
-        markdown=True,
-    ))
+    asyncio.run(
+        article_workflow.aprint_response(
+            message="Write an article about the benefits of renewable energy",
+            markdown=True,
+        )
+    )
