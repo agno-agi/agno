@@ -1073,15 +1073,6 @@ class Workflow:
         """Execute the workflow synchronously with optional streaming"""
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
-        # Use stream override value when necessary
-        if stream is None:
-            stream = False if self.stream is None else self.stream
-
-        if stream_intermediate_steps is None:
-            stream_intermediate_steps = (
-                False if self.stream_intermediate_steps is None else self.stream_intermediate_steps
-            )
-
         # Use simple defaults
         stream = stream or self.stream or False
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
