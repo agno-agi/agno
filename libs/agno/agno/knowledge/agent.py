@@ -103,6 +103,11 @@ class AgentKnowledge(BaseModel):
             logger.warning("No vector db provided")
             return
 
+        if upsert and not self.vector_db.upsert_available():
+            raise ValueError(
+                f"Vector db '{self.vector_db.__class__.__module__}' does not support upsert. Please set upsert to False or use a vector db that supports upsert."
+            )
+
         if recreate:
             log_info("Dropping collection")
             self.vector_db.drop()
@@ -122,9 +127,8 @@ class AgentKnowledge(BaseModel):
                     self._track_metadata_structure(doc.meta_data)
 
             # Upsert documents if upsert is True and vector db supports upsert
-            if upsert and self.vector_db.upsert_available():
-                for doc in document_list:
-                    self.vector_db.upsert(documents=[doc], filters=doc.meta_data)
+            if upsert:
+                self.vector_db.upsert(documents=documents_to_load, filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -133,11 +137,10 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    for doc in documents_to_load:
-                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
+                    self.vector_db.insert(documents=documents_to_load, filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
-            log_info(f"Added {len(documents_to_load)} documents to knowledge base")
+        log_info(f"Added {num_documents} documents to knowledge base")
 
     async def aload(
         self,
@@ -156,6 +159,11 @@ class AgentKnowledge(BaseModel):
         if self.vector_db is None:
             logger.warning("No vector db provided")
             return
+
+        if upsert and not self.vector_db.upsert_available():
+            raise ValueError(
+                f"Vector db '{self.vector_db.__class__.__module__}' does not support upsert. Please set upsert to False or use a vector db that supports upsert."
+            )
 
         if recreate:
             log_info("Dropping collection")
@@ -176,9 +184,8 @@ class AgentKnowledge(BaseModel):
                     self._track_metadata_structure(doc.meta_data)
 
             # Upsert documents if upsert is True and vector db supports upsert
-            if upsert and self.vector_db.upsert_available():
-                for doc in document_list:
-                    await self.vector_db.async_upsert(documents=[doc], filters=doc.meta_data)
+            if upsert:
+                await self.vector_db.async_upsert(documents=documents_to_load, filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -187,8 +194,7 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    for doc in documents_to_load:
-                        await self.vector_db.async_insert(documents=[doc], filters=doc.meta_data)
+                    await self.vector_db.async_insert(documents=documents_to_load, filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
@@ -302,7 +308,7 @@ class AgentKnowledge(BaseModel):
             else:
                 log_info("No new documents to load")
 
-    def add_document_to_knowledge_base(
+    async def load_document(
         self,
         document: Document,
         upsert: bool = False,
@@ -317,7 +323,9 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-        self.load_documents(documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters)
+        self.load_documents(
+            documents=[document], upsert=upsert, skip_existing=skip_existing, filters=filters
+        )
 
     async def async_load_document(
         self,

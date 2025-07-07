@@ -2,7 +2,7 @@ import json
 import uuid
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from warnings import filterwarnings
@@ -72,6 +72,13 @@ class Weaviate(VectorDb):
         self.search_type: SearchType = search_type
         self.reranker: Optional[Reranker] = reranker
         self.hybrid_search_alpha = hybrid_search_alpha
+
+    @staticmethod
+    def _get_doc_uuid(document: Document) -> Tuple[uuid.UUID, str]:
+        cleaned_content = document.content.replace("\x00", "\ufffd")
+        content_hash = md5(cleaned_content.encode()).hexdigest()
+        doc_uuid = uuid.UUID(hex=content_hash[:32])
+        return doc_uuid, cleaned_content
 
     def get_client(self) -> weaviate.WeaviateClient:
         """Initialize and return a Weaviate client instance.
@@ -152,6 +159,53 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
         finally:
             await client.close()
+    
+    def doc_content_changed(self, document: Document, check_existing: Optional[bool]=True) -> Optional[bool]:
+        """
+        Check if the content of the document has changed by comparing its UUID.
+
+        Args:
+            document (Document): Document to check
+
+        Returns:
+            bool: True if the document content has changed, False otherwise. None on wrong input.
+            check_existing (bool): If True, check if the document exists before checking if the content changed.
+        """
+        if not document or not document.content:
+            logger.warning("Invalid document: Missing content.")
+            return None
+        
+        if check_existing and not self.name_exists(document):
+            logger.warning(f"A document by this name does not exist: {document.name}")
+            return None
+        
+        doc_uuid, _ = self._get_doc_uuid(document)
+
+        collection = self.get_client().collections.get(self.collection)
+        existing_doc = collection.query.fetch_object_by_id(doc_uuid)
+
+        if not existing_doc:
+            return True
+        else:
+            return False
+
+
+    def doc_delete(self, name: str) -> None:
+        """
+        Delete all documents from Weaviate with a specific 'name' property.
+
+        Args:
+            name (str): Document name to delete.
+        """
+        collection = self.get_client().collections.get(self.collection)
+        filter_expr = Filter.by_property("name").equal(name)
+
+        result = collection.data.delete_many(where=filter_expr)
+        
+        log_debug(f"Deleted document by name: '{name}' - {result.successful} documents deleted.")
+        if result.failed > 0:
+            logger.warning(f"Failed to delete (some chunks of) document with name: '{name}' - "
+                           f"Failed {result.failed} out of {result.matches} times. {result.successful} successful deletions.")
 
     def doc_exists(self, document: Document) -> bool:
         """
@@ -167,9 +221,7 @@ class Weaviate(VectorDb):
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
 
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
+        doc_uuid, _ = self._get_doc_uuid(document)
 
         collection = self.get_client().collections.get(self.collection)
         return collection.data.exists(doc_uuid)
@@ -188,9 +240,7 @@ class Weaviate(VectorDb):
             logger.warning("Invalid document: Missing content.")
             return False  # Early exit for invalid input
 
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
+        doc_uuid, _ = self._get_doc_uuid(document)
 
         client = await self.get_async_client()
         try:
@@ -254,9 +304,7 @@ class Weaviate(VectorDb):
                 logger.error(f"Document embedding is None: {document.name}")
                 continue
 
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            content_hash = md5(cleaned_content.encode()).hexdigest()
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
+            doc_uuid, cleaned_content = self._get_doc_uuid(document)
 
             # Merge filters with metadata
             meta_data = document.meta_data or {}
@@ -303,9 +351,7 @@ class Weaviate(VectorDb):
                         continue
 
                     # Clean content and generate UUID
-                    cleaned_content = document.content.replace("\x00", "\ufffd")
-                    content_hash = md5(cleaned_content.encode()).hexdigest()
-                    doc_uuid = uuid.UUID(hex=content_hash[:32])
+                    doc_uuid, cleaned_content = self._get_doc_uuid(document)
 
                     # Serialize meta_data to JSON string
                     meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
@@ -336,7 +382,18 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        self.insert(documents)
+        _docs_to_insert = []
+        for document in documents:
+            if self.name_exists(document.name):
+                if self.doc_content_changed(document, check_existing=False):
+                    log_debug(f"Document already exists, but content changed. Document will be deleted and added again: {document.name}")
+                    self.doc_delete(document.name)
+                    _docs_to_insert.append(document)
+                else:
+                    log_debug(f"Document skipped, content is unchanged: {document.name}")
+            else:
+                _docs_to_insert.append(document)
+        self.insert(_docs_to_insert)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -363,9 +420,7 @@ class Weaviate(VectorDb):
                     logger.error(f"Document embedding is None: {document.name}")
                     continue
 
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                doc_uuid = uuid.UUID(hex=content_hash[:32])
+                doc_uuid, cleaned_content = self._get_doc_uuid(document)
 
                 # Serialize meta_data to JSON string
                 meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
