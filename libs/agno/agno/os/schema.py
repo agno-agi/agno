@@ -325,6 +325,7 @@ class RunSchema(BaseModel):
     run_review: Optional[dict]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
+    tools: Optional[List[dict]]
     events: Optional[List[dict]]
     created_at: Optional[datetime]
 
@@ -344,6 +345,7 @@ class RunSchema(BaseModel):
             reasoning_content=run_dict.get("reasoning_content", ""),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
+            tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
             created_at=datetime.fromtimestamp(run_dict.get("run", {}).get("created_at", 0), tz=timezone.utc)
             if run_dict.get("run", {}).get("created_at") is not None
@@ -366,6 +368,7 @@ class RunSchema(BaseModel):
             run_response_format=run_response_format,
             metrics=run_response.metrics,
             messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
+            tools=[tool.to_dict() for tool in run_response.tools] if run_response.tools else None,
             events=[event.to_dict() for event in run_response.events] if run_response.events else None,
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at is not None
@@ -387,6 +390,7 @@ class RunSchema(BaseModel):
             run_response_format=run_response_format,
             reasoning_content=run_response.reasoning_content,
             metrics=run_response.metrics,
+            tools=[tool.to_dict() for tool in run_response.tools] if run_response.tools else None,
             messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
             events=[event.to_dict() for event in run_response.events] if run_response.events else None,
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
@@ -406,6 +410,7 @@ class TeamRunSchema(BaseModel):
     run_response_format: Optional[str]
     run_review: Optional[dict]
     metrics: Optional[dict]
+    tools: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
@@ -421,6 +426,7 @@ class TeamRunSchema(BaseModel):
             run_response_format="",
             run_review=None,
             metrics=run_response.get("metrics", {}),
+            tools=[tool.to_dict() for tool in run_response.get("tools", [])] if run_response.get("tools") else None,
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,
