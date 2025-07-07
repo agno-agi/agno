@@ -48,7 +48,11 @@ def test_run_sql_query_success(bq_tools_instance, mock_bq_client):
     assert result_json_str == expected_json_string
 
     cleaned_query = query.replace("\\n", " ").replace("\n", "").replace("\\", "")
-    mock_bq_client.query.assert_called_once_with(cleaned_query)
+    # Verify the call was made with cleaned query and job config
+    mock_bq_client.query.assert_called_once()
+    call_args = mock_bq_client.query.call_args
+    assert call_args[0][0] == cleaned_query  # First positional argument should be the cleaned query
+    assert len(call_args[0]) == 2  # Should have 2 positional arguments (query and job_config)
 
 
 def test_list_tables_error(bq_tools_instance, mock_bq_client):

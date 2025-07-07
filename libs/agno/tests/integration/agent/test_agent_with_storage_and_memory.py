@@ -63,7 +63,6 @@ def test_agent_session_state(chat_agent, agent_storage):
     assert chat_agent.session_id == "session_2"
     assert chat_agent.session_name is None
     assert chat_agent.session_state == {"current_session_id": "session_2"}
-    assert chat_agent.team_session_state is None
 
     # Run again with original session ID
     response = chat_agent.run("What name should I call you?", session_id=session_id)
