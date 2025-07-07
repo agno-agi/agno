@@ -155,7 +155,7 @@ def get_base_router(
 
     @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
     async def config() -> ConfigResponse:
-        app_response = AppsResponse(
+        apps_response = AppsResponse(
             session=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
                 for app in os.apps
@@ -183,11 +183,11 @@ def get_base_router(
             ],
         )
 
-        app_response.session = app_response.session or None
-        app_response.knowledge = app_response.knowledge or None
-        app_response.memory = app_response.memory or None
-        app_response.eval = app_response.eval or None
-        app_response.metrics = app_response.metrics or None
+        apps_response.session = apps_response.session or None
+        apps_response.knowledge = apps_response.knowledge or None
+        apps_response.memory = apps_response.memory or None
+        apps_response.eval = apps_response.eval or None
+        apps_response.metrics = apps_response.metrics or None
 
         return ConfigResponse(
             os_id=os.os_id,
@@ -197,7 +197,7 @@ def get_base_router(
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
                 for interface in os.interfaces
             ],
-            apps=app_response,
+            apps=apps_response,
             agents=[
                 AgentSummaryResponse(agent_id=agent.agent_id, name=agent.name, description=agent.description)
                 for agent in os.agents
