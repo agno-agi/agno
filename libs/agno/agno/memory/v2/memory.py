@@ -190,7 +190,7 @@ class Memory:
                 all_memories = self.db.read_memories()
             else:
                 all_memories = self.db.read_memories(user_id=user_id)
-            
+
             # Reset the memories
             self.memories = {}
             for memory in all_memories:
@@ -243,7 +243,7 @@ class Memory:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
-            
+
         self.refresh_from_db(user_id=user_id)
 
         if self.memories is None:
@@ -1084,14 +1084,14 @@ class Memory:
 
     def __deepcopy__(self, memo):
         from copy import deepcopy
-        
+
         # Create a new instance without calling __init__
         copied_obj = self.__class__.__new__(self.__class__)
         memo[id(self)] = copied_obj
-        
+
         # Copy attributes, reusing specific objects
         shared_objects = {"db", "memory_manager", "summary_manager", "team_context"}
         for k, v in self.__dict__.items():
             setattr(copied_obj, k, v if k in shared_objects else deepcopy(v, memo))
-        
+
         return copied_obj
