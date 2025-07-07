@@ -355,6 +355,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunResponse,
         stream_intermediate_steps: bool = False,
+        **kwargs: Any
     ) -> Iterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
 
@@ -371,7 +372,7 @@ class Workflow:
                 raise ValueError("Cannot use async function with synchronous execution")
             elif inspect.isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self.steps(self, execution_input):
+                for chunk in self.steps(self, execution_input, **kwargs):
                     # Update the run_response with the content from the result
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
@@ -380,7 +381,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input)
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -523,7 +524,7 @@ class Workflow:
         self.write_to_storage()
 
     async def _aexecute(
-        self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
+        self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name asynchronously"""
 
@@ -534,9 +535,9 @@ class Workflow:
             content = ""
 
             if inspect.iscoroutinefunction(self.steps):
-                workflow_run_response.content = await self.steps(self, execution_input)
+                workflow_run_response.content = await self.steps(self, execution_input, **kwargs)
             elif inspect.isgeneratorfunction(self.steps):
-                for chunk in self.steps(self, execution_input):
+                for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
@@ -550,7 +551,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input)
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -653,6 +654,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunResponse,
         stream_intermediate_steps: bool = False,
+        **kwargs: Any
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
 
@@ -666,10 +668,10 @@ class Workflow:
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps):
-                workflow_run_response.content = await self.steps(self, execution_input)
+                workflow_run_response.content = await self.steps(self, execution_input, **kwargs)
             elif inspect.isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self.steps(self, execution_input):
+                for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -678,7 +680,7 @@ class Workflow:
                 workflow_run_response.content = content
             elif inspect.isasyncgenfunction(self.steps):
                 content = ""
-                async for chunk in self.steps(self, execution_input):
+                async for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -686,7 +688,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input)
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -974,6 +976,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: bool = False,
         stream_intermediate_steps: bool = False,
+        **kwargs: Any,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
@@ -1024,9 +1027,10 @@ class Workflow:
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
             )
         else:
-            return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response)
+            return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""
@@ -1827,6 +1831,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with rich formatting and optional streaming
 
@@ -1858,6 +1863,7 @@ class Workflow:
                 show_time=show_time,
                 show_step_details=show_step_details,
                 console=console,
+                **kwargs,
             )
         else:
             await self._aprint_response(
@@ -1871,6 +1877,7 @@ class Workflow:
                 show_time=show_time,
                 show_step_details=show_step_details,
                 console=console,
+                **kwargs,
             )
 
     async def _aprint_response(
@@ -1885,6 +1892,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with rich formatting (non-streaming)"""
         from rich.live import Live
@@ -1955,6 +1963,7 @@ class Workflow:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    **kwargs,
                 )
 
                 response_timer.stop()
@@ -2037,6 +2046,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with clean streaming - green step blocks displayed once"""
         from rich.console import Group
@@ -2119,6 +2129,7 @@ class Workflow:
                     videos=videos,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    **kwargs,
                 ):
                     # Handle the new event types
                     if isinstance(response, WorkflowStartedEvent):
