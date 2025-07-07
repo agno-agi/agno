@@ -319,7 +319,9 @@ class RunSchema(BaseModel):
     workspace_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
+    content: Optional[str]
     run_response_format: Optional[str]
+    reasoning_content: Optional[str]
     run_review: Optional[dict]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
@@ -337,7 +339,9 @@ class RunSchema(BaseModel):
             user_id=None,
             run_review=None,
             run_input=run_input,
+            content=run_dict.get("content", ""),
             run_response_format=run_response_format,
+            reasoning_content=run_dict.get("reasoning_content", ""),
             metrics=run_dict.get("metrics", {}),
             messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
             events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
