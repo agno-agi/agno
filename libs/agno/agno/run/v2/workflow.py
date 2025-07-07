@@ -342,21 +342,37 @@ class StepOutputEvent(BaseWorkflowRunResponseEvent):
     step_name: Optional[str] = None
     step_index: Optional[int] = None
 
-    # Primary output
-    content: Optional[str] = None
-
-    # Media outputs
-    images: Optional[List[ImageArtifact]] = None
-    videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
-
-    # Execution metadata
-    success: bool = True
-    error: Optional[str] = None
-    stop: bool = False
-
     # Store actual step execution result as StepOutput object
     step_output: Optional["StepOutput"] = None  # noqa: F821
+
+    # Properties for backward compatibility
+    @property
+    def content(self) -> Optional[str]:
+        return self.step_output.content if self.step_output else None
+
+    @property
+    def images(self) -> Optional[List[ImageArtifact]]:
+        return self.step_output.images if self.step_output else None
+
+    @property
+    def videos(self) -> Optional[List[VideoArtifact]]:
+        return self.step_output.videos if self.step_output else None
+
+    @property
+    def audio(self) -> Optional[List[AudioArtifact]]:
+        return self.step_output.audio if self.step_output else None
+
+    @property
+    def success(self) -> bool:
+        return self.step_output.success if self.step_output else True
+
+    @property
+    def error(self) -> Optional[str]:
+        return self.step_output.error if self.step_output else None
+
+    @property
+    def stop(self) -> bool:
+        return self.step_output.stop if self.step_output else False
 
 
 # Union type for all workflow run response events

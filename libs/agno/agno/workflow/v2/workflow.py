@@ -179,20 +179,13 @@ class Workflow:
     ) -> StepOutputEvent:
         """Transform a StepOutput object into a StepOutputEvent for consistent streaming interface"""
         return StepOutputEvent(
+            step_output=step_output,
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_name=step_output.step_name,
             step_index=step_index,
-            content=step_output.content,
-            images=step_output.images,
-            videos=step_output.videos,
-            audio=step_output.audio,
-            success=step_output.success,
-            error=step_output.error,
-            stop=step_output.stop,
-            step_output=step_output,
         )
 
     def _set_debug(self) -> None:
