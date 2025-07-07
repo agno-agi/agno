@@ -149,28 +149,30 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-    def _handle_event(self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse) -> None:
+    def _handle_event(
+        self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
+    ) -> "WorkflowRunResponseEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
-        if not self.store_events:
-            return
+        if self.store_events:
+            # Check if this event type should be skipped
+            if self.events_to_skip:
+                event_type = event.event
+                for skip_event in self.events_to_skip:
+                    if isinstance(skip_event, str):
+                        if event_type == skip_event:
+                            return event
+                    else:
+                        # It's a WorkflowRunEvent enum
+                        if event_type == skip_event.value:
+                            return event
 
-        # Check if this event type should be skipped
-        if self.events_to_skip:
-            event_type = event.event
-            for skip_event in self.events_to_skip:
-                if isinstance(skip_event, str):
-                    if event_type == skip_event:
-                        return
-                else:
-                    # It's a WorkflowRunEvent enum
-                    if event_type == skip_event.value:
-                        return
+            # Store the event
+            if workflow_run_response.events is None:
+                workflow_run_response.events = []
 
-        # Store the event
-        if workflow_run_response.events is None:
-            workflow_run_response.events = []
+            workflow_run_response.events.append(event)
 
-        workflow_run_response.events.append(event)
+        return event
 
     def _transform_step_output_to_event(
         self, step_output: StepOutput, workflow_run_response: WorkflowRunResponse, step_index: Optional[int] = None
@@ -432,8 +434,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        self._handle_event(workflow_started_event, workflow_run_response)
-        yield workflow_started_event
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
@@ -591,8 +592,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,
             extra_data=workflow_run_response.extra_data,
         )
-        self._handle_event(workflow_completed_event, workflow_run_response)
-        yield workflow_completed_event
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
         if self.workflow_session:
@@ -742,8 +742,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        self._handle_event(workflow_started_event, workflow_run_response)
-        yield workflow_started_event
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps):
@@ -807,6 +806,9 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         step_index=i,
                     ):
+                        if isinstance(event, WorkflowRunResponseEvent):
+                            self._handle_event(event, workflow_run_response)
+
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -905,8 +907,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,
             extra_data=workflow_run_response.extra_data,
         )
-        self._handle_event(workflow_completed_event, workflow_run_response)
-        yield workflow_completed_event
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
         if self.workflow_session:
