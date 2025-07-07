@@ -229,7 +229,7 @@ class Workflow:
         )
 
     def _execute(
-        self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
+        self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
 
@@ -240,7 +240,7 @@ class Workflow:
                 raise ValueError("Cannot use async function with synchronous execution")
             elif inspect.isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self.steps(self, execution_input):
+                for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
@@ -248,7 +248,7 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 # Execute the workflow with the custom executor
-                workflow_run_response.content = self.steps(self, execution_input)
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
 
             workflow_run_response.status = RunStatus.completed
         else:
@@ -880,6 +880,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = None,
+        **kwargs: Any,
     ) -> Union[WorkflowRunResponse, Iterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         self._set_debug()
@@ -932,9 +933,10 @@ class Workflow:
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
+                **kwargs,
             )
         else:
-            return self._execute(execution_input=inputs, workflow_run_response=workflow_run_response)
+            return self._execute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
 
     @overload
     async def arun(
@@ -1191,6 +1193,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with rich formatting and optional streaming
 
@@ -1223,6 +1226,7 @@ class Workflow:
                 show_time=show_time,
                 show_step_details=show_step_details,
                 console=console,
+                **kwargs,
             )
         else:
             self._print_response(
@@ -1236,6 +1240,7 @@ class Workflow:
                 show_time=show_time,
                 show_step_details=show_step_details,
                 console=console,
+                **kwargs,
             )
 
     def _print_response(
@@ -1250,6 +1255,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with rich formatting (non-streaming)"""
         from rich.live import Live
@@ -1320,6 +1326,7 @@ class Workflow:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    **kwargs,
                 )
 
                 response_timer.stop()
@@ -1401,6 +1408,7 @@ class Workflow:
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
+        **kwargs: Any,
     ) -> None:
         """Print workflow execution with clean streaming - green step blocks displayed once"""
         from rich.console import Group
@@ -1483,6 +1491,7 @@ class Workflow:
                     videos=videos,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    **kwargs,
                 ):
                     # Handle the new event types
                     if isinstance(response, WorkflowStartedEvent):
