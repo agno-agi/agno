@@ -134,7 +134,7 @@ def _clean_page_numbers(
     if best_match and best_correct_count / len(page_numbers) >= PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL:
         # Remove the page numbers from the content
         for i, expected_number in enumerate(best_match):
-            page_content_list[i] = re.sub(f'^\s*{expected_number}\s*|\s*{expected_number}\s*$', '', page_content_list[i])
+            page_content_list[i] = re.sub(fr'^\s*{expected_number}\s*|\s*{expected_number}\s*$', '', page_content_list[i])
             
             page_start = page_start_numbering_format.format(page_nr=expected_number) + "\n" if page_start_numbering_format else ""
             page_end = "\n" + page_end_numbering_format.format(page_nr=expected_number) if page_end_numbering_format else ""
@@ -165,7 +165,7 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
-    def _create_documents(self, pdf_content, page_number_shift):
+    def _create_documents(self, pdf_content, doc_name: str, use_uuid_for_id: bool, page_number_shift):
         
         if self.split_on_pages:
             shift = page_number_shift if page_number_shift is not None else 1
@@ -194,7 +194,7 @@ class BasePDFReader(Reader):
 
         return documents
 
-    def _pdf_reader_to_documents(self, doc_reader: DocumentReader, read_images=False, use_uuid_for_id=False):
+    def _pdf_reader_to_documents(self, doc_reader: DocumentReader, doc_name, read_images=False, use_uuid_for_id=False):
 
         pdf_content = []
         pdf_images_text = []
@@ -204,15 +204,15 @@ class BasePDFReader(Reader):
                 pdf_images_text.append(_ocr_reader(page))
 
         pdf_content, shift = _clean_page_numbers(
-            page_content=pdf_content, extra_content=pdf_images_text,
+            page_content_list=pdf_content, extra_content=pdf_images_text,
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format
         )
-        return _create_documents(pdf_content, shift)
+        return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
 
-    async def _async_pdf_reader_to_documents(self, doc_reader: DocumentReader, read_images=False, use_uuid_for_id=False):
+    async def _async_pdf_reader_to_documents(self, doc_reader: DocumentReader, doc_name: str, read_images=False, use_uuid_for_id=False):
 
-        async def _read_pdf_page(page, read_images) -> str:
+        async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
             text_future = asyncio.to_thread(page.extract_text)
 
             if read_images:
@@ -230,13 +230,13 @@ class BasePDFReader(Reader):
         )
 
         pdf_content, shift = _clean_page_numbers(
-            page_content=[x[0] for x in pdf_content],
+            page_content_list=[x[0] for x in pdf_content],
             extra_content=[x[1] for x in pdf_content],
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format
         )
 
-        return _create_documents(pdf_content, shift)
+        return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
 
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
@@ -259,7 +259,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, use_uuid_for_id=True)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         try:
@@ -279,7 +279,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._async_pdf_reader_to_documents(pdf_reader, use_uuid_for_id=True)
+        return self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
 
 class PDFUrlReader(BasePDFReader):
@@ -304,7 +304,7 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
     async def async_read(self, url: str) -> List[Document]:
         if not url:
@@ -324,7 +324,7 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._async_pdf_reader_to_documents(pdf_reader, use_uuid_for_id=False)
+        return self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
 
 class PDFImageReader(BasePDFReader):
@@ -346,7 +346,7 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         if not pdf:
@@ -364,7 +364,7 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Read and chunk.
-        return _async_pdf_reader_to_documents(pdf_reader, read_images=True, use_uuid_for_id=False)
+        return _async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
 
 class PDFUrlImageReader(BasePDFReader):
@@ -390,7 +390,7 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, read_images=True, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
     async def async_read(self, url: str) -> List[Document]:
         if not url:
@@ -411,4 +411,4 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return _async_pdf_reader_to_documents(pdf_reader, read_images=True, use_uuid_for_id=False)
+        return _async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
