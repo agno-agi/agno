@@ -427,16 +427,13 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
-    ) -> None:
+    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
         """
         Handle the results of function calls.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
         """
         if len(function_call_results) > 0:
             fc_responses: List = []
