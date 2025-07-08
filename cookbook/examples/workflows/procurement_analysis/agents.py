@@ -13,7 +13,7 @@ company_overview_agent = Agent(
     category information, regional context, and other procurement details.
     
     **Input Data Structure:**
-    The input will be a ProcurementAnalysisRequest containing:
+    The input contains the following data:
     - companies: List of companies to analyze
     - category_name: The procurement category being analyzed
     - region: Regional context for the analysis
