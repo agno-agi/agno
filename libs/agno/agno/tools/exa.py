@@ -143,7 +143,7 @@ class ExaTools(Toolkit):
                     log_debug(f"Failed to get highlights {e}")
                     result_dict["highlights"] = f"Failed to get highlights {e}"
             exa_results_parsed.append(result_dict)
-        return json.dumps(exa_results_parsed, indent=4)
+        return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
     def search_exa(self, query: str, num_results: int = 5, category: Optional[str] = None) -> str:
         """Use this function to search Exa (a web search engine) for a query.

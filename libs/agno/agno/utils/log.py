@@ -1,6 +1,6 @@
 import logging
 from os import getenv
-from typing import Any, Optional, Literal
+from typing import Any, Literal, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
@@ -143,7 +143,7 @@ def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1
     global logger
     global debug_on
     global debug_level
-    
+
     if debug_on:
         if debug_level >= log_level:
             logger.debug(msg, center, symbol, *args, **kwargs)
