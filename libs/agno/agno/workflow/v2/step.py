@@ -358,6 +358,9 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
+                        # Switch back to workflow logger after execution
+                        use_workflow_logger()
+
                         for event in response_stream:
                             yield event
                         final_response = self._process_step_output(self.active_executor.run_response)
@@ -500,6 +503,9 @@ class Step:
                             session_id=session_id,
                             user_id=user_id,
                         )
+
+                        # Switch back to workflow logger after execution
+                        use_workflow_logger()
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -638,6 +644,9 @@ class Step:
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
+
+                        # Switch back to workflow logger after execution
+                        use_workflow_logger()
 
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
