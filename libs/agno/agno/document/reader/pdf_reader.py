@@ -213,14 +213,13 @@ class BasePDFReader(Reader):
     async def _async_pdf_reader_to_documents(self, doc_reader: DocumentReader, doc_name: str, read_images=False, use_uuid_for_id=False):
 
         async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
-            text_future = asyncio.to_thread(page.extract_text)
+            # We tried "asyncio.to_thread(page.extract_text)", but it maintains state internally, which leads to issues.
+            page_text = page.extract_text()
 
             if read_images:
                 pdf_images_text = await _async_ocr_reader(page)
             else:
                 pdf_images_text = ""
-
-            page_text = await text_future
 
             return page_text, pdf_images_text
 
