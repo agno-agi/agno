@@ -262,6 +262,7 @@ class AgentSessionDetailSchema(BaseModel):
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name(session.to_dict())
 
+        # TODO: this is because of SQLite returning strings instead of dicts. Should be done in the db layer.
         if session.summary:
             if isinstance(session.summary, str):
                 session_summary = json.loads(session.summary)
