@@ -1,9 +1,3 @@
-"""Example: Advanced Research Agent using Exa Research Tools
-
-This example demonstrates how to use the Exa research tool for complex,
-structured research tasks with automatic citation tracking.
-"""
-
 import json
 from textwrap import dedent
 
@@ -21,8 +15,7 @@ agent = Agent(
         - instructions (str): The research topic/question
         - output_schema (dict, optional): A JSON schema for structured output
     """),
-    # show_tool_calls=True,
-    debug_mode=True,
+    show_tool_calls=True,
 )
 
 agent.print_response(
