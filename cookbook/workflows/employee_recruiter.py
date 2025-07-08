@@ -1,316 +1,202 @@
-"""
-This workflow is a simple example of a recruitment workflow where in you can also pass custom prameters like job description, 
-candidate resume urls, etc. (**kwargs) in the workflow along with workflow execution input.
-"""
-
 import io
-import random
-from datetime import datetime, timedelta
-from typing import Any, List
+import os
+from datetime import datetime
+from typing import List
 
 import requests
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.workflow.v2.types import WorkflowExecutionInput
-from agno.workflow.v2.workflow import Workflow
+from agno.run.response import RunResponse
+from agno.tools.zoom import ZoomTools
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    raise ImportError(
+        "pypdf is not installed. Please install it using `pip install pypdf`"
+    )
+from agno.agent.agent import Agent
+from agno.models.openai.chat import OpenAIChat
+from agno.tools.resend import ResendTools
+from agno.utils.log import logger
+from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
-from pypdf import PdfReader
 
 
-# --- Response models ---
 class ScreeningResult(BaseModel):
-    name: str
-    email: str
-    score: float
-    feedback: str
+    name: str = Field(description="The name of the candidate")
+    email: str = Field(description="The email of the candidate")
+    score: float = Field(description="The score of the candidate from 0 to 10")
+    feedback: str = Field(description="The feedback for the candidate")
 
 
-class ScheduledCall(BaseModel):
-    name: str
-    email: str
-    call_time: str
-    url: str
+class CandidateScheduledCall(BaseModel):
+    name: str = Field(description="The name of the candidate")
+    email: str = Field(description="The email of the candidate")
+    call_time: str = Field(description="The time of the call")
+    url: str = Field(description="The url of the call")
 
 
-class EmailContent(BaseModel):
-    subject: str
-    body: str
+class Email(BaseModel):
+    subject: str = Field(description="The subject of the email")
+    body: str = Field(description="The body of the email")
 
 
-# --- PDF utility ---
-def extract_text_from_pdf(url: str) -> str:
-    try:
-        resp = requests.get(url)
-        resp.raise_for_status()
-        reader = PdfReader(io.BytesIO(resp.content))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
-    except Exception as e:
-        print(f"Error extracting PDF from {url}: {e}")
-        return ""
+current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-# --- Simulation tools ---
-def simulate_zoom_scheduling(
-    agent: Agent, candidate_name: str, candidate_email: str
-) -> str:
-    """Simulate Zoom call scheduling"""
-    # Generate a future time slot (1-7 days from now, between 10am-6pm IST)
-    base_time = datetime.now() + timedelta(days=random.randint(1, 7))
-    hour = random.randint(10, 17)  # 10am to 5pm
-    scheduled_time = base_time.replace(hour=hour, minute=0, second=0, microsecond=0)
+class EmployeeRecruitmentWorkflow(Workflow):
+    screening_agent: Agent = Agent(
+        description="You are an HR agent that screens candidates for a job interview.",
+        model=OpenAIChat(id="gpt-4o"),
+        instructions=[
+            "You are an expert HR agent that screens candidates for a job interview.",
+            "You are given a candidate's name and resume and job description.",
+            "You need to screen the candidate and determine if they are a good fit for the job.",
+            "You need to provide a score for the candidate from 0 to 10.",
+            "You need to provide a feedback for the candidate on why they are a good fit or not.",
+        ],
+        response_model=ScreeningResult,
+    )
 
-    # Generate fake Zoom URL
-    meeting_id = random.randint(100000000, 999999999)
-    zoom_url = f"https://zoom.us/j/{meeting_id}"
-
-    result = f"✅ Zoom call scheduled successfully!\n"
-    result += f"📅 Time: {scheduled_time.strftime('%Y-%m-%d %H:%M')} IST\n"
-    result += f"🔗 Meeting URL: {zoom_url}\n"
-    result += f"👤 Participant: {candidate_name} ({candidate_email})"
-
-    return result
-
-
-def simulate_email_sending(agent: Agent, to_email: str, subject: str, body: str) -> str:
-    """Simulate email sending"""
-    result = f"📧 Email sent successfully!\n"
-    result += f"📮 To: {to_email}\n"
-    result += f"📝 Subject: {subject}\n"
-    result += f"✉️ Body length: {len(body)} characters\n"
-    result += f"🕐 Sent at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
-    return result
-
-
-# --- Agents ---
-screening_agent = Agent(
-    name="Screening Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions=[
-        "Screen candidate given resume text and job description.",
-        "Provide a score from 0-10 based on how well they match the job requirements.",
-        "Give specific feedback on strengths and areas of concern.",
-        "Extract the candidate's name and email from the resume if available.",
-    ],
-    response_model=ScreeningResult,
-)
-
-scheduler_agent = Agent(
-    name="Scheduler Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions=[
-        f"You are scheduling interview calls. Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST",
-        "Schedule calls between 10am-6pm IST on weekdays.",
-        "Use the simulate_zoom_scheduling tool to create the meeting.",
-        "Provide realistic future dates and times.",
-    ],
-    tools=[simulate_zoom_scheduling],
-    response_model=ScheduledCall,
-)
-
-email_writer_agent = Agent(
-    name="Email Writer Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions=[
-        "Write professional, friendly interview invitation emails.",
-        "Include congratulations, interview details, and next steps.",
-        "Keep emails concise but warm and welcoming.",
-        "Sign emails as 'John Doe, Senior Software Engineer' with email john@agno.com",
-    ],
-    response_model=EmailContent,
-)
-
-email_sender_agent = Agent(
-    name="Email Sender Agent",
-    model=OpenAIChat(id="gpt-4o"),
-    instructions=[
-        "You send emails using the simulate_email_sending tool.",
-        "Always confirm successful delivery with details.",
-    ],
-    tools=[simulate_email_sending],
-)
-
-
-# --- Execution function ---
-def recruitment_execution(
-    workflow: Workflow,
-    execution_input: WorkflowExecutionInput,
-    job_description: str,
-    **kwargs: Any,
-) -> str:
-    """Execute the complete recruitment workflow"""
-
-    # Get inputs
-    message: str = execution_input.message
-    jd: str = job_description
-    resumes: List[str] = kwargs.get("candidate_resume_urls", [])
-
-    if not resumes:
-        return "❌ No candidate resume URLs provided"
-
-    if not jd:
-        return "❌ No job description provided"
-
-    print(f"🚀 Starting recruitment process for {len(resumes)} candidates")
-    print(f"📋 Job Description: {jd[:100]}{'...' if len(jd) > 100 else ''}")
-
-    selected_candidates: List[ScreeningResult] = []
-
-    # Phase 1: Screening
-    print(f"\n📊 PHASE 1: CANDIDATE SCREENING")
-    print("=" * 50)
-
-    for i, url in enumerate(resumes, 1):
-        print(f"\n🔍 Processing candidate {i}/{len(resumes)}")
-
-        # Extract resume text (with caching)
-        if url not in workflow.workflow_session_state:
-            print(f"📄 Extracting text from: {url}")
-            workflow.workflow_session_state[url] = extract_text_from_pdf(url)
-        else:
-            print(f"📋 Using cached resume content")
-
-        resume_text = workflow.workflow_session_state[url]
-
-        if not resume_text:
-            print(f"❌ Could not extract text from resume")
-            continue
-
-        # Screen the candidate
-        screening_prompt = f"""
-        {message}
-        Please screen this candidate for the job position.
-        
-        RESUME:
-        {resume_text}
-        
-        JOB DESCRIPTION:
-        {jd}
-        
-        Evaluate how well this candidate matches the job requirements and provide a score from 0-10.
-        """
-
-        result = screening_agent.run(screening_prompt)
-        candidate = result.content
-
-        print(f"👤 Candidate: {candidate.name}")
-        print(f"📧 Email: {candidate.email}")
-        print(f"⭐ Score: {candidate.score}/10")
-        print(
-            f"💭 Feedback: {candidate.feedback[:150]}{'...' if len(candidate.feedback) > 150 else ''}"
-        )
-
-        if candidate.score >= 5.0:
-            selected_candidates.append(candidate)
-            print(f"✅ SELECTED for interview!")
-        else:
-            print(f"❌ Not selected (score below 5.0)")
-
-    # Phase 2: Interview Scheduling & Email Communication
-    if selected_candidates:
-        print(f"\n📅 PHASE 2: INTERVIEW SCHEDULING")
-        print("=" * 50)
-
-        for i, candidate in enumerate(selected_candidates, 1):
-            print(
-                f"\n🗓️ Scheduling interview {i}/{len(selected_candidates)} for {candidate.name}"
+    interview_scheduler_agent: Agent = Agent(
+        description="You are an interview scheduler agent that schedules interviews for candidates.",
+        model=OpenAIChat(id="gpt-4o"),
+        instructions=[
+            "You are an interview scheduler agent that schedules interviews for candidates.",
+            "You need to schedule interviews for the candidates using the Zoom tool.",
+            "You need to schedule the interview for the candidate at the earliest possible time between 10am and 6pm.",
+            "Check if the candidate and interviewer are available at the time and if the time is free in the calendar.",
+            "You are in IST timezone and the current time is {current_time}. So schedule the call in future time with reference to current time.",
+        ],
+        tools=[
+            ZoomTools(
+                account_id=os.getenv("ZOOM_ACCOUNT_ID"),
+                client_id=os.getenv("ZOOM_CLIENT_ID"),
+                client_secret=os.getenv("ZOOM_CLIENT_SECRET"),
             )
+        ],
+        response_model=CandidateScheduledCall,
+    )
 
-            # Schedule interview
-            schedule_prompt = f"""
-            Schedule a 1-hour interview call for:
-            - Candidate: {candidate.name}
-            - Email: {candidate.email}
-            - Interviewer: Dirk Brand (dirk@phidata.com)
-            
-            Use the simulate_zoom_scheduling tool to create the meeting.
-            """
+    email_writer_agent: Agent = Agent(
+        description="You are an expert email writer agent that writes emails to selected candidates.",
+        model=OpenAIChat(id="gpt-4o"),
+        instructions=[
+            "You are an expert email writer agent that writes emails to selected candidates.",
+            "You need to write an email and send it to the candidates using the Resend tool.",
+            "You represent the company and the job position.",
+            "You need to write an email that is concise and to the point.",
+            "You need to write an email that is friendly and professional.",
+            "You need to write an email that is not too long and not too short.",
+            "You need to write an email that is not too formal and not too informal.",
+        ],
+        response_model=Email,
+    )
 
-            call_result = scheduler_agent.run(schedule_prompt)
-            scheduled_call = call_result.content
+    email_sender_agent: Agent = Agent(
+        description="You are an expert email sender agent that sends emails to selected candidates.",
+        model=OpenAIChat(id="gpt-4o"),
+        instructions=[
+            "You are an expert email sender agent that sends emails to selected candidates.",
+            "You need to send an email to the candidate using the Resend tool.",
+            "You will be given the email subject and body and you need to send it to the candidate.",
+        ],
+        tools=[ResendTools(from_email="email@agno.com")],
+    )
 
-            print(f"📅 Scheduled for: {scheduled_call.call_time}")
-            print(f"🔗 Meeting URL: {scheduled_call.url}")
+    def extract_text_from_pdf(self, pdf_url: str) -> str:
+        """Download PDF from URL and extract text content"""
+        try:
+            # Download PDF content
+            response = requests.get(pdf_url)
+            response.raise_for_status()
 
-            # Write congratulatory email
-            email_prompt = f"""
-            Write a professional interview invitation email for:
-            - Candidate: {candidate.name} ({candidate.email})
-            - Interview time: {scheduled_call.call_time}
-            - Meeting URL: {scheduled_call.url}
-            - Congratulate them on being selected
-            - Include next steps and what to expect
-            """
+            # Create PDF reader object
+            pdf_file = io.BytesIO(response.content)
+            pdf_reader = PdfReader(pdf_file)
 
-            email_result = email_writer_agent.run(email_prompt)
-            email_content = email_result.content
+            # Extract text from all pages
+            text_content = ""
+            for page in pdf_reader.pages:
+                text_content += page.extract_text()
 
-            print(f"✏️ Email subject: {email_content.subject}")
+            return text_content
 
-            # Send email
-            send_prompt = f"""
-            Send the interview invitation email:
-            - To: {candidate.email}
-            - Subject: {email_content.subject}
-            - Body: {email_content.body}
-            
-            Use the simulate_email_sending tool.
-            """
+        except Exception as e:
+            print(f"Error processing PDF: {str(e)}")
+            return ""
 
-            send_result = email_sender_agent.run(send_prompt)
-            print(f"📧 Email sent to {candidate.email}")
+    def run(
+        self, candidate_resume_urls: List[str], job_description: str
+    ) -> RunResponse:
+        selected_candidates = []
 
-    # Final summary
-    summary = f"""
-    🎉 RECRUITMENT WORKFLOW COMPLETED!
-    
-    📊 Summary:
-    • Processed: {len(resumes)} candidate resumes
-    • Selected: {len(selected_candidates)} candidates for interviews
-    • Interviews scheduled: {len(selected_candidates)}
-    • Emails sent: {len(selected_candidates)}
-    
-    ✅ Selected candidates:
-    """
+        if not candidate_resume_urls:
+            raise Exception("candidate_resume_urls cannot be empty")
 
-    for candidate in selected_candidates:
-        summary += (
-            f"\n   • {candidate.name} ({candidate.email}) - Score: {candidate.score}/10"
+        for resume_url in candidate_resume_urls:
+            # Extract text from PDF resume
+            if resume_url in self.session_state:
+                resume_content = self.session_state[resume_url]
+            else:
+                resume_content = self.extract_text_from_pdf(resume_url)
+                self.session_state[resume_url] = resume_content
+            screening_result = None
+
+            if resume_content:
+                # Screen the candidate
+                input = f"Candidate resume: {resume_content}, Job description: {job_description}"
+                screening_result = self.screening_agent.run(input)
+                logger.info(screening_result)
+            else:
+                logger.error(f"Could not process resume from URL: {resume_url}")
+
+            if (
+                screening_result
+                and screening_result.content
+                and screening_result.content.score > 7.0
+            ):
+                selected_candidates.append(screening_result.content)
+
+        for selected_candidate in selected_candidates:
+            input = f"Schedule a 1hr call with Candidate name: {selected_candidate.name}, Candidate email: {selected_candidate.email} and the interviewer would be Manthan Gupts with email manthan@agno.com"
+            scheduled_call = self.interview_scheduler_agent.run(input)
+            logger.info(scheduled_call.content)
+
+            if (
+                scheduled_call.content
+                and scheduled_call.content.url
+                and scheduled_call.content.call_time
+            ):
+                input = f"Write an email to Candidate name: {selected_candidate.name}, Candidate email: {selected_candidate.email} for the call scheduled at {scheduled_call.content.call_time} with the url {scheduled_call.content.url} and congratulate them for the interview from John Doe designation Senior Software Engineer and email john@agno.com"
+                email = self.email_writer_agent.run(input)
+                logger.info(email.content)
+
+                if email.content:
+                    input = f"Send email to {selected_candidate.email} with subject {email.content.subject} and body {email.content.body}"
+                    self.email_sender_agent.run(input)
+
+        return RunResponse(
+            content=f"Selected {len(selected_candidates)} candidates for the interview.",
         )
-
-    return summary
-
-
-# --- Workflow definition ---
-recruitment_workflow = Workflow(
-    name="Employee Recruitment Workflow (Simulated)",
-    description="Automated candidate screening with simulated scheduling and email",
-    steps=recruitment_execution,
-    workflow_session_state={},  # Initialize empty workflow session state
-)
 
 
 if __name__ == "__main__":
-    # Test with sample data
-    print("🧪 Testing Employee Recruitment Workflow with Simulated Tools")
-    print("=" * 60)
-
-    result = recruitment_workflow.print_response(
-        message="Process candidates for backend engineer position",
+    workflow = EmployeeRecruitmentWorkflow()
+    result = workflow.run(
         candidate_resume_urls=[
-            "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_1.pdf",
-            "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_2.pdf",
+            # Add resume URLs here
         ],
         job_description="""
-        We are hiring for backend and systems engineers!
-        Join our team building the future of agentic software
+            We are hiring for backend and systems engineers!
+            Join our team building the future of agentic software
 
-        Requirements:
-        🧠 You know your way around Python, typescript, docker, and AWS.
-        ⚙️ Love to build in public and contribute to open source.
-        🚀 Are ok dealing with the pressure of an early-stage startup.
-        🏆 Want to be a part of the biggest technological shift since the internet.
-        🌟 Bonus: experience with infrastructure as code.
-        🌟 Bonus: starred Agno repo.
+            Apply if:
+            🧠 You know your way around Python, typescript, docker, and AWS.
+            ⚙️ Love to build in public and contribute to open source.
+            🚀 Are ok dealing with the pressure of an early-stage startup.
+            🏆 Want to be a part of the biggest technological shift since the internet.
+            🌟 Bonus: experience with infrastructure as code.
+            🌟 Bonus: starred Agno repo.
         """,
     )
+    print(result.content)
