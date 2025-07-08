@@ -106,6 +106,7 @@ class AgentOS:
     def _auto_discover_managers(self) -> List[BaseManager]:
         """Auto-discover managers from agents, teams, and workflows."""
         discovered_managers: List[BaseManager] = []
+        
         seen_components: Dict[str, set] = {
             "session_db": set(),
             "knowledge": set(),
@@ -124,44 +125,61 @@ class AgentOS:
         # Process agents
         if self.agents:
             for agent in self.agents:
-                # Session manager - check for memory.db (agents use memory.db for storage)
                 if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
+                    memory_id = id(agent.memory)
                     db_id = id(agent.memory.db)
-                    if add_unique_component("session_db", str(db_id)):
-                        discovered_managers.append(SessionManager(db=agent.memory.db))
-
+                    
+                    # Memory manager
+                    if add_unique_component("memory", str(memory_id)):
+                        discovered_managers.append(MemoryManager(memory=agent.memory))
+                        
+                    # Session manager
+                    if agent.memory.db.session_table_name:
+                        if add_unique_component("session_db", str(db_id)):
+                            discovered_managers.append(SessionManager(db=agent.memory.db))
+                    
+                    # Metrics manager
+                    if agent.memory.db.metrics_table_name:
+                        if add_unique_component("metrics_db", str(db_id)):
+                            discovered_managers.append(MetricsManager(db=agent.memory.db))
+                    
+                    # Eval manager
+                    if agent.memory.db.eval_table_name:
+                        if add_unique_component("eval_db", str(db_id)):
+                            discovered_managers.append(EvalManager(db=agent.memory.db))
+                            
                 # Knowledge manager
                 if hasattr(agent, 'knowledge') and agent.knowledge:
                     knowledge_id = id(agent.knowledge)
                     if add_unique_component("knowledge", str(knowledge_id)):
                         discovered_managers.append(KnowledgeManager(knowledge=agent.knowledge))
 
-                # Memory manager
-                if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
-                    memory_id = id(agent.memory)
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_managers.append(MemoryManager(memory=agent.memory))
-
-                # Metrics manager - check for memory.db
-                if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
-                    db_id = id(agent.memory.db)
-                    if add_unique_component("metrics_db", str(db_id)):
-                        discovered_managers.append(MetricsManager(db=agent.memory.db))
-
-                # Eval manager - check for memory.db
-                if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
-                    db_id = id(agent.memory.db)
-                    if add_unique_component("eval_db", str(db_id)):
-                        discovered_managers.append(EvalManager(db=agent.memory.db))
 
         # Process teams
         if self.teams:
             for team in self.teams:
-                # Session manager - check for memory.db (teams use memory.db for storage)
                 if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
+                    memory_id = id(team.memory)
                     db_id = id(team.memory.db)
-                    if add_unique_component("session_db", str(db_id)):
-                        discovered_managers.append(SessionManager(db=team.memory.db))
+                    
+                    # Memory manager
+                    if add_unique_component("memory", str(memory_id)):
+                        discovered_managers.append(MemoryManager(memory=team.memory))
+                    
+                    # Session manager
+                    if team.memory.db.session_table_name:
+                        if add_unique_component("session_db", str(db_id)):
+                            discovered_managers.append(SessionManager(db=team.memory.db))
+                            
+                    # Metrics manager
+                    if team.memory.db.metrics_table_name:
+                        if add_unique_component("metrics_db", str(db_id)):
+                            discovered_managers.append(MetricsManager(db=team.memory.db))
+                    
+                    # Eval manager
+                    if team.memory.db.eval_table_name:
+                        if add_unique_component("eval_db", str(db_id)):
+                            discovered_managers.append(EvalManager(db=team.memory.db))
 
                 # Knowledge manager
                 if hasattr(team, 'knowledge') and team.knowledge:
@@ -169,32 +187,13 @@ class AgentOS:
                     if add_unique_component("knowledge", str(knowledge_id)):
                         discovered_managers.append(KnowledgeManager(knowledge=team.knowledge))
 
-                # Memory manager
-                if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
-                    memory_id = id(team.memory)
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_managers.append(MemoryManager(memory=team.memory))
-
-                # Metrics manager - check for memory.db
-                if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
-                    db_id = id(team.memory.db)
-                    if add_unique_component("metrics_db", str(db_id)):
-                        discovered_managers.append(MetricsManager(db=team.memory.db))
-
-                # Eval manager - check for memory.db
-                if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
-                    db_id = id(team.memory.db)
-                    if add_unique_component("eval_db", str(db_id)):
-                        discovered_managers.append(EvalManager(db=team.memory.db))
 
         # Process workflows
         # TODO: Implement workflow manager discovery
 
         # Log discovered managers
         if discovered_managers:
-            log_info(f"Auto-discovered {len(discovered_managers)} managers:")
-            for manager in discovered_managers:
-                log_info(f"  - {manager.name} ({manager.type})")
+            log_info(f"Auto-discovered {len(discovered_managers)} managers")
 
         return discovered_managers
 
