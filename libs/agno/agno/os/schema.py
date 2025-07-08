@@ -426,7 +426,7 @@ class TeamRunSchema(BaseModel):
             run_response_format="",
             run_review=None,
             metrics=run_response.get("metrics", {}),
-            tools=[tool.to_dict() for tool in run_response.get("tools", [])] if run_response.get("tools") else None,
+            tools=[tool for tool in run_response.get("tools", [])] if run_response.get("tools") else None,
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,
