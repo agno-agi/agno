@@ -1,18 +1,30 @@
 import json
 import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+from uuid import uuid4
 
-from sqlalchemy import Column, MetaData, Table, func, select, text
+from sqlalchemy import Index, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.memory import MemoryRow
+from agno.db.schemas import MemoryRow
 from agno.db.sqlite.schemas import get_table_schema_definition
-from agno.db.sqlite.utils import apply_sorting, is_table_available, is_valid_table
+from agno.db.sqlite.utils import (
+    apply_sorting,
+    bulk_upsert_metrics,
+    calculate_date_metrics,
+    fetch_all_sessions_data,
+    get_dates_to_calculate_metrics_for,
+    is_table_available,
+    is_valid_table,
+)
+from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
+    from sqlalchemy import Column, MetaData, Table, and_, func, select, text, update
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -27,9 +39,7 @@ class SqliteDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
         db_file: Optional[str] = None,
-        agent_session_table: Optional[str] = None,
-        team_session_table: Optional[str] = None,
-        workflow_session_table: Optional[str] = None,
+        session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -48,9 +58,7 @@ class SqliteDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
             db_file (Optional[str]): The database file to connect to.
-            agent_session_table (Optional[str]): Name of the table to store Agent sessions.
-            team_session_table (Optional[str]): Name of the table to store Team sessions.
-            workflow_session_table (Optional[str]): Name of the table to store Workflow sessions.
+            session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             user_memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
@@ -60,9 +68,7 @@ class SqliteDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         super().__init__(
-            agent_session_table=agent_session_table,
-            team_session_table=team_session_table,
-            workflow_session_table=workflow_session_table,
+            session_table=session_table,
             user_memory_table=user_memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -172,37 +178,72 @@ class SqliteDb(BaseDb):
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {table_name}")
+            log_info(f"Successfully created table '{table_name}'")
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {table_name}: {e}")
+            log_error(f"Could not create table '{table_name}': {e}")
             raise
 
-    def _get_table_for_session_type(self, session_type: SessionType) -> Optional[Table]:
-        if session_type == SessionType.AGENT:
-            if self.agent_session_table_name is None:
-                raise ValueError("Agent session table was not provided on initialization")
-            self.agent_session_table = self._get_or_create_table(
-                table_name=self.agent_session_table_name, table_type="agent_sessions"
-            )
-            return self.agent_session_table
-        elif session_type == SessionType.TEAM:
-            if self.team_session_table_name is None:
-                raise ValueError("Team session table was not provided on initialization")
-            self.team_session_table = self._get_or_create_table(
-                table_name=self.team_session_table_name, table_type="team_sessions"
-            )
-            return self.team_session_table
-        elif session_type == SessionType.WORKFLOW:
-            if self.workflow_session_table_name is None:
-                raise ValueError("Workflow session table was not provided on initialization")
-            self.workflow_session_table = self._get_or_create_table(
-                table_name=self.workflow_session_table_name, table_type="workflow_sessions"
-            )
-            return self.workflow_session_table
+    def _get_table(self, table_type: str) -> Table:
+        if table_type == "sessions":
+            if not hasattr(self, "session_table"):
+                if self.session_table_name is None:
+                    raise ValueError("Session table was not provided on initialization")
+
+                log_info(f"Getting session table: {self.session_table_name}")
+                self.session_table = self._get_or_create_table(
+                    table_name=self.session_table_name, table_type=table_type
+                )
+
+            return self.session_table
+
+        elif table_type == "user_memories":
+            if not hasattr(self, "user_memory_table"):
+                if self.user_memory_table_name is None:
+                    raise ValueError("User memory table was not provided on initialization")
+
+                log_info(f"Getting user memory table: {self.user_memory_table_name}")
+                self.user_memory_table = self._get_or_create_table(
+                    table_name=self.user_memory_table_name, table_type="user_memories"
+                )
+
+            return self.user_memory_table
+
+        elif table_type == "metrics":
+            if not hasattr(self, "metrics_table"):
+                if self.metrics_table_name is None:
+                    raise ValueError("Metrics table was not provided on initialization")
+
+                log_info(f"Getting metrics table: {self.metrics_table_name}")
+                self.metrics_table = self._get_or_create_table(table_name=self.metrics_table_name, table_type="metrics")
+
+            return self.metrics_table
+
+        elif table_type == "evals":
+            if not hasattr(self, "eval_table"):
+                if self.eval_table_name is None:
+                    raise ValueError("Eval table was not provided on initialization")
+
+                log_info(f"Getting eval table: {self.eval_table_name}")
+                self.eval_table = self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
+
+            return self.eval_table
+
+        else:
+            raise ValueError(f"Unknown table type: '{table_type}'")
 
     def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
+        """
+        Check if the table exists and is valid, else create it.
+
+        Args:
+            table_name (str): Name of the table to get or create
+            table_type (str): Type of table (used to get schema definition)
+
+        Returns:
+            Table: SQLAlchemy Table object
+        """
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name)
 
@@ -214,10 +255,10 @@ class SqliteDb(BaseDb):
             raise ValueError(f"Table {table_name} has an invalid schema")
 
         try:
-            # Load table without schema for SQLite
             table = Table(table_name, self.metadata, autoload_with=self.db_engine)
             log_debug(f"Loaded existing table {table_name}")
             return table
+
         except Exception as e:
             log_error(f"Error loading existing table {table_name}: {e}")
             raise
@@ -227,19 +268,20 @@ class SqliteDb(BaseDb):
     def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
         """
         Insert or update an agent session in the database.
+
         Args:
             session (AgentSession): The session data to upsert.
+
         Returns:
             Optional[dict]: The upserted session, or None if operation failed.
+
         Raises:
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table_for_session_type(SessionType.AGENT)
-            if table is None:
-                raise ValueError("Agent session table not found")
+            table = self._get_table(table_type="sessions")
 
-            # Calculated fields - convert to JSON strings for SQLite
+            # Calculated fields
             chat_history = (
                 json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
                 if session.chat_history
@@ -254,7 +296,6 @@ class SqliteDb(BaseDb):
             extra_data = json.dumps(session.extra_data) if session.extra_data else None
 
             with self.Session() as sess, sess.begin():
-                # SQLite upsert using INSERT OR REPLACE
                 stmt = sqlite.insert(table).values(
                     session_id=session.session_id,
                     agent_id=session.agent_id,
@@ -269,8 +310,6 @@ class SqliteDb(BaseDb):
                     created_at=session.created_at,
                     updated_at=session.created_at,
                 )
-
-                # SQLite upsert syntax
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
@@ -289,9 +328,10 @@ class SqliteDb(BaseDb):
 
                 sess.execute(stmt)
 
-                # Get the upserted record since SQLite doesn't support RETURNING with upsert
+                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
                 select_stmt = select(table).where(table.c.session_id == session.session_id)
                 row = sess.execute(select_stmt).fetchone()
+
                 sess.commit()
 
             return row._mapping if row else None
@@ -301,13 +341,277 @@ class SqliteDb(BaseDb):
             return None
 
     def _upsert_team_session_raw(self, session: TeamSession) -> Optional[Dict[str, Any]]:
-        pass
+        """
+        Insert or update a team session in the database.
+
+        Args:
+            session (TeamSession): The session data to upsert.
+
+        Returns:
+            Optional[dict]: The upserted session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            # Calculated fields
+            chat_history = (
+                json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
+                if session.chat_history
+                else None
+            )
+            runs = json.dumps([run.to_dict() for run in session.runs]) if session.runs else None
+            summary = json.dumps(session.summary) if session.summary else None
+
+            # Convert other JSON fields to strings
+            team_data = json.dumps(session.team_data) if session.team_data else None
+            session_data = json.dumps(session.session_data) if session.session_data else None
+            extra_data = json.dumps(session.extra_data) if session.extra_data else None
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    session_id=session.session_id,
+                    team_id=session.team_id,
+                    user_id=session.user_id,
+                    runs=runs,
+                    team_data=team_data,
+                    session_data=session_data,
+                    chat_history=chat_history,
+                    summary=summary,
+                    extra_data=extra_data,
+                    created_at=session.created_at,
+                    updated_at=session.created_at,
+                )
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_=dict(
+                        team_id=session.team_id,
+                        user_id=session.user_id,
+                        team_data=team_data,
+                        session_data=session_data,
+                        chat_history=chat_history,
+                        summary=summary,
+                        extra_data=extra_data,
+                        runs=runs,
+                        updated_at=int(time.time()),
+                    ),
+                )
+
+                sess.execute(stmt)
+
+                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
+                select_stmt = select(table).where(table.c.session_id == session.session_id)
+                row = sess.execute(select_stmt).fetchone()
+
+                sess.commit()
+
+                return row._mapping if row else None
+
+        except Exception as e:
+            log_error(f"Exception upserting into team session table: {e}")
+            return None
 
     def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[Dict[str, Any]]:
-        pass
+        """
+        Insert or update a workflow session in the database.
 
-    def get_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
-        pass
+        Args:
+            session (WorkflowSession): The session data to upsert.
+
+        Returns:
+            Optional[dict]: The upserted session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            # Calculated fields
+            chat_history = (
+                json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
+                if session.chat_history
+                else None
+            )
+            runs = json.dumps([run.to_dict() for run in session.runs]) if session.runs else None
+            summary = json.dumps(session.summary) if session.summary else None
+
+            # Convert other JSON fields to strings
+            workflow_data = json.dumps(session.workflow_data) if session.workflow_data else None
+            session_data = json.dumps(session.session_data) if session.session_data else None
+            extra_data = json.dumps(session.extra_data) if session.extra_data else None
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    session_id=session.session_id,
+                    workflow_id=session.workflow_id,
+                    user_id=session.user_id,
+                    runs=runs,
+                    workflow_data=workflow_data,
+                    session_data=session_data,
+                    chat_history=chat_history,
+                    summary=summary,
+                    extra_data=extra_data,
+                    created_at=session.created_at,
+                    updated_at=session.created_at,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_=dict(
+                        workflow_id=session.workflow_id,
+                        user_id=session.user_id,
+                        workflow_data=workflow_data,
+                        session_data=session_data,
+                        chat_history=chat_history,
+                        summary=summary,
+                        extra_data=extra_data,
+                        runs=runs,
+                        updated_at=int(time.time()),
+                    ),
+                )
+
+                sess.execute(stmt)
+
+                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
+                select_stmt = select(table).where(table.c.session_id == session.session_id)
+                row = sess.execute(select_stmt).fetchone()
+
+                sess.commit()
+
+                return row._mapping if row else None
+
+        except Exception as e:
+            log_error(f"Exception upserting into workflow session table: {e}")
+            return None
+
+    def delete_session(self, session_id: str) -> None:
+        """
+        Delete a session from the database.
+
+        Args:
+            session_id (str): ID of the session to delete
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.session_id == session_id)
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No session found with session_id: {session_id} in table {table.name}")
+                else:
+                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+
+        except Exception as e:
+            log_error(f"Exception deleting session: {e}")
+
+    def delete_sessions(self, session_ids: List[str]) -> None:
+        """Delete all given sessions from the database.
+        Can handle multiple session types in the same run.
+
+        Args:
+            session_ids (List[str]): The IDs of the sessions to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                result = sess.execute(delete_stmt)
+
+            log_debug(f"Successfully deleted {result.rowcount} sessions")
+
+        except Exception as e:
+            log_error(f"Error deleting sessions: {e}")
+
+    def get_session_raw(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
+        table: Optional[Table] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a session as a raw dictionary.
+
+        Args:
+            session_id (str): The ID of the session to get.
+            session_type (SessionType): The type of session to get.
+            table (Table): Table to read from. If not provided, the session type must be provided.
+
+        Returns:
+            Optional[Dict[str, Any]]: The session as a raw dictionary, or None if not found.
+
+        Raises:
+            ValueError: If no table and no session type are provided, or if the table is not found.
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return result._mapping
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return None
+
+    def get_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        session_type: Optional[SessionType] = None,
+        table: Optional[Table] = None,
+    ) -> Optional[Session]:
+        """
+        Read a session from the database.
+
+        Args:
+            table (Table): Table to read from.
+            session_id (str): ID of the session to read.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
+
+        Returns:
+            Optional[Session]: Session object if found, None otherwise.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            session_raw = self.get_session_raw(
+                session_id=session_id, user_id=user_id, session_type=session_type, table=table
+            )
+            if session_raw is None:
+                return None
+
+            if session_type == SessionType.AGENT:
+                return AgentSession.from_dict(session_raw)
+            elif session_type == SessionType.TEAM:
+                return TeamSession.from_dict(session_raw)
+            elif session_type == SessionType.WORKFLOW:
+                return WorkflowSession.from_dict(session_raw)
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return None
 
     def get_sessions_raw(
         self,
@@ -340,12 +644,7 @@ class SqliteDb(BaseDb):
             Tuple[List[Dict[str, Any]], int]: List of sessions matching the criteria and the total number of sessions.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError("No table found")
+            table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -371,6 +670,7 @@ class SqliteDb(BaseDb):
                         )
                     )
 
+                # Getting total count
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
 
@@ -418,12 +718,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError("No table found")
+            table = self._get_table(table_type="sessions")
 
             sessions_raw, _ = self.get_sessions_raw(  # Note: Added unpacking here
                 session_type=session_type,
@@ -437,18 +732,57 @@ class SqliteDb(BaseDb):
                 table=table,
             )
 
-            if table == self.agent_session_table:
+            if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif table == self.team_session_table:
+            elif session_type == SessionType.TEAM:
                 return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif table == self.workflow_session_table:
+            elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
             else:
-                raise ValueError(f"Invalid table: {table}")
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
             return []
+
+    def rename_session(
+        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Table] = None
+    ) -> Optional[Session]:
+        """
+        Rename a session in the database.
+
+        Args:
+            session_id (str): The ID of the session to rename.
+            session_type (SessionType): The type of session to rename.
+            session_name (str): The new name for the session.
+            table (Table): Table to read from.
+
+        Returns:
+            Optional[Session]: The renamed session, or None if operation failed.
+
+        Raises:
+            Exception: If an error occurs during renaming.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            with self.Session() as sess, sess.begin():
+                # TODO: wrong. session_name is inside session_data. correct everywhere.
+                stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                sess.commit()
+
+            if session_type == SessionType.AGENT:
+                return AgentSession.from_dict(row._mapping)
+            elif session_type == SessionType.TEAM:
+                return TeamSession.from_dict(row._mapping)
+            elif session_type == SessionType.WORKFLOW:
+                return WorkflowSession.from_dict(row._mapping)
+
+        except Exception as e:
+            log_error(f"Exception renaming session: {e}")
+            return None
 
     def upsert_session(self, session: Session) -> Optional[Session]:
         """
@@ -477,6 +811,205 @@ class SqliteDb(BaseDb):
 
     # -- Memory methods --
 
+    def delete_user_memory(self, memory_id: str) -> bool:
+        """Delete a user memory from the database.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
+
+                return success
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {e}")
+            return False
+
+    def delete_user_memories(self, memory_ids: List[str]) -> None:
+        """Delete user memories from the database.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+                result = sess.execute(delete_stmt)
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found with ids: {memory_ids}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memories: {e}")
+
+    def get_all_memory_topics(self) -> List[str]:
+        """Get all memory topics from the database.
+
+        Returns:
+            List[str]: List of memory topics.
+        """
+        try:
+            table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(func.json_array_elements_text(table.c.topics))
+                result = sess.execute(stmt).fetchall()
+                return [record[0] for record in result]
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return []
+
+    def get_user_memory_raw(self, memory_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        """Get a memory from the database as a raw dictionary.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+            table (Table): Table to read from.
+
+        Returns:
+            Optional[Dict[str, Any]]: The memory as a raw dictionary, or None if not found.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.memory_id == memory_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+            return result._mapping
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return None
+
+    def get_user_memory(self, memory_id: str, table: Optional[Table] = None) -> Optional[MemoryRow]:
+        """Get a memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+            table (Table): Table to read from.
+
+        Returns:
+            Optional[MemoryRow]: The memory as a MemoryRow object, or None if not found.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            memory_raw = self.get_user_memory_raw(memory_id=memory_id, table=table)
+            if memory_raw is None:
+                return None
+
+            return MemoryRow(
+                id=memory_raw["memory_id"],
+                user_id=memory_raw["user_id"],
+                memory=memory_raw["memory"],
+                last_updated=memory_raw["last_updated"],
+            )
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return None
+
+    def get_user_memories_raw(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
+        search_content: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get all memories from the database as raw dictionaries.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: The memories as raw dictionaries and the total number of memories.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if topics is not None:
+                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
+                    stmt = stmt.where(and_(*topic_conditions))
+                if search_content is not None:
+                    stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [record._mapping for record in result], total_count
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return [], 0
+
     def get_user_memories(
         self,
         user_id: Optional[str] = None,
@@ -489,14 +1022,809 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
     ) -> List[MemoryRow]:
-        return []
+        """Get all memories from the database as MemoryRow objects.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            List[MemoryRow]: The memories as MemoryRow objects.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            user_memories_raw, total_count = self.get_user_memories_raw(
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                topics=topics,
+                search_content=search_content,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                table=table,
+            )
+            if not user_memories_raw:
+                return []
+
+            return [
+                MemoryRow(
+                    id=record["memory_id"],
+                    user_id=record["user_id"],
+                    memory=record["memory"],
+                    last_updated=record["last_updated"],
+                )
+                for record in user_memories_raw
+            ]
+
+        except Exception as e:
+            log_debug(f"Exception reading from table: {e}")
+            return []
+
+    def get_user_memory_stats(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        table: Optional[Table] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    select(
+                        table.c.user_id,
+                        func.count(table.c.memory_id).label("total_memories"),
+                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                    )
+                    .where(table.c.user_id.is_not(None))
+                    .group_by(table.c.user_id)
+                    .order_by(func.max(table.c.last_updated).desc())
+                )
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [
+                    {
+                        "user_id": record.user_id,  # type: ignore
+                        "total_memories": record.total_memories,
+                        "last_memory_updated_at": record.last_memory_updated_at,
+                    }
+                    for record in result
+                ], total_count
+
+        except Exception as e:
+            log_debug(f"Exception getting user memory stats: {e}")
+            return [], 0
+
+    def upsert_user_memory_raw(self, memory: MemoryRow, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        """Upsert a user memory in the database, and return the upserted memory as a raw dictionary.
+
+        Args:
+            memory (MemoryRow): The user memory to upsert.
+            table (Optional[Table]): The table to upsert into.
+
+        Returns:
+            Optional[Dict[str, Any]]: The upserted user memory, or None if the operation fails.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="user_memories")
+
+            with self.Session() as sess, sess.begin():
+                if memory.id is None:
+                    memory.id = str(uuid4())
+
+                stmt = postgresql.insert(table).values(
+                    user_id=memory.user_id,
+                    agent_id=memory.agent_id,
+                    team_id=memory.team_id,
+                    memory_id=memory.id,
+                    memory=memory.memory,
+                    topics=memory.memory.get("topics", []),
+                    feedback=memory.memory.get("feedback", None),
+                    last_updated=int(time.time()),
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["memory_id"],
+                    set_=dict(
+                        memory=memory.memory,
+                        topics=memory.memory.get("topics", []),
+                        feedback=memory.memory.get("feedback", None),
+                        last_updated=int(time.time()),
+                    ),
+                ).returning(table)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                sess.commit()
+
+            return row._mapping
+
+        except Exception as e:
+            log_error(f"Exception upserting user memory: {e}")
+            return None
 
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        pass
+        """Upsert a user memory in the database.
 
-    def delete_user_memory(self, memory_id: str) -> bool:
-        return True
+        Args:
+            memory (MemoryRow): The user memory to upsert.
 
-    def delete_user_memories(self, memory_ids: List[str]) -> None:
-        pass
+        Returns:
+            Optional[UserMemory]: The upserted user memory, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="user_memories")
+
+            user_memory_raw = self.upsert_user_memory_raw(memory=memory, table=table)
+            if user_memory_raw is None:
+                return None
+
+            return MemoryRow(
+                id=user_memory_raw["memory_id"],
+                user_id=user_memory_raw["user_id"],
+                agent_id=user_memory_raw["agent_id"],
+                team_id=user_memory_raw["team_id"],
+                memory=user_memory_raw["memory"],
+                last_updated=user_memory_raw["last_updated"],
+            )
+
+        except Exception as e:
+            log_error(f"Exception upserting user memory: {e}")
+            return None
+
+    # -- Metrics methods --
+
+    def _get_all_sessions_for_metrics_calculation(
+        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
+
+         Args:
+            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
+            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of session dictionaries with session_type field.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+
+            stmt = select(
+                table.c.user_id,
+                table.c.session_data,
+                table.c.runs,
+                table.c.created_at,
+                table.c.session_type,
+            )
+
+            if start_timestamp is not None:
+                stmt = stmt.where(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                stmt = stmt.where(table.c.created_at <= end_timestamp)
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).fetchall()
+                return [record._mapping for record in result]
+
+        except Exception as e:
+            log_debug(f"Exception reading from sessions table: {e}")
+            return []
+
+    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+        """Get the first date for which metrics calculation is needed:
+
+        1. If there are metrics records, return the date of the first day without a complete metrics record.
+        2. If there are no metrics records, return the date of the first recorded session.
+        3. If there are no metrics records and no sessions records, return None.
+
+        Args:
+            table (Table): The table to get the starting date for.
+
+        Returns:
+            Optional[date]: The starting date for which metrics calculation is needed.
+        """
+        with self.Session() as sess:
+            stmt = select(table).order_by(table.c.date.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+
+            # 1. Return the date of the first day without a complete metrics record.
+            if result is not None:
+                if result.completed:
+                    return result._mapping["date"] + timedelta(days=1)
+                else:
+                    return result._mapping["date"]
+
+            # 2. No metrics records. Return the date of the first recorded session.
+            else:
+                first_session = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+                first_session_date = first_session[0].created_at
+
+                # 3. No metrics records and no sessions records. Return None.
+                if not first_session_date:
+                    return None
+
+                return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+
+    def calculate_metrics(self) -> Optional[list[dict]]:
+        """Calculate metrics for all dates without complete metrics.
+
+        Returns:
+            Optional[list[dict]]: The calculated metrics.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            table = self._get_table(table_type="metrics")
+
+            starting_date = self._get_metrics_calculation_starting_date(table)
+            if starting_date is None:
+                log_info("No session data found. Won't calculate metrics.")
+                return None
+
+            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+            if not dates_to_process:
+                log_info("Metrics already calculated for all relevant dates.")
+                return None
+
+            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            end_timestamp = int(
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+            )
+
+            sessions = self._get_all_sessions_for_metrics_calculation(
+                start_timestamp=start_timestamp, end_timestamp=end_timestamp
+            )
+            all_sessions_data = fetch_all_sessions_data(
+                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+            )
+            if not all_sessions_data:
+                log_info("No new session data found. Won't calculate metrics.")
+                return None
+
+            results = []
+            metrics_records = []
+
+            for date_to_process in dates_to_process:
+                date_key = date_to_process.isoformat()
+                sessions_for_date = all_sessions_data.get(date_key, {})
+
+                # Skip dates with no sessions
+                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+                    continue
+
+                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                metrics_records.append(metrics_record)
+
+            if metrics_records:
+                with self.Session() as sess, sess.begin():
+                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception refreshing metrics: {e}")
+            raise e
+
+    def get_metrics_raw(
+        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="metrics")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if starting_date:
+                    stmt = stmt.where(table.c.date >= starting_date)
+                if ending_date:
+                    stmt = stmt.where(table.c.date <= ending_date)
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], None
+
+                # Get the latest updated_at
+                latest_stmt = select(func.max(table.c.updated_at))
+                latest_updated_at = sess.execute(latest_stmt).scalar()
+
+            return [row._mapping for row in result], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {e}")
+            return [], None
+
+    # -- Knowledge methods --
+
+    def _get_knowledge_table(self) -> Table:
+        """Get or create the knowledge table.
+
+        Returns:
+            Table: The knowledge table.
+        """
+        if not hasattr(self, "knowledge_table"):
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge table was not provided on initialization")
+
+            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge_documents",
+                db_schema=self.db_schema,
+            )
+
+        return self.knowledge_table
+
+    def delete_knowledge_document(self, document_id: str):
+        """Delete a knowledge document from the database.
+
+        Args:
+            document_id (str): The ID of the document to delete.
+        """
+        table = self._get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = table.delete().where(table.c.id == document_id)
+            sess.execute(stmt)
+            sess.commit()
+        return
+
+    def get_document_status(self, document_id: str) -> Optional[str]:
+        table = self._get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table.c.status).where(table.c.id == document_id)
+            result = sess.execute(stmt).fetchone()
+            return result._mapping["status"]
+
+    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+        table = self._get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table).where(table.c.id == document_id)
+            result = sess.execute(stmt).fetchone()
+            return KnowledgeRow.model_validate(result._mapping)
+
+    def get_knowledge_documents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge documents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge documents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[KnowledgeRow]: The knowledge documents.
+        """
+        table = self._get_knowledge_table()
+        with self.Session() as sess, sess.begin():
+            stmt = select(table)
+
+            # Apply sorting
+            if sort_by is not None:
+                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+
+            # Get total count before applying limit and pagination
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            total_count = sess.execute(count_stmt).scalar()
+
+            # Apply pagination after count
+            if limit is not None:
+                stmt = stmt.limit(limit)
+                if page is not None:
+                    stmt = stmt.offset((page - 1) * limit)
+
+            result = sess.execute(stmt).fetchall()
+            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+        """Upsert a knowledge document in the database.
+
+        Args:
+            knowledge_document (KnowledgeRow): The knowledge document to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
+        """
+        try:
+            table = self._get_knowledge_table()
+            with self.Session() as sess, sess.begin():
+                # Only include fields that are not None in the update
+                update_fields = {
+                    k: v
+                    for k, v in {
+                        "name": knowledge_row.name,
+                        "description": knowledge_row.description,
+                        "metadata": knowledge_row.metadata,
+                        "type": knowledge_row.type,
+                        "size": knowledge_row.size,
+                        "linked_to": knowledge_row.linked_to,
+                        "access_count": knowledge_row.access_count,
+                        "status": knowledge_row.status,
+                        "created_at": knowledge_row.created_at,
+                        "updated_at": knowledge_row.updated_at,
+                    }.items()
+                    if v is not None
+                }
+
+                stmt = (
+                    postgresql.insert(table)
+                    .values(knowledge_row.model_dump())
+                    .on_conflict_do_update(index_elements=["id"], set_=update_fields)
+                )
+                sess.execute(stmt)
+                sess.commit()
+            return knowledge_row
+        except Exception as e:
+            log_error(f"Error upserting knowledge document: {e}")
+            return None
+
+    # -- Eval methods --
+
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        """Create an EvalRunRecord in the database.
+
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+
+            with self.Session() as sess, sess.begin():
+                current_time = int(time.time())
+                stmt = postgresql.insert(table).values(
+                    {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
+                )
+                sess.execute(stmt)
+                sess.commit()
+
+            return eval_run
+
+        except Exception as e:
+            log_error(f"Error creating eval run: {e}")
+            return None
+
+    def delete_eval_run(self, eval_run_id: str) -> None:
+        """Delete an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to delete.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    log_warning(f"No eval run found with ID: {eval_run_id}")
+                else:
+                    log_debug(f"Deleted eval run with ID: {eval_run_id}")
+
+        except Exception as e:
+            log_debug(f"Error deleting eval run {eval_run_id}: {e}")
+            raise
+
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): List of eval run IDs to delete.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                result = sess.execute(stmt)
+                if result.rowcount == 0:
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
+                else:
+                    log_debug(f"Deleted {result.rowcount} eval runs")
+
+        except Exception as e:
+            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
+            raise
+
+    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+        """Get an eval run from the database as a raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+
+        Returns:
+            Optional[Dict[str, Any]]: The eval run as a raw dictionary, or None if not found.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="evals")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return result._mapping
+
+        except Exception as e:
+            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
+            return None
+
+    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
+        """Get an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+            table (Optional[Table]): The table to read from.
+
+        Returns:
+            Optional[EvalRunRecord]: The eval run, or None if not found.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="evals")
+
+            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id, table=table)
+            if eval_run_raw is None:
+                return None
+
+            return EvalRunRecord.model_validate(eval_run_raw)
+
+        except Exception as e:
+            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
+            return None
+
+    def get_eval_runs_raw(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[List[EvalType]] = None,
+        filter_type: Optional[EvalFilterType] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get all eval runs from the database as raw dictionaries.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            table (Optional[Table]): The table to read from.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow, all).
+
+        Returns:
+            List[Dict[str, Any]]: The eval runs as raw dictionaries.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="evals")
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                # Filtering
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if model_id is not None:
+                    stmt = stmt.where(table.c.model_id == model_id)
+                if eval_type is not None and len(eval_type) > 0:
+                    stmt = stmt.where(table.c.eval_type.in_(eval_type))
+                if filter_type is not None:
+                    if filter_type == EvalFilterType.AGENT:
+                        stmt = stmt.where(table.c.agent_id.is_not(None))
+                    elif filter_type == EvalFilterType.TEAM:
+                        stmt = stmt.where(table.c.team_id.is_not(None))
+                    elif filter_type == EvalFilterType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id.is_not(None))
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting - apply default sort by created_at desc if no sort parameters provided
+                if sort_by is None:
+                    stmt = stmt.order_by(table.c.created_at.desc())
+                else:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [row._mapping for row in result], total_count
+
+        except Exception as e:
+            log_debug(f"Exception getting eval runs: {e}")
+            return [], 0
+
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        table: Optional[Table] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        eval_type: Optional[List[EvalType]] = None,
+        filter_type: Optional[EvalFilterType] = None,
+    ) -> List[EvalRunRecord]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            table (Optional[Table]): The table to read from.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+
+        Returns:
+            List[EvalRunRecord]: The eval runs.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            if table is None:
+                table = self._get_table(table_type="evals")
+
+            eval_runs_raw, total_count = self.get_eval_runs_raw(
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                table=table,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                model_id=model_id,
+                eval_type=eval_type,
+                filter_type=filter_type,
+            )
+            if not eval_runs_raw:
+                return []
+
+            return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
+
+        except Exception as e:
+            log_debug(f"Exception getting eval runs: {e}")
+            return []
+
+    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+        """Upsert the name of an eval run in the database, returning raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+
+        Returns:
+            Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during update.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
+                )
+                sess.execute(stmt)
+                sess.commit()
+
+            return self.get_eval_run_raw(eval_run_id=eval_run_id)
+
+        except Exception as e:
+            log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
+            raise

@@ -25,12 +25,12 @@ from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, literal, update
+    from sqlalchemy import and_, func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text, union_all
+    from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -241,6 +241,11 @@ class PostgresDb(BaseDb):
     def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Check if the table exists and is valid, else create it.
+
+        Args:
+            table_name (str): Name of the table to get or create
+            table_type (str): Type of table (used to get schema definition)
+            db_schema (str): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
@@ -468,8 +473,6 @@ class PostgresDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to delete
-            session_type (SessionType): Type of session to delete. If not provided, the table must be provided.
-            table (Table): Table to delete from. If not provided, the session type must be provided.
 
         Raises:
             ValueError: If no table and no session type are provided, or if the table is not found.
