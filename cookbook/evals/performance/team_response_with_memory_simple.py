@@ -9,7 +9,6 @@ from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 
-
 cities = [
     "New York",
     "Los Angeles",
@@ -42,6 +41,7 @@ memory = Memory(db=memory_db)
 
 def get_weather(city: str) -> str:
     return f"The weather in {city} is sunny."
+
 
 weather_agent = Agent(
     agent_id="weather_agent",
