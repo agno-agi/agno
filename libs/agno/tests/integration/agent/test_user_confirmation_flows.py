@@ -1,4 +1,3 @@
-
 import pytest
 
 from agno.agent import Agent, RunResponse  # noqa
