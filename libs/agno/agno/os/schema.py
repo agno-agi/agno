@@ -261,21 +261,32 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name(session.to_dict())
+
+        if session.summary:
+            if isinstance(session.summary, str):
+                session_summary = json.loads(session.summary)
+            else:
+                session_summary = session.summary.to_dict()
+        if session_data := session.session_data:
+            if isinstance(session.session_data, str):
+                session_data = json.loads(session.session_data)
+        if agent_data := session.agent_data:
+            if isinstance(agent_data, str):
+                agent_data = json.loads(agent_data)
+
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
             workspace_id=None,
             session_id=session.session_id,
             session_name=session_name,
-            session_summary=session.summary.to_dict() if session.summary else None,
+            session_summary=session_summary,
             agent_id=session.agent_id if session.agent_id else None,
-            agent_data=session.agent_data,
+            agent_data=agent_data,
             agent_sessions=[],
             response_latency_avg=0,
-            total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
-            if session.session_data
-            else None,
-            metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            total_tokens=session_data.get("session_metrics", {}).get("total_tokens") if session.session_data else None,  # type: ignore
+            metrics=session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             chat_history=[message.to_dict() for message in session.chat_history] if session.chat_history else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,

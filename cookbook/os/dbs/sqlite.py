@@ -8,16 +8,19 @@ from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
 from agno.os.managers.session import SessionManager
 from agno.team.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the SQLite database
-db = SqliteDb(session_table="sessions")
+db = SqliteDb(
+    db_file="agno-os.db",
+    session_table="sessions",
+)
 
 # Setup the memory
 memory = Memory(db=db)
 
 basic_agent = Agent(
     name="Basic Agent",
+    agent_id="basic",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     enable_user_memories=True,
@@ -27,12 +30,12 @@ basic_agent = Agent(
     add_datetime_to_instructions=True,
     markdown=True,
 )
+
 team_agent = Team(
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     members=[basic_agent],
-    tools=[DuckDuckGoTools()],
     debug_mode=True,
 )
 

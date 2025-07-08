@@ -9,6 +9,7 @@ from sqlalchemy import Index, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     apply_sorting,
@@ -298,6 +299,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.AGENT.value,
                     agent_id=session.agent_id,
                     team_session_id=session.team_session_id,
                     user_id=session.user_id,
@@ -337,7 +339,7 @@ class SqliteDb(BaseDb):
             return row._mapping if row else None
 
         except Exception as e:
-            log_error(f"Exception upserting into agent session table: {e}")
+            log_error(f"Exception upserting an agent session into sessions table: {e}")
             return None
 
     def _upsert_team_session_raw(self, session: TeamSession) -> Optional[Dict[str, Any]]:
@@ -373,6 +375,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.TEAM.value,
                     team_id=session.team_id,
                     user_id=session.user_id,
                     runs=runs,
@@ -411,7 +414,7 @@ class SqliteDb(BaseDb):
                 return row._mapping if row else None
 
         except Exception as e:
-            log_error(f"Exception upserting into team session table: {e}")
+            log_error(f"Exception upserting a team session into sessions table: {e}")
             return None
 
     def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[Dict[str, Any]]:
@@ -447,6 +450,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.WORKFLOW.value,
                     workflow_id=session.workflow_id,
                     user_id=session.user_id,
                     runs=runs,
@@ -484,7 +488,7 @@ class SqliteDb(BaseDb):
                 return row._mapping if row else None
 
         except Exception as e:
-            log_error(f"Exception upserting into workflow session table: {e}")
+            log_error(f"Exception upserting a workflow session into sessions table: {e}")
             return None
 
     def delete_session(self, session_id: str) -> None:
