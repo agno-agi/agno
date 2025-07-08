@@ -26,16 +26,16 @@ Example companies to analyze:
 Run `pip install openai yfinance agno` to install dependencies.
 """
 
+import asyncio
 import random
 from pathlib import Path
 from shutil import rmtree
 from textwrap import dedent
-import asyncio
 
-from agno.utils.pprint import pprint_run_response
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 from pydantic import BaseModel
@@ -295,7 +295,9 @@ async def investment_analysis_execution(
         f.write(f"## Allocation Strategy\n{portfolio_strategy.allocation_strategy}\n\n")
         f.write(f"## Investment Thesis\n{portfolio_strategy.investment_thesis}\n\n")
         f.write(f"## Risk Management\n{portfolio_strategy.risk_management}\n\n")
-        f.write(f"## Final Recommendations\n{portfolio_strategy.final_recommendations}\n")
+        f.write(
+            f"## Final Recommendations\n{portfolio_strategy.final_recommendations}\n"
+        )
 
     print(f"✅ Portfolio strategy completed and saved to {investment_report}")
 
@@ -333,6 +335,7 @@ investment_workflow = Workflow(
 
 
 if __name__ == "__main__":
+
     async def main():
         from rich.prompt import Prompt
 

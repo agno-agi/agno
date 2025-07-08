@@ -23,6 +23,8 @@ from agno.run.v2.workflow import (
     RouterExecutionStartedEvent,
     StepCompletedEvent,
     StepOutputEvent,
+    StepsExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
@@ -582,7 +584,7 @@ class Workflow:
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
-                        
+
                         elif isinstance(event, WorkflowRunResponseEvent):
                             yield self._handle_event(event, workflow_run_response)
 
@@ -1918,6 +1920,47 @@ class Workflow:
 
                         step_started_printed = True
 
+                    elif isinstance(response, StepsExecutionStartedEvent):
+                        current_step_name = response.step_name or "Steps"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        status.update(f"Starting steps: {current_step_name} ({response.steps_count} steps)...")
+                        live_log.update(status)
+
+                    elif isinstance(response, StepsExecutionCompletedEvent):
+                        step_name = response.step_name or "Steps"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed steps: {step_name}")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_name}.{i + 1}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "StepsStepResult",
+                                    }
+                                )
+
+                        # Print steps summary
+                        if show_step_details:
+                            summary_content = "**Steps Summary:**\n\n"
+                            summary_content += f"- Total steps: {response.steps_count or 0}\n"
+                            summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
+
+                            steps_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Steps {step_name} (Completed)",
+                                border_style="yellow",
+                            )
+                            console.print(steps_summary_panel)
+
+                        step_started_printed = True
+
                     elif isinstance(response, WorkflowCompletedEvent):
                         status.update("Workflow completed!")
 
@@ -2723,7 +2766,7 @@ class Workflow:
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
         log_debug("Updating agents and teams with session information")
-        # Initialize steps - only if steps is iterable (not callable)    
+        # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not isinstance(self.steps, Callable):
             for step in self.steps:
                 # TODO: Handle properly steps inside other primitives

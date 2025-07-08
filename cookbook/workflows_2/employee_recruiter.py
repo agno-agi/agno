@@ -1,5 +1,5 @@
 """
-This workflow is a simple example of a recruitment workflow where in you can also pass custom prameters like job description, 
+This workflow is a simple example of a recruitment workflow where in you can also pass custom prameters like job description,
 candidate resume urls, etc. (**kwargs) in the workflow along with workflow execution input.
 """
 

@@ -80,14 +80,20 @@ class MarketResearch(BaseModel):
 class CompetitorAnalysis(BaseModel):
     competitors: str = Field(..., description="List of identified competitors.")
     swot_analysis: str = Field(..., description="SWOT analysis for each competitor.")
-    positioning: str = Field(..., description="Startup's potential positioning relative to competitors.")
+    positioning: str = Field(
+        ..., description="Startup's potential positioning relative to competitors."
+    )
 
 
 class ValidationReport(BaseModel):
-    executive_summary: str = Field(..., description="Executive summary of the validation.")
+    executive_summary: str = Field(
+        ..., description="Executive summary of the validation."
+    )
     idea_assessment: str = Field(..., description="Assessment of the startup idea.")
     market_opportunity: str = Field(..., description="Market opportunity analysis.")
-    competitive_landscape: str = Field(..., description="Competitive landscape overview.")
+    competitive_landscape: str = Field(
+        ..., description="Competitive landscape overview."
+    )
     recommendations: str = Field(..., description="Strategic recommendations.")
     next_steps: str = Field(..., description="Recommended next steps.")
 
@@ -197,14 +203,14 @@ async def startup_validation_execution(
     """
 
     print(f"🔍 Analyzing and refining the startup concept...")
-    
+
     try:
         clarification_result = await idea_clarifier_agent.arun(clarification_prompt)
         idea_clarification = clarification_result.content
-        
+
         print(f"✅ Idea clarification completed")
         print(f"📝 Mission: {idea_clarification.mission[:100]}...")
-        
+
     except Exception as e:
         return f"❌ Failed to clarify idea: {str(e)}"
 
@@ -230,14 +236,14 @@ async def startup_validation_execution(
     """
 
     print(f"📈 Researching market size and customer segments...")
-    
+
     try:
         market_result = await market_research_agent.arun(market_research_prompt)
         market_research = market_result.content
-        
+
         print(f"✅ Market research completed")
         print(f"🎯 TAM: {market_research.total_addressable_market[:100]}...")
-        
+
     except Exception as e:
         return f"❌ Failed to complete market research: {str(e)}"
 
@@ -264,14 +270,14 @@ async def startup_validation_execution(
     """
 
     print(f"🔎 Analyzing competitive landscape...")
-    
+
     try:
         competitor_result = await competitor_analysis_agent.arun(competitor_prompt)
         competitor_analysis = competitor_result.content
-        
+
         print(f"✅ Competitor analysis completed")
         print(f"🏆 Positioning: {competitor_analysis.positioning[:100]}...")
-        
+
     except Exception as e:
         return f"❌ Failed to complete competitor analysis: {str(e)}"
 
@@ -310,13 +316,13 @@ async def startup_validation_execution(
     """
 
     print(f"📝 Generating comprehensive validation report...")
-    
+
     try:
         final_result = await report_agent.arun(report_prompt)
         validation_report = final_result.content
-        
+
         print(f"✅ Validation report completed")
-        
+
     except Exception as e:
         return f"❌ Failed to generate final report: {str(e)}"
 
@@ -374,6 +380,7 @@ startup_validation_workflow = Workflow(
 
 
 if __name__ == "__main__":
+
     async def main():
         from rich.prompt import Prompt
 
