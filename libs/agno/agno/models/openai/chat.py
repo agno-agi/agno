@@ -672,11 +672,11 @@ class OpenAIChat(Model):
                     url_citations.append(UrlCitation(url=citation_url))
                 else:
                     url_citations.append(UrlCitation(url=str(citation_url)))
-            
+
             citations.urls = url_citations
             citations.raw = response.citations
             model_response.citations = citations
-            
+
             log_debug(f"Extracted {len(url_citations)} citations from response")
 
         if response.usage is not None:
@@ -740,11 +740,11 @@ class OpenAIChat(Model):
                     url_citations.append(UrlCitation(url=citation_url))
                 else:
                     url_citations.append(UrlCitation(url=str(citation_url)))
-            
+
             citations.urls = url_citations
             citations.raw = response_delta.citations
             model_response.citations = citations
-            
+
             log_debug(f"Extracted {len(url_citations)} citations from streaming response")
 
         # Add usage metrics if present
