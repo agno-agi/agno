@@ -1341,7 +1341,6 @@ class Workflow:
 
         if self.storage is not None:
             # Try to load existing session
-            log_debug(f"Reading WorkflowSessionV2: {self.session_id}")
             existing_session = self.read_from_storage()
 
             # Create new session if it doesn't exist

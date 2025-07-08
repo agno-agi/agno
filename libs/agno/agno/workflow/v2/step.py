@@ -359,7 +359,6 @@ class Step:
                         )
 
                         for event in response_stream:
-                            log_debug(f"Received event from agent: {type(event).__name__}")
                             yield event
                         final_response = self._process_step_output(self.active_executor.run_response)
 
