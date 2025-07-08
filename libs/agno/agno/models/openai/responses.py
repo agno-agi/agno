@@ -376,9 +376,7 @@ class OpenAIResponses(Model):
                         }
                     )
             elif message.role == "assistant":
-                formatted_messages.append(
-                    {"role": self.role_map[message.role], "content": message.content}
-                )
+                formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
 
             print(formatted_messages)
         return formatted_messages
