@@ -6937,7 +6937,7 @@ class Agent:
                     if response_content_stream and not self.markdown:
                         response_content = response_content_stream
                     else:
-                        response_content = response_content_batch
+                        response_content = response_content_batch  # type: ignore
 
                     # Sanitize empty Markdown content
                     if isinstance(response_content, Markdown):
@@ -7386,7 +7386,7 @@ class Agent:
                     if response_content_stream and not self.markdown:
                         response_content = response_content_stream
                     else:
-                        response_content = response_content_batch
+                        response_content = response_content_batch  # type: ignore
 
                     # Sanitize empty Markdown content
                     if isinstance(response_content, Markdown):

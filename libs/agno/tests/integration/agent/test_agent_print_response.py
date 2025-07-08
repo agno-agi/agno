@@ -437,4 +437,3 @@ def test_stream_vs_non_stream_behavior():
                 assert any(call.kwargs.get("stream") for call in mock_run.call_args_list), (
                     "run() should be called with stream=True in streaming mode"
                 )
-
