@@ -132,11 +132,13 @@ team_response_with_memory_impact = PerformanceEval(
     warmup_runs=0,
     measure_runtime=False,
     debug_mode=True,
+    memory_growth_tracking=True,
+    top_n_memory_allocations=10
 )
 
 if __name__ == "__main__":
     asyncio.run(
         team_response_with_memory_impact.arun(
-            print_results=True, print_summary=True, with_growth_tracking=True
+            print_results=True, print_summary=True
         )
     )
