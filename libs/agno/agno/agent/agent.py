@@ -6934,16 +6934,14 @@ class Agent:
 
                     response_panel = None
                     # Check if we have any response content to display
-                    response_content = (
-                        response_content_stream
-                        if response_content_stream and len(response_content_stream) > 0 and not self.markdown
-                        else response_content_batch
-                    )
+                    if response_content_stream and not self.markdown:
+                        response_content = response_content_stream
+                    else:
+                        response_content = response_content_batch
 
+                    # Sanitize empty Markdown content
                     if isinstance(response_content, Markdown):
-                        if response_content.markup is not None and response_content.markup.strip():
-                            response_content = response_content.markup
-                        else:
+                        if not (response_content.markup and response_content.markup.strip()):
                             response_content = None  # type: ignore
 
                     if response_content:
@@ -7385,15 +7383,14 @@ class Agent:
 
                     response_panel = None
                     # Check if we have any response content to display
-                    response_content = (
-                        response_content_stream
-                        if response_content_stream and len(response_content_stream) > 0
-                        else response_content_batch
-                    )
+                    if response_content_stream and not self.markdown:
+                        response_content = response_content_stream
+                    else:
+                        response_content = response_content_batch
+
+                    # Sanitize empty Markdown content
                     if isinstance(response_content, Markdown):
-                        if response_content.markup is not None and response_content.markup.strip():
-                            response_content = response_content.markup
-                        else:
+                        if not (response_content.markup and response_content.markup.strip()):
                             response_content = None  # type: ignore
 
                     if response_content:
