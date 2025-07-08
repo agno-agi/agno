@@ -9,11 +9,7 @@ from agno.team import Team
 
 # Setup the database and memory
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(
-    db_url=db_url,
-    agent_session_table="agent_sessions",
-    team_session_table="team_sessions",
-)
+db = PostgresDb(db_url=db_url, session_table="sessions")
 memory = Memory(db=db)
 
 # Sessions of this agent will be stored (it has memory)
