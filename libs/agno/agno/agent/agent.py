@@ -6944,7 +6944,7 @@ class Agent:
                         if response_content.markup is not None and response_content.markup.strip():
                             response_content = response_content.markup
                         else:
-                            response_content = None
+                            response_content = None  # type: ignore
 
                     if response_content:
                         render = True
@@ -7394,7 +7394,7 @@ class Agent:
                         if response_content.markup is not None and response_content.markup.strip():
                             response_content = response_content.markup
                         else:
-                            response_content = None
+                            response_content = None  # type: ignore
 
                     if response_content:
                         render = True
