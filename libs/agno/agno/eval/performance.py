@@ -118,6 +118,7 @@ class PerformanceResult:
 
         # Add rows
         if measure_runtime and measure_memory:
+            perf_table.add_row("Average", f"{self.avg_run_time:.6f}", f"{self.avg_memory_usage:.6f}")
             perf_table.add_row("Minimum", f"{self.min_run_time:.6f}", f"{self.min_memory_usage:.6f}")
             perf_table.add_row("Maximum", f"{self.max_run_time:.6f}", f"{self.max_memory_usage:.6f}")
             perf_table.add_row("Std Dev", f"{self.std_dev_run_time:.6f}", f"{self.std_dev_memory_usage:.6f}")
@@ -204,6 +205,12 @@ class PerformanceEval:
     print_summary: bool = False
     # Print detailed results
     print_results: bool = False
+    # Print detailed memory growth analysis
+    with_growth_tracking: bool = False
+
+    # Number of memory allocations to track
+    top_n_memory_allocations: int = 5
+
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
@@ -344,7 +351,7 @@ class PerformanceEval:
         else:
             set_log_level_to_info()
 
-    def _compare_memory_snapshots(self, snapshot1, snapshot2, top_n: int = 10):
+    def _compare_memory_snapshots(self, snapshot1, snapshot2, top_n: int):
         """
         Compare two memory snapshots to identify what's causing memory growth.
         """
@@ -404,13 +411,13 @@ class PerformanceEval:
 
             # Compare with previous snapshot if available
             if previous_snapshot is not None:
-                self._compare_memory_snapshots(previous_snapshot, current_snapshot)
+                self._compare_memory_snapshots(previous_snapshot, current_snapshot, self.top_n_memory_allocations)
             else:
                 # Get detailed memory allocation statistics
                 top_stats = current_snapshot.statistics("lineno")
 
-                log_debug("[DEBUG] Top 10 memory allocations:")
-                for stat in top_stats[:10]:
+                log_debug(f"[DEBUG] Top {self.top_n_memory_allocations} memory allocations:")
+                for stat in top_stats[: self.top_n_memory_allocations]:
                     log_debug(f"  {stat.count} blocks: {stat.size / 1024 / 1024:.1f} MiB")
                     log_debug(f"    {stat.traceback.format()}")
 
@@ -448,13 +455,13 @@ class PerformanceEval:
 
             # Compare with previous snapshot if available
             if previous_snapshot is not None:
-                self._compare_memory_snapshots(previous_snapshot, current_snapshot)
+                self._compare_memory_snapshots(previous_snapshot, current_snapshot, self.top_n_memory_allocations)
             else:
                 # Get detailed memory allocation statistics
                 top_stats = current_snapshot.statistics("lineno")
 
-                log_debug("[DEBUG] Top 10 memory allocations:")
-                for stat in top_stats[:10]:
+                log_debug(f"[DEBUG] Top {self.top_n_memory_allocations} memory allocations:")
+                for stat in top_stats[: self.top_n_memory_allocations]:
                     log_debug(f"  {stat.count} blocks: {stat.size / 1024 / 1024:.1f} MiB")
                     log_debug(f"    {stat.traceback.format()}")
 
@@ -530,7 +537,7 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    if with_growth_tracking:
+                    if self.with_growth_tracking or with_growth_tracking:
                         usage, current_snapshot = self._measure_memory_with_growth_tracking(
                             memory_baseline, previous_snapshot
                         )
@@ -652,7 +659,7 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    if with_growth_tracking:
+                    if self.with_growth_tracking or with_growth_tracking:
                         usage, current_snapshot = await self._async_measure_memory_with_growth_tracking(
                             memory_baseline, previous_snapshot
                         )

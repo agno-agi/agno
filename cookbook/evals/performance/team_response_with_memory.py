@@ -3,10 +3,10 @@ import random
 
 from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
+from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
+from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 
 users = [
@@ -32,15 +32,18 @@ cities = [
     "Las Vegas",
 ]
 
-agent_storage = SqliteStorage(
-    table_name="agent_sessions", db_file="tmp/data.db", auto_upgrade_schema=True
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+agent_storage = PostgresStorage(
+    table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
 )
 
-team_storage = SqliteStorage(
-    table_name="team_sessions", db_file="tmp/data.db", auto_upgrade_schema=True
+team_storage = PostgresStorage(
+    table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
 )
 
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+memory_db = PostgresMemoryDb(table_name="memory", db_url=db_url)
 memory = Memory(db=memory_db)
 
 
@@ -125,7 +128,7 @@ async def run_team():
 team_response_with_memory_impact = PerformanceEval(
     name="Team Memory Impact",
     func=run_team,
-    num_iterations=2,
+    num_iterations=5,
     warmup_runs=0,
     measure_runtime=False,
     debug_mode=True,
