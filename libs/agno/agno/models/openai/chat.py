@@ -663,7 +663,7 @@ class OpenAIChat(Model):
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
 
-        # Add citations if present (for providers like xAI)
+        # Add citations if present
         if hasattr(response, "citations") and response.citations:
             citations = Citations()
             url_citations = []
@@ -731,7 +731,6 @@ class OpenAIChat(Model):
                     except Exception as e:
                         log_warning(f"Error processing audio: {e}")
 
-        # Add citations if present in streaming response (for providers like xAI)
         if hasattr(response_delta, "citations") and response_delta.citations:
             citations = Citations()
             url_citations = []
