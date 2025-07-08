@@ -230,30 +230,32 @@ class Condition:
         condition_result = self._evaluate_condition(step_input)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        # Yield condition started event
-        yield ConditionExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            condition_result=condition_result,
-        )
-
-        if not condition_result:
-            # Yield condition completed event for empty case
-            yield ConditionExecutionCompletedEvent(
+        if stream_intermediate_steps:
+            # Yield condition started event
+            yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
                 workflow_id=workflow_run_response.workflow_id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=False,
-                executed_steps=0,
-                step_results=[],
+                condition_result=condition_result,
             )
+
+        if not condition_result:
+            if stream_intermediate_steps:
+                # Yield condition completed event for empty case
+                yield ConditionExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=False,
+                    executed_steps=0,
+                    step_results=[],
+                )
             return
 
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
@@ -319,19 +321,19 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-
-        # Yield condition completed event
-        yield ConditionExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            condition_result=True,
-            executed_steps=len(self.steps),
-            step_results=all_results,
-        )
+        if stream_intermediate_steps:
+            # Yield condition completed event
+            yield ConditionExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                condition_result=True,
+                executed_steps=len(self.steps),
+                step_results=all_results,
+            )
 
         for result in all_results:
             yield result
@@ -424,31 +426,32 @@ class Condition:
         condition_result = await self._aevaluate_condition(step_input)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        # Yield condition started event
-        yield ConditionExecutionStartedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            condition_result=condition_result,
-        )
-
-        if not condition_result:
-            log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
-            # Yield condition completed event for empty case
-            yield ConditionExecutionCompletedEvent(
+        if stream_intermediate_steps:
+            # Yield condition started event
+            yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
                 workflow_id=workflow_run_response.workflow_id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
-                condition_result=False,
-                executed_steps=0,
-                step_results=[],
+                condition_result=condition_result,
             )
+
+        if not condition_result:
+            if stream_intermediate_steps:
+                # Yield condition completed event for empty case
+                yield ConditionExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=False,
+                    executed_steps=0,
+                    step_results=[],
+                )
             return
 
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
@@ -518,18 +521,19 @@ class Condition:
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        # Yield condition completed event
-        yield ConditionExecutionCompletedEvent(
-            run_id=workflow_run_response.run_id or "",
-            workflow_name=workflow_run_response.workflow_name or "",
-            workflow_id=workflow_run_response.workflow_id or "",
-            session_id=workflow_run_response.session_id or "",
-            step_name=self.name,
-            step_index=step_index,
-            condition_result=True,
-            executed_steps=len(self.steps),
-            step_results=all_results,
-        )
+        if stream_intermediate_steps:
+            # Yield condition completed event
+            yield ConditionExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                condition_result=True,
+                executed_steps=len(self.steps),
+                step_results=all_results,
+            )
 
         for result in all_results:
             yield result

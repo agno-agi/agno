@@ -50,7 +50,7 @@ class ToolExecution:
     def to_dict(self) -> Dict[str, Any]:
         _dict = asdict(self)
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics._to_dict()
+            _dict["metrics"] = self.metrics.to_dict()
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]

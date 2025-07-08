@@ -98,5 +98,5 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                 if _metrics:
                     st.markdown("**Metrics:**")
                     st.json(
-                        _metrics if isinstance(_metrics, dict) else _metrics._to_dict()
+                        _metrics if isinstance(_metrics, dict) else _metrics.to_dict()
                     )

@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -9,6 +9,9 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Message
 from agno.run.base import RunStatus
 from agno.utils.log import log_error
+
+if TYPE_CHECKING:
+    from agno.workflow.v2.types import WorkflowMetrics
 
 
 class WorkflowRunEvent(str, Enum):
@@ -361,6 +364,9 @@ class WorkflowRunResponse:
     # Store actual step execution results as StepOutput objects
     step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
+    # Workflow metrics aggregated from all steps
+    workflow_metrics: Optional["WorkflowMetrics"] = None
+
     extra_data: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
@@ -384,6 +390,7 @@ class WorkflowRunResponse:
                 "audio",
                 "response_audio",
                 "step_responses",
+                "workflow_metrics",
             ]
         }
 
@@ -418,6 +425,9 @@ class WorkflowRunResponse:
                     # Handle single StepOutput
                     flattened_responses.append(step_response.to_dict())
             _dict["step_responses"] = flattened_responses
+
+        if self.workflow_metrics is not None:
+            _dict["workflow_metrics"] = self.workflow_metrics.to_dict()
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

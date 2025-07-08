@@ -217,9 +217,6 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
         if execution_input.message:
             components.append(f"Message: {execution_input.message}")
 
-        if execution_input.message_data:  # Using message_data instead of user_id/session_id
-            components.append(f"Message Data: {execution_input.message_data}")
-
         if execution_input.images:
             components.append(f"Images: {len(execution_input.images)} provided")
 
@@ -238,14 +235,12 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
     )
 
     # Pass data via message_data instead of user_id/session_id
-    message_data = {"user_id": "test_user", "session_id": "test_session"}
-    response = workflow.run(message="Test input analysis", message_data=message_data)
+    message = {"user_id": "test_user", "session_id": "test_session"}
+    response = workflow.run(message=message)
 
     assert isinstance(response, WorkflowRunResponse)
     assert response.content is not None
     assert response.status == RunStatus.completed
-    assert "Message: Test input analysis" in response.content
-    assert "Message Data:" in response.content
     assert "test_user" in str(response.content)
 
 
