@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import AudioResponse
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
@@ -663,6 +663,22 @@ class OpenAIChat(Model):
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
 
+        # Add citations if present (for providers like xAI)
+        if hasattr(response, "citations") and response.citations:
+            citations = Citations()
+            url_citations = []
+            for citation_url in response.citations:
+                if isinstance(citation_url, str):
+                    url_citations.append(UrlCitation(url=citation_url))
+                else:
+                    url_citations.append(UrlCitation(url=str(citation_url)))
+            
+            citations.urls = url_citations
+            citations.raw = response.citations
+            model_response.citations = citations
+            
+            log_debug(f"Extracted {len(url_citations)} citations from response")
+
         if response.usage is not None:
             model_response.response_usage = response.usage
 
@@ -714,6 +730,22 @@ class OpenAIChat(Model):
                             )
                     except Exception as e:
                         log_warning(f"Error processing audio: {e}")
+
+        # Add citations if present in streaming response (for providers like xAI)
+        if hasattr(response_delta, "citations") and response_delta.citations:
+            citations = Citations()
+            url_citations = []
+            for citation_url in response_delta.citations:
+                if isinstance(citation_url, str):
+                    url_citations.append(UrlCitation(url=citation_url))
+                else:
+                    url_citations.append(UrlCitation(url=str(citation_url)))
+            
+            citations.urls = url_citations
+            citations.raw = response_delta.citations
+            model_response.citations = citations
+            
+            log_debug(f"Extracted {len(url_citations)} citations from streaming response")
 
         # Add usage metrics if present
         if response_delta.usage is not None:
