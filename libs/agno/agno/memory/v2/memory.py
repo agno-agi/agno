@@ -218,7 +218,7 @@ class Memory:
         # Add memories if they exist
         if self.memories is not None:
             _memory_dict["memories"] = {
-                user_id: {memory_id: memory.to_dict() for memory_id, memory in user_memories.items()}
+                user_id: {memory.memory_id: memory.to_dict() for memory in user_memories.values()}
                 for user_id, user_memories in self.memories.items()
             }
         # Add runs if they exist
@@ -474,7 +474,7 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories.values()
         ]
         response = self.memory_manager.create_or_update_memories(  # type: ignore
             messages=messages,
@@ -522,7 +522,7 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories.values()
         ]
 
         response = await self.memory_manager.acreate_or_update_memories(  # type: ignore
@@ -555,7 +555,7 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories.values()
         ]
         # The memory manager updates the DB directly
         response = self.memory_manager.run_memory_task(  # type: ignore
@@ -589,7 +589,7 @@ class Memory:
 
         existing_memories = self.memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory.memory_id, "memory": memory.memory} for memory in existing_memories.values()
         ]
         # The memory manager updates the DB directly
         response = await self.memory_manager.arun_memory_task(  # type: ignore
