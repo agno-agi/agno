@@ -63,6 +63,22 @@ class BaseWorkflowRunResponseEvent:
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        # Handle StepOutput fields that contain Message objects
+        if hasattr(self, "step_responses") and self.step_responses is not None:
+            _dict["step_responses"] = [step.to_dict() for step in self.step_responses]
+
+        if hasattr(self, "step_response") and self.step_response is not None:
+            _dict["step_response"] = self.step_response.to_dict()
+
+        if hasattr(self, "iteration_results") and self.iteration_results is not None:
+            _dict["iteration_results"] = [step.to_dict() for step in self.iteration_results]
+
+        if hasattr(self, "all_results") and self.all_results is not None:
+            _dict["all_results"] = [[step.to_dict() for step in iteration] for iteration in self.all_results]
+
+        if hasattr(self, "step_results") and self.step_results is not None:
+            _dict["step_results"] = [step.to_dict() for step in self.step_results]
+
         return _dict
 
     def to_json(self) -> str:
@@ -318,6 +334,47 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
     step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
 
 
+@dataclass
+class StepOutputEvent(BaseWorkflowRunResponseEvent):
+    """Event sent when a step produces output - replaces direct StepOutput yielding"""
+
+    event: str = "StepOutput"
+    step_name: Optional[str] = None
+    step_index: Optional[int] = None
+
+    # Store actual step execution result as StepOutput object
+    step_output: Optional["StepOutput"] = None  # noqa: F821
+
+    # Properties for backward compatibility
+    @property
+    def content(self) -> Optional[str]:
+        return self.step_output.content if self.step_output else None
+
+    @property
+    def images(self) -> Optional[List[ImageArtifact]]:
+        return self.step_output.images if self.step_output else None
+
+    @property
+    def videos(self) -> Optional[List[VideoArtifact]]:
+        return self.step_output.videos if self.step_output else None
+
+    @property
+    def audio(self) -> Optional[List[AudioArtifact]]:
+        return self.step_output.audio if self.step_output else None
+
+    @property
+    def success(self) -> bool:
+        return self.step_output.success if self.step_output else True
+
+    @property
+    def error(self) -> Optional[str]:
+        return self.step_output.error if self.step_output else None
+
+    @property
+    def stop(self) -> bool:
+        return self.step_output.stop if self.step_output else False
+
+
 # Union type for all workflow run response events
 WorkflowRunResponseEvent = Union[
     WorkflowStartedEvent,
@@ -336,6 +393,9 @@ WorkflowRunResponseEvent = Union[
     ConditionExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     RouterExecutionCompletedEvent,
+    StepsExecutionStartedEvent,
+    StepsExecutionCompletedEvent,
+    StepOutputEvent,
 ]
 
 
@@ -364,6 +424,9 @@ class WorkflowRunResponse:
     # Store actual step execution results as StepOutput objects
     step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
+    # Store events from workflow execution
+    events: Optional[List[WorkflowRunResponseEvent]] = None
+
     # Workflow metrics aggregated from all steps
     workflow_metrics: Optional["WorkflowMetrics"] = None
 
@@ -390,6 +453,7 @@ class WorkflowRunResponse:
                 "audio",
                 "response_audio",
                 "step_responses",
+                "events",
                 "workflow_metrics",
             ]
         }
@@ -432,6 +496,9 @@ class WorkflowRunResponse:
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
+
         return _dict
 
     def to_json(self) -> str:
@@ -469,6 +536,8 @@ class WorkflowRunResponse:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        events = data.pop("events", [])
+
         return cls(
             messages=messages,
             step_responses=parsed_step_responses,
@@ -477,6 +546,7 @@ class WorkflowRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            events=events,
             **data,
         )
 

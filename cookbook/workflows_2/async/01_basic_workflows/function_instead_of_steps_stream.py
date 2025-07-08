@@ -1,10 +1,9 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 
@@ -26,14 +25,14 @@ content_planner = Agent(
 )
 
 
-def custom_execution_function(
+async def custom_execution_function(
     workflow: Workflow, execution_input: WorkflowExecutionInput
 ):
     print(f"Executing workflow: {workflow.name}")
 
     # Run the Hackernews agent to gather research content
     research_content = ""
-    for response in hackernews_agent.run(
+    async for response in await hackernews_agent.arun(
         execution_input.message, stream=True, stream_intermediate_steps=True
     ):
         if hasattr(response, "content") and response.content:
@@ -42,23 +41,25 @@ def custom_execution_function(
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
-
+        
         Core Topic: {execution_input.message}
-
+        
         Research Results: {research_content[:500]}
-
+        
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
         3. Identify content formats and channels
         4. Provide timeline and priority recommendations
         5. Include engagement and distribution strategies
-
+        
         Please create a detailed, actionable content plan.
     """
-    yield from content_planner.run(
+
+    async for response in await content_planner.arun(
         planning_prompt, stream=True, stream_intermediate_steps=True
-    )
+    ):
+        yield response
 
 
 # Create and use workflow
@@ -73,8 +74,10 @@ if __name__ == "__main__":
         ),
         steps=custom_execution_function,
     )
-    response = content_creation_workflow.print_response(
-        message="AI trends in 2024",
-        stream=True,
-        stream_intermediate_steps=True,
+    asyncio.run(
+        content_creation_workflow.aprint_response(
+            message="AI trends in 2024",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
     )
