@@ -1,5 +1,4 @@
 from agno.agent.agent import Agent
-from agno.models.anthropic import Claude
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.condition import Condition
@@ -13,33 +12,28 @@ hackernews_agent = Agent(
     name="HackerNews Researcher",
     instructions="Research tech news and trends from Hacker News",
     tools=[HackerNewsTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 exa_agent = Agent(
     name="Exa Search Researcher",
     instructions="Research using Exa advanced search capabilities",
     tools=[ExaTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 content_agent = Agent(
     name="Content Creator",
     instructions="Create well-structured content from research data",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # Additional agents for multi-step condition
 trend_analyzer_agent = Agent(
     name="Trend Analyzer",
     instructions="Analyze trends and patterns from research data",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 fact_checker_agent = Agent(
     name="Fact Checker",
     instructions="Verify facts and cross-reference information",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # === RESEARCH STEPS ===
@@ -144,6 +138,8 @@ if __name__ == "__main__":
     try:
         workflow.print_response(
             message="Comprehensive analysis of climate change research",
+            stream=True,
+            stream_intermediate_steps=True,
         )
     except Exception as e:
         print(f"❌ Error: {e}")

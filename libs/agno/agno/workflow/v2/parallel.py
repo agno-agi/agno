@@ -390,7 +390,7 @@ class Parallel:
         yield aggregated_result
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
- 
+
         if stream_intermediate_steps:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(

@@ -1,7 +1,6 @@
 from typing import List, Union
 
 from agno.agent.agent import Agent
-from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
@@ -16,27 +15,23 @@ hackernews_agent = Agent(
     name="HackerNews Researcher",
     instructions="Research tech news and trends from Hacker News",
     tools=[HackerNewsTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 web_agent = Agent(
     name="Web Researcher",
     instructions="Research general information from the web",
     tools=[DuckDuckGoTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 exa_agent = Agent(
     name="Exa Search Researcher",
     instructions="Research using Exa advanced search capabilities",
     tools=[ExaTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 content_agent = Agent(
     name="Content Creator",
     instructions="Create well-structured content from research data",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # === RESEARCH STEPS ===
