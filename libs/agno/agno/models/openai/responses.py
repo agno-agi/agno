@@ -37,13 +37,14 @@ class OpenAIResponses(Model):
     # Request parameters
     include: Optional[List[str]] = None
     max_output_tokens: Optional[int] = None
+    max_tool_calls: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-    truncation: Optional[str] = None
+    truncation: Optional[Dict[str, Any]] = None
     user: Optional[str] = None
 
     request_params: Optional[Dict[str, Any]] = None
@@ -165,6 +166,7 @@ class OpenAIResponses(Model):
         base_params: Dict[str, Any] = {
             "include": self.include,
             "max_output_tokens": self.max_output_tokens,
+            "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
             "reasoning": self.reasoning,
@@ -174,7 +176,6 @@ class OpenAIResponses(Model):
             "truncation": self.truncation,
             "user": self.user,
         }
-
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -193,6 +194,21 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+
+        # Handle tools for deep research models
+        if "deep-research" in self.id:
+            if tools is None:
+                tools = []
+
+            # Check if web_search_preview tool is already present
+            has_web_search = any(tool.get("type") == "web_search_preview" for tool in tools)
+
+            # Add web_search_preview if not present
+            if not has_web_search:
+                web_search_tool = {"type": "web_search_preview"}
+                tools.insert(0, web_search_tool)
+                log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
+
         if tools:
             request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
 
@@ -330,7 +346,6 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        print("--------------------------------")
         formatted_messages: List[Dict[str, Any]] = []
         for message in messages:
             if message.role in ["user", "system"]:
@@ -378,7 +393,6 @@ class OpenAIResponses(Model):
             elif message.role == "assistant":
                 formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
 
-            print(formatted_messages)
         return formatted_messages
 
     def invoke(
