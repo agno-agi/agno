@@ -83,9 +83,9 @@ def _clean_page_numbers(
     Args:
         page_content_list (List[str]): A list of strings where each string represents the content of a PDF page.
         extra_content (List[str]): A list of strings where each string will be appended after the main content. Can be used for appending image information.
-        page_start_numbering_format (str): A format string to prepend to the page content, with `{page_nr}` as a placeholder for the page number.
+        page_start_numbering_format (str): A format string to prepend to the page content, with `{{page_nr}}` as a placeholder for the page number.
             Defaults to {PAGE_START_NUMBERING_FORMAT_DEFAULT}. Make it an empty string to remove the page number.
-        page_end_numbering_format (str): A format string to append to the page content, with `{page_nr}` as a placeholder for the page number.
+        page_end_numbering_format (str): A format string to append to the page content, with `{{page_nr}}` as a placeholder for the page number.
             Defaults to {PAGE_END_NUMBERING_FORMAT_DEFAULT}. Make it an empty string to remove the page number.
 
     Returns:
@@ -147,7 +147,7 @@ def _clean_page_numbers(
 
 
 class BasePDFReader(Reader):
-    def __init__(self, split_on_pages: True, page_start_numbering_format: Optional[str]=None, page_end_numbering_format: Optional[str]=None, **kwargs):
+    def __init__(self, split_on_pages: bool=True, page_start_numbering_format: Optional[str]=None, page_end_numbering_format: Optional[str]=None, **kwargs):
         if page_start_numbering_format is None:
             page_start_numbering_format = PAGE_START_NUMBERING_FORMAT_DEFAULT
         if page_end_numbering_format is None:
@@ -279,7 +279,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
 
 class PDFUrlReader(BasePDFReader):
@@ -324,7 +324,7 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
 
 class PDFImageReader(BasePDFReader):
@@ -364,7 +364,7 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Read and chunk.
-        return _async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
 
 class PDFUrlImageReader(BasePDFReader):
@@ -411,4 +411,4 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return _async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
