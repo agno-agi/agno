@@ -120,7 +120,7 @@ def _clean_page_numbers(
     # Possible range shifts to detect page numbering
     range_shifts = [-2, -1, 0, 1, 2]
     best_match = None
-    best_shift = None
+    best_shift: Optional[int] = None
     best_correct_count = 0
 
     for shift in range_shifts:
@@ -198,7 +198,7 @@ class BasePDFReader(Reader):
         return chunked_documents
 
     def _create_documents(
-        self, pdf_content, doc_name: str, use_uuid_for_id: bool, page_number_shift
+        self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift
     ):
 
         if self.split_on_pages:
@@ -218,12 +218,12 @@ class BasePDFReader(Reader):
                     )
                 )
         else:
-            pdf_content = "\n".join(pdf_content)
+            pdf_content_str = "\n".join(pdf_content)
             document = Document(
                 name=doc_name,
                 id=str(uuid4()) if use_uuid_for_id else doc_name,
                 meta_data={},
-                content=pdf_content,
+                content=pdf_content_str,
             )
             documents = [document]
 
@@ -279,14 +279,14 @@ class BasePDFReader(Reader):
             *[_read_pdf_page(page, read_images) for page in doc_reader.pages]
         )
 
-        pdf_content, shift = _clean_page_numbers(
+        pdf_content_clean, shift = _clean_page_numbers(
             page_content_list=[x[0] for x in pdf_content],
             extra_content=[x[1] for x in pdf_content],
             page_start_numbering_format=self.page_start_numbering_format,
             page_end_numbering_format=self.page_end_numbering_format,
         )
 
-        return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
+        return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
 
 
 class PDFReader(BasePDFReader):
