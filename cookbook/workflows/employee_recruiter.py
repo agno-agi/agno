@@ -281,7 +281,7 @@ recruitment_workflow = Workflow(
     name="Employee Recruitment Workflow (Simulated)",
     description="Automated candidate screening with simulated scheduling and email",
     steps=recruitment_execution,
-    workflow_session_state={}, # Initialize empty workflow session state
+    workflow_session_state={},  # Initialize empty workflow session state
 )
 
 

@@ -27,9 +27,9 @@ from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
+from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.workflow import Workflow
 from pydantic import BaseModel, Field
-from agno.utils.pprint import pprint_run_response
 
 
 # --- Response Models ---
@@ -480,11 +480,11 @@ if __name__ == "__main__":
 
         # Generate the blog post
         resp = await blog_generator_workflow.arun(
-                topic=topic,
-                use_search_cache=True,
-                use_scrape_cache=True,
-                use_blog_cache=True,
-            )
+            topic=topic,
+            use_search_cache=True,
+            use_scrape_cache=True,
+            use_blog_cache=True,
+        )
 
         pprint_run_response(resp, markdown=True, show_time=True)
 
