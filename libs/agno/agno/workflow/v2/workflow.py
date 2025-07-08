@@ -484,9 +484,6 @@ class Workflow:
                         step_index=i,
                     ):
                         # Handle events
-                        if isinstance(event, WorkflowRunResponseEvent):
-                            self._handle_event(event, workflow_run_response)
-
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -528,6 +525,10 @@ class Workflow:
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
+                        
+                        elif isinstance(event, WorkflowRunResponseEvent):
+                            yield self._handle_event(event, workflow_run_response)
+
                         else:
                             # Yield other internal events
                             yield event
@@ -799,9 +800,6 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         step_index=i,
                     ):
-                        if isinstance(event, WorkflowRunResponseEvent):
-                            self._handle_event(event, workflow_run_response)
-
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -842,6 +840,10 @@ class Workflow:
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
+
+                        elif isinstance(event, WorkflowRunResponseEvent):
+                            yield self._handle_event(event, workflow_run_response)
+
                         else:
                             # Yield other internal events
                             yield event
@@ -2589,7 +2591,7 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
-        # Initialize steps - only if steps is iterable (not callable)
+        # Initialize steps - only if steps is iterable (not callable)    
         if self.steps and not isinstance(self.steps, Callable):
             for step in self.steps:
                 # TODO: Handle properly steps inside other primitives
