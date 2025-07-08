@@ -90,12 +90,16 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         elif session_type == SessionType.WORKFLOW:
             return [WorkflowRunSchema.from_dict(run) for run in runs]  # type: ignore
 
+    @router.delete("/sessions/{session_id}", status_code=204)
+    async def delete_session(session_id: str = Path(...)) -> None:
+        db.delete_session(session_id=session_id)
+
     @router.delete("/sessions", status_code=204)
-    async def delete_session(request: DeleteSessionRequest) -> None:
+    async def delete_sessions(request: DeleteSessionRequest) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
-        db.delete_sessions(session_types=request.session_types, session_ids=request.session_ids)
+        db.delete_sessions(session_ids=request.session_ids)
 
     @router.post(
         "/sessions/{session_id}/rename",

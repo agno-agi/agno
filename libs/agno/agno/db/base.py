@@ -20,9 +20,7 @@ class SessionType(str, Enum):
 class BaseDb(ABC):
     def __init__(
         self,
-        agent_session_table: Optional[str] = None,
-        team_session_table: Optional[str] = None,
-        workflow_session_table: Optional[str] = None,
+        session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         learning_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -30,9 +28,7 @@ class BaseDb(ABC):
         knowledge_table: Optional[str] = None,
     ):
         if (
-            not agent_session_table
-            and not team_session_table
-            and not workflow_session_table
+            not session_table
             and not user_memory_table
             and not learning_table
             and not metrics_table
@@ -41,9 +37,7 @@ class BaseDb(ABC):
         ):
             raise ValueError("At least one of the tables must be provided")
 
-        self.agent_session_table_name = agent_session_table
-        self.team_session_table_name = team_session_table
-        self.workflow_session_table_name = workflow_session_table
+        self.session_table_name = session_table
         self.user_memory_table_name = user_memory_table
         self.learning_table_name = learning_table
         self.metrics_table_name = metrics_table
@@ -57,7 +51,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _get_table_for_session_type(self, session_type: SessionType) -> Optional[Table]:
+    def _get_table(self, table_type: str) -> Table:
         raise NotImplementedError
 
     @abstractmethod
@@ -71,7 +65,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str]) -> None:
         raise NotImplementedError
 
     @abstractmethod

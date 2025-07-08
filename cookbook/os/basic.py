@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Setup the database
 db = PostgresDb(
     db_url=db_url,
-    agent_session_table="agent_session",
+    session_table="sessions",
     user_memory_table="user_memory",
 )
 

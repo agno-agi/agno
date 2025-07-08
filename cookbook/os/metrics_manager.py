@@ -11,9 +11,7 @@ from agno.os.managers import MetricsManager, SessionManager
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(
     db_url=db_url,
-    agent_session_table="agent_sessions",
-    team_session_table="team_sessions",
-    workflow_session_table="workflow_sessions",
+    session_table="sessions",
     metrics_table="metrics",
 )
 

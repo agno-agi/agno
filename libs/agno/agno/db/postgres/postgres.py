@@ -40,9 +40,7 @@ class PostgresDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
-        agent_session_table: Optional[str] = None,
-        team_session_table: Optional[str] = None,
-        workflow_session_table: Optional[str] = None,
+        session_table: Optional[str] = None,
         user_memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -60,9 +58,7 @@ class PostgresDb(BaseDb):
             db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
-            agent_session_table (Optional[str]): Name of the table to store Agent sessions.
-            team_session_table (Optional[str]): Name of the table to store Team sessions.
-            workflow_session_table (Optional[str]): Name of the table to store Workflow sessions.
+            session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             user_memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
@@ -73,9 +69,7 @@ class PostgresDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         super().__init__(
-            agent_session_table=agent_session_table,
-            team_session_table=team_session_table,
-            workflow_session_table=workflow_session_table,
+            session_table=session_table,
             user_memory_table=user_memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -192,45 +186,55 @@ class PostgresDb(BaseDb):
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
 
-    def _get_table_for_session_type(self, session_type: SessionType) -> Optional[Table]:
-        """Map the given session type into the appropriate table.
-        If the table has not been created yet, handle its creation.
+    def _get_table(self, table_type: str) -> Table:
+        if table_type == "sessions":
+            if not hasattr(self, "session_table"):
+                if self.session_table_name is None:
+                    raise ValueError("Session table was not provided on initialization")
 
-        Args:
-            session_type (Optional[SessionType]): The type of session to get the table for.
+                log_info(f"Getting session table: {self.session_table_name}")
+                self.session_table = self._get_or_create_table(
+                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                )
+            return self.session_table
 
-        Returns:
-            Optional[Table]: The table for the given session type.
-        """
-        if session_type == SessionType.AGENT:
-            if self.agent_session_table_name is None:
-                raise ValueError("Agent session table was not provided on initialization")
-            self.agent_session_table = self._get_or_create_table(
-                table_name=self.agent_session_table_name,
-                table_type="agent_sessions",
-                db_schema=self.db_schema,
-            )
-            return self.agent_session_table
+        if table_type == "user_memories":
+            if not hasattr(self, "user_memory_table"):
+                if self.user_memory_table_name is None:
+                    raise ValueError("User memory table was not provided on initialization")
 
-        elif session_type == SessionType.TEAM:
-            if self.team_session_table_name is None:
-                raise ValueError("Team session table was not provided on initialization")
-            self.team_session_table = self._get_or_create_table(
-                table_name=self.team_session_table_name,
-                table_type="team_sessions",
-                db_schema=self.db_schema,
-            )
-            return self.team_session_table
+                log_info(f"Getting user memory table: {self.user_memory_table_name}")
+                self.user_memory_table = self._get_or_create_table(
+                    table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
+                )
 
-        elif session_type == SessionType.WORKFLOW:
-            if self.workflow_session_table_name is None:
-                raise ValueError("Workflow session table was not provided on initialization")
-            self.workflow_session_table = self._get_or_create_table(
-                table_name=self.workflow_session_table_name,
-                table_type="workflow_sessions",
-                db_schema=self.db_schema,
-            )
-            return self.workflow_session_table
+            return self.user_memory_table
+
+        if table_type == "metrics":
+            if not hasattr(self, "metrics_table"):
+                if self.metrics_table_name is None:
+                    raise ValueError("Metrics table was not provided on initialization")
+
+                log_info(f"Getting metrics table: {self.metrics_table_name}")
+                self.metrics_table = self._get_or_create_table(
+                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                )
+
+            return self.metrics_table
+
+        if table_type == "evals":
+            if not hasattr(self, "eval_table"):
+                if self.eval_table_name is None:
+                    raise ValueError("Eval table was not provided on initialization")
+
+                log_info(f"Getting eval table: {self.eval_table_name}")
+                self.eval_table = self._get_or_create_table(
+                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                )
+
+            return self.eval_table
+
+        raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
@@ -265,32 +269,6 @@ class PostgresDb(BaseDb):
 
     # -- Session methods --
 
-    def _get_oldest_session_date(self) -> Optional[int]:
-        """Get the session (of any type) with the min created_at timestamp.
-
-        Returns:
-            Timestamp of the session, or None if no sessions exist or on error.
-        """
-        try:
-            tables = []
-            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
-                table = self._get_table_for_session_type(session_type=session_type)
-                if table is not None:
-                    tables.append(select(table.c.created_at))
-            if not tables:
-                return None
-
-            union_stmt = union_all(*tables)
-            stmt = select(func.min(union_stmt.c.created_at))
-
-            with self.Session() as sess:
-                result = sess.execute(stmt).scalar()
-                return result
-
-        except Exception as e:
-            log_error(f"Error getting latest session: {e}")
-            return None
-
     def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
         """
         Insert or update an agent session in the database.
@@ -305,9 +283,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table_for_session_type(SessionType.AGENT)
-            if table is None:
-                raise ValueError("Agent session table not found")
+            table = self._get_table(table_type="sessions")
 
             # Calculated fields
             chat_history = (
@@ -319,6 +295,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.AGENT.value,
                     agent_id=session.agent_id,
                     team_session_id=session.team_session_id,
                     user_id=session.user_id,
@@ -370,9 +347,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table_for_session_type(SessionType.TEAM)
-            if table is None:
-                raise ValueError("Team session table not found")
+            table = self._get_table(table_type="sessions")
 
             # Calculated fields
             chat_history = (
@@ -384,6 +359,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.TEAM.value,
                     team_id=session.team_id,
                     team_session_id=session.team_session_id,
                     user_id=session.user_id,
@@ -435,9 +411,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table_for_session_type(SessionType.WORKFLOW)
-            if table is None:
-                raise ValueError("Workflow session table not found")
+            table = self._get_table(table_type="sessions")
 
             # Calculated fields
             chat_history = (
@@ -449,6 +423,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
                     session_id=session.session_id,
+                    session_type=SessionType.WORKFLOW.value,
                     workflow_id=session.workflow_id,
                     user_id=session.user_id,
                     runs=session.runs,
@@ -484,12 +459,7 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting into workflow session table: {e}")
             return None
 
-    def delete_session(
-        self,
-        session_id: str,
-        session_type: Optional[SessionType] = None,
-        table: Optional[Table] = None,
-    ) -> None:
+    def delete_session(self, session_id: str) -> None:
         """
         Delete a session from the database.
 
@@ -503,12 +473,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError("No table found")
+            table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -521,45 +486,24 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting session: {e}")
 
-    def delete_sessions(self, session_types: List[SessionType], session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
-            session_types (List[SessionType]): The types of sessions to delete.
             session_ids (List[str]): The IDs of the sessions to delete.
 
         Raises:
-            ValueError: If the session_types and session_ids lists have different lengths.
             Exception: If an error occurs during deletion.
         """
-        if len(session_types) != len(session_ids):
-            raise ValueError("session_types and session_ids lists must have the same length")
-
         try:
-            # Group session_ids by their corresponding table
-            table_to_session_ids = {}
-            for session_type, session_id in zip(session_types, session_ids):
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError(f"Table not found for session type: {session_type}")
+            table = self._get_table(table_type="sessions")
 
-                if table not in table_to_session_ids:
-                    table_to_session_ids[table] = []
-                table_to_session_ids[table].append(session_id)
-
-            # Execute all deletes in a single transaction
-            total_deleted = 0
             with self.Session() as sess, sess.begin():
-                for table, ids in table_to_session_ids.items():
-                    delete_stmt = table.delete().where(table.c.session_id.in_(ids))
-                    result = sess.execute(delete_stmt)
-                    total_deleted += result.rowcount
+                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                result = sess.execute(delete_stmt)
 
-                    if result.rowcount == 0:
-                        log_debug(f"No sessions found with session_ids: {ids} in table {table.name}")
-
-            log_debug(f"Successfully deleted {total_deleted} sessions across {len(table_to_session_ids)} tables")
+            log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
@@ -587,17 +531,14 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError(f"Table not found for session type: {session_type}")
+            table = self._get_table(table_type="sessions")
 
             with self.Session() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -628,18 +569,10 @@ class PostgresDb(BaseDb):
             Optional[Session]: Session object if found, None otherwise.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError(f"Table not found for session type: {session_type}")
+            table = self._get_table(table_type="sessions")
 
             session_raw = self.get_session_raw(
-                session_id=session_id,
-                user_id=user_id,
-                session_type=session_type,
-                table=table,
+                session_id=session_id, user_id=user_id, session_type=session_type, table=table
             )
             if session_raw is None:
                 return None
@@ -688,12 +621,7 @@ class PostgresDb(BaseDb):
             Tuple[List[Dict[str, Any]], int]: List of sessions matching the criteria and the total number of sessions.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError("No table found")
+            table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -717,6 +645,8 @@ class PostgresDb(BaseDb):
                             f"%{session_name}%"
                         )
                     )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
@@ -767,12 +697,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                if session_type is None:
-                    raise ValueError("Session type is required when no table is provided")
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError("No table found")
+            table = self._get_table(table_type="sessions")
 
             sessions_raw = self.get_sessions_raw(
                 session_type=session_type,
@@ -786,14 +711,14 @@ class PostgresDb(BaseDb):
                 table=table,
             )
 
-            if table == self.agent_session_table:
+            if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif table == self.team_session_table:
+            elif session_type == SessionType.TEAM:
                 return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif table == self.workflow_session_table:
+            elif session_type == SessionType.WORKFLOW:
                 return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
             else:
-                raise ValueError(f"Invalid table: {table}")
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
@@ -818,10 +743,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         try:
-            if table is None:
-                table = self._get_table_for_session_type(session_type)
-                if table is None:
-                    raise ValueError(f"Table not found for session type: {session_type}")
+            table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
                 stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
@@ -829,14 +751,12 @@ class PostgresDb(BaseDb):
                 row = result.fetchone()
                 sess.commit()
 
-            if table == self.agent_session_table:
+            if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(row._mapping)
-            elif table == self.team_session_table:
+            elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(row._mapping)
-            elif table == self.workflow_session_table:
+            elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(row._mapping)
-            else:
-                raise ValueError(f"Invalid table: {table}")
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
@@ -868,46 +788,6 @@ class PostgresDb(BaseDb):
             return None
 
     # -- Memory methods --
-
-    def _get_table(self, table_type: str) -> Table:
-        if table_type == "user_memories":
-            if not hasattr(self, "user_memory_table"):
-                if self.user_memory_table_name is None:
-                    raise ValueError("User memory table was not provided on initialization")
-
-                log_info(f"Getting user memory table: {self.user_memory_table_name}")
-                self.user_memory_table = self._get_or_create_table(
-                    table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
-                )
-
-            return self.user_memory_table
-
-        elif table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                if self.metrics_table_name is None:
-                    raise ValueError("Metrics table was not provided on initialization")
-
-                log_info(f"Getting metrics table: {self.metrics_table_name}")
-                self.metrics_table = self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
-                )
-
-            return self.metrics_table
-
-        elif table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                if self.eval_table_name is None:
-                    raise ValueError("Eval table was not provided on initialization")
-
-                log_info(f"Getting eval table: {self.eval_table_name}")
-                self.eval_table = self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-                )
-
-            return self.eval_table
-
-        else:
-            raise ValueError(f"Unknown table type: {table_type}")
 
     def delete_user_memory(self, memory_id: str) -> bool:
         """Delete a user memory from the database.
@@ -966,6 +846,7 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="user_memories")
+
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
@@ -1333,7 +1214,7 @@ class PostgresDb(BaseDb):
         """
         Get all sessions of all types (agent, team, workflow) as raw dictionaries.
 
-        Args:
+         Args:
             start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
             end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
 
@@ -1344,42 +1225,27 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            cols = ["user_id", "session_data", "runs", "created_at"]
-            select_statements = []
+            table = self._get_table(table_type="sessions")
 
-            for session_type in [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]:
-                try:
-                    table = self._get_table_for_session_type(session_type)
-
-                    # Add session_type as a literal column
-                    if table is not None:
-                        table_cols = [
-                            *[table.c[col] for col in cols],
-                            literal(session_type.value).label("session_type"),
-                        ]
-                        select_statements.append(select(*table_cols))
-
-                except ValueError:
-                    continue
-
-            if not select_statements:
-                return []
-
-            union_stmt = union_all(*select_statements)
-            subquery = union_stmt.subquery()
-            stmt = select(subquery)
+            stmt = select(
+                table.c.user_id,
+                table.c.session_data,
+                table.c.runs,
+                table.c.created_at,
+                table.c.session_type,
+            )
 
             if start_timestamp is not None:
-                stmt = stmt.where(subquery.c.created_at >= start_timestamp)
+                stmt = stmt.where(table.c.created_at >= start_timestamp)
             if end_timestamp is not None:
-                stmt = stmt.where(subquery.c.created_at <= end_timestamp)
+                stmt = stmt.where(table.c.created_at <= end_timestamp)
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             return []
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1408,7 +1274,8 @@ class PostgresDb(BaseDb):
 
             # 2. No metrics records. Return the date of the first recorded session.
             else:
-                first_session_date = self._get_oldest_session_date()
+                first_session = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+                first_session_date = first_session[0].created_at
 
                 # 3. No metrics records and no sessions records. Return None.
                 if not first_session_date:
