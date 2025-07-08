@@ -68,6 +68,20 @@ def test_pdf_reader_with_chunking(sample_pdf_path):
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
+def test_pdf_reader_with_chunking_and_pages_merged(sample_pdf_path):
+    reader = PDFReader(split_on_pages=False, chunk=True, chunk_size=5000)
+    documents_unsplit = reader.read(sample_pdf_path)
+
+    assert len(documents_unsplit) > 0
+    assert all("chunk" in doc.meta_data for doc in documents_unsplit)
+
+    # Chunking per page is different then chunking the whole document
+    reader = PDFReader(split_on_pages=True, chunk=True, chunk_size=5000)
+    documents_splitted = reader.read(sample_pdf_path)
+
+    assert len(documents_splitted) > len(documents_unsplit)
+
+
 def test_pdf_url_reader(sample_pdf_url):
     reader = PDFUrlReader()
     documents = reader.read(sample_pdf_url)
@@ -146,6 +160,19 @@ async def test_async_pdf_processing(sample_pdf_path):
     assert len(results) == 3
     assert all(len(docs) > 0 for docs in results)
     assert all(all("ThaiRecipes" in doc.name for doc in docs) for docs in results)
+    assert all(all("page" in doc.meta_data for doc in docs) for docs in results)
+
+
+@pytest.mark.asyncio
+async def test_async_pdf_processing_with_pages_merged(sample_pdf_path):
+    reader = PDFReader(split_on_pages=False, chunk=False)
+    tasks = [reader.async_read(sample_pdf_path) for _ in range(3)]
+    results = await asyncio.gather(*tasks)
+
+    assert len(results) == 3
+    assert all(len(docs) == 1 for docs in results)
+    assert all(all("ThaiRecipes" == doc.name for doc in docs) for docs in results)
+    assert all(all("page" not in doc.meta_data for doc in docs) for docs in results)
 
 
 def test_pdf_reader_empty_pdf():
