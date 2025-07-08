@@ -175,7 +175,7 @@ class Weaviate(VectorDb):
             logger.warning("Invalid document: Missing content.")
             return None
         
-        if check_existing and not self.name_exists(document):
+        if check_existing and document.name and not self.name_exists(document.name):
             logger.warning(f"A document by this name does not exist: {document.name}")
             return None
         
@@ -384,7 +384,7 @@ class Weaviate(VectorDb):
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         _docs_to_insert = []
         for document in documents:
-            if self.name_exists(document.name):
+            if document.name and self.name_exists(document.name):
                 if self.doc_content_changed(document, check_existing=False):
                     log_debug(f"Document already exists, but content changed. Document will be deleted and added again: {document.name}")
                     self.doc_delete(document.name)
