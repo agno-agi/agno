@@ -75,7 +75,7 @@ def pprint_run_response(
                 ):
                     if isinstance(resp.content, BaseModel):
                         try:
-                            json_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:

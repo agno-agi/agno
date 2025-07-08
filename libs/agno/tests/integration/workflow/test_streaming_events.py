@@ -23,7 +23,6 @@ from agno.run.v2.workflow import (
     WorkflowCompletedEvent,
     WorkflowStartedEvent,
 )
-from agno.utils.log import logger
 from agno.workflow.v2 import Condition, Loop, Parallel, Router, Step, Steps, Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -539,7 +538,7 @@ def test_condition_events_with_stream_intermediate_steps_true(workflow_storage):
 
     # Verify event details
     assert condition_started[0].step_name == "test_condition"
-    assert condition_started[0].condition_result == True  # "test" in message
+    assert condition_started[0].condition_result is True  # "test" in message
 
 
 @pytest.mark.asyncio
