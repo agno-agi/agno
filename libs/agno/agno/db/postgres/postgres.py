@@ -21,6 +21,7 @@ from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -106,6 +107,7 @@ class PostgresDb(BaseDb):
 
         Args:
             table_name (str): Name of the table to create
+            table_type (str): Type of table (used to get schema definition)
             db_schema (str): Database schema name
 
         Returns:
@@ -380,6 +382,7 @@ class PostgresDb(BaseDb):
             )
             runs = [run.to_dict() for run in session.runs] if session.runs else None
             summary = session.summary if session.summary else None
+            summary = summary.to_dict() if isinstance(summary, SessionSummary) else summary
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(

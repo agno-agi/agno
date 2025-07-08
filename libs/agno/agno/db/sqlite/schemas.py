@@ -1,9 +1,9 @@
-"""Table schemas and related utils used by the PostgresDb class"""
+"""Table schemas and related utils used by the SqliteDb class"""
 
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
+    from sqlalchemy.types import TEXT, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -12,14 +12,14 @@ AGENT_SESSION_TABLE_SCHEMA = {
     "agent_id": {"type": String, "nullable": False},
     "user_id": {"type": String, "nullable": True},
     "team_session_id": {"type": String, "nullable": True},
-    "session_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "session_data": {"type": TEXT, "nullable": True},
+    "extra_data": {"type": TEXT, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_data": {"type": JSON, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
-    "summary": {"type": JSON, "nullable": True},
+    "agent_data": {"type": TEXT, "nullable": True},
+    "chat_history": {"type": TEXT, "nullable": True},
+    "runs": {"type": TEXT, "nullable": True},
+    "summary": {"type": TEXT, "nullable": True},
 }
 
 TEAM_SESSION_TABLE_SCHEMA = {
@@ -27,38 +27,38 @@ TEAM_SESSION_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": False},
     "user_id": {"type": String, "nullable": True},
     "team_session_id": {"type": String, "nullable": True},
-    "team_data": {"type": JSON, "nullable": True},
-    "session_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "team_data": {"type": TEXT, "nullable": True},
+    "session_data": {"type": TEXT, "nullable": True},
+    "extra_data": {"type": TEXT, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
-    "summary": {"type": JSON, "nullable": True},
+    "chat_history": {"type": TEXT, "nullable": True},
+    "runs": {"type": TEXT, "nullable": True},
+    "summary": {"type": TEXT, "nullable": True},
 }
 
 WORKFLOW_SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
     "workflow_id": {"type": String, "nullable": False},
     "user_id": {"type": String, "nullable": True},
-    "workflow_data": {"type": JSON, "nullable": True},
-    "session_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "workflow_data": {"type": TEXT, "nullable": True},
+    "session_data": {"type": TEXT, "nullable": True},
+    "extra_data": {"type": TEXT, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
-    "summary": {"type": JSON, "nullable": True},
+    "chat_history": {"type": TEXT, "nullable": True},
+    "runs": {"type": TEXT, "nullable": True},
+    "summary": {"type": TEXT, "nullable": True},
 }
 
 USER_MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
-    "memory": {"type": JSON, "nullable": False},
+    "memory": {"type": TEXT, "nullable": False},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
-    "topics": {"type": JSON, "nullable": True},
+    "topics": {"type": TEXT, "nullable": True},
     "feedback": {"type": String, "nullable": True},
     "last_updated": {"type": BigInteger, "nullable": True},
 }
@@ -66,7 +66,7 @@ USER_MEMORY_TABLE_SCHEMA = {
 EVAL_TABLE_SCHEMA = {
     "run_id": {"type": String, "primary_key": True, "nullable": False},
     "eval_type": {"type": String, "nullable": False},
-    "eval_data": {"type": JSON, "nullable": False},
+    "eval_data": {"type": TEXT, "nullable": False},
     "name": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
@@ -82,7 +82,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
     "description": {"type": String, "nullable": False},
-    "metadata": {"type": JSON, "nullable": True},
+    "metadata": {"type": TEXT, "nullable": True},
     "type": {"type": String, "nullable": True},
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": String, "nullable": True},
@@ -101,8 +101,8 @@ METRICS_TABLE_SCHEMA = {
     "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "users_count": {"type": BigInteger, "nullable": False, "default": 0},
-    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
-    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_metrics": {"type": TEXT, "nullable": False, "default": "{}"},
+    "model_metrics": {"type": TEXT, "nullable": False, "default": "{}"},
     "date": {"type": Date, "nullable": False},
     "aggregation_period": {"type": String, "nullable": False},
     "created_at": {"type": BigInteger, "nullable": False},
@@ -139,9 +139,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
-
     schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-
     return schema
