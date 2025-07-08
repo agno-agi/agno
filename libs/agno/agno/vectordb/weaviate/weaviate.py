@@ -98,7 +98,7 @@ class Weaviate(VectorDb):
 
         if not self.client.is_ready():  # type: ignore
             raise Exception("Weaviate client is not ready")
-            
+
         return self.client
 
     async def get_async_client(self) -> WeaviateAsyncClient:
