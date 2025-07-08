@@ -1,7 +1,7 @@
 import asyncio
-from pathlib import Path
 import re
-from typing import IO, Tuple, Any, List, Optional, Union
+from pathlib import Path
+from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.document.base import Document
@@ -13,7 +13,9 @@ try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
     from pypdf.errors import PdfStreamError
 except ImportError:
-    raise ImportError("`pypdf` not installed. Please install it via `pip install pypdf`.")
+    raise ImportError(
+        "`pypdf` not installed. Please install it via `pip install pypdf`."
+    )
 
 
 PAGE_START_NUMBERING_FORMAT_DEFAULT = "<start page {page_nr}>"
@@ -72,11 +74,11 @@ async def _async_ocr_reader(page: Any) -> str:
 
 
 def _clean_page_numbers(
-        page_content_list: List[str],
-        extra_content: List[str],
-        page_start_numbering_format: str,
-        page_end_numbering_format: str
-    ) -> Tuple[List[str], Optional[int]]:
+    page_content_list: List[str],
+    extra_content: List[str],
+    page_start_numbering_format: str,
+    page_end_numbering_format: str,
+) -> Tuple[List[str], Optional[int]]:
     f"""
     Identifies and removes or reformats page numbers from a list of PDF page contents, based on the most consistent sequential numbering.
 
@@ -100,10 +102,12 @@ def _clean_page_numbers(
         - If page numbers are found, the function will add formatted page numbers to each page's content if `page_start_numbering_format` or 
           `page_end_numbering_format` is provided.
     """
-    assert len(extra_content) == 0 or len(extra_content) == len(page_content_list), "Please provide an equally sized list of extra content if provided."
+    assert len(extra_content) == 0 or len(extra_content) == len(
+        page_content_list
+    ), "Please provide an equally sized list of extra content if provided."
 
     # Regex to match potential page numbers at the start or end of a string
-    page_number_regex = re.compile(r'^\s*(\d+)\s*|\s*(\d+)\s*$')
+    page_number_regex = re.compile(r"^\s*(\d+)\s*|\s*(\d+)\s*$")
 
     def find_page_number(content):
         match = page_number_regex.search(content)
@@ -123,7 +127,11 @@ def _clean_page_numbers(
         expected_numbers = [i + shift for i in range(len(page_numbers))]
         # Check if expected number occurs (or that the expected "2" occurs in an incorrectly merged number like 25,
         # where 2 is the page number and 5 is part of the PDF content).
-        correct_count = sum(1 for actual, expected in zip(page_numbers, expected_numbers) if actual == expected or str(expected) in str(actual))
+        correct_count = sum(
+            1
+            for actual, expected in zip(page_numbers, expected_numbers)
+            if actual == expected or str(expected) in str(actual)
+        )
 
         if correct_count > best_correct_count:
             best_correct_count = correct_count
@@ -131,28 +139,52 @@ def _clean_page_numbers(
             best_shift = shift
 
     # Check if at least ..% of the pages have correct sequential numbering
-    if best_match and best_correct_count / len(page_numbers) >= PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL:
+    if (
+        best_match
+        and best_correct_count / len(page_numbers)
+        >= PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL
+    ):
         # Remove the page numbers from the content
         for i, expected_number in enumerate(best_match):
-            page_content_list[i] = re.sub(fr'^\s*{expected_number}\s*|\s*{expected_number}\s*$', '', page_content_list[i])
-            
-            page_start = page_start_numbering_format.format(page_nr=expected_number) + "\n" if page_start_numbering_format else ""
-            page_end = "\n" + page_end_numbering_format.format(page_nr=expected_number) if page_end_numbering_format else ""
+            page_content_list[i] = re.sub(
+                rf"^\s*{expected_number}\s*|\s*{expected_number}\s*$",
+                "",
+                page_content_list[i],
+            )
+
+            page_start = (
+                page_start_numbering_format.format(page_nr=expected_number) + "\n"
+                if page_start_numbering_format
+                else ""
+            )
+            page_end = (
+                "\n" + page_end_numbering_format.format(page_nr=expected_number)
+                if page_end_numbering_format
+                else ""
+            )
             extra_info = "\n" + extra_content[i] if extra_content else ""
 
             # Add formatted page numbering if configured.
-            page_content_list[i] = (page_start + page_content_list[i] + extra_info + page_end)
+            page_content_list[i] = (
+                page_start + page_content_list[i] + extra_info + page_end
+            )
 
     return page_content_list, best_shift
 
 
 class BasePDFReader(Reader):
-    def __init__(self, split_on_pages: bool=True, page_start_numbering_format: Optional[str]=None, page_end_numbering_format: Optional[str]=None, **kwargs):
+    def __init__(
+        self,
+        split_on_pages: bool = True,
+        page_start_numbering_format: Optional[str] = None,
+        page_end_numbering_format: Optional[str] = None,
+        **kwargs,
+    ):
         if page_start_numbering_format is None:
             page_start_numbering_format = PAGE_START_NUMBERING_FORMAT_DEFAULT
         if page_end_numbering_format is None:
             page_end_numbering_format = PAGE_END_NUMBERING_FORMAT_DEFAULT
-        
+
         self.split_on_pages = split_on_pages
         self.page_start_numbering_format = page_start_numbering_format
         self.page_end_numbering_format = page_end_numbering_format
@@ -165,8 +197,10 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
-    def _create_documents(self, pdf_content, doc_name: str, use_uuid_for_id: bool, page_number_shift):
-        
+    def _create_documents(
+        self, pdf_content, doc_name: str, use_uuid_for_id: bool, page_number_shift
+    ):
+
         if self.split_on_pages:
             shift = page_number_shift if page_number_shift is not None else 1
             documents: List[Document] = []
@@ -174,7 +208,11 @@ class BasePDFReader(Reader):
                 documents.append(
                     Document(
                         name=doc_name,
-                        id=str(uuid4()) if use_uuid_for_id else f"{doc_name}_{page_number}",
+                        id=(
+                            str(uuid4())
+                            if use_uuid_for_id
+                            else f"{doc_name}_{page_number}"
+                        ),
                         meta_data={"page": page_number},
                         content=page_content,
                     )
@@ -194,7 +232,13 @@ class BasePDFReader(Reader):
 
         return documents
 
-    def _pdf_reader_to_documents(self, doc_reader: DocumentReader, doc_name, read_images=False, use_uuid_for_id=False):
+    def _pdf_reader_to_documents(
+        self,
+        doc_reader: DocumentReader,
+        doc_name,
+        read_images=False,
+        use_uuid_for_id=False,
+    ):
 
         pdf_content = []
         pdf_images_text = []
@@ -204,13 +248,20 @@ class BasePDFReader(Reader):
                 pdf_images_text.append(_ocr_reader(page))
 
         pdf_content, shift = _clean_page_numbers(
-            page_content_list=pdf_content, extra_content=pdf_images_text,
+            page_content_list=pdf_content,
+            extra_content=pdf_images_text,
             page_start_numbering_format=self.page_start_numbering_format,
-            page_end_numbering_format=self.page_end_numbering_format
+            page_end_numbering_format=self.page_end_numbering_format,
         )
         return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
 
-    async def _async_pdf_reader_to_documents(self, doc_reader: DocumentReader, doc_name: str, read_images=False, use_uuid_for_id=False):
+    async def _async_pdf_reader_to_documents(
+        self,
+        doc_reader: DocumentReader,
+        doc_name: str,
+        read_images=False,
+        use_uuid_for_id=False,
+    ):
 
         async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
             # We tried "asyncio.to_thread(page.extract_text)", but it maintains state internally, which leads to issues.
@@ -232,10 +283,11 @@ class BasePDFReader(Reader):
             page_content_list=[x[0] for x in pdf_content],
             extra_content=[x[1] for x in pdf_content],
             page_start_numbering_format=self.page_start_numbering_format,
-            page_end_numbering_format=self.page_end_numbering_format
+            page_end_numbering_format=self.page_end_numbering_format,
         )
 
         return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
+
 
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
@@ -278,7 +330,9 @@ class PDFReader(BasePDFReader):
             return []
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
+        return await self._async_pdf_reader_to_documents(
+            pdf_reader, doc_name, use_uuid_for_id=True
+        )
 
 
 class PDFUrlReader(BasePDFReader):
@@ -303,7 +357,9 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(
+            pdf_reader, doc_name, use_uuid_for_id=False
+        )
 
     async def async_read(self, url: str) -> List[Document]:
         if not url:
@@ -323,7 +379,9 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(
+            pdf_reader, doc_name, use_uuid_for_id=False
+        )
 
 
 class PDFImageReader(BasePDFReader):
@@ -345,7 +403,9 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(
+            pdf_reader, doc_name, read_images=True, use_uuid_for_id=False
+        )
 
     async def async_read(self, pdf: Union[str, Path, IO[Any]]) -> List[Document]:
         if not pdf:
@@ -363,7 +423,9 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(
+            pdf_reader, doc_name, read_images=True, use_uuid_for_id=False
+        )
 
 
 class PDFUrlImageReader(BasePDFReader):
@@ -389,7 +451,9 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return self._pdf_reader_to_documents(
+            pdf_reader, doc_name, read_images=True, use_uuid_for_id=False
+        )
 
     async def async_read(self, url: str) -> List[Document]:
         if not url:
@@ -410,4 +474,6 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Read and chunk.
-        return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
+        return await self._async_pdf_reader_to_documents(
+            pdf_reader, doc_name, read_images=True, use_uuid_for_id=False
+        )
