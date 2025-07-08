@@ -1,6 +1,3 @@
-from agno.workflow.v2 import Condition, Parallel, Step, Workflow
-from agno.workflow.v2.types import StepInput
-
 from agents import (
     alternative_suppliers_agent,
     company_overview_agent,
@@ -11,6 +8,8 @@ from agents import (
     report_compiler_agent,
     switching_barriers_agent,
 )
+from agno.workflow.v2 import Condition, Parallel, Step, Workflow
+from agno.workflow.v2.types import StepInput
 from models import ProcurementAnalysisRequest
 
 
@@ -22,6 +21,7 @@ def should_run_analysis(analysis_type: str) -> callable:
         return False
 
     return evaluator
+
 
 company_overview_step = Step(
     name="Company Overview",
@@ -114,7 +114,7 @@ procurement_workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    analysis_input = ProcurementAnalysisRequest(
+    analysis_details = ProcurementAnalysisRequest(
         companies=["Tesla", "Ford"],
         category_name="Electric Vehicle Components",
         analyses_requested=[
@@ -125,13 +125,12 @@ if __name__ == "__main__":
             "cost_drivers",
             "alternative_suppliers",
         ],
-        model_id="gpt-4o",
         region="Global",
         annual_spend=50_000_000,
         incumbent_suppliers=["CATL", "Panasonic", "LG Energy Solution"],
     )
     procurement_workflow.print_response(
-        message=analysis_input,
+        message=analysis_details,
         stream=True,
         stream_intermediate_steps=True,
     )
