@@ -12,4 +12,6 @@ agent = Agent(
     ),
     markdown=True,
 )
-agent.print_response("Provide me a digest of world news in the last 24 hours.", stream=True)
+agent.print_response(
+    "Provide me a digest of world news in the last 24 hours.", stream=True
+)

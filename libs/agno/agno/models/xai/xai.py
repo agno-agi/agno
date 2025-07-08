@@ -52,8 +52,6 @@ class xAI(OpenAILike):
             existing_body.update({"search_parameters": self.search_parameters})
             request_params["extra_body"] = existing_body
 
-            log_debug(f"Added search parameters: {self.search_parameters}")
-
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
 
