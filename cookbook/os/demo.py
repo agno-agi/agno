@@ -142,16 +142,6 @@ agent_os = AgentOS(
     os_id="demo",
     agents=[agent],
     interfaces=[Whatsapp(agent=agent)],
-    apps=[
-        SessionManager(db=db, name="Session Manager"),
-        SessionManager(db=db, name="Session Manager 2"),
-        KnowledgeManager(knowledge=knowledge1, name="Knowledge Manager 1"),
-        KnowledgeManager(knowledge=knowledge2, name="Knowledge Manager 2"),
-        MemoryManager(memory=memory, name="Memory Manager"),
-        MetricsManager(db=db, name="Metrics Manager"),
-        EvalManager(db=db, name="Eval Manager"),
-        EvalManager(db=db, name="Eval Manager 2"),
-    ],
 )
 app = agent_os.get_app()
 

@@ -39,7 +39,7 @@ agent_os = AgentOS(
     description="Example app for basic agent with eval capabilities",
     os_id="eval-demo",
     agents=[basic_agent],
-    apps=[EvalManager(db=db)],
+    managers=[EvalManager(db=db)],
 )
 app = agent_os.get_app()
 
