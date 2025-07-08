@@ -123,7 +123,7 @@ class Weaviate(VectorDb):
             await self.async_client.connect()  # type: ignore
 
         if not await self.async_client.is_ready():  # type: ignore
-            raise Exception("Weaviate async client is not ready")
+            raise ConnectionError("Weaviate async client is not ready")
 
         return self.async_client  # type: ignore
 
@@ -382,12 +382,18 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
+        
         _docs_to_insert = []
         for document in documents:
-            if document.name and self.name_exists(document.name):
+            assert document.name is not None, "Document name must be set for upsert operation."
+
+            if self.name_exists(document.name):
                 if self.doc_content_changed(document, check_existing=False):
                     log_debug(f"Document already exists, but content changed. Document will be deleted and added again: {document.name}")
-                    self.doc_delete(document.name)
+                    
+                    is_first_or_only_chunk = ("chunk" in document.meta_data and document.meta_data["chunk"] == 1) or ("chunk" not in document.meta_data)
+                    if is_first_or_only_chunk:
+                        self.doc_delete(document.name)
                     _docs_to_insert.append(document)
                 else:
                     log_debug(f"Document skipped, content is unchanged: {document.name}")
