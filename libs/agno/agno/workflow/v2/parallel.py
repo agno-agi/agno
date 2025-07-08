@@ -233,7 +233,7 @@ class Parallel:
                     index, result = future.result()
                     results_with_indices.append((index, result))
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.info(f"Parallel step {step_name} completed")
+                    log_debug(f"Parallel step {step_name} completed")
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
@@ -351,7 +351,7 @@ class Parallel:
                         step_results.extend(step_outputs)
 
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.info(f"Parallel step {step_name} streaming completed")
+                    log_debug(f"Parallel step {step_name} streaming completed")
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
@@ -465,7 +465,7 @@ class Parallel:
                 index, step_result = result
                 processed_results_with_indices.append((index, step_result))
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
-                logger.info(f"Parallel step {step_name} completed")
+                log_debug(f"Parallel step {step_name} completed")
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -578,7 +578,7 @@ class Parallel:
                     step_results.extend(step_outputs)
 
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
-                logger.info(f"Parallel step {step_name} async streaming completed")
+                log_debug(f"Parallel step {step_name} async streaming completed")
 
         # Sort events by original index to preserve order
         all_events_with_indices.sort(key=lambda x: x[0])

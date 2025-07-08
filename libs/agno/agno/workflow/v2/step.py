@@ -159,9 +159,7 @@ class Step:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
-        logger.info(f"Executing step: {self.name}")
-
-        log_debug(f"Executor type: {self._executor_type}")
+        log_debug(f"Executing step: {self.name}")
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -253,7 +251,7 @@ class Step:
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
-                        logger.info(f"Step {self.name} failed but continuing due to skip_on_failure=True")
+                        log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
                         return StepOutput(content=f"Step {self.name} failed but skipped", success=False, error=str(e))
                     else:
@@ -396,7 +394,7 @@ class Step:
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
-                        logger.info(f"Step {self.name} failed but continuing due to skip_on_failure=True")
+                        log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
                         step_output = StepOutput(
                             content=f"Step {self.name} failed but skipped", success=False, error=str(e)
@@ -509,7 +507,6 @@ class Step:
                 # Create StepOutput from response
                 step_output = self._process_step_output(response)
 
-                logger.info(f"Async Step {self.name} completed successfully")
                 return step_output
 
             except Exception as e:
@@ -518,7 +515,7 @@ class Step:
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
-                        logger.info(f"Step {self.name} failed but continuing due to skip_on_failure=True")
+                        log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
                         return StepOutput(content=f"Step {self.name} failed but skipped", success=False, error=str(e))
                     else:
@@ -677,7 +674,7 @@ class Step:
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
-                        logger.info(f"Step {self.name} failed but continuing due to skip_on_failure=True")
+                        log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
                         step_output = StepOutput(
                             content=f"Step {self.name} failed but skipped", success=False, error=str(e)
@@ -772,7 +769,6 @@ class Step:
                         # Decode bytes to string, then decode base64 to get actual image bytes
                         base64_string = img_artifact.content.decode("utf-8")
                         actual_image_bytes = base64.b64decode(base64_string)
-                        logger.info(f"Decoded base64 content to {len(actual_image_bytes)} bytes")
                     else:
                         # If it's already actual image bytes
                         actual_image_bytes = img_artifact.content
@@ -784,7 +780,6 @@ class Step:
                         if "/" in img_artifact.mime_type:
                             format_from_mime = img_artifact.mime_type.split("/")[-1]
                             image_kwargs["format"] = format_from_mime
-                            logger.info(f"Setting format from mime_type: {format_from_mime}")
 
                     images.append(Image(**image_kwargs))
 

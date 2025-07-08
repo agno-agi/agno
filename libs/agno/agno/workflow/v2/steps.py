@@ -226,8 +226,6 @@ class Steps:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
-                logger.info(f"Sequential step {step_name} streaming completed")
-
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -322,8 +320,6 @@ class Steps:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
 
-                logger.info(f"Async sequential step {step_name} completed")
-
                 # Update input for next step with proper chaining
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, steps_step_outputs
@@ -398,8 +394,6 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
-
-                logger.info(f"Async sequential step {step_name} streaming completed")
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:

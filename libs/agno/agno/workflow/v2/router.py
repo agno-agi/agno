@@ -271,7 +271,7 @@ class Router:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} streaming completed")
+                log_debug(f"Router step {step_name} streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -370,7 +370,7 @@ class Router:
                         break
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} async completed")
+                log_debug(f"Router step {step_name} async completed")
 
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, router_step_outputs
@@ -462,7 +462,7 @@ class Router:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} async streaming completed")
+                log_debug(f"Router step {step_name} async streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:

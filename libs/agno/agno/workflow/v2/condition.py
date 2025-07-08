@@ -174,7 +174,7 @@ class Condition:
                     all_results.extend(step_output)
                     if step_output:
                         step_name = getattr(step, "name", f"step_{i}")
-                        logger.info(f"Executing condition step {i + 1}/{len(self.steps)}: {step_name}")
+                        log_debug(f"Executing condition step {i + 1}/{len(self.steps)}: {step_name}")
 
                         condition_step_outputs[step_name] = step_output[-1]
 
@@ -191,7 +191,7 @@ class Condition:
                         break
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} completed")
+                log_debug(f"Condition step {step_name} completed")
 
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, condition_step_outputs
@@ -283,7 +283,7 @@ class Condition:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} streaming completed")
+                log_debug(f"Condition step {step_name} streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -350,8 +350,6 @@ class Condition:
         condition_result = await self._aevaluate_condition(step_input)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        logger.info(f"Condition {self.name} evaluated to: {condition_result}")
-
         if not condition_result:
             log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
             return []
@@ -387,7 +385,7 @@ class Condition:
                         break
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} async completed")
+                log_debug(f"Condition step {step_name} async completed")
 
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, condition_step_outputs
@@ -482,7 +480,7 @@ class Condition:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Condition step {step_name} async streaming completed")
+                log_debug(f"Condition step {step_name} async streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
