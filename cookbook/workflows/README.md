@@ -7,13 +7,13 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
 - [Overview](#overview)
 - [Core Concepts](#core-concepts)
 - [Workflow Patterns](#workflow-patterns)
-  - [1. Sequential Workflows](#1-sequential-workflows)
-  - [2. Parallel Execution](#2-parallel-execution)
-  - [3. Conditional Workflows](#3-conditional-workflows)
-  - [4. Loop/Iteration Workflows](#4-loopiteration-workflows)
-  - [5. Condition-Based Branching](#5-Condition-based-branching)
-  - [6. Function-Based Steps](#6-function-based-steps)
-  - [7. Mixed Execution Types](#7-mixed-execution-types)
+  - [1. Basic Sequential Workflows](#1-basic-sequential-workflows)
+  - [2. Workflows 1.0 type execution](#2-workflows-10-type-execution)
+  - [3. Basic Step Based Execution](#3-basic-step-based-execution)
+  - [4. Parallel Execution](#4-parallel-execution)
+  - [5. Conditional Workflows](#5-conditional-workflows)
+  - [6. Loop/Iteration Workflows](#6-loopiteration-workflows)
+  - [7. Condition-Based Branching](#7-Condition-based-branching)
   - [8. Complex Combinations](#8-complex-combinations)
 - [Advanced Features](#advanced-features)
 - [Best Practices](#best-practices)
@@ -22,6 +22,8 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
 ## Overview
 
 Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-step AI processes. Unlike traditional linear workflows, you can now create sophisticated branching logic, parallel execution, and dynamic routing based on content analysis.
+
+![Workflows 2.0 flow](/cookbook/workflows/assets/workflows_v2_flow.png)
 
 ### Key Features
 
@@ -47,41 +49,86 @@ Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-ste
 | **Loop** | Iterative execution | Quality-driven research |
 | **Router** | Dynamic routing | Content-based step selection |
 
-## Getting Started
+### Atomic Units with Controlled Execution
+The workflow system is built around the concept of atomic execution units in Agno- `Agents` and `Teams`, these are individual components that can work independently but gain enhanced capabilities when orchestrated together:
+- **Agents**: Individual AI executors with specific capabilities and instructions
+- **Teams**: Coordinated groups of agents working together on complex problems
+- **Custom Python Functions**: Custom Python functions for specialized processing logic and full control
 
-1. **Start Simple**: Begin with sequential workflows
-2. **Add Parallelism**: Identify independent tasks
-3. **Introduce Conditions**: Add content-aware branching
-4. **Enable Streaming**: Have event-based information
-5. **Scale Complexity**: Combine patterns as needed
+The beauty of this approach is that you maintain the full power and flexibility of each atomic unit while gaining sophisticated orchestration capabilities. Your agents and teams retain their individual characteristics, memory, and behavior patterns, but now operate within a structured workflow that provides:
+- Sequential step execution with output chaining
+- Session management and state persistence
+- Error handling and retry mechanisms
+- Streaming capabilities for real-time feedback
 
 ## Workflow Patterns
 
-### 1. Sequential Workflows
+### 1. Basic Sequential Workflows
 
 **When to use**: Linear processes where each step depends on the previous one.
 
-**Example**: Research → Analysis → Content Creation
+**Example**: Research → Preprocess data in a function before next step → Content Creation
 
 ```python
 from agno.workflow.v2 import Step, Workflow
 
-# Simple sequential workflow - just use agents directly
+def data_preprocessor(step_input):
+    # Custom preprocessing logic
+
+    # Or you can also run any agent/team over here itself
+    # response = some_agent.run(...)
+    return StepOutput(content=f"Processed: {step_input.message}") # <-- Now pass the agent/team response in content here
+
 workflow = Workflow(
-    name="Content Creation Pipeline",
+    name="Mixed Execution Pipeline",
     steps=[
-        researcher,  # Agent
-        analyst,     # Agent 
-        writer,      # Agent
+        research_team,      # Team
+        data_preprocessor,  # Function
+        content_agent,      # Agent
     ]
 )
 
-# Run the workflow
-workflow.print_response(
-    "AI trends in 2024",
-    markdown=True,
-)
+workflow.print_response("Analyze the competitive landscape for fintech startups", markdown=True)
 ```
+
+**See Examples**: 
+- [`sequence_of_functions_and_agents.py`](/cookbook/workflows/sync/01_basic_workflows/sequence_of_functions_and_agents.py)
+- [`sequence_of_functions_and_agents_stream.py`](/cookbook/workflows/sync/01_basic_workflows/sequence_of_functions_and_agents_stream.py)
+
+
+> **Note**: `StepInput` and `StepOutput` provides standardized interfaces for data flow between steps:
+![Workflows Step IO](/cookbook/workflows/assets/step_io_flow.png)
+
+> So if you make a custom function as an executor for a step, do make sure that the input and output types are compatible with the `StepInput` and `StepOutput` interfaces. This will ensure that your custom function can seamlessly integrate into the workflow system.
+
+### 2. `Workflows 1.0` type execution
+
+**Keep it Simple with Pure Python**: If you prefer the Workflows 1.0 approach or need maximum flexibility, you can still use a single Python function to handle everything. This approach gives you complete control over the execution flow while still benefiting from workflow features like storage, streaming, and session management.
+
+Replace all the steps in the workflow with a single executable function where you can control everything.
+
+```python
+def custom_workflow_function(workflow: Workflow, execution_input: WorkflowExecutionInput):
+    # Custom orchestration logic
+    research_result = research_team.run(execution_input.message)
+    analysis_result = analysis_agent.run(research_result.content)
+    return f"Final: {analysis_result.content}"
+
+workflow = Workflow(
+    name="Function-Based Workflow",
+    steps=custom_workflow_function  # Single function replaces all steps
+)
+
+workflow.print_response("Evaluate the market potential for quantum computing applications", markdown=True)
+```
+
+**See Examples**:
+- [`function_instead_of_steps.py`](/cookbook/workflows/sync/01_basic_workflows/function_instead_of_steps.py) - Complete function-based workflow
+- [`function_instead_of_steps_stream.py`](/cookbook/workflows/sync/01_basic_workflows/function_instead_of_steps_stream.py) - Streaming version
+
+For migration to 2.0 refer to this section- [Migration from Workflows 1.0](#migration-from-workflows-10)
+
+### 3. Basic Step Based Execution
 
 **You can name your steps** for better logging and future support on the Agno platform:
 
@@ -92,8 +139,8 @@ from agno.workflow.v2 import Step, Workflow
 workflow = Workflow(
     name="Content Creation Pipeline",
     steps=[
-        Step(name="Research Phase", agent=researcher),
-        Step(name="Analysis Phase", agent=analyst), 
+        Step(name="Research Phase", team=researcher),
+        Step(name="Analysis Phase", executor=custom_function), 
         Step(name="Writing Phase", agent=writer),
     ]
 )
@@ -104,9 +151,13 @@ workflow.print_response(
 )
 ```
 
-**See**: [`sequence_of_steps.py`](sync/sequence_of_steps.py)
+**See Examples**: 
+- [`sequence_of_steps.py`](cookbook/workflows/sync/01_basic_workflows/sequence_of_steps.py)
+- [`sequence_of_steps_stream.py`](cookbook/workflows/sync/01_basic_workflows/sequence_of_steps_stream.py)
+- [`step_with_function.py`](/cookbook/workflows/sync/01_basic_workflows/step_with_function.py)
+- [`step_with_function_stream.py`](/cookbook/workflows/sync/01_basic_workflows/step_with_function_stream.py)
 
-### 2. Parallel Execution
+### 4. Parallel Execution
 
 **When to use**: Independent tasks that can run simultaneously to save time.
 
@@ -133,9 +184,11 @@ workflow = Workflow(
 workflow.print_response("Write about the latest AI developments", markdown=True)
 ```
 
-**See**: [`parallel_steps_workflow.py`](sync/parallel_steps_workflow.py)
+**See Examples**: 
+- [`parallel_steps_workflow.py`](/cookbook/workflows/sync/04_workflows_parallel_execution/parallel_steps_workflow.py)
+- [`parallel_steps_workflow_stream.py`](/cookbook/workflows/sync/04_workflows_parallel_execution/parallel_steps_workflow_stream.py)
 
-### 3. Conditional Steps
+### 5. Conditional Steps
 
 **When to use**: Conditional step execution based on business logic.
 
@@ -165,9 +218,11 @@ workflow = Workflow(
 workflow.print_response("Comprehensive analysis of AI and machine learning trends", markdown=True)
 ```
 
-**See**: [`condition_with_list_of_steps.py`](sync/condition_with_list_of_steps.py)
+**See Examples**: 
+- [`condition_with_list_of_steps.py`](/cookbook/workflows/sync/02_workflows_conditional_execution/condition_with_list_of_steps.py)
+- [`condition_steps_workflow_stream.py`](/cookbook/workflows/sync/02_workflows_conditional_execution/condition_steps_workflow_stream.py)
 
-### 4. Loop/Iteration Workflows
+### 6. Loop/Iteration Workflows
 
 **When to use**: Quality-driven processes, iterative refinement, or retry logic.
 
@@ -198,9 +253,11 @@ workflow = Workflow(
 workflow.print_response("Research the impact of renewable energy on global markets", markdown=True)
 ```
 
-**See**: [`loop_steps_workflow.py`](sync/loop_steps_workflow.py)
+**See Examples**: 
+- [`loop_steps_workflow.py`](/cookbook/workflows/sync/03_workflows_loop_execution/loop_steps_workflow.py)
+- [`loop_steps_workflow_stream.py`](/cookbook/workflows/sync/03_workflows_loop_execution/loop_steps_workflow_stream.py)
 
-### 5. Condition-Based Branching
+### 7. Condition-Based Branching
 
 **When to use**: Complex decision trees, topic-specific workflows, dynamic routing.
 
@@ -236,70 +293,9 @@ workflow = Workflow(
 workflow.print_response("Latest developments in artificial intelligence and machine learning", markdown=True)
 ```
 
-**See**: [`router_steps_workflow.py`](sync/router_steps_workflow.py)
-
-### 6. Function-Based Steps
-
-**When to use**: Custom business logic, API integrations, data transformations.
-
-**Example**: Custom processing with agent integration
-
-![Custom Function Steps](/cookbook/workflows/assets/custom_function_steps.png)
-
-```python
-from agno.workflow.v2 import Step, Workflow
-
-def custom_processor(step_input) -> StepOutput:
-    # Custom logic with agent interaction
-    processed_data = some_custom_logic(step_input.message)
-    agent_response = content_agent.run(processed_data)
-    
-    return StepOutput(
-        content=f"Enhanced: {agent_response.content}",
-        response=agent_response
-    )
-
-workflow = Workflow(
-    name="Custom Processing Pipeline",
-    steps=[
-        Step(name="Research", agent=researcher),
-        Step(name="Custom Processing", executor=custom_processor),
-        Step(name="Final Review", agent=reviewer),
-    ]
-)
-
-workflow.print_response("Create a technical analysis of blockchain scalability solutions", markdown=True)
-```
-
-**See**: [`step_with_function.py`](sync/step_with_function.py)
-
-### 7. Mixed Execution Types
-
-**When to use**: Combining different execution types (agents, teams, functions) in one workflow.
-
-**Example**: Function → Team → Agent → Function
-
-```python
-from agno.workflow.v2 import Step, Workflow
-
-def data_preprocessor(step_input):
-    # Custom preprocessing logic
-    return StepOutput(content=f"Processed: {step_input.message}")
-
-workflow = Workflow(
-    name="Mixed Execution Pipeline",
-    steps=[
-        data_preprocessor,  # Function
-        research_team,      # Team
-        Step(name="Analysis", agent=analyst),  # Agent
-        Step(name="Custom Logic", executor=custom_function),  # Function in Step
-    ]
-)
-
-workflow.print_response("Analyze the competitive landscape for fintech startups", markdown=True)
-```
-
-**See**: [`sequence_of_functions_and_agents.py`](sync/sequence_of_functions_and_agents.py)
+**See Examples**: 
+- [`router_steps_workflow.py`](/cookbook/workflows/sync/05_workflows_conditional_branching/router_steps_workflow.py)
+- [`router_steps_workflow_stream.py`](/cookbook/workflows/sync/05_workflows_conditional_branching/router_steps_workflow_stream.py)
 
 ### 8. Complex Combinations
 
@@ -389,9 +385,187 @@ workflow = Workflow(
 workflow.print_response("Create a comprehensive analysis of sustainable technology trends and their business impact for 2024", markdown=True)
 ```
 
-**See**: [`condition_and_parallel_steps.py`](sync/condition_and_parallel_steps.py), [`router_with_loop_steps.py`](sync/router_with_loop_steps.py)
-
+**See Examples**: 
+- [`condition_and_parallel_steps_stream.py`](/cookbook/workflows/sync/02_workflows_conditional_execution/condition_and_parallel_steps_stream.py)
+- [`loop_with_parallel_steps_stream.py`](/cookbook/workflows/sync/03_workflows_loop_execution/loop_with_parallel_steps_stream.py)
+- [`router_with_loop_steps.py`](/cookbook/workflows/sync/05_workflows_conditional_branching/router_with_loop_steps.py)
+ 
 ## Advanced Features
+
+### Early Stopping
+
+Workflows can be terminated early when certain conditions are met, preventing unnecessary processing and ensuring safety gates work properly. Any step can trigger early termination by returning `StepOutput(stop=True)`.
+
+![Early Stop Workflows](/cookbook/workflows/assets/early_stop.png)
+
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def security_gate(step_input: StepInput) -> StepOutput:
+    """Security gate that stops deployment if vulnerabilities found"""
+    security_result = step_input.previous_step_content or ""
+    
+    if "VULNERABLE" in security_result.upper():
+        return StepOutput(
+            content="🚨 SECURITY ALERT: Critical vulnerabilities detected. Deployment blocked.",
+            stop=True  # Stop the entire workflow
+        )
+    else:
+        return StepOutput(
+            content="✅ Security check passed. Proceeding with deployment...",
+            stop=False
+        )
+
+# Secure deployment pipeline
+workflow = Workflow(
+    name="Secure Deployment Pipeline",
+    steps=[
+        Step(name="Security Scan", agent=security_scanner),
+        Step(name="Security Gate", executor=security_gate),  # May stop here
+        Step(name="Deploy Code", agent=code_deployer),       # Only if secure
+        Step(name="Setup Monitoring", agent=monitoring_agent), # Only if deployed
+    ]
+)
+
+# Test with vulnerable code - workflow stops at security gate
+workflow.print_response("Scan this code: exec(input('Enter command: '))")
+```
+
+**See Examples**: 
+- [`early_stop_workflow_with_agents.py`](/cookbook/workflows/sync/06_workflows_advanced_concepts/early_stop_workflow_with_agents.py)
+- [`early_stop_workflow_with_loop.py`](/cookbook/workflows/sync/06_workflows_advanced_concepts/early_stop_workflow_with_loop.py)
+- [`early_stop_workflow_with_router.py`](/cookbook/workflows/sync/06_workflows_advanced_concepts/early_stop_workflow_with_router.py)
+
+### Access Multiple Previous Steps Output
+
+Advanced workflows often need to access data from multiple previous steps, not just the immediate previous step. The `StepInput` object provides powerful methods to access any previous step's output by name or get all previous content.
+
+```python
+def create_comprehensive_report(step_input: StepInput) -> StepOutput:
+    """
+    Custom function that creates a report using data from multiple previous steps.
+    This function has access to ALL previous step outputs and the original workflow message.
+    """
+
+    # Access original workflow input
+    original_topic = step_input.workflow_message or ""
+
+    # Access specific step outputs by name
+    hackernews_data = step_input.get_step_content("research_hackernews") or ""
+    web_data = step_input.get_step_content("research_web") or ""
+
+    # Or access ALL previous content
+    all_research = step_input.get_all_previous_content()
+
+    # Create a comprehensive report combining all sources
+    report = f"""
+        # Comprehensive Research Report: {original_topic}
+
+        ## Executive Summary
+        Based on research from HackerNews and web sources, here's a comprehensive analysis of {original_topic}.
+
+        ## HackerNews Insights
+        {hackernews_data[:500]}...
+
+        ## Web Research Findings  
+        {web_data[:500]}...
+    """
+
+    return StepOutput(
+        step_name="comprehensive_report", 
+        content=report.strip(), 
+        success=True
+    )
+
+# Use in workflow
+workflow = Workflow(
+    name="Enhanced Research Workflow",
+    steps=[
+        Step(name="research_hackernews", agent=hackernews_agent),
+        Step(name="research_web", agent=web_agent),
+        Step(name="comprehensive_report", executor=create_comprehensive_report),  # Accesses both previous steps
+        Step(name="final_reasoning", agent=reasoning_agent),
+    ],
+)
+```
+
+> **Key Methods:**
+> - `step_input.get_step_content("step_name")` - Get content from specific step by name
+> - `step_input.get_all_previous_content()` - Get all previous step content combined
+> - `step_input.workflow_message` - Access the original workflow input message
+> - `step_input.previous_step_content` - Get content from immediate previous step
+
+### Event Storage and Filtering
+
+Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunResponse` and in the `runs` column in your `Workflow's Session DB`
+
+**Key Features:**
+
+- **`store_events=True`**: Automatically stores all workflow events in the database
+- **`events_to_skip=[]`**: Filter out specific event types to reduce storage and noise
+- **Persistent Storage**: Events are stored in your configured storage backend (SQLite, PostgreSQL, etc.)
+- **Post-Execution Access**: Access all stored events via `workflow.run_response.events`
+
+**Available Events to Skip:**
+```python
+from agno.run.v2.workflow import WorkflowRunEvent
+
+# Common events you might want to skip
+events_to_skip = [
+    WorkflowRunEvent.workflow_started,
+    WorkflowRunEvent.workflow_completed,
+    WorkflowRunEvent.step_started,
+    WorkflowRunEvent.step_completed,
+    WorkflowRunEvent.parallel_execution_started,
+    WorkflowRunEvent.parallel_execution_completed,
+    WorkflowRunEvent.condition_execution_started,
+    WorkflowRunEvent.condition_execution_completed,
+    WorkflowRunEvent.loop_execution_started,
+    WorkflowRunEvent.loop_execution_completed,
+    WorkflowRunEvent.router_execution_started,
+    WorkflowRunEvent.router_execution_completed,
+]
+```
+
+**When to use:**
+- **Debugging**: Store all events to analyze workflow execution flow
+- **Audit Trails**: Keep records of all workflow activities for compliance
+- **Performance Analysis**: Analyze timing and execution patterns
+- **Error Investigation**: Review event sequences leading to failures
+- **Noise Reduction**: Skip verbose events like `step_started` to focus on results
+
+**Example Use Cases:**
+```python
+# store everything
+debug_workflow = Workflow(
+    name="Debug Workflow",
+    store_events=True,
+    steps=[...]
+)
+
+# store only important events
+production_workflow = Workflow(
+    name="Production Workflow", 
+    store_events=True,
+    events_to_skip=[
+        WorkflowRunEvent.step_started,
+        WorkflowRunEvent.parallel_execution_started,
+        # keep step_completed and workflow_completed
+    ],
+    steps=[...]
+)
+
+# No event storage
+fast_workflow = Workflow(
+    name="Fast Workflow",
+    store_events=False,  
+    steps=[...]
+)
+```
+
+**See Examples**:
+- [`store_events_and_events_to_skip_in_a_workflow.py`](/cookbook/workflows/sync/06_workflows_advanced_concepts/store_events_and_events_to_skip_in_a_workflow.py)
 
 ### Streaming Support
 
@@ -499,27 +673,6 @@ workflow.print_response(
 
 **See**: [`pydantic_model_as_input.py`](sync/pydantic_model_as_input.py)
 
-### Custom Workflow Execution
-
-Replace all the steps in the workflow with a single executable function where you can control everything.
-
-```python
-def custom_workflow_function(workflow: Workflow, execution_input: WorkflowExecutionInput):
-    # Custom orchestration logic
-    research_result = research_team.run(execution_input.message)
-    analysis_result = analysis_agent.run(research_result.content)
-    return f"Final: {analysis_result.content}"
-
-workflow = Workflow(
-    name="Function-Based Workflow",
-    steps=custom_workflow_function  # Single function replaces all steps
-)
-
-workflow.print_response("Evaluate the market potential for quantum computing applications", markdown=True)
-```
-
-**See**: [`function_instead_of_steps.py`](sync/function_instead_of_steps.py)
-
 ## Best Practices
 
 ### When to Use Each Pattern
@@ -552,30 +705,4 @@ workflow.print_response("Evaluate the market potential for quantum computing app
 4. **Enable streaming**: For event-based information
 5. **Add state management**: Use `workflow_session_state` for data sharing
 
-## Examples by Use Case
-
-### Content Creation Pipeline
-- **Pattern**: Sequential
-- **See**: [`sequence_of_steps.py`](sync/sequence_of_steps.py)
-
-### Multi-Source Research
-- **Pattern**: Parallel + Conditional
-- **See**: [`condition_and_parallel_steps.py`](sync/condition_and_parallel_steps.py)
-
-### Quality-Driven Processing
-- **Pattern**: Loop + Conditional
-- **See**: [`loop_steps_workflow.py`](sync/loop_steps_workflow.py)
-
-### Dynamic Expert Routing
-- **Pattern**: Router + Mixed components
-- **See**: [`router_steps_workflow.py`](sync/router_steps_workflow.py)
-
-### Custom Business Logic
-- **Pattern**: Function-based + Mixed
-- **See**: [`step_with_function.py`](sync/step_with_function.py)
-
-### Stateful Multi-Step Process
-- **Pattern**: Sequential + State management
-- **See**: [`shared_session_state_with_agent.py`](sync/shared_session_state_with_agent.py)
-
-For more examples and advanced patterns, explore the [`cookbook/workflows/sync/`](sync/) and [`cookbook/workflows/async/`](async/) directory. Each file demonstrates a specific pattern with detailed comments and real-world use cases.
+For more examples and advanced patterns, explore the [`cookbook/workflows/sync/`](/cookbook/workflows/sync) and [`cookbook/workflows/async/`](/cookbook/workflows/async) directory. Each file demonstrates a specific pattern with detailed comments and real-world use cases.

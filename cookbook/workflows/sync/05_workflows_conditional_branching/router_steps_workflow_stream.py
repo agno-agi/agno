@@ -97,6 +97,8 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
-    tech_result = workflow.print_response(
-        "Latest developments in artificial intelligence and machine learning"
+    workflow.print_response(
+        "Latest developments in artificial intelligence and machine learning",
+        stream=True,
+        stream_intermediate_steps=True,
     )

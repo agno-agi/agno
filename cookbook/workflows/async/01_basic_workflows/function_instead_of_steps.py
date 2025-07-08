@@ -1,10 +1,11 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 
@@ -40,7 +41,7 @@ content_planner = Agent(
 )
 
 
-def custom_execution_function(
+async def custom_execution_function(
     workflow: Workflow, execution_input: WorkflowExecutionInput
 ):
     print(f"Executing workflow: {workflow.name}")
@@ -66,7 +67,7 @@ def custom_execution_function(
 
         Please create a detailed, actionable content plan.
     """
-    content_plan = content_planner.run(planning_prompt)
+    content_plan = await content_planner.arun(planning_prompt)
 
     # Return the content plan
     return content_plan.content
@@ -84,6 +85,9 @@ if __name__ == "__main__":
         ),
         steps=custom_execution_function,
     )
-    response = content_creation_workflow.print_response(
-        message="AI trends in 2024",
+
+    asyncio.run(
+        content_creation_workflow.aprint_response(
+            message="AI trends in 2024",
+        )
     )

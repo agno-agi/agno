@@ -31,7 +31,7 @@ def report_step(step_input: StepInput) -> StepOutput:
 Research: {research_data}
 Analysis: {analysis_data}
 Total Content Length: {len(all_content)}
-Available Steps: {list(step_input.previous_steps_outputs.keys())}"""
+Available Steps: {list(step_input.previous_step_outputs.keys())}"""
 
     return StepOutput(step_name="report_step", content=report, success=True)
 

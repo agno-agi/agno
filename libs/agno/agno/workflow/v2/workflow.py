@@ -22,8 +22,10 @@ from agno.run.v2.workflow import (
     RouterExecutionCompletedEvent,
     RouterExecutionStartedEvent,
     StepCompletedEvent,
+    StepOutputEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
+    WorkflowRunEvent,
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
     WorkflowStartedEvent,
@@ -78,6 +80,7 @@ class Workflow:
 
     # Session management
     session_id: Optional[str] = None
+    session_name: Optional[str] = None
     user_id: Optional[str] = None
     workflow_session_id: Optional[str] = None
     workflow_session_state: Optional[Dict[str, Any]] = None
@@ -90,6 +93,15 @@ class Workflow:
     workflow_session: Optional[WorkflowSessionV2] = None
     debug_mode: Optional[bool] = False
 
+    # --- Workflow Streaming ---
+    # Stream the response from the Workflow
+    stream: Optional[bool] = None
+    # Stream the intermediate steps from the Workflow
+    stream_intermediate_steps: bool = False
+
+    store_events: bool = False
+    events_to_skip: Optional[List[WorkflowRunEvent]] = None
+
     def __init__(
         self,
         workflow_id: Optional[str] = None,
@@ -98,9 +110,14 @@ class Workflow:
         storage: Optional[Storage] = None,
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         workflow_session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: bool = False,
+        store_events: bool = False,
+        events_to_skip: Optional[List[WorkflowRunEvent]] = None,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -108,9 +125,14 @@ class Workflow:
         self.storage = storage
         self.steps = steps
         self.session_id = session_id
+        self.session_name = session_name
         self.workflow_session_state = workflow_session_state
         self.user_id = user_id
         self.debug_mode = debug_mode
+        self.store_events = store_events
+        self.events_to_skip = events_to_skip or []
+        self.stream = stream
+        self.stream_intermediate_steps = stream_intermediate_steps
 
     def initialize_workflow(self):
         if self.workflow_id is None:
@@ -126,6 +148,45 @@ class Workflow:
             self.storage.mode = "workflow_v2"
 
         self._update_workflow_session_state()
+
+    def _handle_event(
+        self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
+    ) -> "WorkflowRunResponseEvent":
+        """Handle workflow events for storage - similar to Team._handle_event"""
+        if self.store_events:
+            # Check if this event type should be skipped
+            if self.events_to_skip:
+                event_type = event.event
+                for skip_event in self.events_to_skip:
+                    if isinstance(skip_event, str):
+                        if event_type == skip_event:
+                            return event
+                    else:
+                        # It's a WorkflowRunEvent enum
+                        if event_type == skip_event.value:
+                            return event
+
+            # Store the event
+            if workflow_run_response.events is None:
+                workflow_run_response.events = []
+
+            workflow_run_response.events.append(event)
+
+        return event
+
+    def _transform_step_output_to_event(
+        self, step_output: StepOutput, workflow_run_response: WorkflowRunResponse, step_index: Optional[int] = None
+    ) -> StepOutputEvent:
+        """Transform a StepOutput object into a StepOutputEvent for consistent streaming interface"""
+        return StepOutputEvent(
+            step_output=step_output,
+            run_id=workflow_run_response.run_id or "",
+            workflow_name=workflow_run_response.workflow_name,
+            workflow_id=workflow_run_response.workflow_id,
+            session_id=workflow_run_response.session_id,
+            step_name=step_output.step_name,
+            step_index=step_index,
+        )
 
     def _set_debug(self) -> None:
         """Set debug mode and configure logging"""
@@ -155,7 +216,7 @@ class Workflow:
     def _create_step_input(
         self,
         execution_input: WorkflowExecutionInput,
-        previous_steps_outputs: Optional[Dict[str, StepOutput]] = None,
+        previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
         shared_images: Optional[List[Image]] = None,
         shared_videos: Optional[List[Video]] = None,
         shared_audio: Optional[List[Audio]] = None,
@@ -163,14 +224,14 @@ class Workflow:
         """Helper method to create StepInput with enhanced data flow support"""
 
         previous_step_content = None
-        if previous_steps_outputs:
-            last_output = list(previous_steps_outputs.values())[-1]
+        if previous_step_outputs:
+            last_output = list(previous_step_outputs.values())[-1]
             previous_step_content = last_output.content if last_output else None
 
         return StepInput(
             message=execution_input.message,
             previous_step_content=previous_step_content,
-            previous_steps_outputs=previous_steps_outputs,
+            previous_step_outputs=previous_step_outputs,
             workflow_message=execution_input.message,
             images=shared_images or [],
             videos=shared_videos or [],
@@ -255,7 +316,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -271,7 +332,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -279,17 +340,17 @@ class Workflow:
 
                     step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Update the workflow-level previous_steps_outputs dictionary
+                    # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
-                            previous_steps_outputs[step_name] = step_output[-1]
+                            previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
                                 logger.info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
-                        previous_steps_outputs[step_name] = step_output
+                        previous_step_outputs[step_name] = step_output
                         if step_output.stop:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
@@ -359,12 +420,14 @@ class Workflow:
         """Execute a specific pipeline by name with event streaming"""
 
         workflow_run_response.status = RunStatus.running
-        yield WorkflowStartedEvent(
+
+        workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
@@ -387,7 +450,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -405,7 +468,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -420,12 +483,18 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         step_index=i,
                     ):
+                        # Handle events
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_steps_outputs dictionary
-                            previous_steps_outputs[step_name] = step_output
+                            # Update the workflow-level previous_step_outputs dictionary
+                            previous_step_outputs[step_name] = step_output
+
+                            # Transform StepOutput to StepOutputEvent for consistent streaming interface
+                            step_output_event = self._transform_step_output_to_event(
+                                step_output, workflow_run_response, step_index=i
+                            )
 
                             if step_output.stop:
                                 logger.info(f"Early termination requested by step {step_name}")
@@ -437,9 +506,9 @@ class Workflow:
                                 output_videos.extend(step_output.videos or [])
                                 output_audio.extend(step_output.audio or [])
 
-                                # Only yield StepOutput for generator functions, not for agents/teams
+                                # Only yield StepOutputEvent for function executors, not for agents/teams
                                 if getattr(step, "executor_type", None) == "function":
-                                    yield event
+                                    yield step_output_event
 
                                 # Break out of the step loop
                                 early_termination = True
@@ -453,13 +522,16 @@ class Workflow:
                             output_videos.extend(step_output.videos or [])
                             output_audio.extend(step_output.audio or [])
 
-                            # Only yield StepOutput for generator functions, not for agents/teams
+                            # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
-                                yield event
+                                yield step_output_event
+                        
+                        elif isinstance(event, WorkflowRunResponseEvent):
+                            yield self._handle_event(event, workflow_run_response)
+
                         else:
                             # Yield other internal events
                             yield event
-
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -505,7 +577,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
 
         # Yield workflow completed event
-        yield WorkflowCompletedEvent(
+        workflow_completed_event = WorkflowCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             content=workflow_run_response.content,
             workflow_name=workflow_run_response.workflow_name,
@@ -514,6 +586,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,
             extra_data=workflow_run_response.extra_data,
         )
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
         if self.workflow_session:
@@ -557,7 +630,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -573,7 +646,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -581,17 +654,17 @@ class Workflow:
 
                     step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
 
-                    # Update the workflow-level previous_steps_outputs dictionary
+                    # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
-                            previous_steps_outputs[step_name] = step_output[-1]
+                            previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
                                 logger.info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
-                        previous_steps_outputs[step_name] = step_output
+                        previous_step_outputs[step_name] = step_output
                         if step_output.stop:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
@@ -657,12 +730,13 @@ class Workflow:
         """Execute a specific pipeline by name with event streaming"""
 
         workflow_run_response.status = RunStatus.running
-        yield WorkflowStartedEvent(
+        workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
             if inspect.iscoroutinefunction(self.steps):
@@ -693,7 +767,7 @@ class Workflow:
             try:
                 # Track outputs from each step for enhanced data flow
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
-                previous_steps_outputs: Dict[str, StepOutput] = {}
+                previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images = execution_input.images or []
                 output_images = []
@@ -711,7 +785,7 @@ class Workflow:
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
                         execution_input=execution_input,
-                        previous_steps_outputs=previous_steps_outputs,
+                        previous_step_outputs=previous_step_outputs,
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
@@ -730,8 +804,13 @@ class Workflow:
                             step_output = event
                             collected_step_outputs.append(step_output)
 
-                            # Update the workflow-level previous_steps_outputs dictionary
-                            previous_steps_outputs[step_name] = step_output
+                            # Update the workflow-level previous_step_outputs dictionary
+                            previous_step_outputs[step_name] = step_output
+
+                            # Transform StepOutput to StepOutputEvent for consistent streaming interface
+                            step_output_event = self._transform_step_output_to_event(
+                                step_output, workflow_run_response, step_index=i
+                            )
 
                             if step_output.stop:
                                 logger.info(f"Early termination requested by step {step_name}")
@@ -743,9 +822,8 @@ class Workflow:
                                 output_videos.extend(step_output.videos or [])
                                 output_audio.extend(step_output.audio or [])
 
-                                # Only yield StepOutput for generator functions, not for agents/teams
                                 if getattr(step, "executor_type", None) == "function":
-                                    yield event
+                                    yield step_output_event
 
                                 # Break out of the step loop
                                 early_termination = True
@@ -759,9 +837,13 @@ class Workflow:
                             output_videos.extend(step_output.videos or [])
                             output_audio.extend(step_output.audio or [])
 
-                            # Only yield StepOutput for generator functions, not for agents/teams
+                            # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
-                                yield event
+                                yield step_output_event
+
+                        elif isinstance(event, WorkflowRunResponseEvent):
+                            yield self._handle_event(event, workflow_run_response)
+
                         else:
                             # Yield other internal events
                             yield event
@@ -811,7 +893,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
 
         # Yield workflow completed event
-        yield WorkflowCompletedEvent(
+        workflow_completed_event = WorkflowCompletedEvent(
             run_id=workflow_run_response.run_id or "",
             content=workflow_run_response.content,
             workflow_name=workflow_run_response.workflow_name,
@@ -820,6 +902,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,
             extra_data=workflow_run_response.extra_data,
         )
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
         if self.workflow_session:
@@ -837,6 +920,7 @@ class Workflow:
                 "workflow_id": self.workflow_id,
                 "run_id": self.run_id,
                 "session_id": self.session_id,
+                "session_name": self.session_name,
             }
         )
         if self.name:
@@ -885,6 +969,15 @@ class Workflow:
         self._set_debug()
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
+
+        # Use simple defaults
+        stream = stream or self.stream or False
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+
+        # Can't have stream_intermediate_steps if stream is False
+        if not stream:
+            stream_intermediate_steps = False
+
         log_debug(f"Stream: {stream}")
         log_debug(f"Total steps: {self._get_step_count()}")
 
@@ -975,6 +1068,15 @@ class Workflow:
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
+
+        # Use simple defaults
+        stream = stream or self.stream or False
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+
+        # Can't have stream_intermediate_steps if stream is False
+        if not stream:
+            stream_intermediate_steps = False
+
         log_debug(f"Stream: {stream}")
 
         # Set user_id and session_id if provided
@@ -1210,6 +1312,9 @@ class Workflow:
             console: Rich console instance (optional)
         """
 
+        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps or False
+        stream = stream or self.stream or False
+
         if stream:
             self._print_response_stream(
                 message=message,
@@ -1372,6 +1477,8 @@ class Workflow:
                         border_style="blue",
                     )
                     console.print(summary_panel)
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
@@ -1725,8 +1832,8 @@ class Workflow:
                     else:
                         if isinstance(response, str):
                             response_str = response
-                        elif isinstance(response, StepOutput):
-                            # Handle StepOutput objects yielded directly from generator functions
+                        elif isinstance(response, StepOutputEvent):
+                            # Handle StepOutputEvent objects yielded from workflow
                             response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
@@ -1788,6 +1895,8 @@ class Workflow:
                                 live_log.update(group)
 
                 response_timer.stop()
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
@@ -1968,7 +2077,7 @@ class Workflow:
                         else:
                             # This is a regular single step
                             if step_output.content:
-                                formatted_content = self._format_step_content_for_display(sub_step_output)
+                                formatted_content = self._format_step_content_for_display(step_output)
                                 step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
                                     title=f"Step {i + 1}: {step_output.step_name} (Completed)",
@@ -1999,6 +2108,8 @@ class Workflow:
                         border_style="blue",
                     )
                     console.print(summary_panel)
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
@@ -2214,6 +2325,33 @@ class Workflow:
 
                         step_started_printed = True
 
+                    elif isinstance(response, ConditionExecutionStartedEvent):
+                        current_step_name = response.step_name or "Condition"
+                        current_step_index = response.step_index or 0
+                        current_step_content = ""
+                        step_started_printed = False
+                        condition_text = "met" if response.condition_result else "not met"
+                        status.update(f"Starting condition: {current_step_name} (condition {condition_text})...")
+                        live_log.update(status)
+
+                    elif isinstance(response, ConditionExecutionCompletedEvent):
+                        step_name = response.step_name or "Condition"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed condition: {step_name}")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_name}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "ConditionStepResult",
+                                    }
+                                )
+
                     elif isinstance(response, ParallelExecutionStartedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
                         current_step_index = response.step_index or 0
@@ -2325,8 +2463,8 @@ class Workflow:
                     else:
                         if isinstance(response, str):
                             response_str = response
-                        elif isinstance(response, StepOutput):
-                            # Handle StepOutput objects yielded directly from generator functions
+                        elif isinstance(response, StepOutputEvent):
+                            # Handle StepOutputEvent objects yielded from workflow
                             response_str = response.content or ""
                         else:
                             from agno.run.response import RunResponseContentEvent
@@ -2388,6 +2526,8 @@ class Workflow:
                                 live_log.update(group)
 
                 response_timer.stop()
+
+                live_log.update("")
 
                 # Final completion message
                 if show_time:
@@ -2451,7 +2591,7 @@ class Workflow:
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
-        # Initialize steps - only if steps is iterable (not callable)
+        # Initialize steps - only if steps is iterable (not callable)    
         if self.steps and not isinstance(self.steps, Callable):
             for step in self.steps:
                 # TODO: Handle properly steps inside other primitives

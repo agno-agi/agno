@@ -126,7 +126,7 @@ workflow = Workflow(
     steps=[
         Router(
             name="research_strategy_router",
-            selctor=research_strategy_router,
+            selector=research_strategy_router,
             choices=[research_web, deep_tech_research_loop],
             description="Chooses between simple web research or deep tech research loop",
         ),
