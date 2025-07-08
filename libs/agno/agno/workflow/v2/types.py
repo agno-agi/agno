@@ -37,7 +37,7 @@ class WorkflowExecutionInput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_dict = None
+        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.message is not None:
             if isinstance(self.message, BaseModel):
                 message_dict = self.message.model_dump(exclude_none=True)
@@ -119,7 +119,7 @@ class StepInput:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified message field
-        message_dict = None
+        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.message is not None:
             if isinstance(self.message, BaseModel):
                 message_dict = self.message.model_dump(exclude_none=True)
@@ -138,6 +138,7 @@ class StepInput:
             else:
                 workflow_message_dict = str(self.workflow_message)
 
+        previous_step_content_str: Optional[str] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
             previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
@@ -145,8 +146,8 @@ class StepInput:
             import json
 
             previous_step_content_str = json.dumps(self.previous_step_content, indent=2, default=str)
-        else:
-            previous_step_content_str = str(self.previous_step_content) if self.previous_step_content else None
+        elif self.previous_step_content:
+            previous_step_content_str = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
@@ -215,7 +216,7 @@ class StepOutput:
 
         # Reconstruct response if present
         response_data = data.get("response")
-        response = None
+        response: Optional[Union[RunResponse, TeamRunResponse]] = None
         if response_data:
             # Determine if it's RunResponse or TeamRunResponse based on structure
             if "team_id" in response_data or "team_name" in response_data:

@@ -2912,7 +2912,7 @@ class Workflow:
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
-                    console.print(completion_text)
+                    console.print(completion_text)  # type: ignore
 
             except Exception as e:
                 import traceback
@@ -2922,7 +2922,7 @@ class Workflow:
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
-                console.print(error_panel)
+                console.print(error_panel)  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
@@ -2936,7 +2936,7 @@ class Workflow:
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
                 }
-                for s in self.steps
+                for s in (self.steps.steps if isinstance(self.steps, Steps) else self.steps)
             ],
             "session_id": self.session_id,
         }
@@ -2947,8 +2947,9 @@ class Workflow:
             self.workflow_session_state = {}
 
         # Collect state from all agents in all steps
-        if self.steps and not isinstance(self.steps, Callable):
-            for step in self.steps:
+        if self.steps and not callable(self.steps):
+            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+            for step in steps_list:
                 if isinstance(step, Step):
                     executor = step.active_executor
                     if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
@@ -2973,8 +2974,9 @@ class Workflow:
         """Update agents and teams with workflow session information"""
         log_debug("Updating agents and teams with session information")
         # Initialize steps - only if steps is iterable (not callable)
-        if self.steps and not isinstance(self.steps, Callable):
-            for step in self.steps:
+        if self.steps and not callable(self.steps):
+            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+            for step in steps_list:
                 # TODO: Handle properly steps inside other primitives
                 if isinstance(step, Step):
                     active_executor = step.active_executor

@@ -5001,11 +5001,11 @@ class Agent:
         from copy import copy, deepcopy
 
         # For memory and reasoning_agent, use their deep_copy methods
-        if field_name in ("memory", "reasoning_agent"):
+        if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model"):
+        elif field_name in ("memory", "storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
             except Exception:
