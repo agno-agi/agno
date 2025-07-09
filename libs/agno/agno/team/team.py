@@ -524,6 +524,13 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+    def set_telemetry(self) -> None:
+        """Override telemetry settings based on environment variables."""
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
+
     def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None) -> None:
         # Set debug mode for all members
         if self.debug_mode:
@@ -1145,7 +1152,7 @@ class Team:
             yield event
 
         # If a parser model is provided, structure the response separately
-        async for event in self._parse_response_with_parser_model_stream(
+        async for event in self._aparse_response_with_parser_model_stream(
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         ):
             yield event
@@ -4062,7 +4069,7 @@ class Team:
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
-        return metrics if for_session else metrics._to_dict()
+        return metrics if for_session else metrics.to_dict()
 
     def set_session_metrics(self, run_messages: RunMessages):
         """Calculate session metrics"""
@@ -7417,7 +7424,7 @@ class Team:
 
             create_team_run(
                 run=TeamRunCreate(
-                    agent_data=agent_session.telemetry_data(),
+                    agent_data=team_session.telemetry_data(),
                 ),
             )
         except Exception as e:
@@ -7426,19 +7433,19 @@ class Team:
     async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_telemetry()
 
-        if not self.telemetry and not self.monitoring:
+        if not self.telemetry:
             return
 
-        from agno.api.team import TeamRunCreate
+        from agno.api.team import TeamRunCreate, acreate_team_run
 
         try:
             team_session: TeamSession = self.team_session or self._get_team_session(
                 session_id=session_id, user_id=user_id
             )
 
-            create_team_run(
+            await acreate_team_run(
                 run=TeamRunCreate(
-                    agent_data=agent_session.telemetry_data(),
+                    agent_data=team_session.telemetry_data(),
                 ),
             )
         except Exception as e:
