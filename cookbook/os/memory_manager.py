@@ -32,7 +32,7 @@ agno_client = AgentOS(
     description="Example app for basic agent with memory capabilities",
     os_id="memory-demo",
     agents=[agent],
-    apps=[MemoryManager(memory=memory)],
+    managers=[MemoryManager(memory=memory)],
 )
 app = agno_client.get_app()
 

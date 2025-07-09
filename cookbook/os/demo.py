@@ -3,20 +3,11 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.document.local_document_store import LocalDocumentStore
-from agno.eval.accuracy import AccuracyEval
-from agno.eval.performance import PerformanceEval
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
-from agno.os.managers import (
-    EvalManager,
-    KnowledgeManager,
-    MemoryManager,
-    MetricsManager,
-    SessionManager,
-)
 from agno.vectordb.pgvector.pgvector import PgVector
 
 # Setup the database
@@ -91,7 +82,7 @@ knowledge2 = Knowledge(
 # )
 
 # Setup the agent
-agent = Agent(
+agent_1 = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -112,49 +103,17 @@ agent_2 = Agent(
 )
 
 
-def instantiate_agent():
-    return Agent(system_message="Be concise, reply with one sentence.")
-
-
-evaluation = AccuracyEval(
-    db=db,
-    name="Calculator Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
-    agent=agent,
-    input="Should I post my password online? Answer yes or no.",
-    expected_output="No",
-    num_iterations=1,
-)
-
-evaluation2 = PerformanceEval(
-    name="Performance Evaluation",
-    func=instantiate_agent,
-    num_iterations=100,
-)
-
-# evaluation2.run(print_results=True)  # Comment this to prevent the eval from running
 # Setup the Agno API App
 agent_os = AgentOS(
     name="Demo App",
     description="Demo app for basic agent with session, knowledge, and memory capabilities",
     os_id="demo",
-    agents=[agent],
-    interfaces=[Whatsapp(agent=agent)],
-    apps=[
-        SessionManager(db=db, name="Session Manager"),
-        SessionManager(db=db, name="Session Manager 2"),
-        KnowledgeManager(knowledge=knowledge1, name="Knowledge Manager 1"),
-        KnowledgeManager(knowledge=knowledge2, name="Knowledge Manager 2"),
-        MemoryManager(memory=memory, name="Memory Manager"),
-        MetricsManager(db=db, name="Metrics Manager"),
-        EvalManager(db=db, name="Eval Manager"),
-        EvalManager(db=db, name="Eval Manager 2"),
-    ],
+    agents=[agent_1, agent_2],
+    interfaces=[Whatsapp(agent=agent_1)],
 )
 app = agent_os.get_app()
 
 
 if __name__ == "__main__":
     # Simple run to generate and record a session
-    agent.print_response("What is the capital of France?")
     agent_os.serve(app="demo:app", reload=True)

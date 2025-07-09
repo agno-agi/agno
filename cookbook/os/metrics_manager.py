@@ -34,7 +34,7 @@ agent_os = AgentOS(
     description="Example app showcasing the MetricsManager",
     os_id="metrics-demo",
     agents=[basic_agent],
-    apps=[SessionManager(db=db), MetricsManager(db=db)],
+    managers=[SessionManager(db=db), MetricsManager(db=db)],
 )
 app = agent_os.get_app()
 

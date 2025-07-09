@@ -14,10 +14,17 @@ from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.interfaces.base import BaseInterface
 from agno.os.managers.base import BaseManager
+from agno.os.managers import (
+    SessionManager,
+    KnowledgeManager,
+    MemoryManager,
+    MetricsManager,
+    EvalManager,
+)
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 from agno.workflow.workflow import Workflow
 
 
@@ -33,7 +40,7 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
-        apps: Optional[List[BaseManager]] = None,
+        managers: Optional[List[BaseManager]] = None,
         settings: Optional[AgnoAPISettings] = None,
         api_app: Optional[FastAPI] = None,
         monitoring: bool = True,
@@ -49,7 +56,7 @@ class AgentOS:
         self.api_app: Optional[FastAPI] = api_app
 
         self.interfaces = interfaces or []
-        self.apps = apps or []
+        self.managers = managers or []
 
         self.os_id: Optional[str] = os_id
         self.name: Optional[str] = name
@@ -57,7 +64,7 @@ class AgentOS:
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
-        self.apps_loaded: List[Tuple[str, str]] = []
+        self.managers_loaded: List[Tuple[str, str]] = []
 
         self.set_os_id()
 
@@ -95,6 +102,101 @@ class AgentOS:
                     workflow.os_id = self.os_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+
+    def _auto_discover_managers(self) -> List[BaseManager]:
+        """Auto-discover managers from agents, teams, and workflows."""
+        discovered_managers: List[BaseManager] = []
+        
+        seen_components: Dict[str, set] = {
+            "session": set(),
+            "knowledge": set(),
+            "memory": set(),
+            "metrics": set(),
+            "eval": set(),
+        }
+
+        # Helper function to add unique components
+        def add_unique_component(component_type: str, component_id: str):
+            if component_id not in seen_components[component_type]:
+                seen_components[component_type].add(component_id)
+                return True
+            return False
+
+        # Process agents
+        if self.agents:
+            for agent in self.agents:
+                if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
+                    memory_id = id(agent.memory)
+                    db_id = id(agent.memory.db)
+                    
+                    # Memory manager
+                    if add_unique_component("memory", str(memory_id)):
+                        discovered_managers.append(MemoryManager(memory=agent.memory))
+                        
+                    # Session manager
+                    if agent.memory.db.session_table_name:
+                        if add_unique_component("session", str(db_id)):
+                            discovered_managers.append(SessionManager(db=agent.memory.db))
+                    
+                    # Metrics manager
+                    if agent.memory.db.metrics_table_name:
+                        if add_unique_component("metrics", str(db_id)):
+                            discovered_managers.append(MetricsManager(db=agent.memory.db))
+                    
+                    # Eval manager
+                    if agent.memory.db.eval_table_name:
+                        if add_unique_component("eval", str(db_id)):
+                            discovered_managers.append(EvalManager(db=agent.memory.db))
+                            
+                # Knowledge manager
+                if hasattr(agent, 'knowledge') and agent.knowledge:
+                    knowledge_id = id(agent.knowledge)
+                    if add_unique_component("knowledge", str(knowledge_id)):
+                        discovered_managers.append(KnowledgeManager(knowledge=agent.knowledge))
+
+
+        # Process teams
+        if self.teams:
+            for team in self.teams:
+                if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
+                    memory_id = id(team.memory)
+                    db_id = id(team.memory.db)
+                    
+                    # Memory manager
+                    if add_unique_component("memory", str(memory_id)):
+                        discovered_managers.append(MemoryManager(memory=team.memory))
+                    
+                    # Session manager
+                    if team.memory.db.session_table_name:
+                        if add_unique_component("session_db", str(db_id)):
+                            discovered_managers.append(SessionManager(db=team.memory.db))
+                            
+                    # Metrics manager
+                    if team.memory.db.metrics_table_name:
+                        if add_unique_component("metrics_db", str(db_id)):
+                            discovered_managers.append(MetricsManager(db=team.memory.db))
+                    
+                    # Eval manager
+                    if team.memory.db.eval_table_name:
+                        if add_unique_component("eval_db", str(db_id)):
+                            discovered_managers.append(EvalManager(db=team.memory.db))
+
+                # Knowledge manager
+                if hasattr(team, 'knowledge') and team.knowledge:
+                    knowledge_id = id(team.knowledge)
+                    if add_unique_component("knowledge", str(knowledge_id)):
+                        discovered_managers.append(KnowledgeManager(knowledge=team.knowledge))
+
+
+        # Process workflows
+        # TODO: Implement workflow manager discovery
+
+        # Log discovered managers
+        if discovered_managers:
+            for manager in discovered_managers:
+                log_debug(f"{manager.type.title()} Manager added to AgentOS")
+
+        return discovered_managers
 
     def set_os_id(self) -> str:
         # If os_id is already set, keep it instead of overriding with UUID
@@ -147,12 +249,18 @@ class AgentOS:
         for interface in self.interfaces:
             self.api_app.include_router(interface.get_router())
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
+            
+        
+        # Auto-discover managers if none are provided
+        if not self.managers:
+            self.managers = self._auto_discover_managers()
 
-        app_index_map: Dict[str, int] = {}
-        for app in self.apps:
-            app_index_map[app.type] = app_index_map.get(app.type, 0) + 1
-            self.api_app.include_router(app.get_router(index=app_index_map[app.type]))
-            self.apps_loaded.append((app.type, app.router_prefix))
+
+        manager_index_map: Dict[str, int] = {}
+        for manager in self.managers:
+            manager_index_map[manager.type] = manager_index_map.get(manager.type, 0) + 1
+            self.api_app.include_router(manager.get_router(index=manager_index_map[manager.type]))
+            self.managers_loaded.append((manager.type, manager.router_prefix))
 
         self.api_app.add_middleware(
             CORSMiddleware,
@@ -221,28 +329,28 @@ class AgentOS:
                     )
                 )
 
-        apps_panel_text = ""
-        for app_type, app_prefix in self.apps_loaded:
-            encoded_endpoint = f"{full_host}:{port}{app_prefix}"
-            if app_type == "session":
-                apps_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "knowledge":
-                apps_panel_text += f"[bold green]Knowledge Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "memory":
-                apps_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "eval":
-                apps_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
-            elif app_type == "metrics":
-                apps_panel_text += f"[bold green]Metrics Manager:[/bold green] {encoded_endpoint}\n"
+        managers_panel_text = ""
+        for manager_type, manager_prefix in self.managers_loaded:
+            encoded_endpoint = f"{full_host}:{port}{manager_prefix}"
+            if manager_type == "session":
+                managers_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
+            elif manager_type == "knowledge":
+                managers_panel_text += f"[bold green]Knowledge Manager:[/bold green] {encoded_endpoint}\n"
+            elif manager_type == "memory":
+                managers_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
+            elif manager_type == "eval":
+                managers_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
+            elif manager_type == "metrics":
+                managers_panel_text += f"[bold green]Metrics Manager:[/bold green] {encoded_endpoint}\n"
             else:
-                log_warning(f"Unknown app type: {app_type}")
+                log_warning(f"Unknown manager type: {manager_type}")
 
-        if apps_panel_text:
-            apps_panel_text = apps_panel_text.strip()
+        if managers_panel_text:
+            managers_panel_text = managers_panel_text.strip()
             panels.append(
                 Panel(
-                    apps_panel_text,
-                    title="Configured Apps",
+                    managers_panel_text,
+                    title="Configured Managers",
                     expand=False,
                     border_style="bright_cyan",
                     box=box.HEAVY,

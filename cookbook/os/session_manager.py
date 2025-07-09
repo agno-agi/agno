@@ -20,7 +20,7 @@ basic_team = Team(
 
 
 # Setup the AgentOS
-agent_os = AgentOS(agents=[basic_agent], apps=[SessionManager(db=db)])
+agent_os = AgentOS(agents=[basic_agent], managers=[SessionManager(db=db)])
 app = agent_os.get_app()
 
 

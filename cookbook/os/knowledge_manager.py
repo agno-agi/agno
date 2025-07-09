@@ -51,7 +51,7 @@ agent_os = AgentOS(
     agents=[
         basic_agent,
     ],
-    apps=[KnowledgeManager(knowledge=knowledge)],
+    managers=[KnowledgeManager(knowledge=knowledge)],
 )
 app = agent_os.get_app()
 

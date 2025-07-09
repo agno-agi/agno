@@ -295,7 +295,7 @@ def get_base_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 agent_response_streamer(
                     agent,
@@ -359,7 +359,7 @@ def get_base_router(
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 agent_continue_response_streamer(
                     agent,
