@@ -15,7 +15,7 @@ from agno.team.team import Team
 
 # Setup the SQLite database
 db = SqliteDb(
-    db_file="test2.db",
+    db_file="agno.db",
     session_table="sessions",
     eval_table="eval_runs",
     user_memory_table="user_memories",
@@ -66,7 +66,7 @@ agent_os = AgentOS(
     agents=[basic_agent],
     teams=[team_agent],
     interfaces=[Whatsapp(agent=basic_agent)],
-    apps=[
+    managers=[
         SessionManager(db=db),
         EvalManager(db=db),
         MetricsManager(db=db),
