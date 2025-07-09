@@ -12,9 +12,9 @@ except (ModuleNotFoundError, ImportError):
     raise ImportError("`agno-aws` not installed. Please install using `pip install agno-aws`")
 
 try:
-    import textract  # noqa: F401
+    from agno.document.reader.universal_reader import UniversalDocumentReader
 except ImportError:
-    raise ImportError("`textract` not installed. Please install it via `pip install textract`.")
+    raise ImportError("`universal_reader` not available. Check agno installation.")
 
 
 class S3TextReader(Reader):
@@ -30,14 +30,27 @@ class S3TextReader(Reader):
 
             log_info(f"Parsing: {temporary_file}")
             doc_name = s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-            doc_content = textract.process(temporary_file)
-            documents = [
-                Document(
-                    name=doc_name,
-                    id=doc_name,
-                    content=doc_content.decode("utf-8"),
-                )
-            ]
+
+            reader = UniversalDocumentReader()
+            extracted_docs = reader.read(temporary_file)
+
+            if extracted_docs:
+                content = "\n".join([doc.content for doc in extracted_docs])
+                documents = [
+                    Document(
+                        name=doc_name,
+                        id=doc_name,
+                        content=content,
+                    )
+                ]
+            else:
+                documents = [
+                    Document(
+                        name=doc_name,
+                        id=doc_name,
+                        content="",
+                    )
+                ]
             if self.chunk:
                 chunked_documents = []
                 for document in documents:
