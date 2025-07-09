@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import Table
 
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
 
 

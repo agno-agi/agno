@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
-from agno.eval.schemas import EvalType
+from agno.db.schemas.evals import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model

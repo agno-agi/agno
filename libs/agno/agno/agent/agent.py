@@ -26,7 +26,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
 from agno.knowledge.knowledge import Knowledge
@@ -3731,8 +3730,6 @@ class Agent:
         """
         from time import time
 
-        from agno.db.base import SessionType
-
         # Return existing session if we have one
         if self.agent_session is not None and self.agent_session.session_id == session_id:
             return self.agent_session
@@ -3741,7 +3738,7 @@ class Agent:
         if self.memory is not None and self.memory.db is not None:
             log_debug(f"Reading AgentSession: {session_id}")
             self.agent_session = cast(
-                AgentSession, self.memory.read_session(session_id=session_id, session_type=SessionType.AGENT)
+                AgentSession, self.memory.read_session(session_id=session_id, session_type="agent")
             )
 
             if self.agent_session is not None:
@@ -3838,7 +3835,7 @@ class Agent:
             return self.agent_session.chat_history
         # Else read from the db
         if self.memory is not None and self.memory.db is not None:
-            return self.memory.read_chat_history(session_id=self.session_id, session_type=SessionType.AGENT)
+            return self.memory.read_chat_history(session_id=self.session_id, session_type="agent")
         return []
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
@@ -7199,7 +7196,7 @@ class Agent:
             if self.memory.db is None:
                 return "Memory not available"
 
-            selected_sessions = self.memory.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+            selected_sessions = self.memory.db.get_sessions(session_type="agent", limit=num_history_sessions)
 
             all_messages = []
             seen_message_pairs = set()

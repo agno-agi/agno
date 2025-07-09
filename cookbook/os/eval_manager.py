@@ -16,6 +16,7 @@ db = PostgresDb(
 
 # Setup the agent
 basic_agent = Agent(
+    agent_id="basic-agent",
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
     markdown=True,
@@ -31,7 +32,7 @@ evaluation = AccuracyEval(
     expected_output="No",
     num_iterations=1,
 )
-evaluation.run(print_results=True)
+# evaluation.run(print_results=True)
 
 # Setup the Agno API App
 agent_os = AgentOS(
@@ -47,9 +48,12 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """ Run your AgentOS:
     Now you can interact with your eval runs using the API. Examples:
-    - http://localhost:8001/eval/{index}/evals
-    - http://localhost:8001/eval/{index}/evals/123
-    - http://localhost:8001/eval/{index}/evals?agent_id=123
-    - http://localhost:8001/eval/{index}/evals?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/eval/{index}/eval-runs
+    - http://localhost:8001/eval/{index}/eval-runs/123
+    - http://localhost:8001/eval/{index}/eval-runs?agent_id=123
+    - http://localhost:8001/eval/{index}/eval-runs?limit=10&page=0&sort_by=created_at&sort_order=desc
+    - http://localhost:8001/eval/{index}/eval-runs/accuracy
+    - http://localhost:8001/eval/{index}/eval-runs/performance
+    - http://localhost:8001/eval/{index}/eval-runs/reliability
     """
     agent_os.serve(app="eval_manager:app", reload=True)

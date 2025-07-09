@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 from agno.db.base import BaseDb
-from agno.eval.schemas import EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.utils.log import log_debug, logger
 
 if TYPE_CHECKING:

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 from agno.agent import RunResponse
-from agno.eval.schemas import EvalType
+from agno.db.schemas.evals import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
 from agno.run.team import TeamRunResponse
 from agno.utils.log import logger

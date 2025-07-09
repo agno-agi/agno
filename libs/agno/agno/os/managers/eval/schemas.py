@@ -1,10 +1,14 @@
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from agno.db.schemas.evals import EvalType
 from agno.eval import AccuracyResult, PerformanceResult, ReliabilityResult
-from agno.eval.schemas import EvalType
+from agno.eval.accuracy import AccuracyEval
+from agno.eval.performance import PerformanceEval
+from agno.eval.reliability import ReliabilityEval
 
 
 class AccuracyEvalInput(BaseModel):
@@ -16,7 +20,6 @@ class AccuracyEvalInput(BaseModel):
 
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
-    workflow_id: Optional[str] = None
 
 
 class ReliabilityEvalInput(BaseModel):
@@ -25,6 +28,9 @@ class ReliabilityEvalInput(BaseModel):
     additional_guidelines: Optional[str] = None
     num_iterations: Optional[int] = 1
     name: Optional[str] = None
+
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
 
 
 class PerformanceEvalInput(BaseModel):
@@ -35,6 +41,9 @@ class PerformanceEvalInput(BaseModel):
     warmup_runs: Optional[int] = 0
     name: Optional[str] = None
 
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+
 
 class EvalSchema(BaseModel):
     id: str
@@ -44,12 +53,12 @@ class EvalSchema(BaseModel):
     model_provider: Optional[str] = None
     team_id: Optional[str] = None
     workflow_id: Optional[str] = None
-    name: str
+    name: Optional[str] = None
     evaluated_component_name: Optional[str] = None
     eval_type: EvalType
     eval_data: Dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     @classmethod
     def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":
@@ -69,16 +78,69 @@ class EvalSchema(BaseModel):
         )
 
     @classmethod
-    def from_accuracy_result(cls, result: AccuracyResult) -> "EvalSchema":
-        return cls()
+    def from_accuracy_eval(cls, accuracy_eval: AccuracyEval, result: AccuracyResult) -> "EvalSchema":
+        model_provider = (
+            accuracy_eval.agent.model.provider
+            if accuracy_eval.agent and accuracy_eval.agent.model
+            else accuracy_eval.team.model.provider
+            if accuracy_eval.team and accuracy_eval.team.model
+            else None
+        )
+        return cls(
+            id=accuracy_eval.eval_id,
+            name=accuracy_eval.name,
+            agent_id=accuracy_eval.agent.agent_id if accuracy_eval.agent else None,
+            team_id=accuracy_eval.team.team_id if accuracy_eval.team else None,
+            workflow_id=None,
+            model_id=accuracy_eval.agent.model.id if accuracy_eval.agent else accuracy_eval.team.model.id,  # type: ignore
+            model_provider=model_provider,
+            eval_type=EvalType.ACCURACY,
+            eval_data=asdict(result),
+        )
 
     @classmethod
-    def from_performance_result(cls, result: PerformanceResult) -> "EvalSchema":
-        return cls()
+    def from_performance_eval(
+        cls,
+        performance_eval: PerformanceEval,
+        result: PerformanceResult,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "EvalSchema":
+        return cls(
+            id=performance_eval.eval_id,
+            name=performance_eval.name,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=None,
+            model_id=model_id,
+            model_provider=model_provider,
+            eval_type=EvalType.PERFORMANCE,
+            eval_data=asdict(result),
+        )
 
     @classmethod
-    def from_reliability_result(cls, result: ReliabilityResult) -> "EvalSchema":
-        return cls()
+    def from_reliability_eval(
+        cls,
+        reliability_eval: ReliabilityEval,
+        result: ReliabilityResult,
+        model_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> "EvalSchema":
+        return cls(
+            id=reliability_eval.eval_id,
+            name=reliability_eval.name,
+            agent_id=agent_id,
+            team_id=team_id,
+            workflow_id=None,
+            model_id=model_id,
+            model_provider=model_provider,
+            eval_type=EvalType.RELIABILITY,
+            eval_data=asdict(result),
+        )
 
 
 class DeleteEvalRunsRequest(BaseModel):
