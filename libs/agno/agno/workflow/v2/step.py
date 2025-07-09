@@ -358,9 +358,6 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
-                        # Switch back to workflow logger after execution
-                        use_workflow_logger()
-
                         for event in response_stream:
                             yield event
                         final_response = self._process_step_output(self.active_executor.run_response)
@@ -372,6 +369,9 @@ class Step:
                 if final_response is None:
                     final_response = StepOutput(content="")
                     log_debug("Created empty StepOutput as fallback")
+                
+                # Switch back to workflow logger after execution
+                use_workflow_logger()
 
                 # Yield the step output
                 yield final_response
@@ -645,9 +645,6 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
-                        # Switch back to workflow logger after execution
-                        use_workflow_logger()
-
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
                             yield event
@@ -658,6 +655,9 @@ class Step:
                 # If we didn't get a final response, create one
                 if final_response is None:
                     final_response = StepOutput(content="")
+
+                # Switch back to workflow logger after execution
+                use_workflow_logger()
 
                 # Yield the final response
                 yield final_response
