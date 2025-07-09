@@ -42,14 +42,20 @@ class ContentStrategy(BaseModel):
 
 class AnalysisReport(BaseModel):
     """Enhanced analysis report with BaseModel output"""
-    
+
     analysis_type: str = Field(description="Type of analysis performed")
     input_data_type: str = Field(description="Type of input data received")
-    structured_data_detected: bool = Field(description="Whether structured data was found")
+    structured_data_detected: bool = Field(
+        description="Whether structured data was found"
+    )
     key_findings: List[str] = Field(description="Key findings from the analysis")
     recommendations: List[str] = Field(description="Recommendations for next steps")
-    confidence_score: float = Field(description="Analysis confidence (0.0-1.0)", ge=0.0, le=1.0)
-    data_quality_score: float = Field(description="Quality of input data (0.0-1.0)", ge=0.0, le=1.0)
+    confidence_score: float = Field(
+        description="Analysis confidence (0.0-1.0)", ge=0.0, le=1.0
+    )
+    data_quality_score: float = Field(
+        description="Quality of input data (0.0-1.0)", ge=0.0, le=1.0
+    )
 
 
 class FinalContentPlan(BaseModel):
@@ -95,36 +101,46 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
 
     if previous_step_content:
         print(f"\n🔍 Previous Step Content Analysis:")
-        
+
         if isinstance(previous_step_content, ResearchFindings):
             structured_data_detected = True
             print("✅ Detected ResearchFindings BaseModel")
             print(f"   Topic: {previous_step_content.topic}")
-            print(f"   Key Insights: {len(previous_step_content.key_insights)} insights")
+            print(
+                f"   Key Insights: {len(previous_step_content.key_insights)} insights"
+            )
             print(f"   Confidence: {previous_step_content.confidence_score}")
-            
+
             # Extract findings from the structured data
-            key_findings.extend([
-                f"Research topic identified: {previous_step_content.topic}",
-                f"Found {len(previous_step_content.key_insights)} key insights",
-                f"Identified {len(previous_step_content.trending_technologies)} trending technologies",
-                f"Research confidence level: {previous_step_content.confidence_score}",
-                f"Market impact assessment available"
-            ])
-            
-            recommendations.extend([
-                "Leverage high-confidence research findings for content strategy",
-                "Focus on trending technologies identified in research",
-                "Use market impact insights for audience targeting",
-                "Build content around key insights with strong evidence"
-            ])
-            
+            key_findings.extend(
+                [
+                    f"Research topic identified: {previous_step_content.topic}",
+                    f"Found {len(previous_step_content.key_insights)} key insights",
+                    f"Identified {len(previous_step_content.trending_technologies)} trending technologies",
+                    f"Research confidence level: {previous_step_content.confidence_score}",
+                    f"Market impact assessment available",
+                ]
+            )
+
+            recommendations.extend(
+                [
+                    "Leverage high-confidence research findings for content strategy",
+                    "Focus on trending technologies identified in research",
+                    "Use market impact insights for audience targeting",
+                    "Build content around key insights with strong evidence",
+                ]
+            )
+
             confidence_score = previous_step_content.confidence_score
             data_quality_score = 0.95  # High quality due to structured input
-            
+
         else:
-            key_findings.append("Received unstructured data - converted to string format")
-            recommendations.append("Consider implementing structured data models for better processing")
+            key_findings.append(
+                "Received unstructured data - converted to string format"
+            )
+            recommendations.append(
+                "Consider implementing structured data models for better processing"
+            )
             confidence_score = 0.6
             data_quality_score = 0.7
 
@@ -142,7 +158,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
         key_findings=key_findings,
         recommendations=recommendations,
         confidence_score=confidence_score,
-        data_quality_score=data_quality_score
+        data_quality_score=data_quality_score,
     )
 
     print(f"\n📋 Analysis Results (BaseModel):")
@@ -162,24 +178,26 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
     """
     print(f"\n🔧 SIMPLE DATA PROCESSOR")
     print(f"Previous step content type: {type(step_input.previous_step_content)}")
-    
+
     # Access the structured data directly
     if isinstance(step_input.previous_step_content, AnalysisReport):
         report = step_input.previous_step_content
         print(f"Processing analysis report with confidence: {report.confidence_score}")
-        
+
         summary = {
             "processor": "simple_data_processor",
             "input_confidence": report.confidence_score,
             "input_quality": report.data_quality_score,
             "processed_findings": len(report.key_findings),
             "processed_recommendations": len(report.recommendations),
-            "status": "processed_successfully"
+            "status": "processed_successfully",
         }
-        
+
         return StepOutput(content=summary, success=True)
     else:
-        return StepOutput(content="Unable to process - expected AnalysisReport", success=False)
+        return StepOutput(
+            content="Unable to process - expected AnalysisReport", success=False
+        )
 
 
 # Define agents with response models

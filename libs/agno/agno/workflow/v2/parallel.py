@@ -80,11 +80,29 @@ class Parallel:
         if not step_outputs:
             return StepOutput(step_name=self.name or "Parallel", content="No parallel steps executed")
 
+        # Always create parallel_step_outputs dict for consistency
+        parallel_step_outputs = {output.step_name or f"step_{i}": output for i, output in enumerate(step_outputs)}
+
         if len(step_outputs) == 1:
-            # Single result, just update the step name
+            # Single result, update the step name but preserve parallel structure
             single_result = step_outputs[0]
-            single_result.step_name = self.name or "Parallel"
-            return single_result
+
+            # Extract metrics using the dedicated method
+            aggregated_metrics = self._extract_metrics_from_response(step_outputs)
+
+            return StepOutput(
+                step_name=self.name or "Parallel",
+                content=single_result.content,
+                parallel_step_outputs=parallel_step_outputs,
+                response=single_result.response,
+                images=single_result.images,
+                videos=single_result.videos,
+                audio=single_result.audio,
+                metrics=aggregated_metrics,
+                success=single_result.success,
+                error=single_result.error,
+                stop=single_result.stop,
+            )
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
@@ -110,6 +128,7 @@ class Parallel:
         return StepOutput(
             step_name=self.name or "Parallel",
             content=aggregated_content,
+            parallel_step_outputs=parallel_step_outputs,
             images=all_images if all_images else None,
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,

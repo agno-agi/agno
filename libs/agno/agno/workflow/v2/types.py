@@ -91,10 +91,26 @@ class StepInput:
             return None
         return self.previous_step_outputs.get(step_name)
 
-    def get_step_content(self, step_name: str) -> Optional[str]:
-        """Get content from a specific previous step by name"""
+    def get_step_content(self, step_name: str) -> Optional[Union[str, Dict[str, str]]]:
+        """Get content from a specific previous step by name
+
+        For parallel steps, if you ask for the parallel step name, returns a dict
+        with {step_name: content} for each sub-step.
+        """
         step_output = self.get_step_output(step_name)
-        return step_output.content if step_output else None
+        if not step_output:
+            return None
+
+        # If this is a parallel step with sub-outputs, return structured dict
+        if step_output.parallel_step_outputs:
+            return {
+                sub_step_name: sub_output.content
+                for sub_step_name, sub_output in step_output.parallel_step_outputs.items()
+                if sub_output.content
+            }
+
+        # Regular step, return content directly
+        return step_output.content
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
@@ -177,6 +193,9 @@ class StepOutput:
 
     # Primary output
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
+
+    # For parallel steps: store individual step outputs
+    parallel_step_outputs: Optional[Dict[str, "StepOutput"]] = None
 
     # Execution response
     response: Optional[Union[RunResponse, TeamRunResponse]] = None
