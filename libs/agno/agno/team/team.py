@@ -724,6 +724,8 @@ class Team:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1143,6 +1145,8 @@ class Team:
                 # Generate a new session_id and store it in the team
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -2825,7 +2829,6 @@ class Team:
                             try:
                                 _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                             except Exception as e:
-                                print(_response_content)
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
