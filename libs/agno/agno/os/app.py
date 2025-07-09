@@ -13,14 +13,14 @@ from agno.agent.agent import Agent
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.interfaces.base import BaseInterface
-from agno.os.managers.base import BaseManager
 from agno.os.managers import (
-    SessionManager,
+    EvalManager,
     KnowledgeManager,
     MemoryManager,
     MetricsManager,
-    EvalManager,
+    SessionManager,
 )
+from agno.os.managers.base import BaseManager
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
@@ -106,7 +106,7 @@ class AgentOS:
     def _auto_discover_managers(self) -> List[BaseManager]:
         """Auto-discover managers from agents, teams, and workflows."""
         discovered_managers: List[BaseManager] = []
-        
+
         seen_components: Dict[str, set] = {
             "session": set(),
             "knowledge": set(),
@@ -125,68 +125,66 @@ class AgentOS:
         # Process agents
         if self.agents:
             for agent in self.agents:
-                if hasattr(agent, 'memory') and agent.memory and hasattr(agent.memory, 'db') and agent.memory.db:
+                if hasattr(agent, "memory") and agent.memory and hasattr(agent.memory, "db") and agent.memory.db:
                     memory_id = id(agent.memory)
                     db_id = id(agent.memory.db)
-                    
+
                     # Memory manager
                     if add_unique_component("memory", str(memory_id)):
                         discovered_managers.append(MemoryManager(memory=agent.memory))
-                        
+
                     # Session manager
                     if agent.memory.db.session_table_name:
                         if add_unique_component("session", str(db_id)):
                             discovered_managers.append(SessionManager(db=agent.memory.db))
-                    
+
                     # Metrics manager
                     if agent.memory.db.metrics_table_name:
                         if add_unique_component("metrics", str(db_id)):
                             discovered_managers.append(MetricsManager(db=agent.memory.db))
-                    
+
                     # Eval manager
                     if agent.memory.db.eval_table_name:
                         if add_unique_component("eval", str(db_id)):
                             discovered_managers.append(EvalManager(db=agent.memory.db))
-                            
+
                 # Knowledge manager
-                if hasattr(agent, 'knowledge') and agent.knowledge:
+                if hasattr(agent, "knowledge") and agent.knowledge:
                     knowledge_id = id(agent.knowledge)
                     if add_unique_component("knowledge", str(knowledge_id)):
                         discovered_managers.append(KnowledgeManager(knowledge=agent.knowledge))
 
-
         # Process teams
         if self.teams:
             for team in self.teams:
-                if hasattr(team, 'memory') and team.memory and hasattr(team.memory, 'db') and team.memory.db:
+                if hasattr(team, "memory") and team.memory and hasattr(team.memory, "db") and team.memory.db:
                     memory_id = id(team.memory)
                     db_id = id(team.memory.db)
-                    
+
                     # Memory manager
                     if add_unique_component("memory", str(memory_id)):
                         discovered_managers.append(MemoryManager(memory=team.memory))
-                    
+
                     # Session manager
                     if team.memory.db.session_table_name:
                         if add_unique_component("session_db", str(db_id)):
                             discovered_managers.append(SessionManager(db=team.memory.db))
-                            
+
                     # Metrics manager
                     if team.memory.db.metrics_table_name:
                         if add_unique_component("metrics_db", str(db_id)):
                             discovered_managers.append(MetricsManager(db=team.memory.db))
-                    
+
                     # Eval manager
                     if team.memory.db.eval_table_name:
                         if add_unique_component("eval_db", str(db_id)):
                             discovered_managers.append(EvalManager(db=team.memory.db))
 
                 # Knowledge manager
-                if hasattr(team, 'knowledge') and team.knowledge:
+                if hasattr(team, "knowledge") and team.knowledge:
                     knowledge_id = id(team.knowledge)
                     if add_unique_component("knowledge", str(knowledge_id)):
                         discovered_managers.append(KnowledgeManager(knowledge=team.knowledge))
-
 
         # Process workflows
         # TODO: Implement workflow manager discovery
@@ -249,12 +247,10 @@ class AgentOS:
         for interface in self.interfaces:
             self.api_app.include_router(interface.get_router())
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
-            
-        
+
         # Auto-discover managers if none are provided
         if not self.managers:
             self.managers = self._auto_discover_managers()
-
 
         manager_index_map: Dict[str, int] = {}
         for manager in self.managers:

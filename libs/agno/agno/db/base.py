@@ -26,13 +26,7 @@ class BaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
-        if (
-            not session_table
-            and not user_memory_table
-            and not metrics_table
-            and not eval_table
-            and not knowledge_table
-        ):
+        if not session_table and not user_memory_table and not metrics_table and not eval_table and not knowledge_table:
             raise ValueError("At least one of the tables must be provided")
 
         self.session_table_name = session_table
