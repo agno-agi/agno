@@ -1,6 +1,6 @@
 @echo off
 REM ###########################################################################
-REM # Format the agno library
+REM # Format the agno library using ruff
 REM # Usage: scripts\format.bat
 REM ###########################################################################
 
@@ -10,27 +10,34 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "AGNO_DIR=%CURR_DIR%\.."
 
-ECHO [INFO] Formatting Python code in %AGNO_DIR%
+ECHO.
+ECHO ##################################################
+ECHO # Formatting agno
+ECHO ##################################################
+ECHO.
 
-REM Check if black and isort are installed
-python -c "import black" 2>nul
+REM Check if ruff is installed
+python -c "import ruff" 2>nul
 IF %ERRORLEVEL% NEQ 0 (
-    ECHO [ERROR] black is not installed. Please install it with: pip install black
+    ECHO [ERROR] ruff is not installed. Please install it with: pip install ruff
     EXIT /B 1
 )
 
-python -c "import isort" 2>nul
-IF %ERRORLEVEL% NEQ 0 (
-    ECHO [ERROR] isort is not installed. Please install it with: pip install isort
-    EXIT /B 1
-)
+ECHO.
+ECHO ##################################################
+ECHO # Running: ruff format %AGNO_DIR%
+ECHO ##################################################
+ECHO.
 
-REM Format Python code with black and isort
-ECHO [INFO] Running black...
-python -m black "%AGNO_DIR%"
+python -m ruff format "%AGNO_DIR%"
 
-ECHO [INFO] Running isort...
-python -m isort "%AGNO_DIR%"
+ECHO.
+ECHO ##################################################
+ECHO # Running: ruff check --select I --fix %AGNO_DIR%
+ECHO ##################################################
+ECHO.
 
-ECHO [INFO] Agno code formatting complete.
+python -m ruff check --select I --fix "%AGNO_DIR%"
+
+ECHO [INFO] agno formatting complete.
 EXIT /B 
