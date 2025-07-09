@@ -245,7 +245,17 @@ class RedisDb(BaseDb):
     # -- Session methods --
 
     def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
-        """Insert or update an agent session in Redis."""
+        """Insert or update an agent session in Redis.
+
+        Args:
+            session (AgentSession): The agent session to upsert.
+
+        Returns:
+            Optional[dict]: The upserted session data if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the session.
+        """
         try:
             # Calculated fields
             chat_history = (
@@ -258,15 +268,19 @@ class RedisDb(BaseDb):
                 "session_id": session.session_id,
                 "session_type": SessionType.AGENT.value,
                 "agent_id": session.agent_id,
+                "team_id": session.team_id,
+                "workflow_id": session.workflow_id,
                 "team_session_id": session.team_session_id,
                 "user_id": session.user_id,
                 "runs": runs,
                 "agent_data": session.agent_data,
+                "team_data": None,
+                "workflow_data": None,
                 "session_data": session.session_data,
                 "chat_history": chat_history,
                 "summary": summary,
                 "extra_data": session.extra_data,
-                "created_at": session.created_at,
+                "created_at": session.created_at or int(time.time()),
                 "updated_at": int(time.time()),
             }
 
@@ -283,7 +297,17 @@ class RedisDb(BaseDb):
             return None
 
     def _upsert_team_session_raw(self, session: TeamSession) -> Optional[dict]:
-        """Insert or update a team session in Redis."""
+        """Insert or update a team session in Redis.
+
+        Args:
+            session (TeamSession): The team session to upsert.
+
+        Returns:
+            Optional[dict]: The upserted session data if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the session.
+        """
         try:
             # Calculated fields
             chat_history = (
@@ -296,16 +320,20 @@ class RedisDb(BaseDb):
             data = {
                 "session_id": session.session_id,
                 "session_type": SessionType.TEAM.value,
+                "agent_id": None,
                 "team_id": session.team_id,
+                "workflow_id": None,
                 "team_session_id": session.team_session_id,
                 "user_id": session.user_id,
                 "runs": runs,
                 "team_data": session.team_data,
+                "agent_data": None,
+                "workflow_data": None,
                 "session_data": session.session_data,
                 "summary": summary,
                 "extra_data": session.extra_data,
                 "chat_history": chat_history,
-                "created_at": session.created_at,
+                "created_at": session.created_at or int(time.time()),
                 "updated_at": int(time.time()),
             }
 
@@ -322,14 +350,20 @@ class RedisDb(BaseDb):
             return None
 
     def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[dict]:
-        """Insert or update a workflow session in Redis."""
+        """Insert or update a workflow session in Redis.
+
+        Args:
+            session (WorkflowSession): The workflow session to upsert.
+
+        Returns:
+            Optional[dict]: The upserted session data if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the session.
+        """
         try:
             # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
             runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary if session.summary else None
 
             data = {
                 "session_id": session.session_id,
@@ -339,11 +373,15 @@ class RedisDb(BaseDb):
                 "runs": runs,
                 "workflow_data": session.workflow_data,
                 "session_data": session.session_data,
-                "summary": summary,
                 "extra_data": session.extra_data,
-                "chat_history": chat_history,
-                "created_at": session.created_at,
+                "created_at": session.created_at or int(time.time()),
                 "updated_at": int(time.time()),
+                "agent_id": None,
+                "team_id": None,
+                "agent_data": None,
+                "team_data": None,
+                "summary": None,
+                "chat_history": None,
             }
 
             success = self._store_record(
@@ -359,7 +397,14 @@ class RedisDb(BaseDb):
             return None
 
     def delete_session(self, session_id: str) -> None:
-        """Delete a session from Redis."""
+        """Delete a session from Redis.
+
+        Args:
+            session_id (str): The ID of the session to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the session.
+        """
         try:
             if self._delete_record(
                 table_type="sessions",
@@ -374,7 +419,14 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting session: {e}")
 
     def delete_sessions(self, session_ids: List[str]) -> None:
-        """Delete multiple sessions from Redis."""
+        """Delete multiple sessions from Redis.
+
+        Args:
+            session_ids (List[str]): The IDs of the sessions to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the sessions.
+        """
         try:
             deleted_count = 0
             for session_id in session_ids:
@@ -385,6 +437,7 @@ class RedisDb(BaseDb):
                 ):
                     deleted_count += 1
             log_debug(f"Successfully deleted {deleted_count} sessions")
+
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
 
@@ -393,9 +446,21 @@ class RedisDb(BaseDb):
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-        table: Optional[Any] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Get a session as a raw dictionary."""
+        """Get a session as a raw dictionary.
+
+        Args:
+            session_id (str): The ID of the session to get.
+            user_id (Optional[str]): The ID of the user to filter by.
+            session_type (Optional[SessionType]): The type of session to filter by.
+            table (Optional[Any]): The table to get the session from.
+
+        Returns:
+            Optional[Dict[str, Any]]: The session data if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the session.
+        """
         try:
             data = self._get_record("sessions", session_id)
             if data is None:
@@ -418,20 +483,30 @@ class RedisDb(BaseDb):
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-        table: Optional[Any] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        """Read a session from Redis."""
+        """Read a session from Redis.
+
+        Args:
+            session_id (str): The ID of the session to get.
+            user_id (Optional[str]): The ID of the user to filter by.
+            session_type (Optional[SessionType]): The type of session to filter by.
+
+        Returns:
+            Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the session.
+        """
         try:
             session_raw = self.get_session_raw(session_id=session_id, user_id=user_id, session_type=session_type)
             if session_raw is None:
                 return None
 
-            session_type_value = session_raw.get("session_type")
-            if session_type_value == SessionType.AGENT.value:
+            if session_type == SessionType.AGENT.value:
                 return AgentSession.from_dict(session_raw)
-            elif session_type_value == SessionType.TEAM.value:
+            elif session_type == SessionType.TEAM.value:
                 return TeamSession.from_dict(session_raw)
-            elif session_type_value == SessionType.WORKFLOW.value:
+            elif session_type == SessionType.WORKFLOW.value:
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
@@ -450,9 +525,20 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all sessions as raw dictionaries."""
+        """Get all sessions as raw dictionaries.
+
+        Args:
+            session_type (Optional[SessionType]): The type of session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            component_id (Optional[str]): The ID of the component to filter by.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A tuple containing the list of sessions and the total number of sessions.
+
+        Raises:
+            Exception: If any error occurs while getting the sessions.
+        """
         try:
             # Get all sessions
             all_sessions = self._get_all_records("sessions")
@@ -489,10 +575,7 @@ class RedisDb(BaseDb):
 
             total_count = len(filtered_sessions)
 
-            # Apply sorting
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
-
-            # Apply pagination
             paginated_sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
 
             return paginated_sessions, total_count
@@ -511,9 +594,22 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
     ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession]]:
-        """Get all sessions."""
+        """Get all sessions matching the given filters.
+
+        Args:
+            session_type (Optional[SessionType]): The type of session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            component_id (Optional[str]): The ID of the component to filter by.
+            session_name (Optional[str]): The name of the session to filter by.
+            limit (Optional[int]): The maximum number of sessions to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[AgentSession] | List[TeamSession] | List[WorkflowSession]: The list of sessions.
+        """
         try:
             sessions_raw, _ = self.get_sessions_raw(
                 session_type=session_type,
@@ -527,11 +623,11 @@ class RedisDb(BaseDb):
             )
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions_raw]
+                return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions_raw]
+                return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions_raw]
+                return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -539,10 +635,20 @@ class RedisDb(BaseDb):
             log_debug(f"Exception reading sessions: {e}")
             return []
 
-    def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Any] = None
-    ) -> Optional[Session]:
-        """Rename a session in Redis."""
+    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
+        """Rename a session in Redis.
+
+        Args:
+            session_id (str): The ID of the session to rename.
+            session_type (SessionType): The type of session to rename.
+            session_name (str): The new name of the session.
+
+        Returns:
+            Optional[Session]: The renamed session if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while renaming the session.
+        """
         try:
             session_data = self._get_record("sessions", session_id)
             if session_data is None:
@@ -573,7 +679,17 @@ class RedisDb(BaseDb):
             return None
 
     def upsert_session(self, session: Session) -> Optional[Session]:
-        """Insert or update a session in Redis."""
+        """Insert or update a session in Redis.
+
+        Args:
+            session (Session): The session to upsert.
+
+        Returns:
+            Optional[Session]: The upserted session if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the session.
+        """
         try:
             if isinstance(session, AgentSession):
                 session_raw = self._upsert_agent_session_raw(session=session)
@@ -592,54 +708,95 @@ class RedisDb(BaseDb):
     # -- Memory methods --
 
     def delete_user_memory(self, memory_id: str) -> bool:
-        """Delete a user memory from Redis."""
+        """Delete a user memory from Redis.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+
+        Returns:
+            bool: True if the memory was deleted, False otherwise.
+
+        Raises:
+            Exception: If any error occurs while deleting the memory.
+        """
         try:
-            success = self._delete_record(
+            if self._delete_record(
                 "user_memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
-            )
-            if success:
+            ):
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
+                return True
             else:
                 log_debug(f"No user memory found with id: {memory_id}")
-            return success
+                return False
+
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
             return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
-        """Delete user memories from Redis."""
+        """Delete user memories from Redis.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+        """
         try:
+            # TODO: cant we optimize this?
             for memory_id in memory_ids:
                 self._delete_record(
-                    "user_memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
+                    "user_memories",
+                    memory_id,
+                    index_fields=["user_id", "agent_id", "team_id", "workflow_id"],
                 )
+
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from Redis."""
+        """Get all memory topics from Redis.
+
+        Returns:
+            List[str]: The list of memory topics.
+        """
         try:
             all_memories = self._get_all_records("user_memories")
+
             topics = set()
             for memory in all_memories:
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
+
             return list(topics)
+
         except Exception as e:
             log_debug(f"Exception reading memory topics: {e}")
             return []
 
-    def get_user_memory_raw(self, memory_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        """Get a memory from Redis as a raw dictionary."""
+    def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Get a memory from Redis as a raw dictionary.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+
+        Returns:
+            Optional[Dict[str, Any]]: The memory data if found, None otherwise.
+        """
         try:
             return self._get_record("user_memories", memory_id)
+
         except Exception as e:
             log_debug(f"Exception reading memory: {e}")
             return None
 
-    def get_user_memory(self, memory_id: str, table: Optional[Any] = None) -> Optional[MemoryRow]:
-        """Get a memory from Redis."""
+    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
+        """Get a memory from Redis.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+
+        Returns:
+            Optional[MemoryRow]: The memory data if found, None otherwise.
+        """
         try:
             memory_raw = self.get_user_memory_raw(memory_id=memory_id)
             if memory_raw is None:
@@ -651,6 +808,7 @@ class RedisDb(BaseDb):
                 memory=memory_raw["memory"],
                 last_updated=memory_raw["last_updated"],
             )
+
         except Exception as e:
             log_debug(f"Exception reading memory: {e}")
             return None
@@ -667,9 +825,14 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all memories from Redis as raw dictionaries."""
+        """Get all memories from Redis as raw dictionaries.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+        """
         try:
             all_memories = self._get_all_records("user_memories")
 
@@ -700,10 +863,7 @@ class RedisDb(BaseDb):
 
             total_count = len(filtered_memories)
 
-            # Apply sorting
             sorted_memories = apply_sorting(records=filtered_memories, sort_by=sort_by, sort_order=sort_order)
-
-            # Apply pagination
             paginated_memories = apply_pagination(records=sorted_memories, limit=limit, page=page)
 
             return paginated_memories, total_count
@@ -724,9 +884,27 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
     ) -> List[MemoryRow]:
-        """Get all memories from Redis as MemoryRow objects."""
+        """Get all memories from Redis as MemoryRow objects.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[MemoryRow]: The list of memories.
+
+        Raises:
+            Exception: If any error occurs while reading the memories.
+        """
         try:
             user_memories_raw, _ = self.get_user_memories_raw(
                 user_id=user_id,
@@ -753,6 +931,7 @@ class RedisDb(BaseDb):
                 )
                 for record in user_memories_raw
             ]
+
         except Exception as e:
             log_debug(f"Exception reading memories: {e}")
             return []
@@ -761,9 +940,19 @@ class RedisDb(BaseDb):
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
-        table: Optional[Any] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get user memory stats from Redis."""
+        """Get user memory stats from Redis.
+
+        Args:
+            limit (Optional[int]): The maximum number of stats to return.
+            page (Optional[int]): The page number to return.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A tuple containing the list of stats and the total number of stats.
+
+        Raises:
+            Exception: If any error occurs while getting the user memory stats.
+        """
         try:
             all_memories = self._get_all_records("user_memories")
 
@@ -788,12 +977,11 @@ class RedisDb(BaseDb):
 
             stats_list = list(user_stats.values())
 
-            # Sort by last_memory_updated_at descending
+            # Sorting by last_memory_updated_at descending
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
 
             total_count = len(stats_list)
 
-            # Apply pagination
             paginated_stats = apply_pagination(records=stats_list, limit=limit, page=page)
 
             return paginated_stats, total_count
@@ -802,8 +990,15 @@ class RedisDb(BaseDb):
             log_debug(f"Exception getting user memory stats: {e}")
             return [], 0
 
-    def upsert_user_memory_raw(self, memory: MemoryRow, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        """Upsert a user memory in Redis and return raw dictionary."""
+    def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
+        """Upsert a user memory in Redis and return raw dictionary.
+
+        Args:
+            memory (MemoryRow): The memory to upsert.
+
+        Returns:
+            Optional[Dict[str, Any]]: The upserted memory data if successful, None otherwise.
+        """
         try:
             if memory.id is None:
                 memory.id = str(uuid4())
@@ -816,13 +1011,14 @@ class RedisDb(BaseDb):
                 "memory_id": memory.id,
                 "memory": memory.memory,
                 "topics": memory.memory.get("topics", []),
-                "feedback": memory.memory.get("feedback", None),
+                "feedback": memory.memory.get("feedback"),
                 "last_updated": int(time.time()),
             }
 
             success = self._store_record(
                 "user_memories", memory.id, data, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             )
+
             return data if success else None
 
         except Exception as e:
@@ -830,7 +1026,14 @@ class RedisDb(BaseDb):
             return None
 
     def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        """Upsert a user memory in Redis."""
+        """Upsert a user memory in Redis.
+
+        Args:
+            memory (MemoryRow): The memory to upsert.
+
+        Returns:
+            Optional[MemoryRow]: The upserted memory data if successful, None otherwise.
+        """
         try:
             user_memory_raw = self.upsert_user_memory_raw(memory=memory)
             if user_memory_raw is None:
@@ -844,6 +1047,7 @@ class RedisDb(BaseDb):
                 memory=user_memory_raw["memory"],
                 last_updated=user_memory_raw["last_updated"],
             )
+
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
@@ -853,7 +1057,18 @@ class RedisDb(BaseDb):
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Get all sessions for metrics calculation."""
+        """Get all sessions for metrics calculation.
+
+        Args:
+            start_timestamp (Optional[int]): The start timestamp to filter by.
+            end_timestamp (Optional[int]): The end timestamp to filter by.
+
+        Returns:
+            List[Dict[str, Any]]: The list of sessions.
+
+        Raises:
+            Exception: If any error occurs while getting the sessions.
+        """
         try:
             all_sessions = self._get_all_records("sessions")
 
@@ -870,12 +1085,20 @@ class RedisDb(BaseDb):
                 return filtered_sessions
 
             return all_sessions
+
         except Exception as e:
             log_debug(f"Exception reading sessions for metrics: {e}")
             return []
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
-        """Get the first date for which metrics calculation is needed."""
+        """Get the first date for which metrics calculation is needed.
+
+        Returns:
+            Optional[date]: The first date for which metrics calculation is needed.
+
+        Raises:
+            Exception: If any error occurs while getting the metrics calculation starting date.
+        """
         try:
             all_metrics = self._get_all_records("metrics")
 
@@ -899,12 +1122,20 @@ class RedisDb(BaseDb):
                 return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
             return None
+
         except Exception as e:
             log_error(f"Exception getting metrics starting date: {e}")
             return None
 
     def calculate_metrics(self) -> Optional[list[dict]]:
-        """Calculate metrics for all dates without complete metrics."""
+        """Calculate metrics for all dates without complete metrics.
+
+        Returns:
+            Optional[list[dict]]: The list of metrics.
+
+        Raises:
+            Exception: If any error occurs while calculating the metrics.
+        """
         try:
             starting_date = self._get_metrics_calculation_starting_date()
             if starting_date is None:
@@ -942,12 +1173,12 @@ class RedisDb(BaseDb):
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
 
-                # Store metrics record
                 success = self._store_record("metrics", metrics_record["id"], metrics_record)
                 if success:
                     results.append(metrics_record)
 
             return results
+
         except Exception as e:
             log_error(f"Exception calculating metrics: {e}")
             raise e
@@ -955,7 +1186,18 @@ class RedisDb(BaseDb):
     def get_metrics_raw(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter by.
+            ending_date (Optional[date]): The ending date to filter by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
+
+        Raises:
+            Exception: If any error occurs while getting the metrics.
+        """
         try:
             all_metrics = self._get_all_records("metrics")
 
@@ -984,28 +1226,59 @@ class RedisDb(BaseDb):
     # -- Knowledge methods --
 
     def delete_knowledge_document(self, document_id: str):
-        """Delete a knowledge document from Redis."""
+        """Delete a knowledge document from Redis.
+
+        Args:
+            document_id (str): The ID of the document to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the document.
+        """
         try:
             self._delete_record("knowledge", document_id)
+
         except Exception as e:
             log_error(f"Error deleting knowledge document: {e}")
 
     def get_document_status(self, document_id: str) -> Optional[str]:
-        """Get the status of a knowledge document."""
+        """Get the status of a knowledge document.
+
+        Args:
+            document_id (str): The ID of the document to get the status of.
+
+        Returns:
+            Optional[str]: The status of the document.
+
+        Raises:
+            Exception: If any error occurs while getting the document status.
+        """
         try:
             document = self._get_record("knowledge", document_id)
             return document.get("status") if document else None
+
         except Exception as e:
             log_error(f"Error getting document status: {e}")
             return None
 
     def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document from Redis."""
+        """Get a knowledge document from Redis.
+
+        Args:
+            document_id (str): The ID of the document to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The document if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the document.
+        """
         try:
             document_raw = self._get_record("knowledge", document_id)
             if document_raw is None:
                 return None
+
             return KnowledgeRow.model_validate(document_raw)
+
         except Exception as e:
             log_error(f"Error getting knowledge document: {e}")
             return None
@@ -1017,7 +1290,20 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from Redis."""
+        """Get all knowledge documents from Redis.
+
+        Args:
+            limit (Optional[int]): The maximum number of documents to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: A tuple containing the list of documents and the total number of documents.
+
+        Raises:
+            Exception: If any error occurs while getting the documents.
+        """
         try:
             all_documents = self._get_all_records("knowledge")
 
@@ -1035,11 +1321,23 @@ class RedisDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in Redis."""
+        """Upsert a knowledge document in Redis.
+
+        Args:
+            knowledge_row (KnowledgeRow): The document to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted document if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the document.
+        """
         try:
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)
+
             return knowledge_row if success else None
+
         except Exception as e:
             log_error(f"Error upserting knowledge document: {e}")
             return None
@@ -1047,7 +1345,17 @@ class RedisDb(BaseDb):
     # -- Eval methods --
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        """Create an EvalRunRecord in Redis."""
+        """Create an EvalRunRecord in Redis.
+
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while creating the eval run.
+        """
         try:
             current_time = int(time.time())
             data = {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
@@ -1058,27 +1366,43 @@ class RedisDb(BaseDb):
                 data,
                 index_fields=["agent_id", "team_id", "workflow_id", "model_id", "eval_type"],
             )
+
             return eval_run if success else None
+
         except Exception as e:
             log_error(f"Error creating eval run: {e}")
             return None
 
     def delete_eval_run(self, eval_run_id: str) -> None:
-        """Delete an eval run from Redis."""
+        """Delete an eval run from Redis.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the eval run.
+        """
         try:
-            success = self._delete_record(
+            if self._delete_record(
                 "evals", eval_run_id, index_fields=["agent_id", "team_id", "workflow_id", "model_id", "eval_type"]
-            )
-            if success:
+            ):
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
             else:
-                log_warning(f"No eval run found with ID: {eval_run_id}")
+                log_debug(f"No eval run found with ID: {eval_run_id}")
+
         except Exception as e:
             log_debug(f"Error deleting eval run {eval_run_id}: {e}")
             raise
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from Redis."""
+        """Delete multiple eval runs from Redis.
+
+        Args:
+            eval_run_ids (List[str]): The IDs of the eval runs to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the eval runs.
+        """
         try:
             deleted_count = 0
             for eval_run_id in eval_run_ids:
@@ -1091,25 +1415,49 @@ class RedisDb(BaseDb):
                 log_warning(f"No eval runs found with IDs: {eval_run_ids}")
             else:
                 log_debug(f"Deleted {deleted_count} eval runs")
+
         except Exception as e:
             log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
-    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        """Get an eval run from Redis as a raw dictionary."""
+    def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
+        """Get an eval run from Redis as a raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+
+        Returns:
+            Optional[Dict[str, Any]]: The eval run data if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the eval run.
+        """
         try:
             return self._get_record("evals", eval_run_id)
+
         except Exception as e:
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
-        """Get an eval run from Redis."""
+    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+        """Get an eval run from Redis.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+
+        Returns:
+            Optional[EvalRunRecord]: The eval run if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the eval run.
+        """
         try:
             eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id)
             if eval_run_raw is None:
                 return None
+
             return EvalRunRecord.model_validate(eval_run_raw)
+
         except Exception as e:
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
@@ -1120,7 +1468,6 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
@@ -1128,7 +1475,20 @@ class RedisDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all eval runs from Redis as raw dictionaries."""
+        """Get all eval runs from Redis as raw dictionaries.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A tuple containing the list of eval runs and the total number of eval runs.
+
+        Raises:
+            Exception: If any error occurs while getting the eval runs.
+        """
         try:
             all_eval_runs = self._get_all_records("evals")
 
@@ -1169,11 +1529,10 @@ class RedisDb(BaseDb):
                 sort_order = "desc"
 
             sorted_runs = apply_sorting(records=filtered_runs, sort_by=sort_by, sort_order=sort_order)
-
-            # Apply pagination
             paginated_runs = apply_pagination(records=sorted_runs, limit=limit, page=page)
 
             return paginated_runs, total_count
+
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
             return [], 0
@@ -1184,7 +1543,6 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
@@ -1192,7 +1550,20 @@ class RedisDb(BaseDb):
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
     ) -> List[EvalRunRecord]:
-        """Get all eval runs from Redis."""
+        """Get all eval runs from Redis.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            List[EvalRunRecord]: The list of eval runs.
+
+        Raises:
+            Exception: If any error occurs while getting the eval runs.
+        """
         try:
             eval_runs_raw, _ = self.get_eval_runs_raw(
                 limit=limit,
@@ -1216,7 +1587,18 @@ class RedisDb(BaseDb):
             return []
 
     def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
-        """Update the name of an eval run in Redis."""
+        """Update the name of an eval run in Redis.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to rename.
+            name (str): The new name of the eval run.
+
+        Returns:
+            Optional[Dict[str, Any]]: The updated eval run data if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while updating the eval run name.
+        """
         try:
             eval_run_data = self._get_record("evals", eval_run_id)
             if eval_run_data is None:
@@ -1226,7 +1608,9 @@ class RedisDb(BaseDb):
             eval_run_data["updated_at"] = int(time.time())
 
             success = self._store_record("evals", eval_run_id, eval_run_data)
+
             return eval_run_data if success else None
+
         except Exception as e:
             log_debug(f"Error updating eval run name {eval_run_id}: {e}")
             raise
