@@ -24,7 +24,7 @@ from agno.os.managers import (
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 from agno.workflow.workflow import Workflow
 
 
@@ -108,11 +108,11 @@ class AgentOS:
         discovered_managers: List[BaseManager] = []
         
         seen_components: Dict[str, set] = {
-            "session_db": set(),
+            "session": set(),
             "knowledge": set(),
             "memory": set(),
-            "metrics_db": set(),
-            "eval_db": set(),
+            "metrics": set(),
+            "eval": set(),
         }
 
         # Helper function to add unique components
@@ -135,17 +135,17 @@ class AgentOS:
                         
                     # Session manager
                     if agent.memory.db.session_table_name:
-                        if add_unique_component("session_db", str(db_id)):
+                        if add_unique_component("session", str(db_id)):
                             discovered_managers.append(SessionManager(db=agent.memory.db))
                     
                     # Metrics manager
                     if agent.memory.db.metrics_table_name:
-                        if add_unique_component("metrics_db", str(db_id)):
+                        if add_unique_component("metrics", str(db_id)):
                             discovered_managers.append(MetricsManager(db=agent.memory.db))
                     
                     # Eval manager
                     if agent.memory.db.eval_table_name:
-                        if add_unique_component("eval_db", str(db_id)):
+                        if add_unique_component("eval", str(db_id)):
                             discovered_managers.append(EvalManager(db=agent.memory.db))
                             
                 # Knowledge manager
@@ -193,7 +193,8 @@ class AgentOS:
 
         # Log discovered managers
         if discovered_managers:
-            log_info(f"Auto-discovered {len(discovered_managers)} managers")
+            for manager in discovered_managers:
+                log_debug(f"{manager.type.title()} Manager added to AgentOS")
 
         return discovered_managers
 
