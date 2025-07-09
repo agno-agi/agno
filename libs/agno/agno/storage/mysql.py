@@ -17,7 +17,7 @@ try:
     from sqlalchemy.sql.expression import select, text
     from sqlalchemy.types import JSON, BigInteger, String
 except ImportError:
-    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy pymysql`")
 
 
 class MySQLStorage(Storage):
@@ -217,9 +217,9 @@ class MySQLStorage(Storage):
                         with self.Session() as sess:
                             if self.schema:
                                 exists_query = text(
-                                    """SELECT 1 FROM information_schema.statistics 
-                                    WHERE table_schema = :schema 
-                                    AND table_name = :table 
+                                    """SELECT 1 FROM information_schema.statistics
+                                    WHERE table_schema = :schema
+                                    AND table_name = :table
                                     AND index_name = :index_name"""
                                 )
                                 exists = (
@@ -231,8 +231,8 @@ class MySQLStorage(Storage):
                                 )
                             else:
                                 exists_query = text(
-                                    """SELECT 1 FROM information_schema.statistics 
-                                    WHERE table_name = :table 
+                                    """SELECT 1 FROM information_schema.statistics
+                                    WHERE table_name = :table
                                     AND index_name = :index_name"""
                                 )
                                 exists = (

@@ -88,7 +88,7 @@ if __name__ == "__main__":
     )
     storage.drop()
     report: Iterator[RunResponse] = HackerNewsReporter(
-        storage=storage, debug_mode=False
+        storage=storage
     ).run(num_stories=5)
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)

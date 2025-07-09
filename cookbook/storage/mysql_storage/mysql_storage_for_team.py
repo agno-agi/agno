@@ -55,9 +55,11 @@ hn_team = Team(
     response_model=Article,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
     add_member_tools_to_system_message=False,
 )
 
 hn_team.print_response("Write an article about the top 2 stories on hackernews")
+
+
+print(f"Session IDs created in DB: {hn_team.storage.get_all_session_ids(entity_id=hn_team.team_id)}")
