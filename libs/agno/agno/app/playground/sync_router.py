@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from io import BytesIO
 from typing import Any, Dict, Generator, List, Optional, cast
 from uuid import uuid4
@@ -644,7 +643,7 @@ def get_sync_playground_router(
             else:
                 # Return as a streaming response
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
+                    (result.to_json() for result in new_workflow_instance.run(**body.input)),
                     media_type="text/event-stream",
                 )
         except Exception as e:
