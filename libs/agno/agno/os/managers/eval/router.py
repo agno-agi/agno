@@ -2,14 +2,24 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from agno.agent.agent import Agent
 from agno.db.base import BaseDb
+from agno.eval.accuracy import AccuracyEval
+from agno.eval.performance import PerformanceEval
+from agno.eval.reliability import ReliabilityEval
 from agno.eval.schemas import EvalFilterType, EvalType
 from agno.os.managers.eval.schemas import (
+    AccuracyEvalInput,
     DeleteEvalRunsRequest,
     EvalSchema,
+    PerformanceEvalInput,
+    ReliabilityEvalInput,
     UpdateEvalRunRequest,
 )
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.utils import get_agent_by_id
+from agno.run.response import RunResponse
+from agno.team.team import Team
 
 
 def parse_eval_types_filter(
@@ -24,8 +34,8 @@ def parse_eval_types_filter(
         raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
 
 
-def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
-    @router.get("/evals", response_model=PaginatedResponse[EvalSchema], status_code=200)
+def attach_routes(router: APIRouter, db: BaseDb, agents: List[Agent], teams: List[Team]) -> APIRouter:
+    @router.get("/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200)
     async def get_eval_runs(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
         team_id: Optional[str] = Query(default=None, description="Team ID"),
@@ -61,7 +71,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             ),
         )
 
-    @router.get("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)
+    @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def get_eval_run(eval_run_id: str) -> EvalSchema:
         eval_run = db.get_eval_run_raw(eval_run_id=eval_run_id)
         if not eval_run:
@@ -69,14 +79,14 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         return EvalSchema.from_dict(eval_run)
 
-    @router.delete("/evals", status_code=204)
+    @router.delete("/eval-runs", status_code=204)
     async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
         try:
             db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
-    @router.patch("/evals/{eval_run_id}", response_model=EvalSchema, status_code=200)
+    @router.patch("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
         try:
             eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name)
@@ -88,10 +98,11 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         return EvalSchema.from_dict(eval_run)
 
-    @router.post("/evals/accuracy/run", response_model=EvalSchema, status_code=200)
-    async def run_accuracy_eval(accuracy_eval_input: AccuracyEvalInput) -> EvalSchema:
-        # TODO: get real agent/team
-        agent = ...
+    @router.post("/eval-runs/accuracy", response_model=EvalSchema, status_code=200)
+    async def run_accuracy_eval(agent_id: str, accuracy_eval_input: AccuracyEvalInput) -> EvalSchema:
+        agent = get_agent_by_id(agent_id=agent_id, agents=agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
 
         accuracy_eval = AccuracyEval(
             db=db,
@@ -99,7 +110,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             input=accuracy_eval_input.input,
             expected_output=accuracy_eval_input.expected_output,
             additional_guidelines=accuracy_eval_input.additional_guidelines,
-            num_iterations=accuracy_eval_input.num_iterations,
+            num_iterations=accuracy_eval_input.num_iterations or 1,
             name=accuracy_eval_input.name,
         )
         result = accuracy_eval.run(print_results=False, print_summary=False)
@@ -108,19 +119,20 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         return EvalSchema.from_accuracy_result(result)
 
-    @router.post("/evals/performance/run", response_model=EvalSchema, status_code=200)
-    async def run_performance_eval(performance_eval_input: PerformanceEvalInput) -> EvalSchema:
-        # TODO: get real agent
-        agent = ...
+    @router.post("/eval-runs/performance", response_model=EvalSchema, status_code=200)
+    async def run_performance_eval(agent_id: str, performance_eval_input: PerformanceEvalInput) -> EvalSchema:
+        agent = get_agent_by_id(agent_id=agent_id, agents=agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
 
-        def run_component() -> str:
+        def run_component() -> RunResponse:
             return agent.run(performance_eval_input.input)
 
         performance_eval = PerformanceEval(
             db=db,
             name=performance_eval_input.name,
             func=run_component,
-            num_iterations=performance_eval_input.num_iterations,
+            num_iterations=performance_eval_input.num_iterations or 10,
             warmup_runs=performance_eval_input.warmup_runs,
         )
         result = performance_eval.run(print_results=False, print_summary=False)
@@ -129,10 +141,12 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         return EvalSchema.from_performance_result(result)
 
-    @router.post("/evals/reliability/run", response_model=EvalSchema, status_code=200)
-    async def run_reliability_eval(reliability_eval_input: ReliabilityEvalInput) -> EvalSchema:
-        # TODO: get and run real agent
-        agent = ...
+    @router.post("/eval-runs/reliability", response_model=EvalSchema, status_code=200)
+    async def run_reliability_eval(agent_id: str, reliability_eval_input: ReliabilityEvalInput) -> EvalSchema:
+        agent = get_agent_by_id(agent_id=agent_id, agents=agents)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent with id '{agent_id}' not found")
+
         agent_response = agent.run(reliability_eval_input.input)
 
         reliability_eval = ReliabilityEval(
@@ -141,7 +155,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             agent_response=agent_response,
             expected_tool_calls=reliability_eval_input.expected_tool_calls,
         )
-        result = reliability_eval.run(print_results=False, print_summary=False)
+        result = reliability_eval.run(print_results=False)
         if not result:
             raise HTTPException(status_code=500, detail="Failed to run reliability evaluation")
 

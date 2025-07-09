@@ -198,7 +198,7 @@ class PerformanceEval:
     # Number of warm-up runs (not included in final stats)
     warmup_runs: Optional[int] = 10
     # Number of measured iterations
-    num_iterations: Optional[int] = 50
+    num_iterations: int = 50
     # Result of the evaluation
     result: Optional[PerformanceResult] = None
 

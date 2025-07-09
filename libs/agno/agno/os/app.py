@@ -255,7 +255,19 @@ class AgentOS:
         manager_index_map: Dict[str, int] = {}
         for manager in self.managers:
             manager_index_map[manager.type] = manager_index_map.get(manager.type, 0) + 1
-            self.api_app.include_router(manager.get_router(index=manager_index_map[manager.type]))
+
+            # Passing contextual agents and teams to the eval manager, so it can use them to run evals.
+            if manager.type == "eval":
+                self.api_app.include_router(
+                    manager.get_router(
+                        index=manager_index_map[manager.type],
+                        agents=self.agents,
+                        teams=self.teams,
+                    )
+                )
+            else:
+                self.api_app.include_router(manager.get_router(index=manager_index_map[manager.type]))
+
             self.managers_loaded.append((manager.type, manager.router_prefix))
 
         self.api_app.add_middleware(
