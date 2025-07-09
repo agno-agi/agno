@@ -10,7 +10,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
 try:
@@ -125,8 +125,7 @@ class Claude(Model):
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
         """
@@ -149,6 +148,7 @@ class Claude(Model):
             ]
         if self.request_params:
             _request_params.update(self.request_params)
+
         return _request_params
 
     def _prepare_request_kwargs(
@@ -163,7 +163,7 @@ class Claude(Model):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
-        request_kwargs = self.request_kwargs.copy()
+        request_kwargs = self.get_request_params().copy()
         if system_message:
             if self.cache_system_prompt:
                 cache_control = (
@@ -177,6 +177,9 @@ class Claude(Model):
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
+
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
     def _format_tools_for_model(self, tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
@@ -244,7 +247,7 @@ class Claude(Model):
                 return self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.request_kwargs,
+                    **self.get_request_params(),
                 )
             else:
                 return self.get_client().messages.create(
@@ -345,7 +348,7 @@ class Claude(Model):
                 return await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
-                    **self.request_kwargs,
+                    **self.get_request_params(),
                 )
             else:
                 return await self.get_async_client().messages.create(
@@ -424,16 +427,13 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
-    ) -> None:
+    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
         """
         Handle the results of function calls.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
         """
         if len(function_call_results) > 0:
             fc_responses: List = []

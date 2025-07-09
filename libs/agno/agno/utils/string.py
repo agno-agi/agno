@@ -90,8 +90,8 @@ def _clean_json_content(content: str) -> str:
     elif "```" in content:
         content = content.split("```")[1].strip()
 
-    # Remove markdown formatting
-    content = re.sub(r"[*`#]", "", content)
+    # Replace markdown formatting like *"name"* or `"name"` with "name"
+    content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
 
     # Handle newlines and control characters
     content = content.replace("\n", " ").replace("\r", "")

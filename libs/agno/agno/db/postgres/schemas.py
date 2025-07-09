@@ -3,52 +3,28 @@
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
-AGENT_SESSION_TABLE_SCHEMA = {
+SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
-    "agent_id": {"type": String, "nullable": False},
+    "session_type": {"type": String, "nullable": False},
+    "agent_id": {"type": String, "nullable": True},
+    "team_id": {"type": String, "nullable": True},
+    "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
     "team_session_id": {"type": String, "nullable": True},
     "session_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
-    "summary": {"type": JSON, "nullable": True},
-}
-
-TEAM_SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": String, "primary_key": True, "nullable": False},
-    "team_id": {"type": String, "nullable": False},
-    "user_id": {"type": String, "nullable": True},
-    "team_session_id": {"type": String, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
-    "session_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
-    "summary": {"type": JSON, "nullable": True},
-}
-
-WORKFLOW_SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": String, "primary_key": True, "nullable": False},
-    "workflow_id": {"type": String, "nullable": False},
-    "user_id": {"type": String, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
-    "session_data": {"type": JSON, "nullable": True},
     "extra_data": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False},
-    "updated_at": {"type": BigInteger, "nullable": True},
     "chat_history": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 USER_MEMORY_TABLE_SCHEMA = {
@@ -75,6 +51,7 @@ EVAL_TABLE_SCHEMA = {
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
@@ -86,6 +63,33 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": String, "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "status": {"type": String, "nullable": True},
+}
+
+METRICS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "agent_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "users_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "date": {"type": Date, "nullable": False},
+    "aggregation_period": {"type": String, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed": {"type": Boolean, "nullable": False, "default": False},
+    "_unique_constraints": [
+        {
+            "name": "uq_metrics_date_period",
+            "columns": ["date", "aggregation_period"],
+        }
+    ],
 }
 
 LEARNING_TABLE_SCHEMA = {}
@@ -102,12 +106,11 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
     schemas = {
-        "agent_sessions": AGENT_SESSION_TABLE_SCHEMA,
-        "team_sessions": TEAM_SESSION_TABLE_SCHEMA,
-        "workflow_sessions": WORKFLOW_SESSION_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
-        "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
+        "metrics": METRICS_TABLE_SCHEMA,
+        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "knowledge_sources": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
 

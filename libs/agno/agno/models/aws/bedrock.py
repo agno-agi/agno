@@ -9,7 +9,7 @@ from agno.exceptions import AgnoError, ModelProviderError
 from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from boto3 import client as AwsClient
@@ -266,6 +266,7 @@ class AwsBedrock(Model):
             body = {k: v for k, v in body.items() if v is not None}
 
             if self.request_params:
+                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)

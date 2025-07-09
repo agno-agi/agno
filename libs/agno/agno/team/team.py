@@ -1,7 +1,6 @@
 import asyncio
 import json
 from collections import ChainMap, defaultdict, deque
-from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from os import getenv
 from textwrap import dedent
@@ -28,7 +27,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -49,6 +48,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
+    create_team_parser_model_response_completed_event,
+    create_team_parser_model_response_started_event,
     create_team_reasoning_completed_event,
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
@@ -216,6 +217,10 @@ class Team:
     # --- Structured output ---
     # Response model for the team response
     response_model: Optional[Type[BaseModel]] = None
+    # Provide a secondary model to parse the response from the primary model
+    parser_model: Optional[Model] = None
+    # Provide a prompt for the parser model
+    parser_model_prompt: Optional[str] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
@@ -232,8 +237,14 @@ class Team:
     add_memory_references: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
+    # Session summary model
+    session_summary_model: Optional[Model] = None
+    # Session summary prompt
+    session_summary_prompt: Optional[str] = None
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
+    # If True, the team stores the chat history in the memory
+    store_chat_history: bool = False
 
     # --- Team History ---
     # If True, enable the team history (Deprecated in favor of add_history_to_messages)
@@ -246,7 +257,6 @@ class Team:
     num_history_runs: int = 3
 
     # --- Team Storage ---
-    storage: Optional[BaseDb] = None
     # Extra data stored with this team
     extra_data: Optional[Dict[str, Any]] = None
 
@@ -275,6 +285,8 @@ class Team:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
     # monitoring=True logs Team information to agno.com for monitoring
@@ -326,6 +338,8 @@ class Team:
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         response_model: Optional[Type[BaseModel]] = None,
+        parser_model: Optional[Model] = None,
+        parser_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
         memory: Optional[Memory] = None,
@@ -334,11 +348,11 @@ class Team:
         add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
+        store_chat_history: bool = False,
         enable_team_history: bool = False,
         add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
         num_history_runs: int = 3,
-        storage: Optional[BaseDb] = None,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
@@ -351,6 +365,7 @@ class Team:
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
         stream_member_events: bool = True,
         debug_mode: bool = False,
+        debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
         monitoring: bool = False,
         telemetry: bool = True,
@@ -406,6 +421,8 @@ class Team:
         self.tool_hooks = tool_hooks
 
         self.response_model = response_model
+        self.parser_model = parser_model
+        self.parser_model_prompt = parser_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
@@ -416,13 +433,12 @@ class Team:
         self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_references = add_session_summary_references
-
+        self.store_chat_history = store_chat_history
         self.enable_team_history = enable_team_history
         self.add_history_to_messages = add_history_to_messages
         self.num_of_interactions_from_history = num_of_interactions_from_history
         self.num_history_runs = num_history_runs
 
-        self.storage = storage
         self.extra_data = extra_data
 
         self.reasoning = reasoning
@@ -444,6 +460,10 @@ class Team:
         self.stream_member_events = stream_member_events
 
         self.debug_mode = debug_mode
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
         self.monitoring = monitoring
@@ -477,7 +497,9 @@ class Team:
 
         self._formatter: Optional[SafeFormatter] = None
 
-        self._memory_deepcopy_done: bool = False
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def _set_team_id(self) -> str:
         if self.team_id is None:
@@ -487,13 +509,9 @@ class Team:
     def _set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug(source_type="team")
+            set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
-
-    def _set_storage_mode(self) -> None:
-        if self.storage is not None:
-            self.storage.mode = "team"
 
     def _set_monitoring(self) -> None:
         """Override monitoring and telemetry settings based on environment variables."""
@@ -507,10 +525,18 @@ class Team:
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
+    def set_telemetry(self) -> None:
+        """Override telemetry settings based on environment variables."""
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
+
     def _initialize_member(self, member: Union["Team", Agent], session_id: Optional[str] = None) -> None:
         # Set debug mode for all members
         if self.debug_mode:
             member.debug_mode = True
+            member.debug_level = self.debug_level
         if self.show_tool_calls:
             member.show_tool_calls = True
         if self.markdown:
@@ -535,8 +561,6 @@ class Team:
             member.parent_team_id = self.team_id
             for sub_member in member.members:
                 self._initialize_member(sub_member, session_id)
-        if member.name is None:
-            log_warning("Team member name is undefined.")
 
     def _set_default_model(self) -> None:
         # Set the default model
@@ -584,7 +608,6 @@ class Team:
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
-        self._set_storage_mode()
 
         # Set debug mode
         self._set_debug()
@@ -600,11 +623,6 @@ class Team:
         # Initialize memory if not yet set
         if self.memory is None:
             self.memory = Memory()
-        elif not self._memory_deepcopy_done:
-            # We store a copy of memory to ensure different team instances reference unique memory copy
-            if isinstance(self.memory, Memory):
-                self.memory = deepcopy(self.memory)
-            self._memory_deepcopy_done = True
 
         # Default to the team's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -621,9 +639,137 @@ class Team:
         # Make sure for the team, we are using the team logger
         use_team_logger()
 
-    @property
-    def is_streamable(self) -> bool:
-        return self.response_model is None
+    def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        if not self.tools:
+            self.tools = []
+        self.tools.append(tool)
+        self._rebuild_tools = True
+
+    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+        self.tools = tools
+        self._rebuild_tools = True
+
+    def _run(
+        self,
+        run_response: TeamRunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> TeamRunResponse:
+        """Run the Team and return the response.
+
+        Steps:
+        1. Reason about the task(s) if reasoning is enabled
+        2. Get a response from the model
+        3. Update Team Memory
+        5. Save session to storage
+        6. Parse any structured outputs
+        7. Log the team run
+        """
+        # 1. Reason about the task(s) if reasoning is enabled
+        self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+
+        # 2. Get the model response for the team leader
+        self.model = cast(Model, self.model)
+        model_response: ModelResponse = self.model.response(
+            messages=run_messages.messages,
+            response_format=response_format,
+            tools=self._tools_for_model,
+            functions=self._functions_for_model,
+            tool_choice=self.tool_choice,
+            tool_call_limit=self.tool_call_limit,
+        )
+
+        #  Update TeamRunResponse
+        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        # 3. Add the run to memory
+        self.add_run_to_session(run_response=run_response)
+
+        # 4. Update Team Memory
+        response_iterator = self._update_memory(
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+        )
+        deque(response_iterator, maxlen=0)
+
+        # 5. Calculate session metrics
+        self.update_session_metrics(run_messages)
+
+        # 5. Save session to storage
+        self.save_session(session_id=session_id, user_id=user_id)
+
+        # 6. Parse team response model
+        self._convert_response_to_structured_format(run_response=run_response)
+
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
+
+        return run_response
+
+    def _run_stream(
+        self,
+        run_response: TeamRunResponse,
+        run_messages: RunMessages,
+        session_id: str,
+        user_id: Optional[str] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        stream_intermediate_steps: bool = False,
+    ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
+        """Run the Team and return the response iterator.
+
+        Steps:
+        1. Reason about the task(s) if reasoning is enabled
+        2. Get a response from the model
+        3. Update Team Memory
+        4. Save session to storage
+        5. Log Team Run
+        """
+
+        # 1. Reason about the task(s) if reasoning is enabled
+        yield from self._handle_reasoning_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+        )
+
+        # Start the Run by yielding a RunStarted event
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
+
+        # 2. Get a response from the model
+        yield from self._handle_model_response_stream(
+            run_response=run_response,
+            run_messages=run_messages,
+            response_format=response_format,
+            stream_intermediate_steps=stream_intermediate_steps,
+        )
+
+        # 3. Add the run to memory
+        self.add_run_to_session(run_response=run_response)
+
+        # 4. Update Team Memory
+        yield from self._update_memory(
+            run_messages=run_messages,
+            session_id=session_id,
+            user_id=user_id,
+        )
+
+        if stream_intermediate_steps:
+            yield self._handle_event(
+                create_team_run_response_completed_event(
+                    from_run_response=run_response,
+                ),
+                run_response,
+            )
+
+        # 5. Calculate session metrics
+        self.update_session_metrics(run_messages)
+
+        # 6. Save session to storage
+        self.save_session(session_id=session_id, user_id=user_id)
+
+        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     @overload
     def run(
@@ -697,6 +843,8 @@ class Team:
                 # Generate a new session_id and store it in the agent
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -740,24 +888,25 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.get_team_session(session_id=session_id, user_id=user_id)
+
+        # TODO: Test and remove this
+        if not isinstance(self.team_session, TeamSession):
+            raise ValueError("Team session is not a TeamSession")
 
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
 
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
-
         # Configure the model for runs
         self._set_default_model()
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -843,7 +992,7 @@ class Team:
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._run_stream(
                         run_response=self.run_response,
                         run_messages=run_messages,
@@ -872,7 +1021,7 @@ class Team:
                 if attempt < num_attempts - 1:
                     time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -889,17 +1038,17 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_team_run_response_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
-    def _run(
+    async def _arun(
         self,
         run_response: TeamRunResponse,
         run_messages: RunMessages,
@@ -917,48 +1066,55 @@ class Team:
         6. Parse any structured outputs
         7. Log the team run
         """
+
+        self.model = cast(Model, self.model)
+
         # 1. Reason about the task(s) if reasoning is enabled
-        self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+        await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # 2. Get the model response for the team leader
-        self.model = cast(Model, self.model)
-        model_response: ModelResponse = self.model.response(
+        model_response = await self.model.aresponse(
             messages=run_messages.messages,
             response_format=response_format,
             tools=self._tools_for_model,
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
-        )
+        )  # type: ignore
+
+        # If a parser model is provided, structure the response separately
+        self._parse_response_with_parser_model(model_response, run_messages)
 
         #  Update TeamRunResponse
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
-            run_response=run_response,
-            session_id=session_id,
-        )
+        self.add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
-        response_iterator = self._update_memory(
+        async for _ in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
-        )
-        deque(response_iterator, maxlen=0)
+        ):
+            pass
 
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
+        # 5. Calculate session metrics
+        self.update_session_metrics(run_messages)
 
         # 6. Parse team response model
         self._convert_response_to_structured_format(run_response=run_response)
+        # 7. Save session to storage
+        self.save_session(session_id=session_id, user_id=user_id)
+
+        # 8. Log Team Run
+        await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
         return run_response
 
-    def _run_stream(
+    async def _arun_stream(
         self,
         run_response: TeamRunResponse,
         run_messages: RunMessages,
@@ -966,8 +1122,8 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-    ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
-        """Run the Team and return the response iterator.
+    ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
+        """Run the Team and return the response.
 
         Steps:
         1. Reason about the task(s) if reasoning is enabled
@@ -978,46 +1134,54 @@ class Team:
         """
 
         # 1. Reason about the task(s) if reasoning is enabled
-        yield from self._handle_reasoning_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-        )
+        async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
+            yield item
 
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
+            yield self._handle_event(
+                create_team_run_response_started_event(from_run_response=run_response), run_response
+            )
 
         # 2. Get a response from the model
-        yield from self._handle_model_response_stream(
+        async for event in self._ahandle_model_response_stream(
             run_response=run_response,
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
-        )
+        ):
+            yield event
+
+        # If a parser model is provided, structure the response separately
+        async for event in self._aparse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        ):
+            yield event
 
         # 3. Add the run to memory
-        self._add_run_to_memory(
-            run_response=run_response,
-            session_id=session_id,
-        )
+        self.add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
-        yield from self._update_memory(
+        async for event in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
-        )
+        ):
+            yield event
 
         if stream_intermediate_steps:
             yield self._handle_event(
-                create_team_run_response_completed_event(
-                    from_run_response=run_response,
-                ),
-                run_response,
+                create_team_run_response_completed_event(from_run_response=run_response), run_response
             )
 
-        # 4. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
+        # 5. Calculate session metrics
+        self.update_session_metrics(run_messages)
+
+        # 6. Save session to storage
+        self.save_session(session_id=session_id, user_id=user_id)
+
+        # 7. Log Team Run
+        await self._alog_team_run(session_id=session_id, user_id=user_id)
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
@@ -1093,6 +1257,8 @@ class Team:
                 # Generate a new session_id and store it in the team
                 session_id = str(uuid4())
                 self.session_id = session_id
+        else:
+            self.session_id = session_id
 
         session_id = cast(str, session_id)
 
@@ -1129,24 +1295,21 @@ class Team:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
+        self.get_team_session(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
             self._resolve_run_context()
 
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
-
         # Configure the model for runs
         self._set_default_model()
-        response_format = self._get_response_format()
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = (
+            self._get_response_format() if self.parser_model is None else None
+        )
 
         self.model = cast(Model, self.model)
         self.determine_tools_for_model(
@@ -1253,7 +1416,7 @@ class Team:
                 if attempt < num_attempts - 1:
                     await asyncio.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_team_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1270,147 +1433,19 @@ class Team:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(
                     create_team_run_response_error_event(run_response, error=str(last_exception))
                 )
 
             raise Exception(f"Failed after {num_attempts} attempts.")
-
-    async def _arun(
-        self,
-        run_response: TeamRunResponse,
-        run_messages: RunMessages,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> TeamRunResponse:
-        """Run the Team and return the response.
-
-        Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        5. Save session to storage
-        6. Parse any structured outputs
-        7. Log the team run
-        """
-
-        self.model = cast(Model, self.model)
-
-        # 1. Reason about the task(s) if reasoning is enabled
-        await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
-
-        # 2. Get the model response for the team leader
-        model_response = await self.model.aresponse(
-            messages=run_messages.messages,
-            response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
-        )  # type: ignore
-
-        # Update TeamRunResponse
-        self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
-
-        # 3. Add the run to memory
-        self._add_run_to_memory(
-            run_response=run_response,
-            session_id=session_id,
-        )
-        # 4. Update Team Memory
-        async for _ in self._aupdate_memory(
-            run_messages=run_messages,
-            session_id=session_id,
-            user_id=user_id,
-        ):
-            pass
-
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
-        # 6. Parse team response model
-        self._convert_response_to_structured_format(run_response=run_response)
-
-        # 7. Log Team Run
-        await self._alog_team_run(session_id=session_id, user_id=user_id)
-
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
-
-        return run_response
-
-    async def _arun_stream(
-        self,
-        run_response: TeamRunResponse,
-        run_messages: RunMessages,
-        session_id: str,
-        user_id: Optional[str] = None,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        stream_intermediate_steps: bool = False,
-    ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
-        """Run the Team and return the response.
-
-        Steps:
-        1. Reason about the task(s) if reasoning is enabled
-        2. Get a response from the model
-        3. Update Team Memory
-        4. Save session to storage
-        5. Log Team Run
-        """
-
-        # 1. Reason about the task(s) if reasoning is enabled
-        async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
-            yield item
-
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield self._handle_event(
-                create_team_run_response_started_event(from_run_response=run_response), run_response
-            )
-
-        # 2. Get a response from the model
-        async for event in self._ahandle_model_response_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        ):
-            yield event
-
-        # 3. Add the run to memory
-        self._add_run_to_memory(
-            run_response=run_response,
-            session_id=session_id,
-        )
-
-        # 4. Update Team Memory
-        async for event in self._aupdate_memory(
-            run_messages=run_messages,
-            session_id=session_id,
-            user_id=user_id,
-        ):
-            yield event
-
-        if stream_intermediate_steps:
-            yield self._handle_event(
-                create_team_run_response_completed_event(from_run_response=run_response), run_response
-            )
-
-        # 5. Save session to storage
-        self.write_to_storage(session_id=session_id, user_id=user_id)
-
-        # 6. Log Team Run
-        await self._alog_team_run(session_id=session_id, user_id=user_id)
-
-        log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
     def _update_run_response(
         self, model_response: ModelResponse, run_response: TeamRunResponse, run_messages: RunMessages
@@ -1462,7 +1497,7 @@ class Team:
         run_response.messages = messages_for_run_response
 
         # Update the TeamRunResponse metrics
-        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self.calculate_metrics(messages_for_run_response)
 
         for tool_call in model_response.tool_calls:
             tool_name = tool_call.get("tool_name", "")
@@ -1470,15 +1505,12 @@ class Team:
                 tool_args = tool_call.get("tool_args", {})
                 self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
-    def _add_run_to_memory(
+    def add_run_to_session(
         self,
         run_response: TeamRunResponse,
-        session_id: str,
     ):
-        self.memory = cast(Memory, self.memory)
-
-        # Add AgentRun to memory
-        self.memory.add_run(session_id=session_id, run=run_response)
+        # Add TeamRun to memory
+        self.team_session.add_run(run=run_response)
 
     def _update_memory(
         self,
@@ -1488,15 +1520,6 @@ class Team:
     ) -> Iterator[TeamRunResponseEvent]:
         yield from self._make_memories_and_summaries(run_messages, session_id, user_id)
 
-        session_messages: List[Message] = []
-        for run in self.memory.runs.get(session_id, []):  # type: ignore
-            if run.messages is not None:
-                for m in run.messages:
-                    session_messages.append(m)
-
-        # 10. Calculate session metrics
-        self.session_metrics = self._calculate_session_metrics(session_messages)
-
     async def _aupdate_memory(
         self,
         run_messages: RunMessages,
@@ -1505,16 +1528,6 @@ class Team:
     ):
         async for event in self._amake_memories_and_summaries(run_messages, session_id, user_id):
             yield event
-
-        session_messages: List[Message] = []
-        if self.memory.runs:
-            for run in self.memory.runs.get(session_id, []):
-                if run.messages is not None:
-                    for m in run.messages:
-                        session_messages.append(m)
-
-        # 10. Calculate session metrics
-        self.session_metrics = self._calculate_session_metrics(session_messages)
 
     def _handle_model_response_stream(
         self,
@@ -1530,6 +1543,11 @@ class Team:
             "reasoning_time_taken": 0.0,
         }
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         full_model_response = ModelResponse()
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
@@ -1538,13 +1556,15 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
             )
 
         # 3. Update TeamRunResponse
@@ -1583,7 +1603,7 @@ class Team:
         # Update the TeamRunResponse messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
-        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self.calculate_metrics(messages_for_run_response)
 
         # Update the run_response audio if streaming
         if full_model_response.audio is not None:
@@ -1602,6 +1622,12 @@ class Team:
             "reasoning_started": False,
             "reasoning_time_taken": 0.0,
         }
+
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         full_model_response = ModelResponse()
         model_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
@@ -1610,14 +1636,16 @@ class Team:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
             for chunk in self._handle_model_response_chunk(
                 run_response=run_response,
                 full_model_response=full_model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
             ):
                 yield chunk
 
@@ -1642,7 +1670,7 @@ class Team:
         # Update the TeamRunResponse messages
         run_response.messages = messages_for_run_response
         # Update the TeamRunResponse metrics
-        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self.calculate_metrics(messages_for_run_response)
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
@@ -1669,8 +1697,9 @@ class Team:
         run_response: TeamRunResponse,
         full_model_response: ModelResponse,
         model_response_event: Union[ModelResponse, TeamRunResponseEvent, RunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
+        parse_structured_output: bool = False,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
@@ -1685,13 +1714,23 @@ class Team:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                content_type = "str"
+
                 should_yield = False
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if not full_model_response.content:
+                    if parse_structured_output:
                         full_model_response.content = model_response_event.content
-                    else:
-                        full_model_response.content += model_response_event.content
+                        self._convert_response_to_structured_format(full_model_response)
+                        content_type = self.response_model.__name__  # type: ignore
+                        run_response.content_type = content_type
+                    elif self._member_response_model is not None:
+                        full_model_response.content = model_response_event.content
+                        self._convert_response_to_structured_format(full_model_response)
+                        content_type = self._member_response_model.__name__  # type: ignore
+                        run_response.content_type = content_type
+                    elif isinstance(model_response_event.content, str):
+                        full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
                 # Process thinking
@@ -1737,18 +1776,28 @@ class Team:
 
                 # Only yield the chunk
                 if should_yield:
-                    yield self._handle_event(
-                        create_team_run_response_content_event(
-                            from_run_response=run_response,
-                            content=model_response_event.content,
-                            thinking=model_response_event.thinking,
-                            redacted_thinking=model_response_event.redacted_thinking,
-                            response_audio=full_model_response.audio,
-                            citations=model_response_event.citations,
-                            image=model_response_event.image,
-                        ),
-                        run_response,
-                    )
+                    if content_type == "str":
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=model_response_event.content,
+                                thinking=model_response_event.thinking,
+                                redacted_thinking=model_response_event.redacted_thinking,
+                                response_audio=full_model_response.audio,
+                                citations=model_response_event.citations,
+                                image=model_response_event.image,
+                            ),
+                            run_response,
+                        )
+                    else:
+                        yield self._handle_event(
+                            create_team_run_response_content_event(
+                                from_run_response=run_response,
+                                content=full_model_response.content,
+                                content_type=content_type,
+                            ),
+                            run_response,
+                        )
 
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_started.value:
@@ -1803,7 +1852,7 @@ class Team:
                             )
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -1819,7 +1868,7 @@ class Team:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state is not None and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_team_reasoning_started_event(
                                     from_run_response=run_response,
@@ -1837,7 +1886,7 @@ class Team:
                             run_response,
                         )
 
-    def _convert_response_to_structured_format(self, run_response: TeamRunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[TeamRunResponse, RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -1847,7 +1896,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -1865,7 +1915,8 @@ class Team:
                     # Update TeamRunResponse
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
-                        run_response.content_type = self._member_response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self._member_response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -1900,15 +1951,27 @@ class Team:
             user_message_str = (
                 run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
             )
-            if self.enable_user_memories and user_message_str is not None and user_message_str:
+            if self.enable_user_memories and user_message_str is not None:
                 futures.append(
-                    executor.submit(self.memory.create_user_memories, message=user_message_str, user_id=user_id)
+                    executor.submit(
+                        self.memory.create_user_memories,
+                        message=user_message_str,
+                        user_id=user_id,
+                        team_id=self.team_id,
+                    )
                 )
 
             # Update the session summary if needed
             if self.enable_session_summaries:
+                if self.session_summary_model is None:
+                    self.session_summary_model = self.model
+
                 futures.append(
-                    executor.submit(self.memory.create_session_summary, session_id=session_id, user_id=user_id)  # type: ignore
+                    executor.submit(
+                        self.team_session.create_session_summary,
+                        session_summary_model=self.session_summary_model,
+                        session_summary_prompt=self.session_summary_prompt,
+                    )
                 )
 
             if futures:
@@ -1945,8 +2008,15 @@ class Team:
 
         # Update the session summary if needed
         if self.enable_session_summaries:
-            tasks.append(self.memory.acreate_session_summary(session_id=session_id, user_id=user_id))  # type: ignore
+            if self.session_summary_model is None:
+                self.session_summary_model = self.model
 
+            tasks.append(
+                self.team_session.acreate_session_summary(
+                    session_summary_model=self.session_summary_model,
+                    session_summary_prompt=self.session_summary_prompt,
+                )
+            )
         if tasks:
             if self.stream_intermediate_steps:
                 yield self._handle_event(
@@ -1964,14 +2034,14 @@ class Team:
                     create_team_memory_update_completed_event(from_run_response=self.run_response), self.run_response
                 )
 
-    def _get_response_format(self) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, self.model)
+    def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -1981,7 +2051,7 @@ class Team:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode:
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -1997,6 +2067,166 @@ class Team:
             else:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
+
+    def _process_parser_response(
+        self,
+        model_response: ModelResponse,
+        run_messages: RunMessages,
+        parser_model_response: ModelResponse,
+        messages_for_parser_model: list,
+    ) -> None:
+        """Common logic for processing parser model response."""
+        parser_model_response_message: Optional[Message] = None
+        for message in reversed(messages_for_parser_model):
+            if message.role == "assistant":
+                parser_model_response_message = message
+                break
+
+        if parser_model_response_message is not None:
+            run_messages.messages.append(parser_model_response_message)
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
+        else:
+            log_warning("Unable to parse response with parser model")
+
+    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_model_stream(
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model"""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                run_response.content = parser_model_response.content
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model_stream(
+        self, run_response: TeamRunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model stream."""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_started_event(run_response), run_response
+                    )
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                model_response_stream = self.parser_model.aresponse_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        full_model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                run_response.content = parser_model_response.content
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_parser_model_response_completed_event(run_response), run_response
+                    )
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
@@ -2039,9 +2269,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             self._print_response_stream(
@@ -2351,7 +2578,11 @@ class Team:
                         )
                         panels.append(memory_panel)
 
-                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                    if (
+                        self.team_session is not None
+                        and self.team_session.summary is not None
+                        and self.enable_session_summaries
+                    ):
                         summary_panel = create_panel(
                             content=Text("Session summary updated"),
                             title="Session Summary",
@@ -2385,6 +2616,7 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -2466,6 +2698,11 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -2634,7 +2871,7 @@ class Team:
                         panels.append(team_tool_calls_panel)
 
                 # Add the team response panel at the end
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(
@@ -2675,7 +2912,11 @@ class Team:
                     panels.append(memory_panel)
                     live_console.update(Group(*panels))
 
-                if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                if (
+                    self.team_session is not None
+                    and self.team_session.summary is not None
+                    and self.enable_session_summaries
+                ):
                     summary_panel = create_panel(
                         content=Text("Session summary updated"),
                         title="Session Summary",
@@ -2900,9 +3141,6 @@ class Team:
             markdown = self.markdown
         else:
             self.markdown = markdown
-
-        if self.response_model is not None:
-            stream = False
 
         if stream:
             await self._aprint_response_stream(
@@ -3210,7 +3448,11 @@ class Team:
                         )
                         panels.append(memory_panel)
 
-                    if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                    if (
+                        self.team_session is not None
+                        and self.team_session.summary is not None
+                        and self.enable_session_summaries
+                    ):
                         summary_panel = create_panel(
                             content=Text("Session summary updated"),
                             title="Session Summary",
@@ -3243,6 +3485,7 @@ class Team:
         import textwrap
 
         from rich.console import Group
+        from rich.json import JSON
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.status import Status
@@ -3322,6 +3565,11 @@ class Team:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
+                        elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            try:
+                                _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
@@ -3427,7 +3675,7 @@ class Team:
                     )
                     panels.append(tool_calls_panel)
 
-                if len(_response_content) > 0:
+                if response_content_stream:
                     render = True
                     # Create panel for response
                     response_panel = create_panel(
@@ -3466,7 +3714,11 @@ class Team:
                     panels.append(memory_panel)
                     live_console.update(Group(*panels))
 
-                if self.memory.summary_manager is not None and self.memory.summary_manager.summary_updated:
+                if (
+                    self.team_session is not None
+                    and self.team_session.summary is not None
+                    and self.enable_session_summaries
+                ):
                     summary_panel = create_panel(
                         content=Text("Session summary updated"),
                         title="Session Summary",
@@ -3798,7 +4050,42 @@ class Team:
         current_session_metrics = replace(current_session_metrics)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
+        # Get metrics of the team-agent's messages
+        for member in self.members:
+            # Only members with memory
+            if member.memory is not None:
+                if member.memory.runs is not None:
+                    for runs in member.memory.runs.values():
+                        for run in runs:
+                            if run is not None and run.messages is not None:
+                                for m in run.messages:
+                                    if m.role == assistant_message_role and m.metrics is not None:
+                                        current_session_metrics += m.metrics
+
         return current_session_metrics
+
+    def calculate_metrics(self, messages: List[Message], for_session: bool = False) -> Metrics:
+        metrics = Metrics()
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        for m in messages:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
+                metrics += m.metrics
+        return metrics if for_session else metrics.to_dict()
+
+    def set_session_metrics(self, run_messages: RunMessages):
+        """Calculate session metrics"""
+        # Calculate initial metrics
+        if self.session_metrics is None:
+            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
+        # Update metrics
+        else:
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
+
+    def update_session_metrics(self, run_messages: RunMessages):
+        """Calculate session metrics"""
+        # Calculate initial metrics
+        self.session_metrics = self._calculate_session_metrics(run_messages.messages)
+        self.full_team_session_metrics = self._calculate_full_team_session_metrics(run_messages.messages)
 
     def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
         aggregated_metrics: Dict[str, Any] = defaultdict(list)
@@ -3816,7 +4103,11 @@ class Team:
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
-            model=reasoning_model, monitoring=self.monitoring, telemetry=self.telemetry, debug_mode=self.debug_mode
+            model=reasoning_model,
+            monitoring=self.monitoring,
+            telemetry=self.telemetry,
+            debug_mode=self.debug_mode,
+            debug_level=self.debug_level,
         )
 
     def _format_reasoning_step_content(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> str:
@@ -3964,6 +4255,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4184,6 +4476,7 @@ class Team:
                     monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                     use_json_mode=use_json_mode,
                 )
 
@@ -4574,8 +4867,9 @@ class Team:
                     system_message_content += member.get_members_system_message_content(indent=indent + 2)
             else:
                 system_message_content += f"{indent * ' '} - Agent {idx + 1}:\n"
-                if member.name is not None:
+                if url_safe_member_id is not None:
                     system_message_content += f"{indent * ' '}   - ID: {url_safe_member_id}\n"
+                if member.name is not None:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
@@ -4767,44 +5061,41 @@ class Team:
             system_message_content += "</attached_media>\n\n"
 
         # Then add memories to the system prompt
-        if self.memory:
-            if isinstance(self.memory, Memory) and self.add_memory_references:
-                if not user_id:
-                    user_id = "default"
-                user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
-                if user_memories and len(user_memories) > 0:
-                    system_message_content += (
-                        "You have access to memories from previous interactions with the user that you can use:\n\n"
-                    )
-                    system_message_content += "<memories_from_previous_interactions>"
-                    for _memory in user_memories:  # type: ignore
-                        system_message_content += f"\n- {_memory.memory}"
-                    system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                    system_message_content += (
-                        "Note: this information is from previous interactions and may be updated in this conversation. "
-                        "You should always prefer information from this conversation over the past memories.\n\n"
-                    )
-                else:
-                    system_message_content += (
-                        "You have the capability to retain memories from previous interactions with the user, "
-                        "but have not had any interactions with the user yet.\n"
-                    )
+        if self.memory and self.add_memory_references:
+            if not user_id:
+                user_id = "default"
+            user_memories = self.memory.get_user_memories(user_id=user_id)  # type: ignore
+            if user_memories and len(user_memories) > 0:
+                system_message_content += (
+                    "You have access to memories from previous interactions with the user that you can use:\n\n"
+                )
+                system_message_content += "<memories_from_previous_interactions>"
+                for _memory in user_memories:  # type: ignore
+                    system_message_content += f"\n- {_memory.memory}"
+                system_message_content += "\n</memories_from_previous_interactions>\n\n"
+                system_message_content += (
+                    "Note: this information is from previous interactions and may be updated in this conversation. "
+                    "You should always prefer information from this conversation over the past memories.\n\n"
+                )
+            else:
+                system_message_content += (
+                    "You have the capability to retain memories from previous interactions with the user, "
+                    "but have not had any interactions with the user yet.\n"
+                )
 
-                if self.enable_agentic_memory:
-                    system_message_content += (
-                        "You have access to the `update_user_memory` tool.\n"
-                        "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                        "Memories should include details that could personalize ongoing interactions with the user.\n"
-                        "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                        "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                        "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
-                    )
+            if self.enable_agentic_memory:
+                system_message_content += (
+                    "You have access to the `update_user_memory` tool.\n"
+                    "You can use the `update_user_memory` tool to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                    "Memories should include details that could personalize ongoing interactions with the user.\n"
+                    "Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                    "Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                    "If you use the `update_user_memory` tool, remember to pass on the response to the user.\n\n"
+                )
 
             # Then add a summary of the interaction to the system prompt
-            if isinstance(self.memory, Memory) and self.add_session_summary_references:
-                if not user_id:
-                    user_id = "default"
-                session_summary: SessionSummary = self.memory.summaries.get(user_id, {}).get(session_id, None)  # type: ignore
+            if self.add_session_summary_references:
+                session_summary: SessionSummary = self.team_session.get_session_summary()  # type: ignore
                 if session_summary is not None:
                     system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"
@@ -4904,7 +5195,7 @@ class Team:
         if self.enable_team_history or self.add_history_to_messages:
             from copy import deepcopy
 
-            history = self.memory.get_messages_from_last_n_runs(
+            history = self.team_session.get_messages_from_last_n_runs(
                 session_id=session_id,
                 last_n=self.num_history_runs,
                 skip_role=self.system_message_role,
@@ -5057,6 +5348,46 @@ class Team:
                 return Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+
+    def get_messages_for_parser_model(
+        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        from agno.utils.prompts import get_json_output_prompt
+
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided user message."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
+
+    def get_messages_for_parser_model_stream(
+        self, run_response: TeamRunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        from agno.utils.prompts import get_json_output_prompt
+
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
+        ]
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
@@ -5341,23 +5672,6 @@ class Team:
         if not files:
             files = []
 
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            self.memory = cast(Memory, self.memory)
-            team_context_str = None
-            if self.enable_agentic_context:
-                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-            team_member_interactions_str = None
-            if self.share_member_interactions:
-                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                    images.extend([Image.from_artifact(img) for img in context_images])
-                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
-
         def run_member_agents(
             task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
@@ -5376,7 +5690,9 @@ class Team:
             self.memory = cast(Memory, self.memory)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5478,7 +5794,9 @@ class Team:
             use_agent_logger()
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5568,6 +5886,41 @@ class Team:
 
         return run_member_agents_func
 
+    def _determine_team_context(
+        self, session_id: str, images: List[Image], videos: List[Video], audio: List[Audio]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        if isinstance(self.memory, Memory):
+            self.memory = cast(Memory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)
+                if context_images := self.memory.get_team_context_images(session_id=session_id):
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        else:
+            self.memory = cast(Memory, self.memory)
+            team_context_str = None
+            if self.enable_agentic_context:
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
+
+            team_member_interactions_str = None
+            if self.share_member_interactions:
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
+                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
+                    images.extend([Image.from_artifact(img) for img in context_images])
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
+                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
+                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
+        return team_context_str, team_member_interactions_str
+
     def get_transfer_task_function(
         self,
         session_id: str,
@@ -5589,23 +5942,6 @@ class Team:
             audio = []
         if not files:
             files = []
-
-        def _determine_team_context(self, session_id: str) -> Tuple[Optional[str], Optional[str]]:
-            self.memory = cast(Memory, self.memory)
-            team_context_str = None
-            if self.enable_agentic_context:
-                team_context_str = self.memory.get_team_context_str(session_id=session_id)  # type: ignore
-
-            team_member_interactions_str = None
-            if self.share_member_interactions:
-                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)  # type: ignore
-                if context_images := self.memory.get_team_context_images(session_id=session_id):  # type: ignore
-                    images.extend([Image.from_artifact(img) for img in context_images])
-                if context_videos := self.memory.get_team_context_videos(session_id=session_id):  # type: ignore
-                    videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                if context_audio := self.memory.get_team_context_audio(session_id=session_id):  # type: ignore
-                    audio.extend([Audio.from_artifact(aud) for aud in context_audio])
-            return team_context_str, team_member_interactions_str
 
         def transfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -5630,7 +5966,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5758,7 +6096,9 @@ class Team:
             self._initialize_member(member_agent, session_id=session_id)
 
             # 2. Determine team context to send
-            team_context_str, team_member_interactions_str = _determine_team_context(self, session_id)
+            team_context_str, team_member_interactions_str = self._determine_team_context(
+                session_id, images, videos, audio
+            )
 
             # 3. Create the member agent task
             member_agent_task = self._formate_member_agent_task(
@@ -5884,6 +6224,11 @@ class Team:
     def _get_member_id(self, member: Union[Agent, "Team"]) -> str:
         """
         Get the ID of a member
+
+        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        Then if the member has a name, convert that to a URL safe string.
+        Then if the member has the default UUID ID, use that.
+        Otherwise, return None.
         """
         if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
             url_safe_member_id = url_safe_string(member.agent_id)
@@ -5891,6 +6236,10 @@ class Team:
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
+        elif isinstance(member, Agent) and member.agent_id is not None:
+            url_safe_member_id = member.agent_id
+        elif isinstance(member, Team) and member.team_id is not None:
+            url_safe_member_id = member.team_id
         else:
             url_safe_member_id = None
         return url_safe_member_id
@@ -5909,10 +6258,9 @@ class Team:
         """
         # First check direct members
         for i, member in enumerate(self.members):
-            if member.name is not None:
-                url_safe_member_id = self._get_member_id(member)
-                if url_safe_member_id == member_id:
-                    return i, member
+            url_safe_member_id = self._get_member_id(member)
+            if url_safe_member_id == member_id:
+                return i, member
 
             # If this member is a team, search its members recursively
             if isinstance(member, Team):
@@ -6209,34 +6557,63 @@ class Team:
     # Storage
     ###########################################################################
 
-    def read_from_storage(self, session_id: str) -> Optional[TeamSession]:
+    def get_team_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
         """Load the TeamSession from storage
 
         Returns:
             Optional[TeamSession]: The loaded TeamSession or None if not found.
         """
-        if self.storage is not None and session_id is not None:
-            self.team_session = cast(TeamSession, self.storage.read(session_id=session_id))
+        from time import time
+
+        from agno.session.team import TeamSession
+
+        # Return existing session if we have one
+        if self.team_session is not None and self.team_session.session_id == session_id:
+            return self.team_session
+
+        # Try to load from database
+        if self.memory is not None and self.memory.db is not None:
+            self.team_session = cast(
+                TeamSession, self.memory.read_session(session_id=session_id, session_type=SessionType.TEAM.value)
+            )
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
-            else:
-                # New session, just reset the state
-                self.session_name = None
+                return self.team_session
+
+        # Create new session if none found
+        log_debug(f"Creating new TeamSession: {session_id}")
+        self.team_session = TeamSession(
+            session_id=session_id,
+            team_id=self.team_id,
+            user_id=user_id,
+            team_session_id=self.team_session_id,
+            team_data=self._get_team_data(),
+            session_data=self.get_team_session_data(),
+            extra_data=self.extra_data,
+            created_at=int(time()),
+        )
         return self.team_session
 
-    def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
+    def save_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
         """Save the TeamSession to storage
 
         Returns:
             Optional[TeamSession]: The saved TeamSession or None if not saved.
         """
-        if self.storage is not None:
-            self.team_session = cast(
-                TeamSession, self.storage.upsert(session=self._get_team_session(session_id=session_id, user_id=user_id))
-            )
+        if self.memory is not None and self.memory.db is not None:
+            session = self.get_team_session(session_id=session_id, user_id=user_id)
+            if not session:
+                return None
+
+            # Update the session_data with the latest data
+            session.session_data = self.get_team_session_data()
+            if self.store_chat_history:
+                session.chat_history = session.get_chat_history()
+
+            self.memory.upsert_session(session=session)
         return self.team_session
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
+    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[TeamSession]:
         """Rename the current session and save to storage"""
         if self.session_id is None and session_id is None:
             raise ValueError("Session ID is not initialized")
@@ -6244,16 +6621,16 @@ class Team:
         session_id = session_id or self.session_id
 
         # -*- Read from storage
-        self.read_from_storage(session_id=session_id)  # type: ignore
+        self.get_team_session(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
-        self.write_to_storage(session_id=session_id, user_id=self.user_id)  # type: ignore
+        return self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
-        if self.storage is not None:
-            self.storage.delete_session(session_id=session_id)
+        if self.memory is not None and self.memory.db is not None:
+            self.memory.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
 
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
@@ -6342,69 +6719,6 @@ class Team:
                 merge_dictionaries(session.extra_data, self.extra_data)
             # Update the current extra_data with the extra_data from the database which is updated in place
             self.extra_data = session.extra_data
-
-        if self.memory is None:
-            self.memory = session.memory  # type: ignore
-
-        if not isinstance(self.memory, Memory):
-            # Default to base memory
-            self.memory = Memory()
-
-        if session.memory is not None:
-            if "runs" in session.memory:
-                try:
-                    if self.memory.runs is None:
-                        self.memory.runs = {}
-                    self.memory.runs[session.session_id] = []
-                    for run in session.memory["runs"]:
-                        run_session_id = run["session_id"]
-                        if "team_id" in run:
-                            self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
-                        else:
-                            self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
-                except Exception as e:
-                    log_warning(f"Failed to load runs from memory: {e}")
-            if "team_context" in session.memory:
-                from agno.memory.memory import TeamContext
-
-                try:
-                    self.memory.team_context = {
-                        session_id: TeamContext.from_dict(team_context)
-                        for session_id, team_context in session.memory["team_context"].items()
-                    }
-                except Exception as e:
-                    log_warning(f"Failed to load team context: {e}")
-            if "memories" in session.memory:
-                if self.memory.memories is not None:
-                    pass
-                else:
-                    from agno.memory.memory import UserMemory as UserMemoryV2
-
-                    try:
-                        self.memory.memories = {
-                            user_id: {
-                                memory_id: UserMemoryV2.from_dict(memory) for memory_id, memory in user_memories.items()
-                            }
-                            for user_id, user_memories in session.memory["memories"].items()
-                        }
-                    except Exception as e:
-                        log_warning(f"Failed to load user memories: {e}")
-            if "summaries" in session.memory:
-                if self.memory.summaries is not None:
-                    pass
-                else:
-                    from agno.memory.memory import SessionSummary as SessionSummaryV2
-
-                    try:
-                        self.memory.summaries = {
-                            user_id: {
-                                session_id: SessionSummaryV2.from_dict(summary)
-                                for session_id, summary in user_session_summaries.items()
-                            }
-                            for user_id, user_session_summaries in session.memory["summaries"].items()
-                        }
-                    except Exception as e:
-                        log_warning(f"Failed to load session summaries: {e}")
         log_debug(f"-*- TeamSession loaded: {session.session_id}")
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -6424,7 +6738,7 @@ class Team:
         if self.storage is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading TeamSession: {self.session_id}")
-            self.read_from_storage(session_id=self.session_id)  # type: ignore
+            self.get_team_session(session_id=self.session_id)  # type: ignore
 
             # Create a new session if it does not exist
             if self.team_session is None:
@@ -6433,12 +6747,24 @@ class Team:
                     self.session_id = str(uuid4())
                 if self.team_id is None:
                     self.initialize_team(session_id=self.session_id)
-                # write_to_storage() will create a new TeamSession
+                # save() will create a new TeamSession
                 # and populate self.team_session with the new session
-                self.write_to_storage(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+                self.save_session(session_id=self.session_id, user_id=self.user_id)  # type: ignore
                 if self.team_session is None:
                     raise Exception("Failed to create new TeamSession in storage")
         return self.session_id
+
+    def get_chat_history(self) -> List[Message]:
+        """Read the chat history from the session"""
+        from agno.db.base import SessionType
+
+        # If the chat history is already set, return it
+        if self.team_session is not None and self.team_session.chat_history is not None:
+            return self.team_session.chat_history
+        # Else read from the db
+        if self.memory is not None and self.memory.db is not None:
+            return self.memory.read_chat_history(session_id=self.session_id, session_type=SessionType.TEAM)
+        return []
 
     def get_messages_for_session(
         self, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -6450,7 +6776,7 @@ class Team:
             return []
 
         if self.memory is None:
-            self.read_from_storage(session_id=_session_id)
+            self.get_team_session(session_id=_session_id)
 
         if self.memory is None:
             return []
@@ -6473,12 +6799,8 @@ class Team:
         if session_id is None:
             raise ValueError("Session ID is required")
 
-        if isinstance(self.memory, Memory):
-            user_id = user_id if user_id is not None else self.user_id
-            if user_id is None:
-                user_id = "default"
-            return self.memory.get_session_summary(session_id=session_id, user_id=user_id)
-        raise ValueError(f"Memory type {type(self.memory)} not supported")
+        # TODO: Add a db call to get the session summary
+        return self.team_session.get_session_summary(session_id=session_id, user_id=user_id)
 
     def get_user_memories(self, user_id: Optional[str] = None):
         """Get the user memories for the given user ID."""
@@ -7018,7 +7340,7 @@ class Team:
             team_data["mode"] = self.mode
         return team_data
 
-    def _get_session_data(self) -> Dict[str, Any]:
+    def get_team_session_data(self) -> Dict[str, Any]:
         session_data: Dict[str, Any] = {}
         if self.session_name is not None:
             session_data["session_name"] = self.session_name
@@ -7055,9 +7377,8 @@ class Team:
             team_id=self.team_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
-            memory=memory_dict,
             team_data=self._get_team_data(),
-            session_data=self._get_session_data(),
+            session_data=self.get_team_session_data(),
             extra_data=self.extra_data,
             created_at=int(time()),
         )
@@ -7086,3 +7407,51 @@ class Team:
 
         log_info(f"Filters used by Agent: {search_filters}")
         return search_filters
+
+    ###########################################################################
+    # Api functions
+    ###########################################################################
+
+    def _log_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        self.set_telemetry()
+
+        if not self.telemetry:
+            return
+
+        from agno.api.team import TeamRunCreate, create_team_run
+
+        try:
+            team_session: TeamSession = self.team_session or self._get_team_session(
+                session_id=session_id, user_id=user_id
+            )
+
+            create_team_run(
+                run=TeamRunCreate(
+                    session_id=team_session.session_id,
+                    team_data=team_session.telemetry_data(),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create agent event: {e}")
+
+    async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        self.set_telemetry()
+
+        if not self.telemetry:
+            return
+
+        from agno.api.team import TeamRunCreate, acreate_team_run
+
+        try:
+            team_session: TeamSession = self.team_session or self._get_team_session(
+                session_id=session_id, user_id=user_id
+            )
+
+            await acreate_team_run(
+                run=TeamRunCreate(
+                    session_id=team_session.session_id,
+                    team_data=team_session.telemetry_data(),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create agent event: {e}")

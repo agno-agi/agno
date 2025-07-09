@@ -47,12 +47,13 @@ from agno.run.response import (
 )
 from agno.run.team import TeamRunResponseEvent
 from agno.session import AgentSession
-from agno.session.summarizer import SessionSummarizer
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
+    create_parser_model_response_completed_event,
+    create_parser_model_response_started_event,
     create_reasoning_completed_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
@@ -114,8 +115,13 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
-    # Session summarizer
-    summary_manager: Optional[SessionSummarizer] = None
+    # If True, the agent creates/updates session summaries at the end of runs
+    enable_session_summaries: bool = False
+    # If True, the agent adds a reference to the session summaries in the response
+    add_session_summary_references: Optional[bool] = None
+    # Model and prompt used to create session summaries
+    session_summary_model: Optional[Model] = None
+    session_summary_prompt: Optional[str] = None
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -133,12 +139,10 @@ class Agent:
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
     add_memory_references: Optional[bool] = None
-    # If True, the agent creates/updates session summaries at the end of runs
-    enable_session_summaries: bool = False
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
+    # If True, stores the flat list of messages in the chat_history field of the session
+    store_chat_history: bool = False
 
     # --- Agent History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
@@ -317,6 +321,7 @@ class Agent:
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
+
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
@@ -354,6 +359,7 @@ class Agent:
         retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         extra_data: Optional[Dict[str, Any]] = None,
+        store_chat_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
@@ -408,7 +414,7 @@ class Agent:
         add_transfer_instructions: bool = True,
         team_response_separator: str = "\n",
         debug_mode: bool = False,
-        monitoring: bool = False,
+        debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
     ):
         self.model = model
@@ -436,6 +442,7 @@ class Agent:
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
+        self.store_chat_history = store_chat_history
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -516,7 +523,10 @@ class Agent:
         self.team_response_separator = team_response_separator
 
         self.debug_mode = debug_mode
-        self.monitoring = monitoring
+        if debug_level not in [1, 2]:
+            log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
+            debug_level = 1
+        self.debug_level = debug_level
         self.telemetry = telemetry
 
         # --- Params not to be set by user ---
@@ -543,8 +553,6 @@ class Agent:
 
         self._formatter: Optional[SafeFormatter] = None
 
-        self._memory_deepcopy_done: bool = False
-
     def set_agent_id(self) -> str:
         if self.agent_id is None:
             self.agent_id = str(uuid4())
@@ -553,17 +561,12 @@ class Agent:
     def set_debug(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
-            set_log_level_to_debug()
+            set_log_level_to_debug(level=self.debug_level)
         else:
             set_log_level_to_info()
 
-    def set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
+    def set_telemetry(self) -> None:
+        """Override telemetry settings based on environment variables."""
 
         telemetry_env = getenv("AGNO_TELEMETRY")
         if telemetry_env is not None:
@@ -618,11 +621,6 @@ class Agent:
 
         if self.memory is None:
             self.memory = Memory()
-        elif not self._memory_deepcopy_done:
-            # We store a copy of memory to ensure different team instances reference unique memory copy
-            # if isinstance(self.memory, Memory):
-            #     self.memory = deepcopy(self.memory)
-            self._memory_deepcopy_done = True
 
         # Default to the agent's model if no model is provided
         if isinstance(self.memory, Memory):
@@ -633,10 +631,6 @@ class Agent:
             self._formatter = SafeFormatter()
 
     @property
-    def is_streamable(self) -> bool:
-        return self.response_model is None
-
-    @property
     def has_team(self) -> bool:
         return self.team is not None and len(self.team) > 0
 
@@ -645,6 +639,20 @@ class Agent:
         if self.run_response is not None and self.run_response.is_paused:
             return True
         return False
+
+    @property
+    def should_parse_structured_output(self) -> bool:
+        return self.response_model is not None and self.parse_response and self.parser_model is None
+
+    def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
+        if not self.tools:
+            self.tools = []
+        self.tools.append(tool)
+        self._rebuild_tools = True
+
+    def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
+        self.tools = tools
+        self._rebuild_tools = True
 
     def _run(
         self,
@@ -682,27 +690,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = self.parser_model.response(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        self._parse_response_with_parser_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -717,7 +705,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update long-term memory
+        # 4. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -731,14 +719,17 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
-        # 6. Save session to short-term memory
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
+        # 6. Save session to memory
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -781,6 +772,11 @@ class Agent:
             stream_intermediate_steps=stream_intermediate_steps,
         ):
             yield event
+
+        # If a parser model is provided, structure the response separately
+        yield from self._parse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
 
         # 3. Add the run to memory
         self.add_run_to_session(
@@ -936,7 +932,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -949,11 +945,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1023,7 +1014,7 @@ class Agent:
 
                 self.run_messages = run_messages
 
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1059,7 +1050,7 @@ class Agent:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                 )
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1071,12 +1062,12 @@ class Agent:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
 
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1116,27 +1107,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = await self.parser_model.aresponse(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1164,14 +1135,17 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+        # Log Agent Run
+        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1212,6 +1186,12 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+        ):
+            yield event
+
+        # If a parser model is provided, structure the response separately
+        async for event in self._aparse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         ):
             yield event
 
@@ -1331,7 +1311,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1340,11 +1320,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1415,7 +1390,7 @@ class Agent:
                 self.run_messages = run_messages
 
                 # Pass the new run_response to _arun
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._arun_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -1450,7 +1425,7 @@ class Agent:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                 )
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1463,11 +1438,11 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
 
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1590,7 +1565,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1626,11 +1601,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1670,7 +1640,7 @@ class Agent:
             run_response.status = RunStatus.running
 
             try:
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._continue_run_stream(
                         run_response=run_response,
                         run_messages=self.run_messages,
@@ -1704,7 +1674,7 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
-                if stream and self.is_streamable:
+                if stream:
                     return generator_wrapper(  # type: ignore
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -1719,11 +1689,11 @@ class Agent:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
 
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))  # type: ignore
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -1789,14 +1759,17 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+        # Log Agent Run
+        self._log_agent_run(user_id=user_id, session_id=session_id)
 
         run_response.status = RunStatus.running
 
@@ -1962,7 +1935,7 @@ class Agent:
         if stream is False:
             stream_intermediate_steps = False
 
-        self.stream = self.stream or (stream and self.is_streamable)
+        self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
@@ -1997,11 +1970,6 @@ class Agent:
         # Read existing session from storage
         if self.context is not None:
             self.resolve_run_context()
-
-        if self.response_model is not None and self.parse_response and stream is True:
-            # Disable stream if response_model is set
-            stream = False
-            log_debug("Disabling stream as response_model is set")
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2051,7 +2019,7 @@ class Agent:
             run_response.status = RunStatus.running
 
             try:
-                if stream and self.is_streamable:
+                if stream:
                     response_iterator = self._acontinue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
@@ -2084,7 +2052,7 @@ class Agent:
 
                     time.sleep(delay)
             except KeyboardInterrupt:
-                if stream and self.is_streamable:
+                if stream:
                     return async_generator_wrapper(
                         create_run_response_cancelled_event(run_response, "Operation cancelled by user")
                     )
@@ -2098,11 +2066,11 @@ class Agent:
             log_error(
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise last_exception
         else:
-            if stream and self.is_streamable:
+            if stream:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
@@ -2167,14 +2135,17 @@ class Agent:
 
         self.run_response.status = RunStatus.completed
 
+        # Convert the response to the structured format if needed
+        self._convert_response_to_structured_format(run_response)
+
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
+        # Log Agent Run
+        await self._alog_agent_run(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2310,7 +2281,7 @@ class Agent:
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
-    def _convert_response_to_structured_format(self, run_response: RunResponse):
+    def _convert_response_to_structured_format(self, run_response: Union[RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
         if self.response_model is not None and not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
@@ -2320,7 +2291,8 @@ class Agent:
                     # Update RunResponse
                     if structured_output is not None:
                         run_response.content = structured_output
-                        run_response.content_type = self.response_model.__name__
+                        if hasattr(run_response, "content_type"):
+                            run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
                 except Exception as e:
@@ -2475,7 +2447,7 @@ class Agent:
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
-                # Case 2: Handle external execution required tools
+            # Case 2: Handle external execution required tools
             elif _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
@@ -2694,17 +2666,17 @@ class Agent:
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
-        run_data = self._create_run_data()
-        self.agent_session.add_run(run=run_response, run_data=run_data)
+        if self.agent_session is not None:
+            self.agent_session.add_run(run=run_response)
 
     def set_session_metrics(self, run_messages: RunMessages):
-        # Calculate session metrics
+        """Calculate session metrics"""
+        # Calculate initial metrics
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(
-                run_messages.messages, for_session=True
-            )  # Calculate initial metrics
+            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
+        # Update metrics
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # Update metrics
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
 
     def update_memory(
         self,
@@ -2748,6 +2720,11 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         for model_response_event in self.model.response_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -2755,13 +2732,15 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
         # Determine reasoning completed
@@ -2808,6 +2787,11 @@ class Agent:
         }
         model_response = ModelResponse(content="")
 
+        stream_model_response = True
+        if self.should_parse_structured_output:
+            log_debug("Response model set, model response is not streamed.")
+            stream_model_response = False
+
         model_response_stream = self.model.aresponse_stream(
             messages=run_messages.messages,
             response_format=response_format,
@@ -2815,6 +2799,7 @@ class Agent:
             functions=self._functions_for_model,
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
+            stream_model_response=stream_model_response,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -2822,8 +2807,9 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             ):
                 yield event
 
@@ -2860,7 +2846,8 @@ class Agent:
         run_response: RunResponse,
         model_response: ModelResponse,
         model_response_event: Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
+        parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
@@ -2872,10 +2859,21 @@ class Agent:
             model_response_event = cast(ModelResponse, model_response_event)
             # If the model response is an assistant_response, yield a RunResponse
             if model_response_event.event == ModelResponseEvent.assistant_response.value:
+                content_type = "str"
+
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    model_response.content = (model_response.content or "") + model_response_event.content
-                    run_response.content = model_response.content
+                    if parse_structured_output:
+                        model_response.content = model_response_event.content
+                        self._convert_response_to_structured_format(model_response)
+
+                        content_type = self.response_model.__name__  # type: ignore
+                        run_response.content = model_response.content
+                        run_response.content_type = content_type
+                    else:
+                        model_response.content = (model_response.content or "") + model_response_event.content
+                        run_response.content = model_response.content
+                        run_response.content_type = "str"
 
                 if model_response_event.thinking is not None:
                     model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
@@ -2893,8 +2891,17 @@ class Agent:
                     # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
-                # Only yield if we have content or thinking to show
-                if (
+                # Only yield if we have content to show
+                if content_type != "str":
+                    yield self._handle_event(
+                        create_run_response_content_event(
+                            from_run_response=run_response,
+                            content=model_response.content,
+                            content_type=content_type,
+                        ),
+                        run_response,
+                    )
+                elif (
                     model_response_event.content is not None
                     or model_response_event.thinking is not None
                     or model_response_event.redacted_thinking is not None
@@ -3022,7 +3029,7 @@ class Agent:
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -3035,7 +3042,7 @@ class Agent:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_reasoning_started_event(from_run_response=run_response), run_response
                             )
@@ -3144,13 +3151,16 @@ class Agent:
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
 
-            # Create user memories from single message
-            if self.enable_user_memories and run_messages.user_message is not None:
+            # Create user memories
+            user_message_str = (
+                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+            )
+            if self.enable_user_memories and user_message_str is not None:
                 log_debug("Creating user memories.")
                 futures.append(
                     executor.submit(
                         self.memory.create_user_memories,
-                        message=run_messages.user_message.get_content_string(),
+                        message=user_message_str,
                         user_id=user_id,
                         agent_id=self.agent_id,
                     )
@@ -3190,17 +3200,14 @@ class Agent:
             # Create session summary
             if self.enable_session_summaries:
                 log_debug("Creating session summary.")
-                if self.summary_manager is None:
-                    self.summary_manager = SessionSummarizer(model=self.model)
-                # Set the model on the summary_manager if it is not set
-                elif self.summary_manager.model is None:
-                    self.summary_manager.model = self.model
+                if self.session_summary_model is None:
+                    self.session_summary_model = self.model
+
                 futures.append(
                     executor.submit(
                         self.agent_session.create_session_summary,
-                        session_id=session_id,
-                        user_id=user_id,
-                        summary_manager=self.summary_manager,
+                        session_summary_model=self.session_summary_model,
+                        session_summary_prompt=self.session_summary_prompt,
                     )
                 )
 
@@ -3269,13 +3276,14 @@ class Agent:
         # Create session summary
         if self.enable_session_summaries:
             log_debug("Creating session summary.")
-            if self.summary_manager is None:
-                self.summary_manager = SessionSummarizer(model=self.model)
-            # Set the model on the summary_manager if it is not set
-            elif self.summary_manager.model is None:
-                self.summary_manager.model = self.model
+            if self.session_summary_model is None:
+                self.session_summary_model = self.model
             tasks.append(
-                self.agent_session.acreate_session_summary(session_id=session_id, summary_manager=self.summary_manager)
+                self.agent_session.acreate_session_summary(
+                    session_id=session_id,
+                    session_summary_model=self.session_summary_model,
+                    session_summary_prompt=self.session_summary_prompt,
+                )
             )
 
         if tasks:
@@ -3521,13 +3529,13 @@ class Agent:
         )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, model or self.model)
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -3537,7 +3545,7 @@ class Agent:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -3765,6 +3773,8 @@ class Agent:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
             # Update the session_data with the latest data
             session.session_data = self.get_agent_session_data()
+            if self.store_chat_history:
+                session.chat_history = session.get_chat_history()
 
             self.memory.upsert_session(session=session)
 
@@ -3820,6 +3830,16 @@ class Agent:
             self.memory.clear()
         self.session_id = str(uuid4())
         self.load_session(force=True)
+
+    def get_chat_history(self) -> List[Message]:
+        """Read the chat history from the session"""
+        # If the chat history is already set, return it
+        if self.agent_session is not None and self.agent_session.chat_history is not None:
+            return self.agent_session.chat_history
+        # Else read from the db
+        if self.memory is not None and self.memory.db is not None:
+            return self.memory.read_chat_history(session_id=self.session_id, session_type=SessionType.AGENT)
+        return []
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
         """Format a message with the session state variables."""
@@ -4450,7 +4470,7 @@ class Agent:
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
+            else "You are tasked with creating a structured output from the provided user message."
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:
@@ -4461,7 +4481,25 @@ class Agent:
             Message(role="user", content=model_response.content),
         ]
 
-    def get_agent_session_summary(self, session_id: Optional[str] = None):
+    def get_messages_for_parser_model_stream(
+        self, run_response: RunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
+        ]
+
+    def get_session_summary(self, session_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         if self.memory is None:
             return None
@@ -4523,11 +4561,11 @@ class Agent:
         from copy import copy, deepcopy
 
         # For memory and reasoning_agent, use their deep_copy methods
-        if field_name in ("memory", "reasoning_agent"):
+        if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model"):
+        elif field_name in ("memory", "storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -4608,7 +4646,7 @@ class Agent:
                 if member_agent_info not in self.team_data["members"]:
                     self.team_data["members"].append(member_agent_info)
 
-            if self.stream and member_agent.is_streamable:
+            if self.stream:
                 member_agent_run_response_stream = member_agent.run(member_agent_task, stream=True)
                 for member_agent_run_response_chunk in member_agent_run_response_stream:
                     yield member_agent_run_response_chunk.content  # type: ignore
@@ -4741,12 +4779,20 @@ class Agent:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                if isinstance(self.knowledge, AgentKnowledge):
+                    num_documents = self.knowledge.num_documents
+                elif isinstance(self.knowledge, Knowledge):
+                    num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters
-            )
+            if isinstance(self.knowledge, AgentKnowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, num_documents=num_documents, filters=filters
+                )
+            elif isinstance(self.knowledge, Knowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, max_results=num_documents, filters=filters
+                )
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -4949,7 +4995,7 @@ class Agent:
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
-        return metrics if for_session else metrics._to_dict()
+        return metrics if for_session else metrics.to_dict()
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
@@ -4966,7 +5012,7 @@ class Agent:
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> None:
+    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[AgentSession]:
         """Rename the current session and save to storage"""
 
         if self.session_id is None and session_id is None:
@@ -4979,7 +5025,7 @@ class Agent:
         # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
-        self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
+        return self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
     def generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
@@ -5177,9 +5223,9 @@ class Agent:
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model,
-                monitoring=self.monitoring,
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5265,9 +5311,9 @@ class Agent:
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
                     use_json_mode=self.use_json_mode,
-                    monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                 )
 
             # Validate reasoning agent
@@ -5398,9 +5444,9 @@ class Agent:
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
                 reasoning_model=reasoning_model,
-                monitoring=self.monitoring,
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
+                debug_level=self.debug_level,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5486,9 +5532,9 @@ class Agent:
                     max_steps=self.reasoning_max_steps,
                     tools=self.tools,
                     use_json_mode=self.use_json_mode,
-                    monitoring=self.monitoring,
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
+                    debug_level=self.debug_level,
                 )
 
             # Validate reasoning agent
@@ -5585,6 +5631,154 @@ class Agent:
                     ),
                     self.run_response,
                 )
+
+    def _process_parser_response(
+        self,
+        model_response: ModelResponse,
+        run_messages: RunMessages,
+        parser_model_response: ModelResponse,
+        messages_for_parser_model: list,
+    ) -> None:
+        """Common logic for processing parser model response."""
+        parser_model_response_message: Optional[Message] = None
+        for message in reversed(messages_for_parser_model):
+            if message.role == "assistant":
+                parser_model_response_message = message
+                break
+
+        if parser_model_response_message is not None:
+            run_messages.messages.append(parser_model_response_message)
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
+        else:
+            log_warning("Unable to parse response with parser model")
+
+    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model"""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model stream."""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                model_response_stream = self.parser_model.aresponse_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
@@ -5956,13 +6150,13 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
+            response_content_batch: Union[str, JSON, Markdown] = ""
             reasoning_steps: List[ReasoningStep] = []
 
             with Live(console=console) as live_log:
@@ -6010,8 +6204,21 @@ class Agent:
                             live_log.update(Group(*panels))
                             break
                         if resp.event == RunEvent.run_response_content:
-                            if hasattr(resp, "content") and isinstance(resp.content, str):
-                                _response_content += resp.content
+                            if hasattr(resp, "content"):
+                                if isinstance(resp.content, str):
+                                    _response_content += resp.content
+                                elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                                    try:
+                                        response_content_batch = JSON(  # type: ignore
+                                            resp.content.model_dump_json(exclude_none=True), indent=2
+                                        )
+                                    except Exception as e:
+                                        log_warning(f"Failed to convert response to JSON: {e}")
+                                else:
+                                    try:
+                                        response_content_batch = JSON(json.dumps(resp.content), indent=4)
+                                    except Exception as e:
+                                        log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
@@ -6105,15 +6312,23 @@ class Agent:
                         )
                         panels.append(tool_calls_panel)
 
-                    if len(_response_content) > 0:
-                        render = True
-                        # Create panel for response
-                        response_panel = create_panel(
-                            content=response_content_stream,
-                            title=f"Response ({response_timer.elapsed:.1f}s)",
-                            border_style="blue",
-                        )
-                        panels.append(response_panel)
+                response_panel = None
+                # Check if we have any response content to display
+                response_content = (
+                    response_content_stream
+                    if response_content_stream
+                    and isinstance(response_content_stream, str)
+                    and len(response_content_stream) > 0
+                    else response_content_batch
+                )
+                if response_content:
+                    render = True
+                    response_panel = create_panel(
+                        content=response_content,
+                        title=f"Response ({response_timer.elapsed:.1f}s)",
+                        border_style="blue",
+                    )
+                    panels.append(response_panel)
                     if render:
                         live_log.update(Group(*panels))
 
@@ -6271,7 +6486,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
@@ -6384,7 +6599,6 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
@@ -6392,6 +6606,7 @@ class Agent:
             _response_content: str = ""
             _response_thinking: str = ""
             reasoning_steps: List[ReasoningStep] = []
+            response_content_batch: Union[str, JSON, Markdown] = ""
 
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -6442,6 +6657,18 @@ class Agent:
                         if resp.event == RunEvent.run_response_content:
                             if isinstance(resp.content, str):
                                 _response_content += resp.content
+                            elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                                try:
+                                    response_content_batch = JSON(
+                                        resp.content.model_dump_json(exclude_none=True), indent=2
+                                    )  # type: ignore
+                                except Exception as e:
+                                    log_warning(f"Failed to convert response to JSON: {e}")
+                            else:
+                                try:
+                                    response_content_batch = JSON(json.dumps(resp.content), indent=4)
+                                except Exception as e:
+                                    log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
                                 _response_thinking += resp.thinking
 
@@ -6537,11 +6764,19 @@ class Agent:
                         panels.append(tool_calls_panel)
                         live_log.update(Group(*panels))
 
-                    if len(_response_content) > 0:
+                    response_panel = None
+                    # Check if we have any response content to display
+                    response_content = (
+                        response_content_stream
+                        if response_content_stream
+                        and isinstance(response_content_stream, str)
+                        and len(response_content_stream) > 0
+                        else response_content_batch
+                    )
+                    if response_content:
                         render = True
-                        # Create panel for response
                         response_panel = create_panel(
-                            content=response_content_stream,
+                            content=response_content,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
                         )
@@ -6700,7 +6935,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
@@ -6964,9 +7199,7 @@ class Agent:
             if self.memory.db is None:
                 return "Memory not available"
 
-            selected_sessions = self.memory.db.get_recent_sessions(
-                session_type=SessionType.AGENT, limit=num_history_sessions
-            )
+            selected_sessions = self.memory.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
 
             all_messages = []
             seen_message_pairs = set()
@@ -7143,3 +7376,49 @@ class Agent:
             await self.aprint_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
+
+    ###########################################################################
+    # Api functions
+    ###########################################################################
+
+    def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        self.set_telemetry()
+
+        if not self.telemetry:
+            return
+
+        from agno.api.agent import AgentRunCreate, create_agent_run
+
+        try:
+            agent_session: AgentSession = self.agent_session or self.get_agent_session(
+                session_id=session_id, user_id=user_id
+            )
+
+            create_agent_run(
+                run=AgentRunCreate(
+                    agent_data=agent_session.telemetry_data(),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create agent event: {e}")
+
+    async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        self.set_telemetry()
+
+        if not self.telemetry:
+            return
+
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
+
+        try:
+            agent_session: AgentSession = self.agent_session or self.get_agent_session(
+                session_id=session_id, user_id=user_id
+            )
+
+            await acreate_agent_run(
+                run=AgentRunCreate(
+                    agent_data=agent_session.telemetry_data(),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create agent event: {e}")

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -47,6 +48,8 @@ class EvalSchema(BaseModel):
     evaluated_component_name: Optional[str] = None
     eval_type: EvalType
     eval_data: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_dict(cls, eval_run: Dict[str, Any]) -> "EvalSchema":
@@ -61,6 +64,8 @@ class EvalSchema(BaseModel):
             evaluated_component_name=eval_run["evaluated_component_name"],
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
+            created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
+            updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
         )
 
     @classmethod
@@ -74,3 +79,11 @@ class EvalSchema(BaseModel):
     @classmethod
     def from_reliability_result(cls, result: ReliabilityResult) -> "EvalSchema":
         return cls()
+
+
+class DeleteEvalRunsRequest(BaseModel):
+    eval_run_ids: List[str]
+
+
+class UpdateEvalRunRequest(BaseModel):
+    name: str

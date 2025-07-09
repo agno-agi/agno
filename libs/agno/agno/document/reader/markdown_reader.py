@@ -13,20 +13,25 @@ from agno.utils.log import log_info, logger
 class MarkdownReader(Reader):
     """Reader for Markdown files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = MarkdownChunking()) -> None:
-        super().__init__(chunking_strategy=chunking_strategy)
+    def __init__(
+        self,
+        chunking_strategy: Optional[ChunkingStrategy] = MarkdownChunking(),
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> None:
+        super().__init__(chunking_strategy=chunking_strategy, name=name, description=description)
 
-    def read(self, file: Union[Path, IO[Any]]) -> List[Document]:
+    def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_info(f"Reading: {file}")
-                file_name = file.stem
+                file_name = name or file.stem
                 file_contents = file.read_text("utf-8")
             else:
                 log_info(f"Reading uploaded file: {file.name}")
-                file_name = file.name.split(".")[0]
+                file_name = name or file.name.split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode("utf-8")
 
@@ -41,14 +46,14 @@ class MarkdownReader(Reader):
             logger.error(f"Error reading: {file}: {e}")
             return []
 
-    async def async_read(self, file: Union[Path, IO[Any]]) -> List[Document]:
+    async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:
             if isinstance(file, Path):
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
 
                 log_info(f"Reading asynchronously: {file}")
-                file_name = file.stem
+                file_name = name or file.stem
 
                 try:
                     import aiofiles
@@ -60,7 +65,7 @@ class MarkdownReader(Reader):
                     file_contents = file.read_text("utf-8")
             else:
                 log_info(f"Reading uploaded file asynchronously: {file.name}")
-                file_name = file.name.split(".")[0]
+                file_name = name or file.name.split(".")[0]
                 file.seek(0)
                 file_contents = file.read().decode("utf-8")
 

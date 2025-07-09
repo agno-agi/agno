@@ -1,136 +1,220 @@
 import json
-from typing import List, Optional
+import math
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
-from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.knowledge.schemas import DocumentResponseSchema
+from agno.knowledge.source import Source, SourceContent
+from agno.os.managers.knowledge.schemas import ConfigResponseSchema, ReaderSchema, SourceResponseSchema
+from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.utils.log import log_info
 
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
-    @router.post("/documents")
-    async def upload_documents(
+    @router.post("/sources")
+    async def upload_source(
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
-        urls: Optional[str] = Form(None),
-        metadata: Optional[str] = Form(None, description="JSON string of metadata dict or list of dicts"),
+        url: Optional[str] = Form(None),
+        metadata: Optional[str] = Form(None, description="JSON metadata"),
         file: Optional[UploadFile] = File(None),
+        reader_id: Optional[str] = Form(None),
     ):
-        # Generate ID immediately
-        document_id = str(uuid4())
+        log_info(f"Uploading sources: {name}, {description}, {url}, {metadata}")
+        # # Generate ID immediately
+        source_id = str(uuid4())
+        log_info(f"Source ID: {source_id}")
+        # # Read the content once and store it
 
-        # Read the content once and store it
-        content_bytes = await file.read()
-
-        parsed_urls = None
-        if urls and urls.strip():
-            try:
-                parsed_urls = json.loads(urls)
-            except json.JSONDecodeError:
-                # If it's not valid JSON, treat as a single URL string
-                parsed_urls = [urls] if urls != "string" else None
-
-        # Parse metadata with proper error handling
         parsed_metadata = None
-        if metadata and metadata.strip():
+        if metadata:
             try:
                 parsed_metadata = json.loads(metadata)
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
+        if file:
+            content_bytes = await file.read()
+        else:
+            content_bytes = None
 
-        document = DocumentV2(
+        parsed_urls = None
+        if url and url.strip():
+            try:
+                log_info(f"Parsing URL: {url}")
+                parsed_urls = json.loads(url)
+                log_info(f"Parsed URLs: {parsed_urls}")
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as a single URL string
+                parsed_urls = url
+
+        # # Parse metadata with proper error handling
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as a simple key-value pair
+                parsed_metadata = {"value": metadata}
+
+        source_content = (
+            SourceContent(
+                content=content_bytes,
+                type=file.content_type if file.content_type else None,
+            )
+            if file
+            else None
+        )
+
+        source = Source(
             name=name if name else file.filename,
             description=description,
-            urls=parsed_urls,
+            url=parsed_urls,
             metadata=parsed_metadata,
-            content=DocumentContent(content=content_bytes, type=file.content_type),
+            content=source_content,
+            size=file.size if file else None,
         )
 
         # Add the processing task to background tasks
-        background_tasks.add_task(process_document, knowledge, document_id, document)
+        background_tasks.add_task(process_source, knowledge, source_id, source, reader_id)
 
         # Return immediately with the ID
-        return {"document_id": document_id, "status": "processing"}
+        return {"source_id": source_id, "status": "processing"}
 
-    @router.get("/documents", response_model=List[DocumentResponseSchema], status_code=200)
-    def get_documents() -> List[DocumentResponseSchema]:
-        documents = knowledge.get_documents()
-        result = []
-        for document in documents:
-            # Convert DocumentV2 to DocumentResponseSchema
-            response_doc = DocumentResponseSchema(
-                id=document.id,  # Generate a unique ID
-                name=document.name,
-                description=document.description,
-                type=document.content.type if document.content else None,
-                size=str(len(document.content.content)) if document.content else "0",
-                linked_to=knowledge.name,
-                metadata=document.metadata,
-                access_count=0,
-            )
-            result.append(response_doc)
-        return result
+    @router.patch("/sources/{source_id}", status_code=200)
+    async def edit_source(
+        source_id: str = Path(..., description="Source ID"),
+        name: Optional[str] = Form(None),
+        description: Optional[str] = Form(None),
+        metadata: Optional[str] = Form(None, description="JSON metadata"),
+        reader_id: Optional[str] = Form(None),
+    ):
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat as a simple key-value pair
+                parsed_metadata = {"value": metadata} if metadata != "string" else None
+        source = Source(
+            id=source_id,
+            name=name,
+            description=description,
+            metadata=parsed_metadata,
+        )
+        if reader_id:
+            if reader_id in knowledge.readers:
+                source.reader = knowledge.readers[reader_id]
+            else:
+                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
+        knowledge.patch_source(source)
+        return {"status": "success"}
 
-    @router.get("/documents/{document_id}", response_model=DocumentResponseSchema, status_code=200)
-    def get_document_by_id(document_id: str) -> DocumentResponseSchema:
-        log_info(f"Getting document by id: {document_id}")
+    @router.get("/sources", response_model=PaginatedResponse[SourceResponseSchema], status_code=200)
+    def get_sources(
+        limit: Optional[int] = Query(default=20, description="Number of documents to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+    ) -> PaginatedResponse[SourceResponseSchema]:
+        sources, count = knowledge.get_sources(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
-        document = knowledge.get_document(document_id=document_id)
+        return PaginatedResponse(
+            data=[
+                SourceResponseSchema(
+                    id=source.id,
+                    name=source.name,
+                    description=source.description,
+                    type=source.content.type if source.content else None,
+                    size=str(source.size) if source.size else "0",
+                    metadata=source.metadata,
+                    linked_to=knowledge.name,
+                    status=source.status,
+                    created_at=str(source.created_at) if source.created_at else None,
+                    updated_at=str(source.updated_at) if source.updated_at else None,
+                )
+                for source in sources
+            ],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=count,
+                total_pages=math.ceil(count / limit) if limit is not None and limit > 0 else 0,
+            ),
+        )
 
-        document = DocumentResponseSchema(
-            id=document_id,
-            name=document.name,
-            description=document.description,
-            type=document.content.type if document.content else None,
-            size=str(len(document.content.content)) if document.content else "0",
+    @router.get("/sources/{source_id}", response_model=SourceResponseSchema, status_code=200)
+    def get_source_by_id(source_id: str) -> SourceResponseSchema:
+        log_info(f"Getting source by id: {source_id}")
+
+        source = knowledge.get_source(source_id=source_id)
+
+        response = SourceResponseSchema(
+            id=source_id,
+            name=source.name,
+            description=source.description,
+            type=source.content.type if source.content else None,
+            size=str(len(source.content.content)) if source.content else "0",
             linked_to=knowledge.name,
-            metadata=document.metadata,
+            metadata=source.metadata,
             access_count=0,
+            status=source.status,
+            created_at=str(source.created_at) if source.created_at else None,
+            updated_at=str(source.updated_at) if source.updated_at else None,
         )
 
-        return document
+        return response
 
-    @router.delete("/documents/{document_id}", response_model=DocumentResponseSchema, status_code=200)
-    def delete_document_by_id(document_id: str) -> DocumentResponseSchema:
-        knowledge.remove_document(document_id=document_id)
-        log_info(f"Deleting document by id: {document_id}")
+    @router.delete(
+        "/sources/{source_id}",
+        response_model=SourceResponseSchema,
+        status_code=200,
+        response_model_exclude_none=True,
+    )
+    def delete_source_by_id(source_id: str) -> SourceResponseSchema:
+        knowledge.remove_source(source_id=source_id)
+        log_info(f"Deleting source by id: {source_id}")
 
-        return DocumentResponseSchema(
-            id=document_id,
+        return SourceResponseSchema(
+            id=source_id,
         )
 
-    @router.delete("/documents/", status_code=200)
-    def delete_all_documents():
-        log_info(f"Deleting all documents")
+    @router.delete("/sources", status_code=200)
+    def delete_all_sources():
+        log_info(f"Deleting all sources")
+        knowledge.remove_all_sources()
         return "success"
 
-    @router.get("/documents/{document_id}/status")
-    async def get_document_status(document_id: str):
-        """Get the processing status of a document"""
-        try:
-            # Try to get the document from the database
-            document = knowledge.get_document(document_id)
-            return {"document_id": document_id, "status": "completed", "document": document}
-        except Exception as e:
-            # Document not found or still processing
-            return {"document_id": document_id, "status": "processing", "message": "Document is still being processed"}
+    @router.get("/sources/{source_id}/status", status_code=200)
+    def get_source_status(source_id: str) -> str:
+        log_info(f"Getting source status: {source_id}")
+        return knowledge.get_source_status(source_id=source_id)
+
+    @router.get("/config", status_code=200)
+    def get_config() -> ConfigResponseSchema:
+        readers = knowledge.get_readers()
+        return ConfigResponseSchema(
+            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers.items()],
+            filters=knowledge.get_filters(),
+        )
 
     return router
 
 
-def process_document(knowledge: Knowledge, document_id: str, document: DocumentV2):
-    """Background task to process the document"""
+def process_source(knowledge: Knowledge, source_id: str, source: Source, reader_id: Optional[str] = None):
+    """Background task to process the source"""
+    log_info(f"Processing source {source_id}")
     try:
         # Set the document ID
-        document.id = document_id
-        # Process the document
-        knowledge.add_document(document)
-        print(f"Document {document_id} processed successfully")
+        source.id = source_id
+        # Process the source
+        if reader_id:
+            source.reader = knowledge.readers[reader_id]
+        knowledge._add_source_from_api(source)
+        log_info(f"Source {source_id} processed successfully")
     except Exception as e:
-        print(f"Error processing document {document_id}: {e}")
+        log_info(f"Error processing source {source_id}: {e}")
         # You might want to update a status in the database here

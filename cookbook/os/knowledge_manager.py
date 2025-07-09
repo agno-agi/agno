@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document import Document
-from agno.document.local_document_store import LocalDocumentStore
+from agno.document.local_store import LocalStore
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -10,28 +9,30 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-document_store = LocalDocumentStore(
-    name="local_document_store",
-    description="Local document store",
-    storage_path="tmp/documents",
-)
+# document_store = LocalSourceStore(
+#     name="local_source_store",
+#     description="Local source store",
+#     storage_path="tmp/sources",
+# )
 
 vector_store = PgVector(
-    table_name="pdf_documents",
+    table_name="vectors",
     # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
     db_url=db_url,
 )
 
 document_db = PostgresDb(
     db_url=db_url,
-    knowledge_table="knowledge_documents",
+    knowledge_table="knowledge_sources",
 )
 
 # Create knowledge base
 knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
-    document_store=document_store,
+    # document_store=document_store,
+    sources_db=document_db,
+    vector_store=vector_store,
 )
 
 basic_agent = Agent(
@@ -49,7 +50,7 @@ agent_os = AgentOS(
     agents=[
         basic_agent,
     ],
-    apps=[KnowledgeManager(knowledge=knowledge)],
+    managers=[KnowledgeManager(knowledge=knowledge)],
 )
 app = agent_os.get_app()
 

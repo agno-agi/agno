@@ -1,3 +1,4 @@
+import json
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
@@ -5,9 +6,40 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.models.message import Message
+from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
+from agno.workflow.workflow import Workflow
+
+
+def get_run_input(run_dict: Dict[str, Any]) -> str:
+    """Get the run input from the given run dictionary"""
+    if run_dict.get("messages") is not None:
+        for message in run_dict["messages"]:
+            if message.get("role") == "user":
+                return message.get("content", "")
+    return ""
+
+
+def get_session_name(session: Dict[str, Any]) -> str:
+    """Get the session name from the given session dictionary"""
+    session_data = session.get("session_data")
+    if isinstance(session_data, str):
+        session_data = json.loads(session_data)
+    if session_data is not None and session_data.get("session_name") is not None:
+        return session_data["session_name"]
+    else:
+        runs = session.get("runs", [])
+        if isinstance(runs, str):
+            runs = json.loads(runs)
+        for message in runs[0]["messages"]:
+            if isinstance(message, Message):
+                message = message.to_dict()
+            if message["role"] == "user":
+                return message["content"]
+    return ""
 
 
 def process_image(file: UploadFile) -> Image:
@@ -79,4 +111,24 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
     for agent in agents:
         if agent.agent_id == agent_id:
             return agent
+    return None
+
+
+def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional[Team]:
+    if team_id is None or teams is None:
+        return None
+
+    for team in teams:
+        if team.team_id == team_id:
+            return team
+    return None
+
+
+def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = None) -> Optional[Workflow]:
+    if workflow_id is None or workflows is None:
+        return None
+
+    for workflow in workflows:
+        if workflow.workflow_id == workflow_id:
+            return workflow
     return None

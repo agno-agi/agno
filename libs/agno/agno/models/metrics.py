@@ -28,7 +28,7 @@ class Metrics:
 
     timer: Optional[Timer] = None
 
-    def _to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
         metrics_dict = {

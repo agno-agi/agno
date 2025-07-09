@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Setup the database
 db = PostgresDb(
     db_url=db_url,
-    agent_session_table="agent_session",
+    session_table="sessions",
     user_memory_table="user_memory",
 )
 
@@ -32,7 +32,7 @@ agno_client = AgentOS(
     description="Example app for basic agent with memory capabilities",
     os_id="memory-demo",
     agents=[agent],
-    apps=[MemoryManager(memory=memory)],
+    managers=[MemoryManager(memory=memory)],
 )
 app = agno_client.get_app()
 
