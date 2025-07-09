@@ -27,7 +27,7 @@ class Storage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_session_ids(self, user_id: Optional[str] = None, agent_id: Optional[str] = None) -> List[str]:
+    def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
