@@ -1,4 +1,4 @@
-import inspect
+
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -135,6 +135,53 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
+
+    @property
+    def run_parameters(self) -> Dict[str, Any]:
+        """Get the run parameters for the workflow"""
+
+        if self.steps is None:
+            return {}
+
+        parameters = {}
+
+        if self.steps and isinstance(self.steps, Callable):
+            from inspect import signature, Parameter
+            sig = signature(self.steps)
+
+
+            for param_name, param in sig.parameters.items():
+                if param_name not in ["workflow", "execution_input", "self"]:
+                    parameters[param_name] = {
+                        "name": param_name,
+                        "default": param.default.default
+                        if hasattr(param.default, "__class__") and param.default.__class__.__name__ == "FieldInfo"
+                        else (param.default if param.default is not Parameter.empty else None),
+                        "annotation": (
+                            param.annotation.__name__
+                            if hasattr(param.annotation, "__name__")
+                            else (
+                                str(param.annotation).replace("typing.Optional[", "").replace("]", "")
+                                if "typing.Optional" in str(param.annotation)
+                                else str(param.annotation)
+                            )
+                        )
+                        if param.annotation is not Parameter.empty
+                        else None,
+                        "required": param.default is Parameter.empty,
+                    }
+        else:
+            parameters = {
+                "message": {
+                    "name": "message",
+                    "default": None,
+                    "annotation": "str",
+                    "required": True,
+                },
+            }
+
+        return parameters
+
 
     def initialize_workflow(self):
         if self.workflow_id is None:
@@ -295,7 +342,8 @@ class Workflow:
         self, func: Callable, workflow: "Workflow", execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
         """Call custom function with only the parameters it expects"""
-        sig = inspect.signature(func)
+        from inspect import signature
+        sig = signature(func)
 
         # Build arguments based on what the function actually accepts
         call_kwargs = {}
@@ -330,13 +378,14 @@ class Workflow:
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
+        from inspect import iscoroutinefunction, isasyncgenfunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
         if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
+            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
-            elif inspect.isgeneratorfunction(self.steps):
+            elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -456,6 +505,7 @@ class Workflow:
         **kwargs: Any,
     ) -> Iterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
+        from inspect import iscoroutinefunction, isasyncgenfunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
@@ -468,9 +518,9 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
+            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
-            elif inspect.isgeneratorfunction(self.steps):
+            elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self._call_custom_function(self.steps, self, execution_input, **kwargs):
                     # Update the run_response with the content from the result
@@ -637,7 +687,8 @@ class Workflow:
         self, func: Callable, workflow: "Workflow", execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
         """Call custom function with only the parameters it expects - handles both async functions and async generators"""
-        sig = inspect.signature(func)
+        from inspect import isasyncgenfunction, signature
+        sig = signature(func)
 
         # Build arguments based on what the function actually accepts
         call_kwargs = {}
@@ -661,7 +712,7 @@ class Workflow:
 
         try:
             # Check if it's an async generator function
-            if inspect.isasyncgenfunction(func):
+            if isasyncgenfunction(func):
                 # For async generators, call the function and return the async generator directly
                 return func(**call_kwargs)
             else:
@@ -672,7 +723,7 @@ class Workflow:
             logger.warning(
                 f"Async function signature inspection failed: {e}. Falling back to original calling convention."
             )
-            if inspect.isasyncgenfunction(func):
+            if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
                 return func(**call_kwargs)
             else:
@@ -683,6 +734,7 @@ class Workflow:
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name asynchronously"""
+        from inspect import iscoroutinefunction, isasyncgenfunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
@@ -690,19 +742,20 @@ class Workflow:
             # Execute the workflow with the custom executor
             content = ""
 
-            if inspect.iscoroutinefunction(self.steps):
+            if iscoroutinefunction(self.steps):
                 workflow_run_response.content = await self._acall_custom_function(
                     self.steps, self, execution_input, **kwargs
                 )
-            elif inspect.isgeneratorfunction(self.steps):
+            elif isgeneratorfunction(self.steps):
                 for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
-            elif inspect.isasyncgenfunction(self.steps):
-                async for chunk in self.steps(self, execution_input):
+            elif isasyncgenfunction(self.steps):
+                async_gen = await self._acall_custom_function(self.steps, self, execution_input, **kwargs)
+                async for chunk in async_gen:
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
@@ -815,6 +868,7 @@ class Workflow:
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
+        from inspect import iscoroutinefunction, isasyncgenfunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
         workflow_started_event = WorkflowStartedEvent(
@@ -826,9 +880,9 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps):
-                workflow_run_response.content = await self.steps(self, execution_input, **kwargs)
-            elif inspect.isgeneratorfunction(self.steps):
+            if iscoroutinefunction(self.steps):
+                workflow_run_response.content = await self._acall_custom_function(self.steps, self, execution_input, **kwargs)
+            elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -837,7 +891,7 @@ class Workflow:
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
-            elif inspect.isasyncgenfunction(self.steps):
+            elif isasyncgenfunction(self.steps):
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, self, execution_input, **kwargs)
                 async for chunk in async_gen:

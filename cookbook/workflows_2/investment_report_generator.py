@@ -34,6 +34,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
@@ -203,16 +204,16 @@ async def investment_analysis_execution(
 
     analysis_prompt = f"""
     {message}
-    
+
     Please conduct a comprehensive analysis of the following companies: {company_symbols}
-    
+
     For each company, provide:
     1. Current market position and financial metrics
     2. Recent performance and analyst recommendations
     3. Industry trends and competitive landscape
     4. Risk factors and growth potential
     5. News impact and market sentiment
-    
+
     Companies to analyze: {company_symbols}
     """
 
@@ -237,13 +238,13 @@ async def investment_analysis_execution(
 
     ranking_prompt = f"""
     Based on the comprehensive stock analysis below, please rank these companies by investment potential.
-    
+
     STOCK ANALYSIS:
     - Market Analysis: {stock_analysis.market_analysis}
     - Financial Metrics: {stock_analysis.financial_metrics}
     - Risk Assessment: {stock_analysis.risk_assessment}
     - Initial Recommendations: {stock_analysis.recommendations}
-    
+
     Please provide:
     1. Detailed ranking of companies from best to worst investment potential
     2. Investment rationale for each company
@@ -271,13 +272,13 @@ async def investment_analysis_execution(
 
     portfolio_prompt = f"""
     Based on the investment ranking and analysis below, create a strategic portfolio allocation.
-    
+
     INVESTMENT RANKING:
     - Company Rankings: {ranking_analysis.ranked_companies}
     - Investment Rationale: {ranking_analysis.investment_rationale}
     - Risk Evaluation: {ranking_analysis.risk_evaluation}
     - Growth Potential: {ranking_analysis.growth_potential}
-    
+
     Please provide:
     1. Specific allocation percentages for each company
     2. Investment thesis and strategic rationale
@@ -304,21 +305,21 @@ async def investment_analysis_execution(
     # Final summary
     summary = f"""
     🎉 INVESTMENT ANALYSIS WORKFLOW COMPLETED!
-    
+
     📊 Analysis Summary:
     • Companies Analyzed: {company_symbols}
     • Market Analysis: ✅ Completed
-    • Investment Ranking: ✅ Completed  
+    • Investment Ranking: ✅ Completed
     • Portfolio Strategy: ✅ Completed
-    
+
     📁 Reports Generated:
     • Stock Analysis: {stock_analyst_report}
     • Investment Ranking: {research_analyst_report}
     • Portfolio Strategy: {investment_report}
-    
+
     💡 Key Insights:
     {portfolio_strategy.allocation_strategy[:200]}...
-    
+
     ⚠️ Disclaimer: This analysis is for educational purposes only and should not be considered as financial advice.
     """
 
@@ -329,6 +330,11 @@ async def investment_analysis_execution(
 investment_workflow = Workflow(
     name="Investment Report Generator",
     description="Automated investment analysis with market research and portfolio allocation",
+    storage=SqliteStorage(
+        table_name="investment_workflow_sessions",
+        db_file="tmp/workflows.db",
+        mode="workflow_v2",
+    ),
     steps=investment_analysis_execution,
     workflow_session_state={},  # Initialize empty workflow session state
 )
