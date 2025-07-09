@@ -91,8 +91,6 @@ class PostgresDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
-        log_debug("Created PostgresDb")
-
     # -- DB methods --
 
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
@@ -194,7 +192,6 @@ class PostgresDb(BaseDb):
                 if self.session_table_name is None:
                     raise ValueError("Session table was not provided on initialization")
 
-                log_info(f"Getting session table: {self.session_table_name}")
                 self.session_table = self._get_or_create_table(
                     table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
                 )
@@ -205,7 +202,6 @@ class PostgresDb(BaseDb):
                 if self.user_memory_table_name is None:
                     raise ValueError("User memory table was not provided on initialization")
 
-                log_info(f"Getting user memory table: {self.user_memory_table_name}")
                 self.user_memory_table = self._get_or_create_table(
                     table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
                 )
@@ -217,7 +213,6 @@ class PostgresDb(BaseDb):
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics table was not provided on initialization")
 
-                log_info(f"Getting metrics table: {self.metrics_table_name}")
                 self.metrics_table = self._get_or_create_table(
                     table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
                 )
@@ -229,7 +224,6 @@ class PostgresDb(BaseDb):
                 if self.eval_table_name is None:
                     raise ValueError("Eval table was not provided on initialization")
 
-                log_info(f"Getting eval table: {self.eval_table_name}")
                 self.eval_table = self._get_or_create_table(
                     table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
                 )

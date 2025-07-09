@@ -1,9 +1,14 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from agno.db.base import SessionType
 from agno.db.sqlite.schemas import get_table_schema_definition
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
+from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -36,6 +41,38 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         return stmt.order_by(sort_column.asc())
     else:
         return stmt.order_by(sort_column.desc())
+
+
+def deserialize_session_json_fields(session: dict) -> dict:
+    """Deserialize all JSON fields in the given Session dictionary.
+
+    Args:
+        data (dict): The dictionary to deserialize JSON fields in.
+
+    Returns:
+        dict: The dictionary with JSON fields deserialized.
+    """
+    if session.get("session_data") is not None:
+        session["session_data"] = json.loads(session["session_data"])
+    if session.get("agent_data") is not None:
+        session["agent_data"] = json.loads(session["agent_data"])
+    if session.get("team_data") is not None:
+        session["team_data"] = json.loads(session["team_data"])
+    if session.get("workflow_data") is not None:
+        session["workflow_data"] = json.loads(session["workflow_data"])
+    if session.get("extra_data") is not None:
+        session["extra_data"] = json.loads(session["extra_data"])
+    if session.get("chat_history") is not None:
+        session["chat_history"] = json.loads(session["chat_history"])
+    if session.get("summary") is not None:
+        session["summary"] = SessionSummary.from_dict(json.loads(session["summary"]))
+    if session.get("runs") is not None:
+        if session["session_type"] == SessionType.AGENT:
+            session["runs"] = [RunResponse.from_dict(run) for run in json.loads(session["runs"])]
+        elif session["session_type"] == SessionType.TEAM:
+            session["runs"] = [TeamRunResponse.from_dict(run) for run in json.loads(session["runs"])]
+
+    return session
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str] = None) -> bool:

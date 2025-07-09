@@ -15,6 +15,7 @@ from agno.db.sqlite.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
+    deserialize_session_json_fields,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
@@ -99,8 +100,6 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
-
-        log_debug("Created SqliteDb")
 
     # -- DB methods --
 
@@ -192,7 +191,6 @@ class SqliteDb(BaseDb):
                 if self.session_table_name is None:
                     raise ValueError("Session table was not provided on initialization")
 
-                log_info(f"Getting session table: {self.session_table_name}")
                 self.session_table = self._get_or_create_table(
                     table_name=self.session_table_name, table_type=table_type
                 )
@@ -204,7 +202,6 @@ class SqliteDb(BaseDb):
                 if self.user_memory_table_name is None:
                     raise ValueError("User memory table was not provided on initialization")
 
-                log_info(f"Getting user memory table: {self.user_memory_table_name}")
                 self.user_memory_table = self._get_or_create_table(
                     table_name=self.user_memory_table_name, table_type="user_memories"
                 )
@@ -216,7 +213,6 @@ class SqliteDb(BaseDb):
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics table was not provided on initialization")
 
-                log_info(f"Getting metrics table: {self.metrics_table_name}")
                 self.metrics_table = self._get_or_create_table(table_name=self.metrics_table_name, table_type="metrics")
 
             return self.metrics_table
@@ -226,7 +222,6 @@ class SqliteDb(BaseDb):
                 if self.eval_table_name is None:
                     raise ValueError("Eval table was not provided on initialization")
 
-                log_info(f"Getting eval table: {self.eval_table_name}")
                 self.eval_table = self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
 
             return self.eval_table
@@ -562,17 +557,20 @@ class SqliteDb(BaseDb):
         try:
             table = self._get_table(table_type="sessions")
 
-            with self.Session() as sess:
+            with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.session_id == session_id)
+
+                # Filtering
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if session_type is not None:
                     stmt = stmt.where(table.c.session_type == session_type.value)
+
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
-                return result._mapping
+                return deserialize_session_json_fields(dict(result._mapping))
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
@@ -1171,7 +1169,7 @@ class SqliteDb(BaseDb):
                 if memory.id is None:
                     memory.id = str(uuid4())
 
-                stmt = postgresql.insert(table).values(
+                stmt = sqlite.insert(table).values(
                     user_id=memory.user_id,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
@@ -1526,7 +1524,7 @@ class SqliteDb(BaseDb):
                 }
 
                 stmt = (
-                    postgresql.insert(table)
+                    sqlite.insert(table)
                     .values(knowledge_row.model_dump())
                     .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                 )
@@ -1556,7 +1554,7 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
-                stmt = postgresql.insert(table).values(
+                stmt = sqlite.insert(table).values(
                     {"created_at": current_time, "updated_at": current_time, **eval_run.model_dump()}
                 )
                 sess.execute(stmt)
@@ -1735,6 +1733,7 @@ class SqliteDb(BaseDb):
                         stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
+                breakpoint()
                 if not result:
                     return [], 0
 
