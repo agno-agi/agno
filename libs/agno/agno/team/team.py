@@ -4062,7 +4062,7 @@ class Team:
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
-        return metrics if for_session else metrics._to_dict()
+        return metrics if for_session else metrics.to_dict()
 
     def set_session_metrics(self, run_messages: RunMessages):
         """Calculate session metrics"""
