@@ -11,7 +11,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
@@ -195,7 +195,8 @@ class Parallel:
         user_id: Optional[str] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
-        logger.info(f"Executing {len(self.steps)} steps in parallel: {self.name}")
+        # Use workflow logger for parallel orchestration
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -232,7 +233,7 @@ class Parallel:
                     index, result = future.result()
                     results_with_indices.append((index, result))
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.info(f"Parallel step {step_name} completed")
+                    log_debug(f"Parallel step {step_name} completed")
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
@@ -262,7 +263,12 @@ class Parallel:
                 flattened_results.append(result)
 
         # Aggregate all results into a single StepOutput
-        return self._aggregate_results(flattened_results)
+        aggregated_result = self._aggregate_results(flattened_results)
+
+        # Use workflow logger for parallel completion
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
+        return aggregated_result
 
     def execute_stream(
         self,
@@ -274,7 +280,7 @@ class Parallel:
         step_index: Optional[int] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
-        logger.info(f"Streaming {len(self.steps)} steps in parallel: {self.name}")
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -345,7 +351,7 @@ class Parallel:
                         step_results.extend(step_outputs)
 
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.info(f"Parallel step {step_name} streaming completed")
+                    log_debug(f"Parallel step {step_name} streaming completed")
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
@@ -383,6 +389,8 @@ class Parallel:
         # Yield the final aggregated StepOutput
         yield aggregated_result
 
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
         if stream_intermediate_steps:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
@@ -403,7 +411,8 @@ class Parallel:
         user_id: Optional[str] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
-        logger.info(f"Async executing {len(self.steps)} steps in parallel: {self.name}")
+        # Use workflow logger for async parallel orchestration
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -456,7 +465,7 @@ class Parallel:
                 index, step_result = result
                 processed_results_with_indices.append((index, step_result))
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
-                logger.info(f"Parallel step {step_name} completed")
+                log_debug(f"Parallel step {step_name} completed")
 
         # Sort by original index to preserve order
         processed_results_with_indices.sort(key=lambda x: x[0])
@@ -471,7 +480,12 @@ class Parallel:
                 flattened_results.append(result)
 
         # Aggregate all results into a single StepOutput
-        return self._aggregate_results(flattened_results)
+        aggregated_result = self._aggregate_results(flattened_results)
+
+        # Use workflow logger for async parallel completion
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
+        return aggregated_result
 
     async def aexecute_stream(
         self,
@@ -483,7 +497,7 @@ class Parallel:
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
-        logger.info(f"Async streaming {len(self.steps)} steps in parallel: {self.name}")
+        log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         self._prepare_steps()
 
@@ -564,7 +578,7 @@ class Parallel:
                     step_results.extend(step_outputs)
 
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
-                logger.info(f"Parallel step {step_name} async streaming completed")
+                log_debug(f"Parallel step {step_name} async streaming completed")
 
         # Sort events by original index to preserve order
         all_events_with_indices.sort(key=lambda x: x[0])
@@ -589,6 +603,8 @@ class Parallel:
 
         # Yield the final aggregated StepOutput
         yield aggregated_result
+
+        log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         if stream_intermediate_steps:
             # Yield parallel step completed event

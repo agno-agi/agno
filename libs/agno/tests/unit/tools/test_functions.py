@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict
 
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
 
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
@@ -125,7 +125,6 @@ def test_wrap_callable():
 
     assert isinstance(test_func, Function)
     assert test_func.entrypoint is not None
-    
 
     test_func.process_entrypoint()
     assert isinstance(test_func, Function)
@@ -134,7 +133,6 @@ def test_wrap_callable():
     with pytest.raises(ValidationError):
         test_func.entrypoint(param1="test")
     assert test_func.entrypoint._wrapped_for_validation is True
-    
 
     test_func.process_entrypoint()
     assert isinstance(test_func, Function)

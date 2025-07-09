@@ -1,7 +1,7 @@
-import asyncio
+from typing import List, Union
 
 from agno.agent.agent import Agent
-from agno.models.anthropic import Claude
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.condition import Condition
@@ -15,33 +15,23 @@ hackernews_agent = Agent(
     name="HackerNews Researcher",
     instructions="Research tech news and trends from Hacker News",
     tools=[HackerNewsTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
+)
+
+web_agent = Agent(
+    name="Web Researcher",
+    instructions="Research general information from the web",
+    tools=[DuckDuckGoTools()],
 )
 
 exa_agent = Agent(
     name="Exa Search Researcher",
     instructions="Research using Exa advanced search capabilities",
     tools=[ExaTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 content_agent = Agent(
     name="Content Creator",
     instructions="Create well-structured content from research data",
-    model=Claude(id="claude-sonnet-4-20250514"),
-)
-
-# Additional agents for multi-step condition
-trend_analyzer_agent = Agent(
-    name="Trend Analyzer",
-    instructions="Analyze trends and patterns from research data",
-    model=Claude(id="claude-sonnet-4-20250514"),
-)
-
-fact_checker_agent = Agent(
-    name="Fact Checker",
-    instructions="Verify facts and cross-reference information",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # === RESEARCH STEPS ===
@@ -51,32 +41,24 @@ research_hackernews_step = Step(
     agent=hackernews_agent,
 )
 
+research_web_step = Step(
+    name="ResearchWeb",
+    description="Research general information from web",
+    agent=web_agent,
+)
+
 research_exa_step = Step(
     name="ResearchExa",
     description="Research using Exa search",
     agent=exa_agent,
 )
 
-# === MULTI-STEP CONDITION STEPS ===
-deep_exa_analysis_step = Step(
-    name="DeepExaAnalysis",
-    description="Conduct deep analysis using Exa search capabilities",
-    agent=exa_agent,
+prepare_input_for_write_step = Step(
+    name="PrepareInput",
+    description="Prepare and organize research data for writing",
+    agent=content_agent,
 )
 
-trend_analysis_step = Step(
-    name="TrendAnalysis",
-    description="Analyze trends and patterns from the research data",
-    agent=trend_analyzer_agent,
-)
-
-fact_verification_step = Step(
-    name="FactVerification",
-    description="Verify facts and cross-reference information",
-    agent=fact_checker_agent,
-)
-
-# === FINAL STEPS ===
 write_step = Step(
     name="WriteContent",
     description="Write the final content based on research",
@@ -100,54 +82,71 @@ def check_if_we_should_search_hn(step_input: StepInput) -> bool:
     return any(keyword in topic.lower() for keyword in tech_keywords)
 
 
-def check_if_comprehensive_research_needed(step_input: StepInput) -> bool:
-    """Check if comprehensive multi-step research is needed"""
+def check_if_we_should_search_web(step_input: StepInput) -> bool:
+    """Check if we should search the web"""
     topic = step_input.message or step_input.previous_step_content or ""
-    comprehensive_keywords = [
-        "comprehensive",
-        "detailed",
-        "thorough",
-        "in-depth",
-        "complete analysis",
-        "full report",
-        "extensive research",
+    general_keywords = ["news", "information", "research", "facts", "data"]
+    return any(keyword in topic.lower() for keyword in general_keywords)
+
+
+def check_if_we_should_search_x(step_input: StepInput) -> bool:
+    """Check if we should search X/Twitter"""
+    topic = step_input.message or step_input.previous_step_content or ""
+    social_keywords = [
+        "trending",
+        "viral",
+        "social",
+        "discussion",
+        "opinion",
+        "twitter",
+        "x",
     ]
-    return any(keyword in topic.lower() for keyword in comprehensive_keywords)
+    return any(keyword in topic.lower() for keyword in social_keywords)
+
+
+def check_if_we_should_search_exa(step_input: StepInput) -> bool:
+    """Check if we should use Exa search"""
+    topic = step_input.message or step_input.previous_step_content or ""
+    advanced_keywords = ["deep", "academic", "research", "analysis", "comprehensive"]
+    return any(keyword in topic.lower() for keyword in advanced_keywords)
 
 
 if __name__ == "__main__":
     workflow = Workflow(
-        name="Conditional Workflow with Multi-Step Condition",
+        name="Conditional Workflow",
         steps=[
             Parallel(
                 Condition(
                     name="HackerNewsCondition",
                     description="Check if we should search Hacker News for tech topics",
                     evaluator=check_if_we_should_search_hn,
-                    steps=[research_hackernews_step],  # Single step
+                    steps=[research_hackernews_step],
                 ),
                 Condition(
-                    name="ComprehensiveResearchCondition",
-                    description="Check if comprehensive multi-step research is needed",
-                    evaluator=check_if_comprehensive_research_needed,
-                    steps=[  # Multiple steps
-                        deep_exa_analysis_step,
-                        trend_analysis_step,
-                        fact_verification_step,
-                    ],
+                    name="WebSearchCondition",
+                    description="Check if we should search the web for general information",
+                    evaluator=check_if_we_should_search_web,
+                    steps=[research_web_step],
+                ),
+                Condition(
+                    name="ExaSearchCondition",
+                    description="Check if we should use Exa for advanced search",
+                    evaluator=check_if_we_should_search_exa,
+                    steps=[research_exa_step],
                 ),
                 name="ConditionalResearch",
                 description="Run conditional research steps in parallel",
             ),
+            prepare_input_for_write_step,
             write_step,
         ],
     )
 
     try:
-        asyncio.run(
-            workflow.aprint_response(
-                message="Comprehensive analysis of climate change research",
-            )
+        workflow.print_response(
+            message="Latest AI developments in machine learning",
+            stream=True,
+            stream_intermediate_steps=True,
         )
     except Exception as e:
         print(f"❌ Error: {e}")
