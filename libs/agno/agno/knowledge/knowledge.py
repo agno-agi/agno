@@ -63,9 +63,9 @@ class Knowledge:
                 log_warning("No vector db provided")
                 return []
 
-            _num_documents = max_results or self.max_results
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
-            return self.vector_store.search(query=query, limit=_num_documents, filters=filters)
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -79,13 +79,13 @@ class Knowledge:
                 log_warning("No vector db provided")
                 return []
 
-            _num_documents = max_results or self.max_results
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_store.async_search(query=query, limit=_num_documents, filters=filters)
+                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.search(query=query, max_results=_num_documents, filters=filters)
+                return self.search(query=query, max_results=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []

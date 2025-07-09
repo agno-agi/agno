@@ -4779,12 +4779,20 @@ class Agent:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_sources
+                if isinstance(self.knowledge, AgentKnowledge):
+                    num_documents = self.knowledge.num_documents
+                elif isinstance(self.knowledge, Knowledge):
+                    num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters
-            )
+            if isinstance(self.knowledge, AgentKnowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, num_documents=num_documents, filters=filters
+                )
+            elif isinstance(self.knowledge, Knowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, max_results=num_documents, filters=filters
+                )
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")

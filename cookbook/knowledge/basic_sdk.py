@@ -50,7 +50,7 @@ knowledge.add_source(
     metadata={"user_tag": "Recipes"},
 )
 
-print("Use Case 5")
+print("Use Case 3")
 # Specify a customer reader
 knowledge.add_source(
     name="Recipes",
@@ -59,14 +59,14 @@ knowledge.add_source(
     reader=WebsiteReader(),
 )
 
-print("Use Case 6")
+print("Use Case 4")
 # Add manual content
 knowledge.add_source(
     text_content="Hello world",
     metadata={"user_tag": "Manual Text Document"},
 )
 
-print("Use Case 7")
+print("Use Case 5")
 # Add manual JSON content
 knowledge.add_source(
     name="Manual JSON Document",
@@ -82,7 +82,7 @@ knowledge.add_source(
 )
 
 
-print("Use Case 10")
+print("Use Case 6")
 # Add from Wikipedia
 knowledge.add_source(
     metadata={"user_tag": "Manual Document String Content"},
@@ -90,7 +90,7 @@ knowledge.add_source(
     reader=WikipediaReader(),
 )
 
-# print("Use Case 11")
+# print("Use Case 7")
 # # TODO: We need to add a reader for Arxiv
 # # Add from Arxiv
 # knowledge.add_source(
@@ -99,7 +99,7 @@ knowledge.add_source(
 #     # reader=ArxivReader(),
 # )
 
-# print("Use Case 12")
+# print("Use Case 8")
 # # TODO: We need to add a reader for Web Search
 # # Add from Web Search
 # knowledge.add_source(
@@ -108,7 +108,7 @@ knowledge.add_source(
 #     # reader=WebSearchReader(),
 # )
 
-# print("Use Case 13")
+# print("Use Case 9")
 # # TODO: Implementation on Knowledge class
 # # Add from S3
 # s3_config = S3Config(
@@ -122,3 +122,17 @@ knowledge.add_source(
 #     metadata={"user_tag": "Recipes"},
 #     # reader=S3PDFReader(),
 # )
+
+
+agent = Agent(
+    name="My Agent",
+    description="Agno 2.0 Agent Implementation",
+    knowledge=knowledge,
+    search_knowledge=True,
+    debug_mode=True,
+)
+
+agent.print_response(
+    "Give me a list of all candidates that have software engineering experience.",
+    markdown=True,
+)
