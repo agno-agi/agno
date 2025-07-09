@@ -99,21 +99,21 @@ class Knowledge:
             else:
                 self.add_source(source=self.sources)
 
-        if self.document_store is not None:
-            if isinstance(self.document_store, list):
-                for store in self.document_store:
+        if self.store is not None:
+            if isinstance(self.store, list):
+                for store in self.store:
                     # Process each store in the list
                     log_info(f"Processing document store: {store.name}")
                     if store.read_from_store:
                         self.load_from_document_store(store)
             else:
-                log_info(f"Processing single document store: {self.document_store.name}")
-                if self.document_store.read_from_store:
-                    self.load_from_document_store(self.document_store)
+                log_info(f"Processing single document store: {self.store.name}")
+                if self.store.read_from_store:
+                    self.load_from_document_store(self.store)
 
-    def load_from_document_store(self, document_store: Store):
-        if document_store.read_from_store:
-            for file_content, metadata in document_store.get_all_documents():
+    def load_from_document_store(self, store: Store):
+        if store.read_from_store:
+            for file_content, metadata in store.get_all_documents():
                 if metadata["file_type"] == ".pdf":
                     _pdf = io.BytesIO(file_content) if isinstance(file_content, bytes) else file_content
                     document = self.pdf_reader.read(pdf=_pdf, name=metadata["name"])
@@ -123,7 +123,7 @@ class Knowledge:
                     else:
                         self.vector_store.insert(document)
 
-        if document_store.copy_to_store:
+        if store.copy_to_store:
             # TODO: Need to implement this part. Copy only when the file does not already exist in that store.
             pass
 
@@ -288,8 +288,8 @@ class Knowledge:
                             self._update_source_status(source.id, "Failed - Could not insert embedding")
 
             # Add to document store if available
-            if self.document_store:
-                self.document_store.add_document(id, source)
+            if self.store:
+                self.store.add_source(id, source)
 
         else:
             self._update_source_status(source.id, "Failed")
@@ -470,15 +470,15 @@ class Knowledge:
         if self.sources_db is not None:
             self.sources_db.delete_knowledge_source(source_id)
 
-        if self.document_store is not None:
-            self.document_store.delete_document(source_id)
+        if self.store is not None:
+            self.store.delete_source(source_id)
 
         if self.vector_store is not None:
             self.vector_store.delete_by_source_id(source_id)
 
     def remove_all_sources(self):
-        if self.document_store is not None:
-            self.document_store.delete_all_documents()
+        if self.store is not None:
+            self.store.delete_all_sources()
         sources, _ = self.get_sources()
         for source in sources:
             self.remove_source(source.id)
@@ -523,7 +523,7 @@ class Knowledge:
                 document = self.pdf_reader.read(
                     path, name=path
                 )  # TODO: Need to make naming consistent with files and their extensions.
-                self.document_store.add_document(document)
+                self.store.add_source(document)
                 self.vector_store.insert(document)
         elif path.is_dir():
             pass

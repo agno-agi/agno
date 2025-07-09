@@ -29,57 +29,57 @@ knowledge = Knowledge(
 custom_reader = Reader(name="Custom Reader", description="Custom Reader")
 knowledge.add_reader(custom_reader)
 
-# readers = knowledge.get_readers()
-# for k, v in readers.items():
-#     print(k, v.name, v.description)
+readers = knowledge.get_readers()
+for k, v in readers.items():
+    print(k, v.name, v.description)
 
 
-# print("Use Case 1")
-# # Add from path to the knowledge base
-# knowledge.add_source(
-#     name="CV1",
-#     path="tmp/cv_1.pdf",
-#     metadata={"user_tag": "Engineering candidates"},
-# )
+print("Use Case 1")
+# Add from path to the knowledge base
+knowledge.add_source(
+    name="CV1",
+    path="tmp/cv_1.pdf",
+    metadata={"user_tag": "Engineering candidates"},
+)
 
-# print("Use Case 2")
-# # Add from URL to the knowledge base
-# knowledge.add_source(
-#     name="Recipes",
-#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-#     metadata={"user_tag": "Recipes"},
-# )
+print("Use Case 2")
+# Add from URL to the knowledge base
+knowledge.add_source(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"user_tag": "Recipes"},
+)
 
-# print("Use Case 5")
-# # Specify a customer reader
-# knowledge.add_source(
-#     name="Recipes",
-#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-#     metadata={"user_tag": "Recipes"},
-#     reader=WebsiteReader(),
-# )
+print("Use Case 5")
+# Specify a customer reader
+knowledge.add_source(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"user_tag": "Recipes"},
+    reader=WebsiteReader(),
+)
 
-# print("Use Case 6")
-# # Add manual content
-# knowledge.add_source(
-#     text_content="Hello world",
-#     metadata={"user_tag": "Manual Text Document"},
-# )
+print("Use Case 6")
+# Add manual content
+knowledge.add_source(
+    text_content="Hello world",
+    metadata={"user_tag": "Manual Text Document"},
+)
 
-# print("Use Case 7")
-# # Add manual JSON content
-# knowledge.add_source(
-#     name="Manual JSON Document",
-#     text_content="""
-#     {
-#         "name": "John Doe",
-#         "age": 30,
-#         "email": "john.doe@example.com"
-#     }
-#     """,
-#     metadata={"user_tag": "Manual JSON Document"},
-#     reader=JSONReader(),
-# )
+print("Use Case 7")
+# Add manual JSON content
+knowledge.add_source(
+    name="Manual JSON Document",
+    text_content="""
+    {
+        "name": "John Doe",
+        "age": 30,
+        "email": "john.doe@example.com"
+    }
+    """,
+    metadata={"user_tag": "Manual JSON Document"},
+    reader=JSONReader(),
+)
 
 
 print("Use Case 10")
