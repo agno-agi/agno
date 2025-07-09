@@ -326,7 +326,7 @@ class SqliteDb(BaseDb):
                 result = sess.execute(stmt)
                 row = result.fetchone()
 
-            return row._mapping if row else None
+            return deserialize_session_json_fields(dict(row._mapping)) if row else None
 
         except Exception as e:
             log_error(f"Exception upserting an agent session into sessions table: {e}")
@@ -392,16 +392,11 @@ class SqliteDb(BaseDb):
                         updated_at=int(time.time()),
                     ),
                 )
+                stmt = stmt.returning(*table.columns)
+                result = sess.execute(stmt)
+                row = result.fetchone()
 
-                sess.execute(stmt)
-
-                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
-                select_stmt = select(table).where(table.c.session_id == session.session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                sess.commit()
-
-                return row._mapping if row else None
+                return deserialize_session_json_fields(dict(row._mapping)) if row else None
 
         except Exception as e:
             log_error(f"Exception upserting a team session into sessions table: {e}")
@@ -466,16 +461,11 @@ class SqliteDb(BaseDb):
                         updated_at=int(time.time()),
                     ),
                 )
+                stmt = stmt.returning(*table.columns)
+                result = sess.execute(stmt)
+                row = result.fetchone()
 
-                sess.execute(stmt)
-
-                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
-                select_stmt = select(table).where(table.c.session_id == session.session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                sess.commit()
-
-                return row._mapping if row else None
+                return deserialize_session_json_fields(dict(row._mapping)) if row else None
 
         except Exception as e:
             log_error(f"Exception upserting a workflow session into sessions table: {e}")
