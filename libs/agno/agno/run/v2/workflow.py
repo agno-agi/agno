@@ -48,7 +48,6 @@ class WorkflowRunEvent(str, Enum):
 class BaseWorkflowRunResponseEvent:
     """Base class for all workflow run response events"""
 
-    run_id: str
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
 
@@ -56,6 +55,7 @@ class BaseWorkflowRunResponseEvent:
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
+    run_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
