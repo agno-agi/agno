@@ -176,7 +176,7 @@ class StepOutput:
     executor_name: Optional[str] = None
 
     # Primary output
-    content: Optional[str] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
 
     # Execution response
     response: Optional[Union[RunResponse, TeamRunResponse]] = None
@@ -196,8 +196,18 @@ class StepOutput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
+        # Handle the unified content field
+        content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.content is not None:
+            if isinstance(self.content, BaseModel):
+                content_dict = self.content.model_dump(exclude_none=True)
+            elif isinstance(self.content, (dict, list)):
+                content_dict = self.content
+            else:
+                content_dict = str(self.content)
+
         return {
-            "content": self.content,
+            "content": content_dict,
             "response": self.response.to_dict() if self.response else None,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
