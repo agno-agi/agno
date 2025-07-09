@@ -6829,13 +6829,13 @@ class Team:
                     and len(team_session_state_from_db) > 0
                 ):
                     # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
-                    
+
                     if self.team_session_state is not None and len(self.team_session_state) > 0:
                         # Copy current team_session_state in case of errors
                         updated_team_session_state = self.team_session_state
                         # team_session_state stored in db should take precedence over statically set state at the team
                         merge_dictionaries(updated_team_session_state, team_session_state_from_db)
-                        
+
                     # Update the current team_session_state
                     self.team_session_state = updated_team_session_state
 
