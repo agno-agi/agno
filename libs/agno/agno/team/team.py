@@ -587,8 +587,6 @@ class Team:
 
     def _reset_session_state(self) -> None:
         self.session_name = None
-        self.session_state = None
-        self.team_session_state = None
         self.session_metrics = None
         self.images = None
         self.videos = None
@@ -6816,10 +6814,12 @@ class Team:
                 ):
                     # If the session_state is already set, merge the session_state from the database with the current session_state
                     if self.session_state is not None and len(self.session_state) > 0:
-                        # This updates session_state_from_db
-                        merge_dictionaries(session_state_from_db, self.session_state)
+                        # Copy current session_state in case of errors
+                        updated_session_state = self.session_state
+                        # session_state stored in db should take precedence over statically set state at the team
+                        merge_dictionaries(updated_session_state, session_state_from_db)
                     # Update the current session_state
-                    self.session_state = session_state_from_db
+                    self.session_state = updated_session_state
 
             if "team_session_state" in session.session_data:
                 team_session_state_from_db = session.session_data.get("team_session_state")
@@ -6829,11 +6829,15 @@ class Team:
                     and len(team_session_state_from_db) > 0
                 ):
                     # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
+                    
                     if self.team_session_state is not None and len(self.team_session_state) > 0:
-                        # This updates team_session_state_from_db
-                        merge_dictionaries(team_session_state_from_db, self.team_session_state)
+                        # Copy current team_session_state in case of errors
+                        updated_team_session_state = self.team_session_state
+                        # team_session_state stored in db should take precedence over statically set state at the team
+                        merge_dictionaries(updated_team_session_state, team_session_state_from_db)
+                        
                     # Update the current team_session_state
-                    self.team_session_state = team_session_state_from_db
+                    self.team_session_state = updated_team_session_state
 
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
