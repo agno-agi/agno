@@ -322,14 +322,9 @@ class SqliteDb(BaseDb):
                         updated_at=int(time.time()),
                     ),
                 )
-
-                sess.execute(stmt)
-
-                # TODO: Optimize. We shouldn't read again but can't figure out how to get the upserted record?
-                select_stmt = select(table).where(table.c.session_id == session.session_id)
-                row = sess.execute(select_stmt).fetchone()
-
-                sess.commit()
+                stmt = stmt.returning(*table.columns)
+                result = sess.execute(stmt)
+                row = result.fetchone()
 
             return row._mapping if row else None
 
@@ -767,20 +762,35 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
             with self.Session() as sess, sess.begin():
-                # TODO: wrong. session_name is inside session_data. correct everywhere.
-                stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
+                # Update session_name inside the session_data JSON field
+                stmt = (
+                    update(table)
+                    .where(table.c.session_id == session_id)
+                    .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
+                )
                 result = sess.execute(stmt)
-                row = result.fetchone()
-                sess.commit()
 
+                # Check if any rows were affected
+                if result.rowcount == 0:
+                    return None
+
+                # Fetch the updated row
+                select_stmt = select(table).where(table.c.session_id == session_id)
+                row = sess.execute(select_stmt).fetchone()
+
+                if not row:
+                    return None
+
+            session = deserialize_session_json_fields(dict(row._mapping))
+
+            # Return the appropriate session type
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(row._mapping)
+                return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(row._mapping)
+                return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(row._mapping)
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
