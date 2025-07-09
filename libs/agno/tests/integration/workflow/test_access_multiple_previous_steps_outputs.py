@@ -3,11 +3,52 @@
 import pytest
 
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
-from agno.workflow.v2 import Workflow
+from agno.workflow.v2 import Parallel, Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 
 
 # Helper functions
+def step_a(step_input: StepInput) -> StepOutput:
+    """Step A in parallel execution."""
+    return StepOutput(step_name="step_a", content=f"Step A processed: {step_input.message}", success=True)
+
+
+def step_b(step_input: StepInput) -> StepOutput:
+    """Step B in parallel execution."""
+    return StepOutput(step_name="step_b", content=f"Step B analyzed: {step_input.message}", success=True)
+
+
+def step_c(step_input: StepInput) -> StepOutput:
+    """Step C in parallel execution."""
+    return StepOutput(step_name="step_c", content=f"Step C reviewed: {step_input.message}", success=True)
+
+
+def parallel_aggregator_step(step_input: StepInput) -> StepOutput:
+    """Aggregator step that accesses parallel step outputs."""
+    # Get the parallel step content - should return a dict
+    parallel_data = step_input.get_step_content("Parallel Processing")
+
+    # Verify we can access individual step content
+    step_a_data = parallel_data.get("step_a", "") if isinstance(parallel_data, dict) else ""
+    step_b_data = parallel_data.get("step_b", "") if isinstance(parallel_data, dict) else ""
+    step_c_data = parallel_data.get("step_c", "") if isinstance(parallel_data, dict) else ""
+
+    # Also test direct access to individual steps (should return None since they're sub-steps)
+    direct_step_a = step_input.get_step_content("step_a")
+
+    aggregated_report = f"""Parallel Aggregation Report:
+        Parallel Data Type: {type(parallel_data).__name__}
+        Step A: {step_a_data}
+        Step B: {step_b_data}
+        Step C: {step_c_data}
+        Direct Step A Access: {direct_step_a}
+        Available Steps: {list(step_input.previous_step_outputs.keys())}
+        Previous step outputs: {step_input.previous_step_outputs}
+    """
+
+    return StepOutput(step_name="parallel_aggregator_step", content=aggregated_report, success=True)
+
+
 def research_step(step_input: StepInput) -> StepOutput:
     """Research step."""
     return StepOutput(step_name="research_step", content=f"Research: {step_input.message}", success=True)
@@ -95,3 +136,67 @@ async def test_async_streaming_access(workflow_storage):
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
     assert "Report:" in completed_events[0].content
+
+
+# Add this test function at the end
+def test_parallel_step_access(workflow_storage):
+    """Test accessing content from parallel steps."""
+    workflow = Workflow(
+        name="Parallel Step Access",
+        storage=workflow_storage,
+        steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
+    )
+
+    response = workflow.run(message="test data")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 2
+
+    # Verify the aggregator step received parallel data correctly
+    aggregator_response = response.step_responses[1]
+    assert "Parallel Aggregation Report:" in aggregator_response.content
+    assert "Parallel Data Type: dict" in aggregator_response.content
+    assert "Step A: Step A processed: test data" in aggregator_response.content
+    assert "Step B: Step B analyzed: test data" in aggregator_response.content
+    assert "Step C: Step C reviewed: test data" in aggregator_response.content
+    assert "Direct Step A Access: None" in aggregator_response.content
+    assert "Parallel Processing" in aggregator_response.content
+
+
+@pytest.mark.asyncio
+async def test_async_parallel_step_access(workflow_storage):
+    """Test async accessing content from parallel steps."""
+    workflow = Workflow(
+        name="Async Parallel Step Access",
+        storage=workflow_storage,
+        steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
+    )
+
+    response = await workflow.arun(message="async test data")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 2
+
+    # Verify the aggregator step received parallel data correctly
+    aggregator_response = response.step_responses[1]
+    assert "Parallel Aggregation Report:" in aggregator_response.content
+    assert "Parallel Data Type: dict" in aggregator_response.content
+    assert "Step A: Step A processed: async test data" in aggregator_response.content
+    assert "Step B: Step B analyzed: async test data" in aggregator_response.content
+    assert "Step C: Step C reviewed: async test data" in aggregator_response.content
+
+
+def test_single_parallel_step_access(workflow_storage):
+    """Test accessing content from a single step in parallel (edge case)."""
+    workflow = Workflow(
+        name="Single Parallel Step Access",
+        storage=workflow_storage,
+        steps=[Parallel(step_a, name="Parallel Processing"), parallel_aggregator_step],
+    )
+
+    response = workflow.run(message="single test")
+    assert isinstance(response, WorkflowRunResponse)
+    assert len(response.step_responses) == 2
+
+    # Verify even single parallel steps return dict structure
+    aggregator_response = response.step_responses[1]
+    assert "Parallel Data Type: dict" in aggregator_response.content
+    assert "Step A: Step A processed: single test" in aggregator_response.content
