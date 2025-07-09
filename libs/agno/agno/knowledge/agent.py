@@ -308,7 +308,7 @@ class AgentKnowledge(BaseModel):
             else:
                 log_info("No new documents to load")
 
-    async def load_document(
+    def load_document(
         self,
         document: Document,
         upsert: bool = False,
