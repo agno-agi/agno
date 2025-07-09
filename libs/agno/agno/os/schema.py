@@ -290,6 +290,8 @@ class TeamSessionDetailSchema(BaseModel):
     team_id: Optional[str]
     session_summary: Optional[dict]
     metrics: Optional[dict]
+    team_data: Optional[dict]
+    total_tokens: Optional[int]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -302,6 +304,10 @@ class TeamSessionDetailSchema(BaseModel):
             session_name=session_name,
             session_summary=session.summary if session.summary else None,
             user_id=session.user_id,
+            team_data=session.team_data,
+            total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
+            if session.session_data
+            else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,

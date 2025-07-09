@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
@@ -587,7 +586,7 @@ def get_base_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and team.is_streamable:
+        if stream:
             return StreamingResponse(
                 team_response_streamer(
                     team,
@@ -788,7 +787,7 @@ def get_base_router(
             else:
                 # Return as a streaming response
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
+                    (result.to_json() for result in new_workflow_instance.run(**body.input)),
                     media_type="text/event-stream",
                 )
         except Exception as e:

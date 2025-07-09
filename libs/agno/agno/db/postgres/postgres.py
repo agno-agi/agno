@@ -205,7 +205,6 @@ class PostgresDb(BaseDb):
                 self.user_memory_table = self._get_or_create_table(
                     table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
                 )
-
             return self.user_memory_table
 
         if table_type == "metrics":
@@ -216,7 +215,6 @@ class PostgresDb(BaseDb):
                 self.metrics_table = self._get_or_create_table(
                     table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
                 )
-
             return self.metrics_table
 
         if table_type == "evals":
@@ -227,8 +225,17 @@ class PostgresDb(BaseDb):
                 self.eval_table = self._get_or_create_table(
                     table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
                 )
-
             return self.eval_table
+
+        if table_type == "knowledge":
+            if not hasattr(self, "knowledge_table"):
+                if self.knowledge_table_name is None:
+                    raise ValueError("Knowledge table was not provided on initialization")
+
+                self.knowledge_table = self._get_or_create_table(
+                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                )
+            return self.knowledge_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1272,16 +1279,15 @@ class PostgresDb(BaseDb):
                 else:
                     return result._mapping["date"]
 
-            # 2. No metrics records. Return the date of the first recorded session.
-            else:
-                first_session = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
-                first_session_date = first_session[0].created_at
+        # 2. No metrics records. Return the date of the first recorded session.
+        first_session, _ = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
+        first_session_date = first_session[0]["created_at"] if first_session else None
 
-                # 3. No metrics records and no sessions records. Return None.
-                if not first_session_date:
-                    return None
+        # 3. No metrics records and no sessions records. Return None.
+        if first_session_date is None:
+            return None
 
-                return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.

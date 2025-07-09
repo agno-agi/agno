@@ -222,6 +222,9 @@ class OpenAIResponses(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def _upload_file(self, file: File) -> Optional[str]:
@@ -327,6 +330,7 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: The formatted message.
         """
+        print("--------------------------------")
         formatted_messages: List[Dict[str, Any]] = []
         for message in messages:
             if message.role in ["user", "system"]:
@@ -354,32 +358,27 @@ class OpenAIResponses(Model):
 
                 formatted_messages.append(message_dict)
 
-            if self.id.startswith(("o3", "o4-mini")):
-                if message.role == "tool":
-                    if message.tool_call_id and message.content is not None:
-                        formatted_messages.append(
-                            {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
-                        )
-
-            else:
-                # OpenAI expects the tool_calls to be None if empty, not an empty list
-                if message.tool_calls is not None and len(message.tool_calls) > 0:
-                    for tool_call in message.tool_calls:
-                        formatted_messages.append(
-                            {
-                                "type": "function_call",
-                                "id": tool_call["id"],
-                                "call_id": tool_call["call_id"],
-                                "name": tool_call["function"]["name"],
-                                "arguments": tool_call["function"]["arguments"],
-                                "status": "completed",
-                            }
-                        )
-
-                if message.role == "tool":
+            elif message.role == "tool":
+                if message.tool_call_id and message.content is not None:
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
                     )
+            elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                for tool_call in message.tool_calls:
+                    formatted_messages.append(
+                        {
+                            "type": "function_call",
+                            "id": tool_call["id"],
+                            "call_id": tool_call["call_id"],
+                            "name": tool_call["function"]["name"],
+                            "arguments": tool_call["function"]["arguments"],
+                            "status": "completed",
+                        }
+                    )
+            elif message.role == "assistant":
+                formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
+
+            print(formatted_messages)
         return formatted_messages
 
     def invoke(

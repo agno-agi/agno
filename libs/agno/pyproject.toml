@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.4"
+version = "1.7.1"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -104,10 +104,12 @@ mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 todoist = ["todoist-api-python"]
+valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
+oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -200,8 +202,10 @@ tools = [
   "agno[browserbase]",
   "agno[agentql]",
   "agno[opencv]",
+  "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
@@ -416,6 +420,7 @@ module = [
   "upstash_vector.*",
   "urllib3.*",
   "uvicorn.*",
+  "valyu.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
@@ -426,6 +431,7 @@ module = [
   "youtube_transcript_api.*",
   "couchbase.*",
   "acouchbase.*",
-  "zep_cloud.*"
+  "zep_cloud.*",
+  "oxylabs.*"
 ]
 ignore_missing_imports = true

@@ -451,7 +451,7 @@ class Qdrant(VectorDb):
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
         """
-        filters = self._format_filters(filters or {})
+        filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
             results = self._run_vector_search_sync(query, limit, filters)
         elif self.search_type == SearchType.keyword:
@@ -466,7 +466,7 @@ class Qdrant(VectorDb):
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        filters = self._format_filters(filters or {})
+        filters = self._format_filters(filters or {})  # type: ignore
         if self.search_type == SearchType.vector:
             results = await self._run_vector_search_async(query, limit, filters)
         elif self.search_type == SearchType.keyword:

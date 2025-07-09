@@ -11,7 +11,7 @@ from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 try:
@@ -142,7 +142,7 @@ class OpenAIChat(Model):
             )
         return AsyncOpenAIClient(**client_params)
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -209,6 +209,9 @@ class OpenAIChat(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -327,7 +330,7 @@ class OpenAIChat(Model):
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -387,7 +390,7 @@ class OpenAIChat(Model):
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -450,7 +453,7 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )  # type: ignore
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -513,7 +516,7 @@ class OpenAIChat(Model):
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
                 yield chunk
@@ -677,39 +680,40 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+            choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
-            # Add audio if present
-            if hasattr(delta, "audio") and delta.audio is not None:
-                try:
-                    if isinstance(delta.audio, dict):
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.get("id"),
-                            content=delta.audio.get("data"),
-                            expires_at=delta.audio.get("expires_at"),
-                            transcript=delta.audio.get("transcript"),
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                    else:
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.id,
-                            content=delta.audio.data,
-                            expires_at=delta.audio.expires_at,
-                            transcript=delta.audio.transcript,
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                except Exception as e:
-                    log_warning(f"Error processing audio: {e}")
+                # Add audio if present
+                if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
+                    try:
+                        if isinstance(choice_delta.audio, dict):
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.get("id"),
+                                content=choice_delta.audio.get("data"),
+                                expires_at=choice_delta.audio.get("expires_at"),
+                                transcript=choice_delta.audio.get("transcript"),
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                        else:
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.id,
+                                content=choice_delta.audio.data,
+                                expires_at=choice_delta.audio.expires_at,
+                                transcript=choice_delta.audio.transcript,
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                    except Exception as e:
+                        log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
         if response_delta.usage is not None:

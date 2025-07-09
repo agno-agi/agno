@@ -31,6 +31,9 @@ class TeamRunEvent(str, Enum):
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
 
+    parser_model_response_started = "TeamParserModelResponseStarted"
+    parser_model_response_completed = "TeamParserModelResponseCompleted"
+
 
 @dataclass
 class BaseTeamRunResponseEvent(BaseRunResponseEvent):
@@ -162,6 +165,16 @@ class ToolCallCompletedEvent(BaseTeamRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
+@dataclass
+class ParserModelResponseStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.parser_model_response_started.value
+
+
+@dataclass
+class ParserModelResponseCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.parser_model_response_completed.value
+
+
 TeamRunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
@@ -175,6 +188,8 @@ TeamRunResponseEvent = Union[
     MemoryUpdateCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ParserModelResponseStartedEvent,
+    ParserModelResponseCompletedEvent,
 ]
 
 # Map event string to dataclass for team events
@@ -191,6 +206,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
+    TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
 }
 
 

@@ -1,6 +1,6 @@
 import logging
 from os import getenv
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
@@ -35,6 +35,10 @@ class ColoredRichHandler(RichHandler):
         if self.source_type and self.source_type in LOG_STYLES:
             if level_name in LOG_STYLES[self.source_type]:
                 color = LOG_STYLES[self.source_type][level_name]
+                return Text(record.levelname, style=color)
+        else:
+            if level_name in LOG_STYLES["agent"]:
+                color = LOG_STYLES["agent"][level_name]
                 return Text(record.levelname, style=color)
         return super().get_level_text(record)
 
@@ -93,14 +97,21 @@ team_logger: AgnoLogger = build_logger(TEAM_LOGGER_NAME, source_type="team")
 logger: AgnoLogger = agent_logger
 
 debug_on: bool = False
+debug_level: Literal[1, 2] = 1
 
 
-def set_log_level_to_debug(source_type: Optional[str] = None):
+def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
+    if source_type is None:
+        use_agent_logger()
+
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
+
+    global debug_level
+    debug_level = level
 
 
 def set_log_level_to_info(source_type: Optional[str] = None):
@@ -135,11 +146,14 @@ def use_agent_logger():
     logger = agent_logger
 
 
-def log_debug(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
+def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on
+    global debug_level
+
     if debug_on:
-        logger.debug(msg, center, symbol, *args, **kwargs)
+        if debug_level >= log_level:
+            logger.debug(msg, center, symbol, *args, **kwargs)
 
 
 def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):

@@ -60,9 +60,15 @@ def pprint_run_response(
                         or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
                     )
                     and hasattr(resp, "content")
-                    and isinstance(resp.content, str)
+                    and resp.content is not None
                 ):
-                    streaming_response_content += resp.content
+                    if isinstance(resp.content, BaseModel):
+                        try:
+                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                    else:
+                        streaming_response_content += resp.content
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
@@ -125,9 +131,15 @@ async def apprint_run_response(
                         or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
                     )
                     and hasattr(resp, "content")
-                    and isinstance(resp.content, str)
+                    and resp.content is not None
                 ):
-                    streaming_response_content += resp.content
+                    if isinstance(resp.content, BaseModel):
+                        try:
+                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                    else:
+                        streaming_response_content += resp.content
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
