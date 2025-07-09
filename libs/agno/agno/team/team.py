@@ -27,6 +27,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.agent import AgentKnowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -5888,20 +5889,20 @@ class Team:
     def _determine_team_context(
         self, session_id: str, images: List[Image], videos: List[Video], audio: List[Audio]
     ) -> Tuple[Optional[str], Optional[str]]:
-        if isinstance(self.memory, TeamMemory):
-            self.memory = cast(TeamMemory, self.memory)
+        if isinstance(self.memory, Memory):
+            self.memory = cast(Memory, self.memory)
             team_context_str = None
             if self.enable_agentic_context:
-                team_context_str = self.memory.get_team_context_str()
+                team_context_str = self.memory.get_team_context_str(session_id=session_id)
 
             team_member_interactions_str = None
             if self.share_member_interactions:
-                team_member_interactions_str = self.memory.get_team_member_interactions_str()
-                if context_images := self.memory.get_team_context_images():
+                team_member_interactions_str = self.memory.get_team_member_interactions_str(session_id=session_id)
+                if context_images := self.memory.get_team_context_images(session_id=session_id):
                     images.extend([Image.from_artifact(img) for img in context_images])
-                if context_videos := self.memory.get_team_context_videos():
+                if context_videos := self.memory.get_team_context_videos(session_id=session_id):
                     videos.extend([Video.from_artifact(vid) for vid in context_videos])
-                if context_audio := self.memory.get_team_context_audio():
+                if context_audio := self.memory.get_team_context_audio(session_id=session_id):
                     audio.extend([Audio.from_artifact(aud) for aud in context_audio])
         else:
             self.memory = cast(Memory, self.memory)
@@ -6564,7 +6565,7 @@ class Team:
         """
         from time import time
 
-        from agno.db.base import SessionType
+        from agno.session.team import TeamSession
 
         # Return existing session if we have one
         if self.team_session is not None and self.team_session.session_id == session_id:
@@ -6573,7 +6574,7 @@ class Team:
         # Try to load from database
         if self.memory is not None and self.memory.db is not None:
             self.team_session = cast(
-                TeamSession, self.memory.read_session(session_id=session_id, session_type=SessionType.TEAM)
+                TeamSession, self.memory.read_session(session_id=session_id, session_type=SessionType.TEAM.value)
             )
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
@@ -6601,6 +6602,9 @@ class Team:
         """
         if self.memory is not None and self.memory.db is not None:
             session = self.get_team_session(session_id=session_id, user_id=user_id)
+            if not session:
+                return None
+
             # Update the session_data with the latest data
             session.session_data = self.get_team_session_data()
             if self.store_chat_history:
@@ -6625,8 +6629,8 @@ class Team:
 
     def delete_session(self, session_id: str) -> None:
         """Delete the current session and save to storage"""
-        if self.storage is not None:
-            self.storage.delete_session(session_id=session_id)
+        if self.memory is not None and self.memory.db is not None:
+            self.memory.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
 
     def load_team_session(self, session: TeamSession):
         """Load the existing TeamSession from an TeamSession (from the database)"""
@@ -7373,7 +7377,6 @@ class Team:
             team_id=self.team_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
-            memory=memory_dict,
             team_data=self._get_team_data(),
             session_data=self.get_team_session_data(),
             extra_data=self.extra_data,
@@ -7424,7 +7427,8 @@ class Team:
 
             create_team_run(
                 run=TeamRunCreate(
-                    agent_data=team_session.telemetry_data(),
+                    session_id=team_session.session_id,
+                    team_data=team_session.telemetry_data(),
                 ),
             )
         except Exception as e:
@@ -7445,7 +7449,8 @@ class Team:
 
             await acreate_team_run(
                 run=TeamRunCreate(
-                    agent_data=team_session.telemetry_data(),
+                    session_id=team_session.session_id,
+                    team_data=team_session.telemetry_data(),
                 ),
             )
         except Exception as e:
