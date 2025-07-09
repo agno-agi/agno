@@ -369,7 +369,7 @@ class Step:
                 if final_response is None:
                     final_response = StepOutput(content="")
                     log_debug("Created empty StepOutput as fallback")
-                
+
                 # Switch back to workflow logger after execution
                 use_workflow_logger()
 

@@ -9,7 +9,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger, log_debug
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.step import Step, StepInput, StepOutput
 
 WorkflowSteps = List[
