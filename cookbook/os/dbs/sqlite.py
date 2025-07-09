@@ -7,6 +7,9 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
+from agno.os.managers.eval import EvalManager
+from agno.os.managers.memory import MemoryManager
+from agno.os.managers.metrics.metrics import MetricsManager
 from agno.os.managers.session import SessionManager
 from agno.team.team import Team
 
@@ -15,12 +18,14 @@ db = SqliteDb(
     db_file="test2.db",
     session_table="sessions",
     eval_table="eval_runs",
+    user_memory_table="user_memories",
+    metrics_table="metrics",
 )
 
 # Setup the memory
 memory = Memory(db=db)
 
-# Sessions, memory
+# Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic",
@@ -61,7 +66,12 @@ agent_os = AgentOS(
     agents=[basic_agent],
     teams=[team_agent],
     interfaces=[Whatsapp(agent=basic_agent)],
-    apps=[SessionManager(db=db)],
+    apps=[
+        SessionManager(db=db),
+        EvalManager(db=db),
+        MetricsManager(db=db),
+        MemoryManager(memory=memory),
+    ],
 )
 app = agent_os.get_app()
 

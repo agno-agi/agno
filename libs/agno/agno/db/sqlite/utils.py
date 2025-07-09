@@ -212,6 +212,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                 all_user_ids.add(session["user_id"])
             metrics[runs_count_key] += len(session.get("runs", []))
             if runs := session.get("runs", []):
+                runs = json.loads(runs)
                 for run in runs:
                     if model_id := run.get("model"):
                         model_provider = run.get("model_provider", "")
@@ -219,7 +220,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_data = json.loads(session.get("session_data", {}))
+            session_metrics = session_data.get("session_metrics", {})
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 

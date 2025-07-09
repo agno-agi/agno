@@ -1296,16 +1296,15 @@ class SqliteDb(BaseDb):
                 else:
                     return result._mapping["date"]
 
-            # 2. No metrics records. Return the date of the first recorded session.
-            else:
-                first_session = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
-                first_session_date = first_session[0].created_at
+        # 2. No metrics records. Return the date of the first recorded session.
+        first_session, _ = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
+        first_session_date = first_session[0]["created_at"] if first_session else None
 
-                # 3. No metrics records and no sessions records. Return None.
-                if not first_session_date:
-                    return None
+        # 3. No metrics records and no sessions records. Return None.
+        if not first_session_date:
+            return None
 
-                return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
@@ -1733,7 +1732,7 @@ class SqliteDb(BaseDb):
                         stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
-                breakpoint()
+
                 if not result:
                     return [], 0
 
