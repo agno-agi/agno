@@ -48,7 +48,8 @@ agent = Agent(
     tool_hooks=[grab_customer_profile_hook],
     session_state={
         "customer_profiles": {
-            "456": {"name": "John Doe", "email": "john.doe@example.com"}
+            "123": {"name": "Jane Doe", "email": "jane.doe@example.com"},
+            "456": {"name": "John Doe", "email": "john.doe@example.com"},
         }
     },
 )
@@ -57,4 +58,4 @@ agent = Agent(
 agent.print_response("I am customer 456, please retrieve my profile.")
 
 # This should fail
-agent.print_response("I am customer 123, please retrieve my profile.")
+agent.print_response("I am customer 789, please retrieve my profile.")
