@@ -264,7 +264,7 @@ class Step:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunResponse"] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -533,7 +533,7 @@ class Step:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunResponse"] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 

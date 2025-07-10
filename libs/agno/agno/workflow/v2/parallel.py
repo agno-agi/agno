@@ -327,7 +327,7 @@ class Parallel:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=(step_index, index),
                 ):
                     events.append(event)
                 return (index, events)
@@ -544,7 +544,7 @@ class Parallel:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=(step_index, index),
                 ):
                     events.append(event)
                 return (index, events)

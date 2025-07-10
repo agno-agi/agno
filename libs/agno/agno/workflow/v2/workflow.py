@@ -1704,8 +1704,20 @@ class Workflow:
         current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
         step_display_cache = {}
 
-        def get_step_display_number(step_index: int, step_name: str = "") -> str:
+        def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
             """Generate smart step numbering based on current context"""
+
+            # Handle tuple format for parallel sub-steps
+            if isinstance(step_index, tuple):
+                parent_index, sub_index = step_index
+                # Check if we're in a loop context to add iteration info
+                if current_primitive_context and current_primitive_context["type"] == "loop":
+                    iteration = current_primitive_context.get("current_iteration", 1)
+                    return f"Step {parent_index + 1}.{sub_index + 1} (Iteration {iteration})"
+                else:
+                    # For parallel or other contexts
+                    return f"Step {parent_index + 1}.{sub_index + 1}"
+
             # Create a unique key for this step
             step_key = f"{step_index}:{step_name}"
 
@@ -1721,22 +1733,30 @@ class Workflow:
                 primitive_step_index = current_primitive_context["step_index"]
 
                 if primitive_type == "parallel":
-                    # For parallel: Step 1.1, Step 1.2, etc.
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    # For parallel: Use a thread-safe approach - get the next sub-index based on what's already in cache
+                    existing_parallel_keys = [
+                        k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_parallel_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 elif primitive_type == "loop":
                     # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
                     iteration = current_primitive_context.get("current_iteration", 1)
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    existing_loop_keys = [
+                        k for k in step_display_cache.keys() if k.startswith(f"loop:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_loop_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
 
                 elif primitive_type in ["condition", "router"]:
-                    # For condition/router: Step 1.1, Step 1.2, etc.
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    # For condition/router: Use a similar thread-safe approach
+                    existing_condition_keys = [
+                        k
+                        for k in step_display_cache.keys()
+                        if k.startswith(f"{primitive_type}:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_condition_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 else:
@@ -1901,9 +1921,11 @@ class Workflow:
                         # Print parallel execution summary panel
                         live_log.update(status, refresh=True)
                         parallel_summary = f"**Parallel Steps:** {response.parallel_step_count}"
+                        # Use get_step_display_number for consistent numbering
+                        step_display = get_step_display_number(current_step_index, current_step_name)
                         parallel_panel = create_panel(
                             content=Markdown(parallel_summary) if markdown else parallel_summary,
-                            title=f"Step {current_step_index + 1}: {current_step_name}",
+                            title=f"{step_display}: {current_step_name}",
                             border_style="cyan",
                         )
                         console.print(parallel_panel)
@@ -2091,8 +2113,12 @@ class Workflow:
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
-                            if not is_callable_function and self.steps and current_step_index < len(self.steps):
-                                step = self.steps[current_step_index]
+                            actual_step_index = current_step_index
+                            if isinstance(current_step_index, tuple):
+                                actual_step_index = current_step_index[0]  # Use parent step index
+                            
+                            if not is_callable_function and self.steps and actual_step_index < len(self.steps):
+                                step = self.steps[actual_step_index]
                                 if hasattr(step, "executor_type"):
                                     current_step_executor_type = step.executor_type
 
@@ -2464,8 +2490,20 @@ class Workflow:
         current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
         step_display_cache = {}
 
-        def get_step_display_number(step_index: int, step_name: str = "") -> str:
+        def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
             """Generate smart step numbering based on current context"""
+
+            # Handle tuple format for parallel sub-steps
+            if isinstance(step_index, tuple):
+                parent_index, sub_index = step_index
+                # Check if we're in a loop context to add iteration info
+                if current_primitive_context and current_primitive_context["type"] == "loop":
+                    iteration = current_primitive_context.get("current_iteration", 1)
+                    return f"Step {parent_index + 1}.{sub_index + 1} (Iteration {iteration})"
+                else:
+                    # For parallel or other contexts
+                    return f"Step {parent_index + 1}.{sub_index + 1}"
+
             # Create a unique key for this step
             step_key = f"{step_index}:{step_name}"
 
@@ -2481,22 +2519,30 @@ class Workflow:
                 primitive_step_index = current_primitive_context["step_index"]
 
                 if primitive_type == "parallel":
-                    # For parallel: Step 1.1, Step 1.2, etc.
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    # For parallel: Use a thread-safe approach - get the next sub-index based on what's already in cache
+                    existing_parallel_keys = [
+                        k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_parallel_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 elif primitive_type == "loop":
                     # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
                     iteration = current_primitive_context.get("current_iteration", 1)
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    existing_loop_keys = [
+                        k for k in step_display_cache.keys() if k.startswith(f"loop:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_loop_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
 
                 elif primitive_type in ["condition", "router"]:
-                    # For condition/router: Step 1.1, Step 1.2, etc.
-                    sub_index = current_primitive_context.get("sub_step_counter", 0) + 1
-                    current_primitive_context["sub_step_counter"] = sub_index
+                    # For condition/router: Use a similar thread-safe approach
+                    existing_condition_keys = [
+                        k
+                        for k in step_display_cache.keys()
+                        if k.startswith(f"{primitive_type}:{primitive_step_index}:")
+                    ]
+                    sub_index = len(existing_condition_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 else:
@@ -2661,9 +2707,11 @@ class Workflow:
                         # Print parallel execution summary panel
                         live_log.update(status, refresh=True)
                         parallel_summary = f"**Parallel Steps:** {response.parallel_step_count}"
+                        # Use get_step_display_number for consistent numbering
+                        step_display = get_step_display_number(current_step_index, current_step_name)
                         parallel_panel = create_panel(
                             content=Markdown(parallel_summary) if markdown else parallel_summary,
-                            title=f"Step {current_step_index + 1}: {current_step_name}",
+                            title=f"{step_display}: {current_step_name}",
                             border_style="cyan",
                         )
                         console.print(parallel_panel)
@@ -2851,8 +2899,12 @@ class Workflow:
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
-                            if not is_callable_function and self.steps and current_step_index < len(self.steps):
-                                step = self.steps[current_step_index]
+                            actual_step_index = current_step_index
+                            if isinstance(current_step_index, tuple):
+                                actual_step_index = current_step_index[0]  # Use parent step index
+                            
+                            if not is_callable_function and self.steps and actual_step_index < len(self.steps):
+                                step = self.steps[actual_step_index]
                                 if hasattr(step, "executor_type"):
                                     current_step_executor_type = step.executor_type
 
