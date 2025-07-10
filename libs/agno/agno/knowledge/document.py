@@ -6,7 +6,7 @@ from agno.utils.log import log_info, logger
 
 
 class DocumentKnowledgeBase(AgentKnowledge):
-    documents: Optional[Union[List[Document], List[Dict[str, Union[Document, Dict[str, Any]]]]]] = None
+    documents: Optional[Union[List[Document], List[Dict[str, Any]]]] = None
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
@@ -23,7 +23,7 @@ class DocumentKnowledgeBase(AgentKnowledge):
         for item in self.documents:
             if isinstance(item, dict) and "document" in item:
                 # Handle document with metadata
-                document = item["document"]
+                document: Document = item["document"]
                 config = item.get("metadata", {})
                 if config:
                     log_info(f"Adding metadata {config} to document: {document.name}")
@@ -62,7 +62,7 @@ class DocumentKnowledgeBase(AgentKnowledge):
         for item in self.documents:
             if isinstance(item, dict) and "document" in item:
                 # Handle document with metadata
-                document = item["document"]
+                document: Document = item["document"]
                 config = item.get("metadata", {})
                 if config:
                     log_info(f"Adding metadata {config} to document: {document.name}")
