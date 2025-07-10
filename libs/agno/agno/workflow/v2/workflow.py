@@ -207,6 +207,13 @@ class Workflow:
         self.session_name = session_name
         # -*- Save to storage
         self.write_to_storage()
+    
+    def delete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.storage is None:
+            return
+        # -*- Delete session
+        self.storage.delete_session(session_id=session_id)
         
     def _handle_event(
         self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse

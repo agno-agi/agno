@@ -515,8 +515,11 @@ class WorkflowRunResponse:
         messages = data.pop("messages", [])
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        workflow_metrics = data.pop("workflow_metrics", None)
-        workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics) if workflow_metrics else None
+        workflow_metrics_dict = data.pop("workflow_metrics", {})
+        workflow_metrics = None
+        if workflow_metrics_dict:
+            from agno.workflow.v2.workflow import WorkflowMetrics
+            workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
         step_responses = data.pop("step_responses", [])
         parsed_step_responses: List["StepOutput"] = []
@@ -550,6 +553,7 @@ class WorkflowRunResponse:
             audio=audio,
             response_audio=response_audio,
             events=events,
+            workflow_metrics=workflow_metrics,
             **data,
         )
 

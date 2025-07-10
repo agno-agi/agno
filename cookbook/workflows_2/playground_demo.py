@@ -17,8 +17,6 @@ from investment_report_generator import investment_workflow
 from startup_idea_validator import startup_validation_workflow
 
 
-
-
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",

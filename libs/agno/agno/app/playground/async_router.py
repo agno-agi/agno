@@ -1,6 +1,6 @@
 import json
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -42,6 +42,7 @@ from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.team.team import Team
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
@@ -155,6 +156,8 @@ async def workflow_response_streamer(
     try:
         run_response = await workflow.arun(
             **body.input,
+            user_id=body.user_id,
+            session_id=body.session_id,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -687,6 +690,11 @@ def get_async_playground_router(
                     return StreamingResponse(
                         (result.to_json() for result in new_workflow_instance.run(**body.input)),
                         media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
                     )
             except Exception as e:
                 # Handle unexpected runtime errors
@@ -699,6 +707,11 @@ def get_async_playground_router(
                     return StreamingResponse(
                         workflow_response_streamer(workflow, body),
                         media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
                     )
                 else:
                     # Return as a normal response
@@ -706,7 +719,8 @@ def get_async_playground_router(
             except Exception as e:
                 # Handle unexpected runtime errors
                 raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
-
+            
+            
     @playground_router.get("/workflows/{workflow_id}/sessions")
     async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
@@ -725,7 +739,7 @@ def get_async_playground_router(
             )  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
-        print("ALL WORKFLOW SESSIONS", all_workflow_sessions)
+        
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []
         for session in all_workflow_sessions:
@@ -739,8 +753,8 @@ def get_async_playground_router(
                 }  # type: ignore
             )
         return workflow_sessions
-
-    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
+    
+    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
     ):
@@ -755,15 +769,18 @@ def get_async_playground_router(
 
         # Retrieve the specific session
         try:
-            workflow_session: Optional[WorkflowSession] = workflow.storage.read(session_id, user_id)  # type: ignore
+            workflow_session = workflow.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
+        
+        workflow_session_dict = workflow_session.to_dict()
+        if "memory" not in workflow_session_dict:
+            workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}
 
-        # Return the session
-        return workflow_session
+        return JSONResponse(content=workflow_session_dict)
 
     @playground_router.post("/workflows/{workflow_id}/sessions/{session_id}/rename")
     async def rename_workflow_session(workflow_id: str, session_id: str, body: WorkflowRenameRequest):

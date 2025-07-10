@@ -157,6 +157,8 @@ def workflow_response_streamer(
     try:
         run_response = workflow.run(
             **body.input,
+            user_id=body.user_id,
+            session_id=body.session_id,
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -754,8 +756,11 @@ def get_sync_playground_router(
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Return the session
-        return workflow_session
+        workflow_session_dict = workflow_session.to_dict()  
+        if "memory" not in workflow_session_dict:
+            workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}
+
+        return JSONResponse(content=workflow_session_dict)
 
     @playground_router.post("/workflows/{workflow_id}/sessions/{session_id}/rename")
     def rename_workflow_session(
