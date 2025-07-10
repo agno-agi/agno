@@ -45,7 +45,7 @@ class ScrapeGraphTools(Toolkit):
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
     def smartscraper(self, url: str, prompt: str) -> str:
-        """Use this function to extract structured data from a webpage using LLM.
+        """Extract structured data from a webpage using LLM.
         Args:
             url (str): The URL to scrape
             prompt (str): Natural language prompt describing what to extract
@@ -59,7 +59,7 @@ class ScrapeGraphTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def markdownify(self, url: str) -> str:
-        """Use this function to convert a webpage to markdown format.
+        """Convert a webpage to markdown format.
         Args:
             url (str): The URL to convert
         Returns:
@@ -82,7 +82,7 @@ class ScrapeGraphTools(Toolkit):
         same_domain_only: bool = True,
         batch_size: int = 1,
     ) -> str:
-        """Use this function to crawl a website and extract structured data using a schema.
+        """Crawl a website and extract structured data
         Args:
             url (str): The URL to crawl
             prompt (str): Natural language prompt describing what to extract
@@ -111,7 +111,7 @@ class ScrapeGraphTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def searchscraper(self, prompt: str) -> str:
-        """Use this function to search and extract information from the web using LLM.
+        """Search the web and extract information from the web.
         Args:
             prompt (str): Search query
         Returns:
