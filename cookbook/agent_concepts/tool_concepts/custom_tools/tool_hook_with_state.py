@@ -35,7 +35,7 @@ def grab_customer_profile_hook(
         raise ValueError(f"Customer profile for {cust_id} not found")
     customer_profile = agent.session_state["customer_profiles"][cust_id]
 
-    # Replace the customer_id with the customer_profile
+    # Replace the customer with the customer_profile
     arguments["customer"] = json.dumps(customer_profile)
     # Call the function with the updated arguments
     result = function_call(**arguments)
