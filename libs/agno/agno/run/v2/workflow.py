@@ -519,6 +519,7 @@ class WorkflowRunResponse:
         workflow_metrics = None
         if workflow_metrics_dict:
             from agno.workflow.v2.workflow import WorkflowMetrics
+
             workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
         step_responses = data.pop("step_responses", [])

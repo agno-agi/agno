@@ -75,12 +75,12 @@ class SingleStoreStorage(Storage):
         self.table: Table = self.get_table()
 
     @property
-    def mode(self) -> Literal["agent", "team", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow", "workflow_v2"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow", "workflow_v2"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(SingleStoreStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:

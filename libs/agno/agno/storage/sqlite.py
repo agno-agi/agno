@@ -262,6 +262,7 @@ class SqliteStorage(Storage):
                 self.create()
             else:
                 import traceback
+
                 traceback.print_exc()
                 log_debug(f"Exception reading from table: {e}")
         return None

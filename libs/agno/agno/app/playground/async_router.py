@@ -1,6 +1,6 @@
 import json
 from io import BytesIO
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union, cast
+from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -42,11 +42,10 @@ from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
-from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
 from agno.workflow.v2.workflow import Workflow as WorkflowV2
+from agno.workflow.workflow import Workflow
 
 
 async def chat_response_streamer(
@@ -675,10 +674,11 @@ def get_async_playground_router(
 
         # Create a new instance of this workflow
         if isinstance(workflow, Workflow):
-            new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
+            new_workflow_instance = workflow.deep_copy(
+                update={"workflow_id": workflow_id, "session_id": body.session_id}
+            )
             new_workflow_instance.user_id = body.user_id
             new_workflow_instance.session_name = None
-
 
             # Return based on the response type
             try:
@@ -719,8 +719,7 @@ def get_async_playground_router(
             except Exception as e:
                 # Handle unexpected runtime errors
                 raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
-            
-            
+
     @playground_router.get("/workflows/{workflow_id}/sessions")
     async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
@@ -739,7 +738,7 @@ def get_async_playground_router(
             )  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
-        
+
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []
         for session in all_workflow_sessions:
@@ -753,7 +752,7 @@ def get_async_playground_router(
                 }  # type: ignore
             )
         return workflow_sessions
-    
+
     @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
@@ -775,7 +774,7 @@ def get_async_playground_router(
 
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
-        
+
         workflow_session_dict = workflow_session.to_dict()
         if "memory" not in workflow_session_dict:
             workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}

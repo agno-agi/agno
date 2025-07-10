@@ -44,8 +44,8 @@ from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
 from agno.workflow.v2.workflow import Workflow as WorkflowV2
+from agno.workflow.workflow import Workflow
 
 
 def chat_response_streamer(
@@ -149,7 +149,6 @@ def team_chat_response_streamer(
         return
 
 
-
 def workflow_response_streamer(
     workflow: WorkflowV2,
     body: WorkflowRunRequest,
@@ -173,6 +172,7 @@ def workflow_response_streamer(
         )
         yield error_response.to_json()
         return
+
 
 def get_sync_playground_router(
     agents: Optional[List[Agent]] = None,
@@ -668,10 +668,11 @@ def get_sync_playground_router(
 
         # Create a new instance of this workflow
         if isinstance(workflow, Workflow):
-            new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
+            new_workflow_instance = workflow.deep_copy(
+                update={"workflow_id": workflow_id, "session_id": body.session_id}
+            )
             new_workflow_instance.user_id = body.user_id
             new_workflow_instance.session_name = None
-
 
             # Return based on the response type
             try:
@@ -683,6 +684,11 @@ def get_sync_playground_router(
                     return StreamingResponse(
                         (result.to_json() for result in new_workflow_instance.run(**body.input)),
                         media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
                     )
             except Exception as e:
                 # Handle unexpected runtime errors
@@ -695,6 +701,11 @@ def get_sync_playground_router(
                     return StreamingResponse(
                         workflow_response_streamer(workflow, body),
                         media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
                     )
                 else:
                     # Return as a normal response
@@ -756,7 +767,7 @@ def get_sync_playground_router(
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        workflow_session_dict = workflow_session.to_dict()  
+        workflow_session_dict = workflow_session.to_dict()
         if "memory" not in workflow_session_dict:
             workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}
 

@@ -68,6 +68,7 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
+
 # Create and use workflow
 async def main():
     await content_creation_workflow.aprint_response(

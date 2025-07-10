@@ -9,6 +9,7 @@ from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.utils.log import log_debug, log_info, logger
 
 try:
@@ -104,6 +105,8 @@ class RedisStorage(Storage):
                 return TeamSession.from_dict(session_data)
             elif self.mode == "workflow":
                 return WorkflowSession.from_dict(session_data)
+            elif self.mode == "workflow_v2":
+                return WorkflowSessionV2.from_dict(session_data)
 
         except Exception as e:
             logger.error(f"Error reading session: {e}")
