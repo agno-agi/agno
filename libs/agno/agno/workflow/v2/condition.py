@@ -219,7 +219,7 @@ class Condition:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -413,7 +413,7 @@ class Condition:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
