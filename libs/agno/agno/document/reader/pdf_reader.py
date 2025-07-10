@@ -73,9 +73,9 @@ async def _async_ocr_reader(page: Any) -> str:
 
 def _clean_page_numbers(
     page_content_list: List[str],
-    extra_content: List[str],
-    page_start_numbering_format: str,
-    page_end_numbering_format: str,
+    extra_content: List[str] = [],
+    page_start_numbering_format: str = PAGE_START_NUMBERING_FORMAT_DEFAULT,
+    page_end_numbering_format: str = PAGE_END_NUMBERING_FORMAT_DEFAULT,
 ) -> Tuple[List[str], Optional[int]]:
     f"""
     Identifies and removes or reformats page numbers from a list of PDF page contents, based on the most consistent sequential numbering.
@@ -114,27 +114,13 @@ def _clean_page_numbers(
         return None
 
     page_numbers = [find_page_number(content) for content in page_content_list]
+    if all(x is None or x > 5 for x in page_numbers):
+        # This approach won't work reliably for higher page numbers.
+        return page_content_list, None
 
     # Possible range shifts to detect page numbering
     range_shifts = [-2, -1, 0, 1, 2]
-    best_match = None
-    best_shift: Optional[int] = None
-    best_correct_count = 0
-
-    for shift in range_shifts:
-        expected_numbers = [i + shift for i in range(len(page_numbers))]
-        # Check if expected number occurs (or that the expected "2" occurs in an incorrectly merged number like 25,
-        # where 2 is the page number and 5 is part of the PDF content).
-        correct_count = sum(
-            1
-            for actual, expected in zip(page_numbers, expected_numbers)
-            if actual == expected or str(expected) in str(actual)
-        )
-
-        if correct_count > best_correct_count:
-            best_correct_count = correct_count
-            best_match = expected_numbers
-            best_shift = shift
+    best_match, best_correct_count, best_shift = _identify_best_page_sequence(page_numbers, range_shifts)
 
     # Check if at least ..% of the pages have correct sequential numbering
     if best_match and best_correct_count / len(page_numbers) >= PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL:
@@ -156,8 +142,33 @@ def _clean_page_numbers(
 
             # Add formatted page numbering if configured.
             page_content_list[i] = page_start + page_content_list[i] + extra_info + page_end
+    else:
+        best_shift = None
 
     return page_content_list, best_shift
+
+
+def _identify_best_page_sequence(page_numbers, range_shifts):
+    best_match = None
+    best_shift: Optional[int] = None
+    best_correct_count = 0
+
+    for shift in range_shifts:
+        expected_numbers = [i + shift for i in range(len(page_numbers))]
+        # Check if expected number occurs (or that the expected "2" occurs in an incorrectly merged number like 25,
+        # where 2 is the page number and 5 is part of the PDF content).
+        correct_count = sum(
+            1
+            for actual, expected in zip(page_numbers, expected_numbers)
+            if actual == expected or str(actual).startswith(str(expected)) or str(actual).endswith(str(expected))
+        )
+
+        if correct_count > best_correct_count:
+            best_correct_count = correct_count
+            best_match = expected_numbers
+            best_shift = shift
+
+    return best_match, best_correct_count, best_shift
 
 
 class BasePDFReader(Reader):
