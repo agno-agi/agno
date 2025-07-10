@@ -4,6 +4,7 @@ from agno.document import Document
 from agno.document.reader.gcs.pdf_reader import GCSPDFReader
 from agno.knowledge.gcs.base import GCSKnowledgeBase
 
+
 class GCSPDFKnowledgeBase(GCSKnowledgeBase):
     reader: GCSPDFReader = GCSPDFReader()
 
@@ -17,4 +18,4 @@ class GCSPDFKnowledgeBase(GCSKnowledgeBase):
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         for blob in self.gcs_blobs:
             if blob.name.endswith(".pdf"):
-                yield await self.reader.async_read(blob=blob) 
+                yield await self.reader.async_read(blob=blob)

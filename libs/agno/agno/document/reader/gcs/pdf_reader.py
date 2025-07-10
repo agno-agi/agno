@@ -17,6 +17,7 @@ try:
 except ImportError:
     raise ImportError("`pypdf` not installed. Please install it via `pip install pypdf`.")
 
+
 class GCSPDFReader(Reader):
     def read(self, blob: storage.Blob) -> List[Document]:
         log_info(f"Reading: gs://{blob.bucket.name}/{blob.name}")
@@ -40,4 +41,4 @@ class GCSPDFReader(Reader):
         return documents
 
     async def async_read(self, blob: storage.Blob) -> List[Document]:
-        return await asyncio.to_thread(self.read, blob) 
+        return await asyncio.to_thread(self.read, blob)

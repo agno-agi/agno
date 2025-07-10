@@ -1,9 +1,10 @@
 from typing import AsyncIterator, Iterator, List, Optional
 
+from google.cloud import storage
+
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
 
-from google.cloud import storage
 
 class GCSKnowledgeBase(AgentKnowledge):
     bucket: Optional[storage.Bucket] = None
@@ -35,4 +36,4 @@ class GCSKnowledgeBase(AgentKnowledge):
 
     @property
     def async_document_lists(self) -> AsyncIterator[List[Document]]:
-        raise NotImplementedError 
+        raise NotImplementedError
