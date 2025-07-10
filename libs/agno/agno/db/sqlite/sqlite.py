@@ -1,4 +1,3 @@
-import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +19,7 @@ from agno.db.sqlite.utils import (
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    serialize_session_json_fields,
 )
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -276,49 +276,36 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
-                if session.chat_history
-                else None
-            )
-            runs = json.dumps([run.to_dict() for run in session.runs]) if session.runs else None
-            summary = json.dumps(session.summary.to_dict()) if session.summary else None
-
-            # Convert other JSON fields to strings
-            agent_data = json.dumps(session.agent_data) if session.agent_data else None
-            session_data = json.dumps(session.session_data) if session.session_data else None
-            extra_data = json.dumps(session.extra_data) if session.extra_data else None
+            serialized_session = serialize_session_json_fields(session.to_dict())
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=serialized_session.get("session_id"),
                     session_type=SessionType.AGENT.value,
-                    agent_id=session.agent_id,
-                    team_session_id=session.team_session_id,
-                    user_id=session.user_id,
-                    runs=runs,
-                    agent_data=agent_data,
-                    session_data=session_data,
-                    chat_history=chat_history,
-                    summary=summary,
-                    extra_data=extra_data,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    agent_id=serialized_session.get("agent_id"),
+                    team_session_id=serialized_session.get("team_session_id"),
+                    user_id=serialized_session.get("user_id"),
+                    agent_data=serialized_session.get("agent_data"),
+                    session_data=serialized_session.get("session_data"),
+                    extra_data=serialized_session.get("extra_data"),
+                    runs=serialized_session.get("runs"),
+                    chat_history=serialized_session.get("chat_history"),
+                    summary=serialized_session.get("summary"),
+                    created_at=serialized_session.get("created_at"),
+                    updated_at=serialized_session.get("created_at"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        agent_id=session.agent_id,
-                        team_session_id=session.team_session_id,
-                        user_id=session.user_id,
-                        agent_data=agent_data,
-                        session_data=session_data,
-                        chat_history=chat_history,
-                        summary=summary,
-                        extra_data=extra_data,
-                        runs=runs,
+                        agent_id=serialized_session.get("agent_id"),
+                        team_session_id=serialized_session.get("team_session_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        agent_data=serialized_session.get("agent_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
                         updated_at=int(time.time()),
                     ),
                 )
@@ -347,48 +334,35 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
-                if session.chat_history
-                else None
-            )
-            runs = json.dumps([run.to_dict() for run in session.runs]) if session.runs else None
-            summary = json.dumps(session.summary) if session.summary else None
-
-            # Convert other JSON fields to strings
-            team_data = json.dumps(session.team_data) if session.team_data else None
-            session_data = json.dumps(session.session_data) if session.session_data else None
-            extra_data = json.dumps(session.extra_data) if session.extra_data else None
+            serialized_session = serialize_session_json_fields(session.to_dict())
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=serialized_session.get("session_id"),
                     session_type=SessionType.TEAM.value,
-                    team_id=session.team_id,
-                    user_id=session.user_id,
-                    runs=runs,
-                    team_data=team_data,
-                    session_data=session_data,
-                    chat_history=chat_history,
-                    summary=summary,
-                    extra_data=extra_data,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    team_id=serialized_session.get("team_id"),
+                    user_id=serialized_session.get("user_id"),
+                    runs=serialized_session.get("runs"),
+                    chat_history=serialized_session.get("chat_history"),
+                    summary=serialized_session.get("summary"),
+                    created_at=serialized_session.get("created_at"),
+                    updated_at=serialized_session.get("created_at"),
+                    team_data=serialized_session.get("team_data"),
+                    session_data=serialized_session.get("session_data"),
+                    extra_data=serialized_session.get("extra_data"),
                 )
 
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        team_id=session.team_id,
-                        user_id=session.user_id,
-                        team_data=team_data,
-                        session_data=session_data,
-                        chat_history=chat_history,
-                        summary=summary,
-                        extra_data=extra_data,
-                        runs=runs,
+                        team_id=serialized_session.get("team_id"),
+                        user_id=serialized_session.get("user_id"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        runs=serialized_session.get("runs"),
+                        team_data=serialized_session.get("team_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
                         updated_at=int(time.time()),
                     ),
                 )
@@ -417,47 +391,34 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                json.dumps([chat_message.to_dict() for chat_message in session.chat_history])
-                if session.chat_history
-                else None
-            )
-            runs = json.dumps([run.to_dict() for run in session.runs]) if session.runs else None
-            summary = json.dumps(session.summary) if session.summary else None
-
-            # Convert other JSON fields to strings
-            workflow_data = json.dumps(session.workflow_data) if session.workflow_data else None
-            session_data = json.dumps(session.session_data) if session.session_data else None
-            extra_data = json.dumps(session.extra_data) if session.extra_data else None
+            serialized_session = serialize_session_json_fields(session.to_dict())
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=serialized_session.get("session_id"),
                     session_type=SessionType.WORKFLOW.value,
-                    workflow_id=session.workflow_id,
-                    user_id=session.user_id,
-                    runs=runs,
-                    workflow_data=workflow_data,
-                    session_data=session_data,
-                    chat_history=chat_history,
-                    summary=summary,
-                    extra_data=extra_data,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    workflow_id=serialized_session.get("workflow_id"),
+                    user_id=serialized_session.get("user_id"),
+                    runs=serialized_session.get("runs"),
+                    chat_history=serialized_session.get("chat_history"),
+                    summary=serialized_session.get("summary"),
+                    created_at=serialized_session.get("created_at"),
+                    updated_at=serialized_session.get("created_at"),
+                    workflow_data=serialized_session.get("workflow_data"),
+                    session_data=serialized_session.get("session_data"),
+                    extra_data=serialized_session.get("extra_data"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        workflow_id=session.workflow_id,
-                        user_id=session.user_id,
-                        workflow_data=workflow_data,
-                        session_data=session_data,
-                        chat_history=chat_history,
-                        summary=summary,
-                        extra_data=extra_data,
-                        runs=runs,
+                        workflow_id=serialized_session.get("workflow_id"),
+                        user_id=serialized_session.get("user_id"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        runs=serialized_session.get("runs"),
+                        workflow_data=serialized_session.get("workflow_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
                         updated_at=int(time.time()),
                     ),
                 )
@@ -1421,7 +1382,6 @@ class SqliteDb(BaseDb):
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge_documents",
-                db_schema=self.db_schema,
             )
 
         return self.knowledge_table
@@ -1533,6 +1493,27 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting knowledge document: {e}")
             return None
+
+    def delete_knowledge_source(self, source_id: str):
+        pass
+
+    def get_knowledge_source(self, source_id: str) -> Optional[KnowledgeRow]:
+        pass
+
+    def get_knowledge_sources(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ):
+        pass
+
+    def get_source_status(self, source_id: str) -> Optional[str]:
+        pass
+
+    def upsert_knowledge_source(self, knowledge_source):
+        pass
 
     # -- Eval methods --
 

@@ -6,7 +6,6 @@ from agno.eval.accuracy import AccuracyEval
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces import Whatsapp
 from agno.os.managers.eval import EvalManager
 from agno.os.managers.memory import MemoryManager
 from agno.os.managers.metrics.metrics import MetricsManager
@@ -65,7 +64,6 @@ agent_os = AgentOS(
     os_id="basic-app",
     agents=[basic_agent],
     teams=[team_agent],
-    interfaces=[Whatsapp(agent=basic_agent)],
     managers=[
         SessionManager(db=db),
         EvalManager(db=db),

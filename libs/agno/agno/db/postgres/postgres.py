@@ -21,7 +21,6 @@ from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -292,42 +291,36 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary.to_dict() if session.summary else None
+            session_dict = session.to_dict()
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=session_dict.get("session_id"),
                     session_type=SessionType.AGENT.value,
-                    agent_id=session.agent_id,
-                    team_session_id=session.team_session_id,
-                    user_id=session.user_id,
-                    runs=runs,
-                    agent_data=session.agent_data,
-                    session_data=session.session_data,
-                    chat_history=chat_history,
-                    summary=summary,
-                    extra_data=session.extra_data,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    agent_id=session_dict.get("agent_id"),
+                    team_session_id=session_dict.get("team_session_id"),
+                    user_id=session_dict.get("user_id"),
+                    runs=session_dict.get("runs"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    chat_history=session_dict.get("chat_history"),
+                    summary=session_dict.get("summary"),
+                    extra_data=session_dict.get("extra_data"),
+                    created_at=session_dict.get("created_at"),
+                    updated_at=session_dict.get("created_at"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        agent_id=session.agent_id,
-                        team_session_id=session.team_session_id,
-                        user_id=session.user_id,
-                        agent_data=session.agent_data,
-                        session_data=session.session_data,
-                        chat_history=chat_history,
-                        summary=summary,
-                        extra_data=session.extra_data,
-                        runs=runs,
+                        agent_id=session_dict.get("agent_id"),
+                        team_session_id=session_dict.get("team_session_id"),
+                        user_id=session_dict.get("user_id"),
+                        agent_data=session_dict.get("agent_data"),
+                        session_data=session_dict.get("session_data"),
+                        chat_history=session_dict.get("chat_history"),
+                        summary=session_dict.get("summary"),
+                        extra_data=session_dict.get("extra_data"),
+                        runs=session_dict.get("runs"),
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)
@@ -356,43 +349,36 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary if session.summary else None
-            summary = summary.to_dict() if isinstance(summary, SessionSummary) else summary
+            session_dict = session.to_dict()
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=session_dict.get("session_id"),
                     session_type=SessionType.TEAM.value,
-                    team_id=session.team_id,
-                    team_session_id=session.team_session_id,
-                    user_id=session.user_id,
-                    runs=runs,
-                    team_data=session.team_data,
-                    session_data=session.session_data,
-                    summary=summary,
-                    extra_data=session.extra_data,
-                    chat_history=chat_history,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    team_id=session_dict.get("team_id"),
+                    team_session_id=session_dict.get("team_session_id"),
+                    user_id=session_dict.get("user_id"),
+                    runs=session_dict.get("runs"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    extra_data=session_dict.get("extra_data"),
+                    chat_history=session_dict.get("chat_history"),
+                    created_at=session_dict.get("created_at"),
+                    updated_at=session_dict.get("created_at"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        team_id=session.team_id,
-                        team_session_id=session.team_session_id,
-                        user_id=session.user_id,
-                        team_data=session.team_data,
-                        session_data=session.session_data,
-                        summary=summary,
-                        extra_data=session.extra_data,
-                        runs=runs,
-                        chat_history=chat_history,
+                        team_id=session_dict.get("team_id"),
+                        team_session_id=session_dict.get("team_session_id"),
+                        user_id=session_dict.get("user_id"),
+                        team_data=session_dict.get("team_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        extra_data=session_dict.get("extra_data"),
+                        runs=session_dict.get("runs"),
+                        chat_history=session_dict.get("chat_history"),
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)
@@ -421,40 +407,34 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
-
-            # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary if session.summary else None
+            session_dict = session.to_dict()
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
-                    session_id=session.session_id,
+                    session_id=session_dict.get("session_id"),
                     session_type=SessionType.WORKFLOW.value,
-                    workflow_id=session.workflow_id,
-                    user_id=session.user_id,
-                    runs=session.runs,
-                    workflow_data=session.workflow_data,
-                    session_data=session.session_data,
-                    summary=summary,
-                    extra_data=session.extra_data,
-                    chat_history=chat_history,
-                    created_at=session.created_at,
-                    updated_at=session.created_at,
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    runs=session_dict.get("runs"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    extra_data=session_dict.get("extra_data"),
+                    chat_history=session_dict.get("chat_history"),
+                    created_at=session_dict.get("created_at"),
+                    updated_at=session_dict.get("created_at"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(
-                        workflow_id=session.workflow_id,
-                        user_id=session.user_id,
-                        workflow_data=session.workflow_data,
-                        session_data=session.session_data,
-                        summary=session.summary,
-                        extra_data=session.extra_data,
-                        runs=runs,
-                        chat_history=chat_history,
+                        workflow_id=session_dict.get("workflow_id"),
+                        user_id=session_dict.get("user_id"),
+                        workflow_data=session_dict.get("workflow_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        extra_data=session_dict.get("extra_data"),
+                        runs=session_dict.get("runs"),
+                        chat_history=session_dict.get("chat_history"),
                         updated_at=int(time.time()),
                     ),
                 ).returning(table)

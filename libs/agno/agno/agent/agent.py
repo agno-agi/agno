@@ -3800,7 +3800,6 @@ class Agent:
             agent_id=self.agent_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
-            workflow_session_id=self.workflow_session_id,
             agent_data=self.get_agent_data(),
             session_data=self.get_agent_session_data(),
             extra_data=self.extra_data,
