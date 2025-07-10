@@ -1707,18 +1707,30 @@ class Workflow:
         def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
             """Generate smart step numbering based on current context"""
 
-            # Handle tuple format for parallel sub-steps
+            # Handle tuple format for nested parallel/loop sub-steps
             if isinstance(step_index, tuple):
-                parent_index, sub_index = step_index
-                # Check if we're in a loop context to add iteration info
-                if current_primitive_context and current_primitive_context["type"] == "loop":
-                    iteration = current_primitive_context.get("current_iteration", 1)
-                    return f"Step {parent_index + 1}.{sub_index + 1} (Iteration {iteration})"
-                else:
-                    # For parallel or other contexts
-                    return f"Step {parent_index + 1}.{sub_index + 1}"
+                # Handle nested tuples by extracting the meaningful parts
+                if len(step_index) == 2:
+                    parent_idx, sub_idx = step_index
 
-            # Create a unique key for this step
+                    # If parent_idx is also a tuple (nested case), extract the base index
+                    if isinstance(parent_idx, tuple):
+                        base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                    else:
+                        base_idx = parent_idx
+
+                    # Check if we're in a loop context to add iteration info
+                    if current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # For parallel or other contexts
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                else:
+                    # Fallback for other tuple formats
+                    return f"Step {step_index[0] + 1}"
+
+            # Handle simple integer step_index
             step_key = f"{step_index}:{step_name}"
 
             # Return cached value if we've already computed it
@@ -1733,7 +1745,7 @@ class Workflow:
                 primitive_step_index = current_primitive_context["step_index"]
 
                 if primitive_type == "parallel":
-                    # For parallel: Use a thread-safe approach - get the next sub-index based on what's already in cache
+                    # For parallel: Use a thread-safe approach
                     existing_parallel_keys = [
                         k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
                     ]
@@ -1748,16 +1760,6 @@ class Workflow:
                     ]
                     sub_index = len(existing_loop_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
-
-                elif primitive_type in ["condition", "router"]:
-                    # For condition/router: Use a similar thread-safe approach
-                    existing_condition_keys = [
-                        k
-                        for k in step_display_cache.keys()
-                        if k.startswith(f"{primitive_type}:{primitive_step_index}:")
-                    ]
-                    sub_index = len(existing_condition_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 else:
                     # Fallback
@@ -2113,10 +2115,15 @@ class Workflow:
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
+                            # Handle both integer and tuple step indices for parallel execution
                             actual_step_index = current_step_index
                             if isinstance(current_step_index, tuple):
-                                actual_step_index = current_step_index[0]  # Use parent step index
-                            
+                                # For tuple indices, use the first element (parent step index)
+                                actual_step_index = current_step_index[0]
+                                # If it's nested tuple, keep extracting until we get an integer
+                                while isinstance(actual_step_index, tuple) and len(actual_step_index) > 0:
+                                    actual_step_index = actual_step_index[0]
+
                             if not is_callable_function and self.steps and actual_step_index < len(self.steps):
                                 step = self.steps[actual_step_index]
                                 if hasattr(step, "executor_type"):
@@ -2493,18 +2500,30 @@ class Workflow:
         def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
             """Generate smart step numbering based on current context"""
 
-            # Handle tuple format for parallel sub-steps
+            # Handle tuple format for nested parallel/loop sub-steps
             if isinstance(step_index, tuple):
-                parent_index, sub_index = step_index
-                # Check if we're in a loop context to add iteration info
-                if current_primitive_context and current_primitive_context["type"] == "loop":
-                    iteration = current_primitive_context.get("current_iteration", 1)
-                    return f"Step {parent_index + 1}.{sub_index + 1} (Iteration {iteration})"
-                else:
-                    # For parallel or other contexts
-                    return f"Step {parent_index + 1}.{sub_index + 1}"
+                # Handle nested tuples by extracting the meaningful parts
+                if len(step_index) == 2:
+                    parent_idx, sub_idx = step_index
 
-            # Create a unique key for this step
+                    # If parent_idx is also a tuple (nested case), extract the base index
+                    if isinstance(parent_idx, tuple):
+                        base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                    else:
+                        base_idx = parent_idx
+
+                    # Check if we're in a loop context to add iteration info
+                    if current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # For parallel or other contexts
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                else:
+                    # Fallback for other tuple formats
+                    return f"Step {step_index[0] + 1}"
+
+            # Handle simple integer step_index
             step_key = f"{step_index}:{step_name}"
 
             # Return cached value if we've already computed it
@@ -2519,7 +2538,7 @@ class Workflow:
                 primitive_step_index = current_primitive_context["step_index"]
 
                 if primitive_type == "parallel":
-                    # For parallel: Use a thread-safe approach - get the next sub-index based on what's already in cache
+                    # For parallel: Use a thread-safe approach
                     existing_parallel_keys = [
                         k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
                     ]
@@ -2534,16 +2553,6 @@ class Workflow:
                     ]
                     sub_index = len(existing_loop_keys) + 1
                     display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
-
-                elif primitive_type in ["condition", "router"]:
-                    # For condition/router: Use a similar thread-safe approach
-                    existing_condition_keys = [
-                        k
-                        for k in step_display_cache.keys()
-                        if k.startswith(f"{primitive_type}:{primitive_step_index}:")
-                    ]
-                    sub_index = len(existing_condition_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index}"
 
                 else:
                     # Fallback
@@ -2899,14 +2908,14 @@ class Workflow:
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
+                            # Handle both integer and tuple step indices for parallel execution
                             actual_step_index = current_step_index
                             if isinstance(current_step_index, tuple):
-                                actual_step_index = current_step_index[0]  # Use parent step index
-                            
-                            if not is_callable_function and self.steps and actual_step_index < len(self.steps):
-                                step = self.steps[actual_step_index]
-                                if hasattr(step, "executor_type"):
-                                    current_step_executor_type = step.executor_type
+                                # For tuple indices, use the first element (parent step index)
+                                actual_step_index = current_step_index[0]
+                                # If it's nested tuple, keep extracting until we get an integer
+                                while isinstance(actual_step_index, tuple) and len(actual_step_index) > 0:
+                                    actual_step_index = actual_step_index[0]
 
                             # Check if this is a streaming content event from agent or team
                             if isinstance(
