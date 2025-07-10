@@ -26,6 +26,7 @@ class CustomerDBTools(Toolkit):
         return customer
 
 
+# When used as a tool hook, this function will receive the contextual Agent, function_name, etc as parameters
 def grab_customer_profile_hook(
     agent: Agent, function_name: str, function_call: Callable, arguments: Dict[str, Any]
 ):
