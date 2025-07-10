@@ -3,8 +3,6 @@ from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy.schema import Table
-
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
@@ -26,13 +24,7 @@ class BaseDb(ABC):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
-        if (
-            not session_table
-            and not user_memory_table
-            and not metrics_table
-            and not eval_table
-            and not knowledge_table
-        ):
+        if not session_table and not user_memory_table and not metrics_table and not eval_table and not knowledge_table:
             raise ValueError("At least one of the tables must be provided")
 
         self.session_table_name = session_table
@@ -48,11 +40,11 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _get_table(self, table_type: str) -> Table:
+    def _get_table(self, table_type: str) -> Any:
         raise NotImplementedError
 
     @abstractmethod
-    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Table]:
+    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Sessions Table ---
@@ -239,11 +231,11 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
+    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
+    def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
         raise NotImplementedError
 
     @abstractmethod
@@ -253,7 +245,7 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
+        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
@@ -270,7 +262,7 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
+        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
