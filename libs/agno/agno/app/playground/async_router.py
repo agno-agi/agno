@@ -156,7 +156,7 @@ async def workflow_response_streamer(
         run_response = await workflow.arun(
             **body.input,
             user_id=body.user_id,
-            session_id=body.session_id or str(uuid4()),
+            session_id=body.session_id,
             stream=True,
             stream_intermediate_steps=True,
         )
