@@ -7,10 +7,6 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces import Whatsapp
-from agno.os.managers.eval import EvalManager
-from agno.os.managers.memory import MemoryManager
-from agno.os.managers.metrics.metrics import MetricsManager
-from agno.os.managers.session import SessionManager
 from agno.team.team import Team
 
 # Setup the Redis database
@@ -66,12 +62,6 @@ agent_os = AgentOS(
     agents=[agent],
     teams=[team],
     interfaces=[Whatsapp(agent=agent)],
-    managers=[
-        SessionManager(db=db),
-        EvalManager(db=db),
-        MetricsManager(db=db),
-        MemoryManager(memory=memory),
-    ],
 )
 app = agent_os.get_app()
 

@@ -4,7 +4,6 @@ from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.os import AgentOS
-from agno.os.managers.session import SessionManager
 from agno.team import Team
 
 # Setup the database and memory
@@ -20,7 +19,7 @@ basic_team = Team(
 
 
 # Setup the AgentOS
-agent_os = AgentOS(agents=[basic_agent], managers=[SessionManager(db=db)])
+agent_os = AgentOS(agents=[basic_agent])
 app = agent_os.get_app()
 
 
