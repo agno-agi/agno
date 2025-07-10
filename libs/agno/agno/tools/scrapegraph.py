@@ -110,17 +110,15 @@ class ScrapeGraphTools(Toolkit):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def searchscraper(self, url: str, prompt: str) -> str:
-        """Use this function to search and extract information from a webpage using LLM.
+    def searchscraper(self, prompt: str) -> str:
+        """Use this function to search and extract information from the web using LLM.
         Args:
-            url (str): The URL to search
-            prompt (str): Natural language prompt describing what to search for
+            prompt (str): Search query
         Returns:
-            The search results extracted from the webpage
+            JSON of the search results
         """
         try:
-            response = self.client.searchscraper(website_url=url, user_prompt=prompt)
-            # If response has a 'result' attribute, return it, else return the whole response
+            response = self.client.searchscraper(user_prompt=prompt)
             if hasattr(response, "result"):
                 return json.dumps(response.result)
             elif isinstance(response, dict) and "result" in response:

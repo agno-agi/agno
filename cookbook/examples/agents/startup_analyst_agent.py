@@ -17,11 +17,7 @@ from agno.tools.scrapegraph import ScrapeGraphTools
 startup_analyst = Agent(
     name="Startup Analyst",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        ScrapeGraphTools(
-            markdownify=True, crawl=True, searchscraper=True
-        )
-    ],
+    tools=[ScrapeGraphTools(markdownify=True, crawl=True, searchscraper=True)],
     instructions=dedent("""
         You are an elite startup analyst and due diligence expert with access to advanced web scraping 
         and analysis tools. Your mission is to provide comprehensive, actionable intelligence on startups 
@@ -127,10 +123,11 @@ startup_analyst = Agent(
         - Set reasonable limits: max_pages=10, depth=3 for most analyses
         
         **SearchScraper Best Practices:**
-        - Use for finding specific information like funding details
-        - Perfect for locating executive information and backgrounds
-        - Great for finding partnership announcements and news
+        - Use for finding specific information across the web like funding details
+        - Perfect for locating executive information and backgrounds from various sources
+        - Great for finding partnership announcements and news articles
         - Excellent for competitive intelligence and market positioning
+        - Note: SearchScraper searches the web directly, not a specific webpage
         
         **RESPONSE FORMATTING:**
         
@@ -167,8 +164,9 @@ startup_analyst = Agent(
     """),
     show_tool_calls=True,
     markdown=True,
-    stream=True,
 )
 
 
-startup_analyst.print_response("Perform a comprehensive startup intelligence analysis on Anthropic")
+startup_analyst.print_response(
+    "Perform a comprehensive startup intelligence analysis on Agno AI Agent framework (https://agno.com)"
+)
