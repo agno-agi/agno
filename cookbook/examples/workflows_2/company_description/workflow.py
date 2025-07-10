@@ -46,8 +46,6 @@ def generate_supplier_profile(step_input: StepInput) -> StepOutput:
     supplier_name: str = supplier_profile.supplier_name
     supplier_homepage_url: str = supplier_profile.supplier_homepage_url
 
-    log_info(f"Step input: {step_input}")
-
     crawler_data: str = step_input.get_step_content("Gathering Information")["Crawler"]
     search_data: str = step_input.get_step_content("Gathering Information")["Search"]
     wikipedia_data: str = step_input.get_step_content("Gathering Information")["Wikipedia"]
@@ -132,14 +130,15 @@ company_description_workflow = Workflow(
     steps=[
         Parallel(
             crawler_step,
-            # search_step,
-            # wikipedia_step,
-            # competitor_step,
+            search_step,
+            wikipedia_step,
+            competitor_step,
             name="Gathering Information",
         ),
         generate_supplier_profile_step,
         send_email_step,
     ],
+    debug_mode=True,
 )
 
 if __name__ == "__main__":
