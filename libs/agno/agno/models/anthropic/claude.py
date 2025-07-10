@@ -149,8 +149,6 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        if _request_params:
-            log_debug(f"Calling {self.provider} with request parameters: {_request_params}")
         return _request_params
 
     def _prepare_request_kwargs(
@@ -179,6 +177,9 @@ class Claude(Model):
 
         if tools:
             request_kwargs["tools"] = self._format_tools_for_model(tools)
+
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
     def _format_tools_for_model(self, tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
@@ -426,16 +427,13 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
-    ) -> None:
+    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
         """
         Handle the results of function calls.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
         """
         if len(function_call_results) > 0:
             fc_responses: List = []
@@ -517,7 +515,6 @@ class Claude(Model):
                         function_def["arguments"] = json.dumps(tool_input)
 
                     model_response.extra = model_response.extra or {}
-                    model_response.extra.setdefault("tool_ids", []).append(block.id)
                     model_response.tool_calls.append(
                         {
                             "id": block.id,
@@ -584,7 +581,6 @@ class Claude(Model):
                     function_def["arguments"] = json.dumps(tool_input)
 
                 model_response.extra = model_response.extra or {}
-                model_response.extra.setdefault("tool_ids", []).append(tool_use.id)
 
                 model_response.tool_calls = [
                     {
