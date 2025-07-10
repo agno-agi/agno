@@ -307,7 +307,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for insertion
                         batch_records = []
@@ -381,7 +381,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for upserting
                         batch_records = []

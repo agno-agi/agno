@@ -314,16 +314,20 @@ class Agent:
 
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
+    # Set when this agent is part of a workflow.
+    workflow_session_id: Optional[str] = None
 
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
+    # Optional workflow session state. Set by the workflow.
+    workflow_session_state: Optional[Dict[str, Any]] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs
     debug_mode: bool = False
-    # Debug level: 1 = basic, 2 = detailed
-    debug_level: Literal[1, 2] = 1
 
+    # monitoring=True logs Agent information to agno.com for monitoring
+    monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
@@ -598,6 +602,7 @@ class Agent:
     def reset_session_state(self) -> None:
         self.session_name = None
         self.session_state = None
+        self.workflow_session_state = self.workflow_session_state  # being set by Workflow, at Agent.run cannot be None
         self.session_metrics = None
         self.images = None
         self.videos = None
@@ -816,7 +821,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -835,7 +840,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -853,7 +858,7 @@ class Agent:
 
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1234,7 +1239,7 @@ class Agent:
 
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -3132,10 +3137,16 @@ class Agent:
             self.session_state["current_user_id"] = user_id
             if self.team_session_state is not None:
                 self.team_session_state["current_user_id"] = user_id
+
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
         if session_id is not None:
             self.session_state["current_session_id"] = session_id
             if self.team_session_state is not None:
                 self.team_session_state["current_session_id"] = session_id
+
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
@@ -3623,6 +3634,8 @@ class Agent:
             session_data["session_state"] = self.session_state
         if self.team_session_state is not None and len(self.team_session_state) > 0:
             session_data["team_session_state"] = self.team_session_state
+        if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
+            session_data["workflow_session_state"] = self.workflow_session_state
         if self.session_metrics is not None:
             session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
         if self.team_data is not None:
@@ -3676,6 +3689,39 @@ class Agent:
                     else:
                         # Update the current session_state
                         self.session_state = session_state_from_db
+
+            # Get the team_session_state from the database and update the current team_session_state
+            if "team_session_state" in session.session_data:
+                team_session_state_from_db = session.session_data.get("team_session_state")
+                if (
+                    team_session_state_from_db is not None
+                    and isinstance(team_session_state_from_db, dict)
+                    and len(team_session_state_from_db) > 0
+                ):
+                    # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
+                    if self.team_session_state is not None and len(self.team_session_state) > 0:
+                        # This updates team_session_state_from_db
+                        # If there are conflicting keys, values from team_session_state_from_db will take precedence
+                        merge_dictionaries(self.team_session_state, team_session_state_from_db)
+                    else:
+                        # Update the current team_session_state
+                        self.team_session_state = team_session_state_from_db
+
+            if "workflow_session_state" in session.session_data:
+                workflow_session_state_from_db = session.session_data.get("workflow_session_state")
+                if (
+                    workflow_session_state_from_db is not None
+                    and isinstance(workflow_session_state_from_db, dict)
+                    and len(workflow_session_state_from_db) > 0
+                ):
+                    # If the workflow_session_state is already set, merge the workflow_session_state from the database with the current workflow_session_state
+                    if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
+                        # This updates workflow_session_state_from_db
+                        # If there are conflicting keys, values from workflow_session_state_from_db will take precedence
+                        merge_dictionaries(self.workflow_session_state, workflow_session_state_from_db)
+                    else:
+                        # Update the current workflow_session_state
+                        self.workflow_session_state = workflow_session_state_from_db
 
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
@@ -3754,6 +3800,7 @@ class Agent:
             agent_id=self.agent_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
+            workflow_session_id=self.workflow_session_id,
             agent_data=self.get_agent_data(),
             session_data=self.get_agent_session_data(),
             extra_data=self.extra_data,
@@ -3851,6 +3898,7 @@ class Agent:
         format_variables = ChainMap(
             self.session_state or {},
             self.team_session_state or {},
+            self.workflow_session_state or {},
             self.context or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
@@ -4146,7 +4194,7 @@ class Agent:
     def get_user_message(
         self,
         *,
-        message: Optional[Union[str, List]],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4282,7 +4330,7 @@ class Agent:
     def get_run_messages(
         self,
         *,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         session_id: str,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4403,6 +4451,14 @@ class Agent:
                 user_message = Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+        # 4.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role=self.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
         # Add user message to run_messages
         if user_message is not None:
             run_messages.user_message = user_message
@@ -4778,12 +4834,20 @@ class Agent:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                if isinstance(self.knowledge, AgentKnowledge):
+                    num_documents = self.knowledge.num_documents
+                elif isinstance(self.knowledge, Knowledge):
+                    num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters
-            )
+            if isinstance(self.knowledge, AgentKnowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, num_documents=num_documents, filters=filters
+                )
+            elif isinstance(self.knowledge, Knowledge):
+                relevant_docs: List[Document] = self.knowledge.search(
+                    query=query, max_results=num_documents, filters=filters
+                )
 
             if not relevant_docs or len(relevant_docs) == 0:
                 log_debug("No relevant documents found for query")
@@ -6106,7 +6170,7 @@ class Agent:
 
     def print_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -6555,7 +6619,7 @@ class Agent:
 
     async def aprint_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         messages: Optional[List[Union[Dict, Message]]] = None,
         session_id: Optional[str] = None,

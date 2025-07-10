@@ -36,4 +36,3 @@ async def acreate_team_run(run: TeamRunCreate) -> None:
             response.raise_for_status()
         except Exception as e:
             log_debug(f"Could not create Team run: {e}")
-

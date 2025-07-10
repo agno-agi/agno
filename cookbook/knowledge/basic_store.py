@@ -1,7 +1,7 @@
 from agno.agent import Agent
-from agno.document.document_v2 import DocumentV2
-from agno.document.local_document_store import LocalDocumentStore
+from agno.document.local_store import LocalDocumentStore
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.source import DocumentV2
 
 # from agno.document.s3_document_store import S3DocumentStore
 from agno.vectordb.pgvector import PgVector

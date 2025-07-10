@@ -10,8 +10,6 @@ from uuid import uuid4
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
-from agno.document.document_store import DocumentStore
-from agno.document.document_v2 import DocumentContent, DocumentV2
 from agno.document.reader import Reader
 from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
 from agno.document.reader.docx_reader import DocxReader
@@ -23,7 +21,9 @@ from agno.document.reader.text_reader import TextReader
 from agno.document.reader.url_reader import URLReader
 from agno.document.reader.website_reader import WebsiteReader
 from agno.document.reader.youtube_reader import YouTubeReader
+from agno.document.store import Store
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
+from agno.knowledge.source import Source, SourceContent
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
@@ -35,24 +35,26 @@ class Knowledge:
     name: str
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
-    document_store: Optional[Union[DocumentStore, List[DocumentStore]]] = None
-    documents_db: Optional[PostgresDb] = None
-    documents: Optional[Union[DocumentV2, List[DocumentV2]]] = None
+    store: Optional[Union[Store, List[Store]]] = None
+    sources_db: Optional[PostgresDb] = None
+    sources: Optional[Union[Source, List[Source]]] = None
     paths: Optional[List[str]] = None
     urls: Optional[List[str]] = None
     valid_metadata_filters: Optional[List[str]] = None
-    num_documents: int = 10
+    max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
     def __post_init__(self):
         if self.vector_store and not self.vector_store.exists():
             self.vector_store.create()
 
-        if self.document_store is not None:
-            self.document_store.read_from_store = True
+        if self.store is not None:
+            self.store.read_from_store = True
+
+        self.construct_readers()
 
     def search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
@@ -60,15 +62,15 @@ class Knowledge:
                 log_warning("No vector db provided")
                 return []
 
-            _num_documents = num_documents or self.num_documents
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
-            return self.vector_store.search(query=query, limit=_num_documents, filters=filters)
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
 
     async def async_search(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
@@ -76,43 +78,42 @@ class Knowledge:
                 log_warning("No vector db provided")
                 return []
 
-            _num_documents = num_documents or self.num_documents
-            log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_store.async_search(query=query, limit=_num_documents, filters=filters)
+                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.search(query=query, num_documents=_num_documents, filters=filters)
+                return self.search(query=query, max_results=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
-        pass
 
     def load(self):
-        log_info("Loading documents from knowledge base")
+        log_info("Loading sources into KnowledgeBase")
 
-        if self.documents:
-            if isinstance(self.documents, list):
-                for document in self.documents:
-                    self.add_documents(document)
+        if self.sources:
+            if isinstance(self.sources, list):
+                for source in self.sources:
+                    self.add_source(source=source)
             else:
-                self.add_documents(self.documents)
+                self.add_source(source=self.sources)
 
-        if self.document_store is not None:
-            if isinstance(self.document_store, list):
-                for store in self.document_store:
+        if self.store is not None:
+            if isinstance(self.store, list):
+                for store in self.store:
                     # Process each store in the list
                     log_info(f"Processing document store: {store.name}")
                     if store.read_from_store:
                         self.load_from_document_store(store)
             else:
-                log_info(f"Processing single document store: {self.document_store.name}")
-                if self.document_store.read_from_store:
-                    self.load_from_document_store(self.document_store)
+                log_info(f"Processing single document store: {self.store.name}")
+                if self.store.read_from_store:
+                    self.load_from_document_store(self.store)
 
-    def load_from_document_store(self, document_store: DocumentStore):
-        if document_store.read_from_store:
-            for file_content, metadata in document_store.get_all_documents():
+    def load_from_document_store(self, store: Store):
+        if store.read_from_store:
+            for file_content, metadata in store.get_all_documents():
                 if metadata["file_type"] == ".pdf":
                     _pdf = io.BytesIO(file_content) if isinstance(file_content, bytes) else file_content
                     document = self.pdf_reader.read(pdf=_pdf, name=metadata["name"])
@@ -122,70 +123,76 @@ class Knowledge:
                     else:
                         self.vector_store.insert(document)
 
-        if document_store.copy_to_store:
+        if store.copy_to_store:
             # TODO: Need to implement this part. Copy only when the file does not already exist in that store.
             pass
 
     def _load_from_path(
         self,
-        document: DocumentV2,
+        source: Source,
     ):
-        log_info("Adding document from path")
-        path = Path(document.path)
+        log_info("Adding source from path")
+        path = Path(source.path)
         if path.is_file():
-            if document.reader:
-                read_documents = document.reader.read(path, name=document.name or path.name)
+            if source.reader:
+                read_documents = source.reader.read(path, name=source.name or path.name)
             else:
                 reader = self._select_reader(path.suffix)
                 print(f"Using Reader: {reader.__class__.__name__}")
                 if reader:
-                    read_documents = reader.read(path, name=document.name or path.name)
-                else:
-                    log_info(f"No reader found for path: {path}")
+                    read_documents = reader.read(path, name=source.name or path.name)
 
-            if not document.size and document.content:
-                document.size = len(document.content.content)
-            if not document.size:
+            if not source.size and source.content:
+                source.size = len(source.content.content)
+            if not source.size:
                 try:
-                    document.size = path.stat().st_size
+                    source.size = path.stat().st_size
                 except (OSError, IOError) as e:
                     log_warning(f"Could not get file size for {path}: {e}")
-                    document.size = 0
+                    source.size = 0
 
             for read_document in read_documents:
-                read_document.source_id = document.id
+                read_document.source_id = source.id
                 if self.vector_store.upsert_available():
-                    self.vector_store.upsert(documents=[read_document], filters=document.metadata)
+                    try:
+                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document: {e}")
+                        self._update_source_status(source.id, "Failed - Could not upsert embedding")
                 else:
-                    self.vector_store.insert(documents=[read_document], filters=document.metadata)
+                    try:
+                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document: {e}")
+                        self._update_source_status(source.id, "Failed - Could not insert embedding")
 
         elif path.is_dir():
             for file in path.iterdir():
                 id = str(uuid4())
-                # Create a new DocumentV2 object for each file in the directory
-                file_document = DocumentV2(
-                    id=id, name=document.name, path=str(file), metadata=document.metadata, reader=document.reader
+                # Create a new Source object for each file in the directory
+                file_source = Source(
+                    id=id, name=source.name, path=str(file), metadata=source.metadata, reader=source.reader
                 )
-                self._load_from_path(file_document)
+                self._load_from_path(file_source)
         else:
-            self._update_document_status(document.id, "Failed")
-            raise ValueError(f"Invalid path: {path}")
+            self._update_source_status(source.id, "Failed")
+            log_warning(f"Invalid path: {path}")
 
-        self._update_document_status(document.id, "Completed")
+        self._update_source_status(source.id, "Completed")
 
-    def _load_from_url(self, document: DocumentV2):
-        log_info("Adding document from URL")
+    def _load_from_url(self, source: Source):
+        log_info("Adding source from URL")
         from urllib.parse import urlparse
 
         # Validate URL
         try:
-            parsed_url = urlparse(document.url)
+            parsed_url = urlparse(source.url)
             if not all([parsed_url.scheme, parsed_url.netloc]):
-                self._update_document_status(document.id, "Failed")
-                raise ValueError(f"Invalid URL format: {document.url}")
+                self._update_source_status(source.id, "Failed - Invalid URL format")
+                log_warning(f"Invalid URL format: {source.url}")
         except Exception as e:
-            self._update_document_status(document.id, "Failed")
-            raise ValueError(f"Invalid URL: {document.url} - {str(e)}")
+            self._update_source_status(source.id, "Failed - Invalid URL")
+            log_warning(f"Invalid URL: {source.url} - {str(e)}")
 
         # Determine file type from URL
         url_path = Path(parsed_url.path)
@@ -193,260 +200,321 @@ class Knowledge:
 
         # Check if it's a file with known extension
         if file_extension and file_extension is not None:
-            log_info(f"Detected file type: {file_extension} from URL: {document.url}")
+            log_info(f"Detected file type: {file_extension} from URL: {source.url}")
             reader = self._select_url_file_reader(file_extension)
             if reader is not None:
                 log_info(f"Selected reader: {reader.__class__.__name__}")
-                read_documents = reader.read(document.url, document.name)
+                read_documents = reader.read(source.url, source.name)
             else:
                 log_info(f"No reader found for file extension: {file_extension}")
         else:
-            log_info(f"No file extension found for URL: {document.url}, determining website type")
-            reader = self._select_url_reader(document.url)
+            log_info(f"No file extension found for URL: {source.url}, determining website type")
+            reader = self._select_url_reader(source.url)
             if reader is not None:
                 log_info(f"Selected reader: {reader.__class__.__name__}")
-                read_documents = reader.read(document.url, document.name)
+                read_documents = reader.read(source.url, source.name)
             else:
-                log_info(f"No reader found for URL: {document.url}")
+                log_info(f"No reader found for URL: {source.url}")
 
         file_size = 0
         if read_documents:
             for read_document in read_documents:
                 if read_document.size:
                     file_size += read_document.size
-                read_document.source_id = document.id
+                read_document.source_id = source.id
                 if self.vector_store.upsert_available():
-                    self.vector_store.upsert(documents=[read_document], filters=document.metadata)
+                    try:
+                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                    except Exception as e:
+                        log_error(f"Error upserting document: {e}")
+                        self._update_source_status(source.id, "Failed - Could not upsert embedding")
                 else:
-                    self.vector_store.insert(documents=[read_document], filters=document.metadata)
+                    try:
+                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                    except Exception as e:
+                        log_error(f"Error inserting document: {e}")
+                        self._update_source_status(source.id, "Failed - Could not insert embedding")
 
-        document.size = file_size
-        self._update_document_status(document.id, "Completed")
+        source.size = file_size
+        self._update_source_status(source.id, "Completed")
 
-    def _load_from_content(self, document: DocumentV2):
-        log_info(f"Adding document from content: {document.size}")
+    def _load_from_content(self, source: Source):
+        log_info(f"Adding source from content: {source.size}")
 
         read_documents = []
-        if isinstance(document.content, str):
-            if document.name is None:
-                document.name = document.content[:10] if len(document.content) >= 10 else document.content
-            content_io = io.BytesIO(document.content.encode("utf-8"))
-            if document.reader:
-                read_documents = document.reader.read(content_io, name=document.name)
+        if isinstance(source.content, str):
+            if source.name is None:
+                source.name = source.content[:10] if len(source.content) >= 10 else source.content
+            content_io = io.BytesIO(source.content.encode("utf-8"))
+            name = source.name if source.name else source.content[:10] if len(source.content) >= 10 else source.content
+            if source.reader:
+                read_documents = source.reader.read(content_io, name=name)
             else:
-                read_documents = self.text_reader.read(content_io, name=document.name)
+                read_documents = self.text_reader.read(content_io, name=name)
 
-        elif isinstance(document.content, DocumentContent):
-            if document.content.type:
-                log_info(f"Document content type: {document.content.type}")
-
-                if "pdf" in document.content.type:
-                    read_documents = self._process_pdf_content(document)
-                elif "csv" in document.content.type:
-                    read_documents = self._process_csv_content(document)
-                elif any(ext in document.content.type for ext in ["docx", "doc", "word"]):
-                    read_documents = self._process_docx_content(document)
+        elif isinstance(source.content, SourceContent):
+            if source.content.type:
+                log_info(f"Source content type: {source.content.type}")
+                if isinstance(source.content.content, bytes):
+                    content_io = io.BytesIO(source.content.content)
+                elif isinstance(source.content.content, str):
+                    content_io = io.BytesIO(source.content.content.encode("utf-8"))
                 else:
-                    log_warning(f"Unsupported content type: {document.content.type}")
-                    return
+                    content_io = source.content.content
+
+                reader = self._select_reader(source.content.type)
+                name = source.name if source.name else f"content_{source.content.type}"
+                read_documents = reader.read(content_io, name=name)
 
                 # Process each document in the list
                 for read_document in read_documents:
                     # Add the original metadata to each document
-                    if document.metadata:
-                        read_document.meta_data.update(document.metadata)
-                    read_document.source_id = document.id
+                    if source.metadata:
+                        read_document.meta_data.update(source.metadata)
+                    read_document.source_id = source.id
 
                     # Add to vector store - pass as a list
-                    if self.vector_store:
-                        self.vector_store.upsert(documents=[read_document], filters=document.metadata)
+                    if self.vector_store and self.vector_store.upsert_available():
+                        try:
+                            self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        except Exception as e:
+                            log_error(f"Error upserting document: {e}")
+                            self._update_source_status(source.id, "Failed - Could not upsert embedding")
+                    else:
+                        try:
+                            self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        except Exception as e:
+                            log_error(f"Error inserting document: {e}")
+                            self._update_source_status(source.id, "Failed - Could not insert embedding")
 
             # Add to document store if available
-            if self.document_store:
-                self.document_store.add_document(id, document)
+            if self.store:
+                self.store.add_source(id, source)
 
         else:
-            self._update_document_status(document.id, "Failed")
+            self._update_source_status(source.id, "Failed")
             raise ValueError("No content provided")
 
-        self._update_document_status(document.id, "Completed")
+        self._update_source_status(source.id, "Completed")
 
-    def _load_from_topics(self): ...
+    def _load_from_topics(self, source: Source):
+        log_info(f"Adding source from topics: {source.topics}")
+
+        for topic in source.topics:
+            id = str(uuid4())
+            self._add_to_sources_db(
+                Source(
+                    id=id,
+                    name=topic,
+                    metadata=source.metadata,
+                    reader=source.reader,
+                    status="Processing" if source.reader else "Failed: No reader provided",
+                    content=SourceContent(
+                        type="Topic",
+                    ),
+                )
+            )
+
+            read_documents = source.reader.read(topic)
+            if len(read_documents) > 0:
+                for read_document in read_documents:
+                    if read_document.content:
+                        read_document.size = len(read_document.content.encode("utf-8"))
+                    if self.vector_store.upsert_available():
+                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                    else:
+                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                self._update_source_status(id, "Completed")
+            else:
+                self._update_source_status(id, "Failed - No content found for topic")
 
     def _load_from_cloud_storage(self): ...
 
-    def _load_document(self, document: DocumentV2) -> None:
-        self._add_to_documents_db(document)
+    def _load_source(self, source: Source) -> None:
+        log_info(f"Loading source: {source.id}")
+        # Don't add for topics, they need to create their own documents.
+        if source.path or source.url or source.content:
+            log_info(f"Adding source to sources db: {source.id}")
+            self._add_to_sources_db(source)
 
-        if document.path:
-            self._load_from_path(document)
+        if source.path:
+            self._load_from_path(source)
 
-        if document.url:
-            self._load_from_url(document)
+        if source.url:
+            self._load_from_url(source)
 
-        if document.content:
-            self._load_from_content(document)
+        if source.content:
+            self._load_from_content(source)
 
-        if document.topics:
-            if document.reader is None:
-                log_warning("No reader provided for topics")
-            else:
-                self._load_from_topics(id, document)
+        if source.topics:
+            self._load_from_topics(source)
 
         # if document.config:
         #     self._load_from_cloud_storage(id, document)
 
-    def add_document(
+    def patch_source(self, source: Source):
+        if self.sources_db is not None:
+            source_row = self.sources_db.get_knowledge_source(source.id)
+            if source_row is None:
+                log_warning(f"Source not found: {source.id}")
+                return
+            # Only update fields that are not None
+            if source.name is not None:
+                source_row.name = source.name
+            if source.description is not None:
+                source_row.description = source.description
+            if source.metadata is not None:
+                source_row.metadata = source.metadata
+            source_row.updated_at = int(time.time())
+            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
+        else:
+            log_warning("No sources db provided")
+
+    def add_source(
         self,
-        document: Optional[DocumentV2] = None,
         name: Optional[str] = None,
         path: Optional[str] = None,
         url: Optional[str] = None,
-        content: Optional[str] = None,
+        text_content: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         topics: Optional[List[str]] = None,
         config: Optional[CloudStorageConfig] = None,
         reader: Optional[Reader] = None,
     ) -> None:
-        # Validation: If document is provided, no other parameters should be provided
-        if document is not None:
-            arguments = [name, path, url, content, metadata, topics, config, reader]
-            if any(argument is not None for argument in arguments):
-                log_warning(
-                    "If 'document' is provided, no other parameters should be provided. "
-                    "Use either 'document' OR individual parameters, not both."
-                )
-
-            # Use the provided document
-            if not document.id:
-                document.id = str(uuid4())
-            log_info(f"Adding document: {document.id}")
-            self._load_document(document)
+        # Validation: At least one of the parameters must be provided
+        if all(argument is None for argument in [name, path, url, text_content, topics]):
+            log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
             return
 
-        # Validation: If document is not provided, at least one of the other parameters must be provided
-        if all(argument is None for argument in [name, path, url, content]):
-            log_warning(
-                "Either 'document' must be provided, or at least one of 'path', 'url', or 'content' must be provided."
-            )
+        # Create Source from individual parameters
+        content = None
+        if text_content:
+            content = SourceContent(content=text_content, type="Text")
 
-        # Create DocumentV2 from individual parameters
-        document = DocumentV2(
+        source = Source(
             id=str(uuid4()),
             name=name,
             path=path,
             url=url,
-            content=content,
+            content=content if content else None,
             metadata=metadata,
             topics=topics,
             config=config,
             reader=reader,
         )
-        self._load_document(document)
+        self._load_source(source)
 
-    # def add_documents(self, documents: List[DocumentV2]) -> None:
-    #     """
-    #     Implementation of add_documents that handles both overloads.
-    #     """
-    #     if isinstance(documents, list):
-    #         log_debug(f"Adding {len(documents)} documents")
-    #         for document in documents:
-    #             self.add_document(document)
+    def _add_source_from_api(
+        self,
+        source: Source,
+    ) -> None:
+        # Validation:At least one of the parameters must be provided
+        if not source.id:
+            source.id = str(uuid4())
 
-    #     elif isinstance(documents, DocumentV2):
-    #         self.add_document(documents)
+        self._load_source(source)
 
-    def get_document(self, document_id: str):
-        if self.documents_db is None:
-            raise ValueError("No documents db provided")
-        document_row = self.documents_db.get_knowledge_document(document_id)
-        document = DocumentV2(
-            id=document_row.id,
-            name=document_row.name,
-            description=document_row.description,
-            metadata=document_row.metadata,
-            size=document_row.size,
-            status=document_row.status,
-            created_at=document_row.created_at,
-            updated_at=document_row.updated_at if document_row.updated_at else document_row.created_at,
+    def get_source(self, source_id: str):
+        if self.sources_db is None:
+            raise ValueError("No sources db provided")
+        source_row = self.sources_db.get_knowledge_source(source_id)
+        if source_row is None:
+            return None
+        source = Source(
+            id=source_row.id,
+            name=source_row.name,
+            description=source_row.description,
+            metadata=source_row.metadata,
+            size=source_row.size,
+            status=source_row.status,
+            created_at=source_row.created_at,
+            updated_at=source_row.updated_at if source_row.updated_at else source_row.created_at,
         )
-        return document
+        return source
 
-    def get_documents(
+    def get_sources(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[DocumentV2], int]:
-        if self.documents_db is None:
-            raise ValueError("No documents db provided")
-        documents, count = self.documents_db.get_knowledge_documents(
+    ) -> Tuple[List[Source], int]:
+        if self.sources_db is None:
+            raise ValueError("No sources db provided")
+        sources, count = self.sources_db.get_knowledge_sources(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
         )
         # Convert database rows to DocumentV2 objects
         result = []
-        for document_row in documents:
-            # Create DocumentV2 from database row
-            doc = DocumentV2(
-                id=document_row.id,
-                name=document_row.name,
-                description=document_row.description,
-                metadata=document_row.metadata,
-                size=document_row.size,
-                status=document_row.status,
-                created_at=document_row.created_at,
-                updated_at=document_row.updated_at if document_row.updated_at else document_row.created_at,
+        for source_row in sources:
+            # Create Source from database row
+            source = Source(
+                id=source_row.id,
+                name=source_row.name,
+                description=source_row.description,
+                metadata=source_row.metadata,
+                size=source_row.size,
+                status=source_row.status,
+                created_at=source_row.created_at,
+                updated_at=source_row.updated_at if source_row.updated_at else source_row.created_at,
             )
-            result.append(doc)
+            result.append(source)
         return result, count
 
-    def get_document_status(self, document_id: str) -> Optional[str]:
-        if self.documents_db is None:
-            raise ValueError("No documents db provided")
-        return self.documents_db.get_document_status(document_id)
+    def get_source_status(self, source_id: str) -> Optional[str]:
+        if self.sources_db is None:
+            raise ValueError("No sources db provided")
+        return self.sources_db.get_source_status(source_id)
 
-    def remove_document(self, document_id: str):
-        if self.documents_db is not None:
-            self.documents_db.delete_knowledge_document(document_id)
+    def remove_source(self, source_id: str):
+        if self.sources_db is not None:
+            self.sources_db.delete_knowledge_source(source_id)
 
-        if self.document_store is not None:
-            self.document_store.delete_document(document_id)
+        if self.store is not None:
+            self.store.delete_source(source_id)
 
         if self.vector_store is not None:
-            self.vector_store.delete_by_source_id(document_id)
+            self.vector_store.delete_by_source_id(source_id)
 
-    def remove_all_documents(self):
-        if self.document_store is None:
-            raise ValueError("No document store provided")
-        return self.document_store.delete_all_documents()
+    def remove_all_sources(self):
+        if self.store is not None:
+            self.store.delete_all_sources()
+        sources, _ = self.get_sources()
+        for source in sources:
+            self.remove_source(source.id)
 
-    def _add_to_documents_db(self, document: DocumentV2):
-        if self.documents_db:
-            created_at = document.created_at if document.created_at else int(time.time())
-            updated_at = document.updated_at if document.updated_at else int(time.time())
+    def _add_to_sources_db(self, source: Source):
+        if self.sources_db:
+            created_at = source.created_at if source.created_at else int(time.time())
+            updated_at = source.updated_at if source.updated_at else int(time.time())
 
-            document_row = KnowledgeRow(
-                id=document.id,
-                name=document.name if document.name else "",
-                description=document.description if document.description else "",
-                metadata=document.metadata,
-                type=document.content.type if document.content else None,
-                size=document.size if document.size else len(document.content.content) if document.content else None,
+            file_type = source.content.type if source.content and source.content.type else None
+
+            source_row = KnowledgeRow(
+                id=source.id,
+                name=source.name if source.name else "",
+                description=source.description if source.description else "",
+                metadata=source.metadata,
+                type=file_type,
+                size=source.size
+                if source.size
+                else len(source.content.content)
+                if source.content and source.content.content
+                else None,
                 linked_to=self.name,
                 access_count=0,
-                status=document.status if document.status else "Processing",
+                status=source.status if source.status else "Processing",
                 created_at=created_at,
                 updated_at=updated_at,
             )
-            self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
+            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
 
-    def _update_document_status(self, document_id: str, status: str):
-        if self.documents_db:
-            document_row = self.documents_db.get_knowledge_document(document_id)
-            document_row.status = status
-            document_row.updated_at = int(time.time())
-            self.documents_db.upsert_knowledge_document(knowledge_row=document_row)
+    def _update_source_status(self, source_id: str, status: str):
+        if self.sources_db:
+            source_row = self.sources_db.get_knowledge_source(source_id)
+            source_row.status = status
+            source_row.updated_at = int(time.time())
+            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
 
     def _add_from_file(self, file_path: str):
         path = Path(file_path)
@@ -455,7 +523,7 @@ class Knowledge:
                 document = self.pdf_reader.read(
                     path, name=path
                 )  # TODO: Need to make naming consistent with files and their extensions.
-                self.document_store.add_document(document)
+                self.store.add_source(document)
                 self.vector_store.insert(document)
         elif path.is_dir():
             pass
@@ -489,6 +557,34 @@ class Knowledge:
     # --- Readers Setup ---
 
     # TODO: Rework these into a map we can use for selection, but also return to API.
+    def _generate_reader_key(self, reader: Reader) -> str:
+        if reader.name:
+            return f"{reader.name.lower().replace(' ', '_')}"
+        else:
+            return f"{reader.__class__.__name__.lower().replace(' ', '_')}"
+
+    def construct_readers(self):
+        self.readers = {
+            self._generate_reader_key(self.pdf_reader): self.pdf_reader,
+            self._generate_reader_key(self.csv_reader): self.csv_reader,
+            self._generate_reader_key(self.docx_reader): self.docx_reader,
+            self._generate_reader_key(self.json_reader): self.json_reader,
+            self._generate_reader_key(self.markdown_reader): self.markdown_reader,
+            self._generate_reader_key(self.text_reader): self.text_reader,
+            self._generate_reader_key(self.url_reader): self.url_reader,
+            self._generate_reader_key(self.website_reader): self.website_reader,
+            self._generate_reader_key(self.firecrawl_reader): self.firecrawl_reader,
+            self._generate_reader_key(self.youtube_reader): self.youtube_reader,
+            self._generate_reader_key(self.csv_url_reader): self.csv_url_reader,
+        }
+
+    def add_reader(self, reader: Reader):
+        self.readers[self._generate_reader_key(reader)] = reader
+        return reader
+
+    def get_readers(self) -> List[Reader]:
+        return self.readers
+
     def _select_reader(self, extension: str) -> Reader:
         log_info(f"Selecting reader for extension: {extension}")
         extension = extension.lower()
@@ -519,6 +615,12 @@ class Knowledge:
         else:
             return self.url_reader
 
+    def get_filters(self) -> List[str]:
+        return [
+            "filter_tag_1",
+            "filter_tag2",
+        ]
+
     # --- File Readers ---
     @cached_property
     def pdf_reader(self) -> PDFReader:
@@ -528,34 +630,34 @@ class Knowledge:
     @cached_property
     def csv_reader(self) -> CSVReader:
         """CSV reader - lazy loaded and cached."""
-        return CSVReader()
+        return CSVReader(name="CSV Reader", description="Reads CSV files")
 
     @cached_property
     def docx_reader(self) -> DocxReader:
         """Docx reader - lazy loaded and cached."""
-        return DocxReader()
+        return DocxReader(name="Docx Reader", description="Reads Docx files")
 
     @cached_property
     def json_reader(self) -> JSONReader:
         """JSON reader - lazy loaded and cached."""
-        return JSONReader()
+        return JSONReader(name="JSON Reader", description="Reads JSON files")
 
     @cached_property
     def markdown_reader(self) -> MarkdownReader:
         """Markdown reader - lazy loaded and cached."""
-        return MarkdownReader()
+        return MarkdownReader(name="Markdown Reader", description="Reads Markdown files")
 
     @cached_property
     def text_reader(self) -> TextReader:
         """Txt reader - lazy loaded and cached."""
-        return TextReader()
+        return TextReader(name="Text Reader", description="Reads Text files")
 
     # --- URL Readers ---
 
     @cached_property
     def website_reader(self) -> WebsiteReader:
         """Website reader - lazy loaded and cached."""
-        return WebsiteReader()
+        return WebsiteReader(name="Website Reader", description="Reads Website files")
 
     @cached_property
     def firecrawl_reader(self) -> FirecrawlReader:
@@ -563,64 +665,29 @@ class Knowledge:
         return FirecrawlReader(
             api_key=os.getenv("FIRECRAWL_API_KEY"),
             mode="crawl",
+            name="Firecrawl Reader",
+            description="Crawls websites",
         )
 
     @cached_property
     def url_reader(self) -> URLReader:
         """URL reader - lazy loaded and cached."""
-        return URLReader()
+        return URLReader(name="URL Reader", description="Reads URLs")
 
     @cached_property
     def pdf_url_reader(self) -> PDFUrlReader:
         """PDF URL reader - lazy loaded and cached."""
-        return PDFUrlReader()
+        return PDFUrlReader(name="PDF URL Reader", description="Reads PDF URLs")
 
     @cached_property
     def youtube_reader(self) -> YouTubeReader:
         """YouTube reader - lazy loaded and cached."""
-        return YouTubeReader()
+        return YouTubeReader(name="YouTube Reader", description="Reads YouTube videos")
 
     @cached_property
     def csv_url_reader(self) -> CSVUrlReader:
         """CSV URL reader - lazy loaded and cached."""
-        return CSVUrlReader()
-
-    # --- Content Processing ---
-
-    def _process_pdf_content(self, document: DocumentV2) -> List[Document]:
-        """Process PDF content"""
-
-        # Convert bytes to BytesIO for the reader
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        read_documents = self.pdf_reader.read(content_io, name=document.name)
-        return read_documents
-
-    def _process_csv_content(self, document: DocumentV2) -> List[Document]:
-        """Process CSV content"""
-        # Convert bytes to BytesIO for the reader
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        log_info(f"Processing CSV content: {document.name}")
-        read_documents = self.csv_reader.read(content_io, name=document.name)
-        return read_documents
-
-    def _process_docx_content(self, document: DocumentV2) -> List[Document]:
-        """Process DOCX content"""
-        if isinstance(document.content.content, bytes):
-            content_io = io.BytesIO(document.content.content)
-        else:
-            content_io = document.content.content
-
-        log_info(f"Processing DOCX content: {document.name}")
-        read_documents = self.docx_reader.read(content_io, name=document.name)
-        return read_documents
+        return CSVUrlReader(name="CSV URL Reader", description="Reads CSV URLs")
 
 
 # -- Unused for now. Will revisit when we do async and optimizations ---

@@ -167,17 +167,17 @@ class AgentOS:
 
                     # Session manager
                     if team.memory.db.session_table_name:
-                        if add_unique_component("session_db", str(db_id)):
+                        if add_unique_component("session", str(db_id)):
                             discovered_managers.append(SessionManager(db=team.memory.db))
 
                     # Metrics manager
                     if team.memory.db.metrics_table_name:
-                        if add_unique_component("metrics_db", str(db_id)):
+                        if add_unique_component("metrics", str(db_id)):
                             discovered_managers.append(MetricsManager(db=team.memory.db))
 
                     # Eval manager
                     if team.memory.db.eval_table_name:
-                        if add_unique_component("eval_db", str(db_id)):
+                        if add_unique_component("eval", str(db_id)):
                             discovered_managers.append(EvalManager(db=team.memory.db))
 
                 # Knowledge manager

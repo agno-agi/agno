@@ -110,7 +110,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
-        "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
+        "knowledge_sources": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
 

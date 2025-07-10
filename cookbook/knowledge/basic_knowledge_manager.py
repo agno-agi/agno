@@ -1,6 +1,5 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.document_v2 import DocumentV2
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
