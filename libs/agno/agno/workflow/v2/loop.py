@@ -203,7 +203,7 @@ class Loop:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -250,6 +250,15 @@ class Loop:
 
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
+
+                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
+                if isinstance(step_index, tuple):
+                    # Handle nested loops/parallel - extend the tuple
+                    composite_step_index = step_index + (i,)
+                else:
+                    # Create new tuple for loop sub-steps
+                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+
                 # Stream step execution
                 for event in step.execute_stream(
                     current_step_input,
@@ -257,7 +266,7 @@ class Loop:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=composite_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -433,7 +442,7 @@ class Loop:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -481,6 +490,14 @@ class Loop:
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
 
+                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
+                if isinstance(step_index, tuple):
+                    # Handle nested loops/parallel - extend the tuple
+                    composite_step_index = step_index + (i,)
+                else:
+                    # Create new tuple for loop sub-steps
+                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+
                 # Stream step execution - mirroring workflow logic
                 async for event in step.aexecute_stream(
                     current_step_input,
@@ -488,7 +505,7 @@ class Loop:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=composite_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)

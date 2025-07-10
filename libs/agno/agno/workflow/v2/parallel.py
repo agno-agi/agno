@@ -296,7 +296,7 @@ class Parallel:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -320,6 +320,10 @@ class Parallel:
             index, step = step_with_index
             try:
                 events = []
+                if isinstance(step_index, tuple):
+                    sub_step_index = index
+                else:
+                    sub_step_index = (step_index, index)
                 # All workflow step types have execute_stream() method
                 for event in step.execute_stream(
                     step_input,
@@ -327,7 +331,7 @@ class Parallel:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=sub_step_index,
                 ):
                     events.append(event)
                 return (index, events)
@@ -513,7 +517,7 @@ class Parallel:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -537,6 +541,10 @@ class Parallel:
             index, step = step_with_index
             try:
                 events = []
+                if isinstance(step_index, tuple):
+                    sub_step_index = index
+                else:
+                    sub_step_index = (step_index, index)
                 # All workflow step types have aexecute_stream() method
                 async for event in step.aexecute_stream(
                     step_input,
@@ -544,7 +552,7 @@ class Parallel:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=sub_step_index,
                 ):
                     events.append(event)
                 return (index, events)

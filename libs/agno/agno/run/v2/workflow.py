@@ -157,7 +157,7 @@ class StepStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
 
 @dataclass
@@ -166,7 +166,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
     content: Optional[Any] = None
     content_type: str = "str"
@@ -187,7 +187,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_error.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     error: Optional[str] = None
 
 
@@ -197,7 +197,7 @@ class LoopExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     max_iterations: Optional[int] = None
 
 
@@ -207,7 +207,7 @@ class LoopIterationStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_iteration_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     iteration: int = 0
     max_iterations: Optional[int] = None
 
@@ -218,7 +218,7 @@ class LoopIterationCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_iteration_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     iteration: int = 0
     max_iterations: Optional[int] = None
     iteration_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
@@ -231,7 +231,7 @@ class LoopExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     total_iterations: int = 0
     max_iterations: Optional[int] = None
     all_results: List[List["StepOutput"]] = field(default_factory=list)  # noqa: F821
@@ -243,7 +243,7 @@ class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.parallel_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     parallel_step_count: Optional[int] = None
 
 
@@ -253,7 +253,7 @@ class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.parallel_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     parallel_step_count: Optional[int] = None
 
     # Results from all parallel steps
@@ -266,7 +266,7 @@ class ConditionExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.condition_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     condition_result: Optional[bool] = None
 
 
@@ -276,7 +276,7 @@ class ConditionExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.condition_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     condition_result: Optional[bool] = None
     executed_steps: Optional[int] = None
 
@@ -290,7 +290,7 @@ class RouterExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.router_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     # Names of steps selected by router
     selected_steps: List[str] = field(default_factory=list)
 
@@ -301,7 +301,7 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.router_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     # Names of steps that were selected
     selected_steps: List[str] = field(default_factory=list)
     executed_steps: Optional[int] = None
@@ -316,7 +316,7 @@ class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.steps_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     steps_count: Optional[int] = None
 
 
@@ -326,7 +326,7 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.steps_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     steps_count: Optional[int] = None
     executed_steps: Optional[int] = None
 
@@ -340,7 +340,7 @@ class StepOutputEvent(BaseWorkflowRunResponseEvent):
 
     event: str = "StepOutput"
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
     # Store actual step execution result as StepOutput object
     step_output: Optional["StepOutput"] = None  # noqa: F821
