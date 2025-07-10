@@ -1,9 +1,10 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
+from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
@@ -44,7 +45,7 @@ class OpenAIResponses(Model):
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-    truncation: Optional[Dict[str, Any]] = None
+    truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
 
     request_params: Optional[Dict[str, Any]] = None
@@ -68,12 +69,14 @@ class OpenAIResponses(Model):
     async_client: Optional[AsyncOpenAI] = None
 
     # The role to map the message role to.
-    role_map = {
-        "system": "developer",
-        "user": "user",
-        "assistant": "assistant",
-        "tool": "tool",
-    }
+    role_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "system": "developer",
+            "user": "user",
+            "assistant": "assistant",
+            "tool": "tool",
+        }
+    )
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -84,7 +87,7 @@ class OpenAIResponses(Model):
         """
         from os import getenv
 
-        # Fetch API key from excnv if not already set
+        # Fetch API key from env if not already set
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
@@ -195,7 +198,7 @@ class OpenAIResponses(Model):
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
 
-        # Handle tools for deep research models
+        # Deep research models require web_search_preview tool or MCP tool
         if "deep-research" in self.id:
             if tools is None:
                 tools = []
@@ -203,7 +206,8 @@ class OpenAIResponses(Model):
             # Check if web_search_preview tool is already present
             has_web_search = any(tool.get("type") == "web_search_preview" for tool in tools)
 
-            # Add web_search_preview if not present
+            # Add web_search_preview if not present - this enables the model to search
+            # the web for current information and provide citations
             if not has_web_search:
                 web_search_tool = {"type": "web_search_preview"}
                 tools.insert(0, web_search_tool)
@@ -391,7 +395,9 @@ class OpenAIResponses(Model):
                         }
                     )
             elif message.role == "assistant":
-                formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
+                # Handle null content by converting to empty string
+                content = message.content if message.content is not None else ""
+                formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
         return formatted_messages
 
