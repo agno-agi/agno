@@ -198,6 +198,16 @@ class Workflow:
 
         self._update_workflow_session_state()
 
+    def rename_session(self, session_name: str):
+        """Rename the current session and save to storage"""
+
+        # -*- Read from storage
+        self.read_from_storage()
+        # -*- Rename session
+        self.session_name = session_name
+        # -*- Save to storage
+        self.write_to_storage()
+        
     def _handle_event(
         self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
     ) -> "WorkflowRunResponseEvent":

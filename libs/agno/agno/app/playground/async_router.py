@@ -725,7 +725,7 @@ def get_async_playground_router(
             )  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
-
+        print("ALL WORKFLOW SESSIONS", all_workflow_sessions)
         # Return the sessions
         workflow_sessions: List[WorkflowSessionResponse] = []
         for session in all_workflow_sessions:

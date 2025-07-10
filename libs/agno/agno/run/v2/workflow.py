@@ -515,6 +515,9 @@ class WorkflowRunResponse:
         messages = data.pop("messages", [])
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
+        workflow_metrics = data.pop("workflow_metrics", None)
+        workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics) if workflow_metrics else None
+
         step_responses = data.pop("step_responses", [])
         parsed_step_responses: List["StepOutput"] = []
         if step_responses:
