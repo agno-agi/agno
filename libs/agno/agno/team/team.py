@@ -1625,7 +1625,9 @@ class Team:
             for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
-                        session_messages.append(m)
+                        # Skipping messages from history to avoid duplicates
+                        if not m.from_history:
+                            session_messages.append(m)
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
@@ -1671,7 +1673,9 @@ class Team:
                 for run in self.memory.runs.get(session_id, []):
                     if run.messages is not None:
                         for m in run.messages:
-                            session_messages.append(m)
+                            # Skipping messages from history to avoid duplicates
+                            if not m.from_history:
+                                session_messages.append(m)
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
