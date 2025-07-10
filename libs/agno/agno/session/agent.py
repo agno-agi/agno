@@ -73,6 +73,10 @@ class AgentSession:
         if chat_history is not None and isinstance(chat_history[0], dict):
             chat_history = [Message.from_dict(msg) for msg in chat_history]
 
+        summary = data.get("summary")
+        if summary is not None and isinstance(summary, dict):
+            summary = SessionSummary.from_dict(summary)
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             agent_id=data.get("agent_id"),
@@ -87,7 +91,7 @@ class AgentSession:
             updated_at=data.get("updated_at"),
             chat_history=chat_history,
             runs=runs,
-            summary=data.get("summary"),
+            summary=summary,
         )
 
     def add_run(self, run: RunResponse):

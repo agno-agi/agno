@@ -33,20 +33,6 @@ class BaseDb(ABC):
         self.eval_table_name = eval_table
         self.knowledge_table_name = knowledge_table
 
-    # --- Base ---
-
-    @abstractmethod
-    def _create_table(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _get_table(self, table_type: str) -> Any:
-        raise NotImplementedError
-
-    @abstractmethod
-    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Optional[Any]:
-        raise NotImplementedError
-
     # --- Sessions Table ---
 
     @abstractmethod
