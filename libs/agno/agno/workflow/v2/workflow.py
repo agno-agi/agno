@@ -1709,23 +1709,32 @@ class Workflow:
 
             # Handle tuple format for nested parallel/loop sub-steps
             if isinstance(step_index, tuple):
-                # Handle nested tuples by extracting the meaningful parts
                 if len(step_index) == 2:
                     parent_idx, sub_idx = step_index
 
-                    # If parent_idx is also a tuple (nested case), extract the base index
+                    # Extract the base parent index if it's nested
                     if isinstance(parent_idx, tuple):
+                        # For deeply nested cases, extract the root index
                         base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                        while isinstance(base_idx, tuple) and len(base_idx) > 0:
+                            base_idx = base_idx[0]
                     else:
                         base_idx = parent_idx
 
-                    # Check if we're in a loop context to add iteration info
-                    if current_primitive_context and current_primitive_context["type"] == "loop":
-                        iteration = current_primitive_context.get("current_iteration", 1)
-                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
-                    else:
-                        # For parallel or other contexts
-                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    # Check context for special formatting
+                    if current_primitive_context:
+                        context_type = current_primitive_context["type"]
+
+                        if context_type == "loop":
+                            iteration = current_primitive_context.get("current_iteration", 1)
+                            return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                        elif context_type == "parallel":
+                            # For parallel steps if inside some other nested step, all use the same parent number (your preferred approach)
+                            # Step 1.1, Step 1.1, Step 1.1 instead of Step 1.1, Step 1.2, Step 1.3
+                            return f"Step {base_idx + 1}.{sub_idx + 1}"
+
+                    # Default: regular hierarchical numbering
+                    return f"Step {base_idx + 1}.{sub_idx + 1}"
                 else:
                     # Fallback for other tuple formats
                     return f"Step {step_index[0] + 1}"
@@ -1744,22 +1753,26 @@ class Workflow:
                 primitive_type = current_primitive_context["type"]
                 primitive_step_index = current_primitive_context["step_index"]
 
+                # Extract integer from primitive_step_index if it's a tuple
+                if isinstance(primitive_step_index, tuple):
+                    base_primitive_idx = primitive_step_index[0]
+                    while isinstance(base_primitive_idx, tuple) and len(base_primitive_idx) > 0:
+                        base_primitive_idx = base_primitive_idx[0]
+                else:
+                    base_primitive_idx = primitive_step_index
+
                 if primitive_type == "parallel":
-                    # For parallel: Use a thread-safe approach
-                    existing_parallel_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
-                    ]
-                    sub_index = len(existing_parallel_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index}"
+                    # For parallel: All parallel steps get the same number
+                    display_number = f"Step {base_primitive_idx + 1}.1"
 
                 elif primitive_type == "loop":
                     # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
                     iteration = current_primitive_context.get("current_iteration", 1)
                     existing_loop_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"loop:{primitive_step_index}:")
+                        k for k in step_display_cache.keys() if k.startswith(f"loop:{base_primitive_idx}:")
                     ]
                     sub_index = len(existing_loop_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
+                    display_number = f"Step {base_primitive_idx + 1}.{sub_index} (Iteration {iteration})"
 
                 else:
                     # Fallback
@@ -2502,23 +2515,32 @@ class Workflow:
 
             # Handle tuple format for nested parallel/loop sub-steps
             if isinstance(step_index, tuple):
-                # Handle nested tuples by extracting the meaningful parts
                 if len(step_index) == 2:
                     parent_idx, sub_idx = step_index
 
-                    # If parent_idx is also a tuple (nested case), extract the base index
+                    # Extract the base parent index if it's nested
                     if isinstance(parent_idx, tuple):
+                        # For deeply nested cases, extract the root index
                         base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                        while isinstance(base_idx, tuple) and len(base_idx) > 0:
+                            base_idx = base_idx[0]
                     else:
                         base_idx = parent_idx
 
-                    # Check if we're in a loop context to add iteration info
-                    if current_primitive_context and current_primitive_context["type"] == "loop":
-                        iteration = current_primitive_context.get("current_iteration", 1)
-                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
-                    else:
-                        # For parallel or other contexts
-                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    # Check context for special formatting
+                    if current_primitive_context:
+                        context_type = current_primitive_context["type"]
+
+                        if context_type == "loop":
+                            iteration = current_primitive_context.get("current_iteration", 1)
+                            return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                        elif context_type == "parallel":
+                            # For parallel steps if inside some other nested step, all use the same parent number (your preferred approach)
+                            # Step 1.1, Step 1.1, Step 1.1 instead of Step 1.1, Step 1.2, Step 1.3
+                            return f"Step {base_idx + 1}.{sub_idx + 1}"
+
+                    # Default: regular hierarchical numbering
+                    return f"Step {base_idx + 1}.{sub_idx + 1}"
                 else:
                     # Fallback for other tuple formats
                     return f"Step {step_index[0] + 1}"
@@ -2537,22 +2559,26 @@ class Workflow:
                 primitive_type = current_primitive_context["type"]
                 primitive_step_index = current_primitive_context["step_index"]
 
+                # Extract integer from primitive_step_index if it's a tuple
+                if isinstance(primitive_step_index, tuple):
+                    base_primitive_idx = primitive_step_index[0]
+                    while isinstance(base_primitive_idx, tuple) and len(base_primitive_idx) > 0:
+                        base_primitive_idx = base_primitive_idx[0]
+                else:
+                    base_primitive_idx = primitive_step_index
+
                 if primitive_type == "parallel":
-                    # For parallel: Use a thread-safe approach
-                    existing_parallel_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"parallel:{primitive_step_index}:")
-                    ]
-                    sub_index = len(existing_parallel_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index}"
+                    # For parallel: All parallel steps get the same number
+                    display_number = f"Step {base_primitive_idx + 1}.1"
 
                 elif primitive_type == "loop":
                     # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
                     iteration = current_primitive_context.get("current_iteration", 1)
                     existing_loop_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"loop:{primitive_step_index}:")
+                        k for k in step_display_cache.keys() if k.startswith(f"loop:{base_primitive_idx}:")
                     ]
                     sub_index = len(existing_loop_keys) + 1
-                    display_number = f"Step {primitive_step_index + 1}.{sub_index} (Iteration {iteration})"
+                    display_number = f"Step {base_primitive_idx + 1}.{sub_index} (Iteration {iteration})"
 
                 else:
                     # Fallback
