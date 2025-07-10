@@ -206,6 +206,7 @@ class RunResponseExtraData:
 class RunStatus(str, Enum):
     """State of the main run response"""
 
+    pending = "PENDING"
     running = "RUNNING"
     completed = "COMPLETED"
     paused = "PAUSED"

@@ -52,7 +52,7 @@ class AgentOS:
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
 
-        self.settings: AgnoAPISettings = settings or AgnoAPISettings(cors_origin_list=["*"])
+        self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.api_app: Optional[FastAPI] = api_app
 
         self.interfaces = interfaces or []

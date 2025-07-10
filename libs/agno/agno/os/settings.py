@@ -34,6 +34,7 @@ class AgnoAPISettings(BaseSettings):
                 "https://www.agno.com",
                 "https://app.agno.com",
                 "https://app-stg.agno.com",
+                "https://os-stg.agno.com",
             ]
         )
 
