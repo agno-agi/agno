@@ -7,7 +7,7 @@ This example shows how to add observability to your agno agent with Atla.
   - export ATLA_API_KEY=<your-key>
 """
 
-import os
+from os import getenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

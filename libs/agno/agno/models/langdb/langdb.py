@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from agno.models.openai.like import OpenAILike
 
@@ -25,9 +25,9 @@ class LangDB(OpenAILike):
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
     project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
 
-    base_host_url: str = getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai")
+    base_host_url: str = cast(str, getenv("LANGDB_API_BASE_URL", "https://api.us-east-1.langdb.ai"))
 
-    base_url: str = None
+    base_url: Optional[str] = None
     label: Optional[str] = None
     default_headers: Optional[dict] = None
 
