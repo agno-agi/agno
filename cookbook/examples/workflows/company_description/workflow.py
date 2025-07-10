@@ -48,10 +48,10 @@ def generate_supplier_profile(step_input: StepInput) -> StepOutput:
 
     log_info(f"Step input: {step_input}")
 
-    crawler_data: str = step_input.get_step_content("Crawler")
-    search_data: str = step_input.get_step_content("Search")
-    wikipedia_data: str = step_input.get_step_content("Wikipedia")
-    competitor_data: str = step_input.get_step_content("Competitor")
+    crawler_data: str = step_input.get_step_content("Gathering Information")["Crawler"]
+    search_data: str = step_input.get_step_content("Gathering Information")["Search"]
+    wikipedia_data: str = step_input.get_step_content("Gathering Information")["Wikipedia"]
+    competitor_data: str = step_input.get_step_content("Gathering Information")["Competitor"]
 
     log_info(f"Crawler data: {crawler_data}")
     log_info(f"Search data: {search_data}")
