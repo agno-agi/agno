@@ -6,7 +6,8 @@ import json
 from typing import Iterator
 
 import httpx
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
+from agno.run.response import RunResponseContentEvent
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -65,14 +66,14 @@ class HackerNewsReporter(Workflow):
             stories.append(story)
         return json.dumps(stories)
 
-    def run(self, num_stories: int = 5) -> Iterator[RunResponse]:
+    def run(self, num_stories: int = 5) -> Iterator[RunResponseContentEvent]:
         # Set the tools for hn_agent here to avoid circular reference
         self.hn_agent.tools = [self.get_top_hackernews_stories]
 
         logger.info(f"Getting top {num_stories} stories from HackerNews.")
-        top_stories: RunResponse = self.hn_agent.run(num_stories=num_stories)
+        top_stories = self.hn_agent.run(num_stories=num_stories)
         if top_stories is None or not top_stories.content:
-            yield RunResponse(
+            yield RunResponseContentEvent(
                 run_id=self.run_id, content="Sorry, could not get the top stories."
             )
             return
@@ -83,8 +84,8 @@ class HackerNewsReporter(Workflow):
 
 if __name__ == "__main__":
     # Run workflow
-    report: Iterator[RunResponse] = HackerNewsReporter(debug_mode=False).run(
-        num_stories=5
-    )
+    report: Iterator[RunResponseContentEvent] = HackerNewsReporter(
+        debug_mode=False
+    ).run(num_stories=5)
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)

@@ -56,11 +56,12 @@ from typing import Dict, Iterator, List, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.response import RunResponseContentEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.exa import ExaTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunResponse, Workflow
+from agno.workflow import Workflow
 from pydantic import BaseModel, Field
 
 # Demo mode
@@ -296,7 +297,7 @@ class PersonalisedEmailGenerator(Workflow):
             4. References a known challenge from the research.
             5. Avoid words like "delve", "explore", "synergy", "amplify", "game changer", "revolutionary", "breakthrough".
             6. Use first-person language ("I") naturally.
-            7. Maintain a 20-year-old’s friendly style—brief and to the point.
+            7. Maintain a 20-year-old's friendly style—brief and to the point.
             8. Avoid placing the recipient's name in the subject line.
 
             Use the following structural template, but ensure the final tone
@@ -340,7 +341,7 @@ class PersonalisedEmailGenerator(Workflow):
         self,
         use_research_cache: bool = True,
         use_email_cache: bool = True,
-    ) -> Iterator[RunResponse]:
+    ) -> Iterator[RunResponseContentEvent]:
         """
         Orchestrates the entire personalized marketing workflow:
 
@@ -360,7 +361,9 @@ class PersonalisedEmailGenerator(Workflow):
                     cached_email = self.get_cached_email(company_name)
                     if cached_email:
                         logger.info(f"Using cached email for {company_name}")
-                        yield RunResponse(content=cached_email)
+                        yield RunResponseContentEvent(
+                            run_id=self.run_id, content=cached_email
+                        )
                         continue
 
                 # 1. Research Phase with caching
