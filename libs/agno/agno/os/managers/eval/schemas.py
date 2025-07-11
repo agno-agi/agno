@@ -11,38 +11,22 @@ from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 
 
-class AccuracyEvalInput(BaseModel):
+class EvalRunInput(BaseModel):
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+
+    eval_type: EvalType
     input: str
     expected_output: str
     additional_guidelines: Optional[str] = None
     num_iterations: Optional[int] = 1
     name: Optional[str] = None
 
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-
-
-class ReliabilityEvalInput(BaseModel):
-    input: str
-    expected_tool_calls: List[str]
-    additional_guidelines: Optional[str] = None
-    num_iterations: Optional[int] = 1
-    name: Optional[str] = None
-
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-
-
-class PerformanceEvalInput(BaseModel):
-    input: str
-    expected_output: str
-    additional_guidelines: Optional[str] = None
-    num_iterations: Optional[int] = 3
+    # Performance eval specific fields
     warmup_runs: Optional[int] = 0
-    name: Optional[str] = None
 
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
+    # Reliability eval specific fields
+    expected_tool_calls: Optional[List[str]] = None
 
 
 class EvalSchema(BaseModel):
