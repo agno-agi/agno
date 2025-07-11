@@ -261,9 +261,6 @@ class SqliteStorage(Storage):
                 log_debug(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                import traceback
-
-                traceback.print_exc()
                 log_debug(f"Exception reading from table: {e}")
         return None
 
