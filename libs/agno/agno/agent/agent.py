@@ -591,6 +591,13 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
+    def set_memory(self) -> None:
+        if self.memory is None:
+            self.memory = Memory()
+
+        if (self.enable_agentic_memory or self.enable_user_memories) and self.memory.model is None:
+            self.memory.set_model(self.model)
+
     def set_defaults(self) -> None:
         if self.add_memory_references is None:
             self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
@@ -620,16 +627,9 @@ class Agent:
         self.set_default_model()
         self.set_debug()
         self.set_agent_id()
+        self.set_memory()
 
         log_debug(f"Agent ID: {self.agent_id}", center=True)
-
-        if self.memory is None:
-            self.memory = Memory()
-
-        # Default to the agent's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
 
         if self._formatter is None:
             self._formatter = SafeFormatter()
