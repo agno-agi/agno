@@ -115,6 +115,7 @@ if __name__ == "__main__":
                     final_content.append(response.content)
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             logger.error(f"Error running workflow: {e}")
             return

@@ -64,6 +64,7 @@ def workflow_storage(temp_storage_db_file):
     storage.create()
     return storage
 
+
 @pytest.fixture
 def memory_db(temp_memory_db_file):
     """Create a SQLite memory database for testing."""

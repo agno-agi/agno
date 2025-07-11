@@ -175,7 +175,6 @@ class Workflow:
         except Exception as e:
             logger.error(f"Workflow.run() failed: {e}")
             raise e
-        
 
         # The run_workflow() method handles both Iterator[RunResponse] and RunResponse
         # Case 1: The run method returns an Iterator[RunResponse]
@@ -195,6 +194,7 @@ class Workflow:
                         isinstance(item, tuple(get_args(RunResponseEvent)))
                         or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                        or isinstance(item, RunResponse)
                     ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
@@ -270,7 +270,8 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.run_id}", center=True)
         try:
-            from inspect import isasyncgenfunction, isasyncgen
+            from inspect import isasyncgen, isasyncgenfunction
+
             self._subclass_run = cast(Callable, self._subclass_run)
             if isasyncgenfunction(self._subclass_run) or isasyncgen(self._subclass_run):
                 result = self._subclass_run(**kwargs)
@@ -279,7 +280,7 @@ class Workflow:
         except Exception as e:
             logger.error(f"Workflow.arun() failed: {e}")
             raise e
-        
+
         # Handle async iterator results
         if isinstance(result, (AsyncIterator, AsyncGenerator)):
             # Initialize the run_response content
@@ -297,6 +298,7 @@ class Workflow:
                         isinstance(item, tuple(get_args(RunResponseEvent)))
                         or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                        or isinstance(item, RunResponse)
                     ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
@@ -450,7 +452,7 @@ class Workflow:
             # If the subclass does not override the run method,
             # the Workflow.run() method will be called and will log an error
             self._subclass_run = self.run
-            
+
             self._run_parameters = {}
             self._run_return_type = None
 

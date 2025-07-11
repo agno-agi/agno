@@ -1,5 +1,4 @@
-
-
+from collections.abc import AsyncIterator
 from typing import Iterator
 import pytest
 
@@ -10,26 +9,44 @@ from agno.workflow.workflow import Workflow
 
 
 
-@pytest.fixture
-def workflow(workflow_storage):
-    
+def test_workflow_storage(workflow_storage):
     class ExampleWorkflow(Workflow):
         description: str = "A workflow for tests"
 
         agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
 
         def run(self, message: str) -> RunResponse:
-            return RunResponse(
-                run_id=self.run_id, content="Received message: " + message
-            )
+            return RunResponse(run_id=self.run_id, content="Received message: " + message)
+    
+    workflow = ExampleWorkflow(storage=workflow_storage)
+    response: RunResponse = workflow.run(message="Tell me a joke.")
+    assert response.content == "Received message: Tell me a joke."
 
-    return ExampleWorkflow(
-        storage=workflow_storage,
-    )
+    stored_workflow_session = workflow_storage.read(session_id=workflow.session_id)
+    assert stored_workflow_session is not None
 
 
-@pytest.fixture
-def async_workflow(workflow_storage):
+
+def test_workflow_storage_streaming(workflow_storage):
+    class ExampleWorkflow(Workflow):
+        description: str = "A workflow for tests"
+
+        agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+
+        def run(self, message: str) -> Iterator[RunResponse]:
+            yield RunResponse(run_id=self.run_id, content="Received message: " + message)
+    
+    workflow = ExampleWorkflow(storage=workflow_storage)
+    response: Iterator[RunResponse] = workflow.run(message="Tell me a joke.")
+    assert list(response)[0].content == "Received message: Tell me a joke."
+
+    stored_workflow_session = workflow_storage.read(session_id=workflow.session_id)
+    assert stored_workflow_session is not None
+
+
+
+@pytest.mark.asyncio
+async def test_workflow_storage_async(workflow_storage):
     
     class ExampleWorkflow(Workflow):
         description: str = "A workflow for tests"
@@ -37,37 +54,31 @@ def async_workflow(workflow_storage):
         agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
 
         async def arun(self, message: str) -> RunResponse:
-            return RunResponse(
-                run_id=self.run_id, content="Received message: " + message
-            )
-        
-    return ExampleWorkflow(
-        storage=workflow_storage,
-    )
-
-
-def test_workflow_storage(workflow, workflow_storage):
+            return RunResponse(run_id=self.run_id, content="Received message: " + message)
     
-    response: RunResponse = workflow.run(message="Tell me a joke.")
+    workflow = ExampleWorkflow(storage=workflow_storage)
+    response: RunResponse = await workflow.arun(message="Tell me a joke.")
     assert response.content == "Received message: Tell me a joke."
-    
+
     stored_workflow_session = workflow_storage.read(session_id=workflow.session_id)
     assert stored_workflow_session is not None
-    
+
 
 @pytest.mark.asyncio
-async def test_workflow_storage_async(async_workflow, workflow_storage):
+async def test_workflow_storage_async_streaming(workflow_storage):
     
-    response: RunResponse = await async_workflow.arun(message="Tell me a joke.")
-    assert response.content == "Received message: Tell me a joke."
+    class ExampleWorkflow(Workflow):
+        description: str = "A workflow for tests"
+
+        agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+
+        async def arun(self, message: str) -> AsyncIterator[RunResponse]:
+            yield RunResponse(run_id=self.run_id, content="Received message: " + message)
     
-    stored_workflow_session = workflow_storage.read(session_id=async_workflow.session_id)
+    workflow = ExampleWorkflow(storage=workflow_storage)
+    response = await workflow.arun(message="Tell me a joke.")
+    async for item in response:
+        assert item.content == "Received message: Tell me a joke."
+
+    stored_workflow_session = workflow_storage.read(session_id=workflow.session_id)
     assert stored_workflow_session is not None
-    
-    
-    
-    
-        
-    
-    
-    

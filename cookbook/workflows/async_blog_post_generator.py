@@ -247,11 +247,13 @@ class BlogPostGenerator(Workflow):
         }
 
         # Run the writer response
-        writer_response: RunResponse = self.writer.run(json.dumps(writer_input, indent=4))
+        writer_response: RunResponse = self.writer.run(
+            json.dumps(writer_input, indent=4)
+        )
 
         # Save the blog post in the cache
         self.add_blog_post_to_cache(topic, writer_response.content)
-        
+
         return writer_response
 
     def get_cached_blog_post(self, topic: str) -> Optional[str]:
@@ -424,12 +426,14 @@ if __name__ == "__main__":
 
     # Execute the workflow with caching enabled
     # Returns an iterator of RunResponse objects containing the generated content
-    blog_post: RunResponse = asyncio.run(generate_blog_post.arun(
-        topic=topic,
-        use_search_cache=True,
-        use_scrape_cache=True,
-        use_cached_report=True,
-    ))
+    blog_post: RunResponse = asyncio.run(
+        generate_blog_post.arun(
+            topic=topic,
+            use_search_cache=True,
+            use_scrape_cache=True,
+            use_cached_report=True,
+        )
+    )
 
     # Print the response
     pprint_run_response(blog_post, markdown=True)
