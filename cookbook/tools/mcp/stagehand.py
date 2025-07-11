@@ -12,6 +12,7 @@ Features:
 Prerequisites:
 - Clone the Stagehand MCP server: git clone https://github.com/browserbase/mcp-server-browserbase
 - Build the Stagehand MCP server: cd mcp-server-browserbase/stagehand && npm install && npm run build
+  - This will create a dist/index.js file in the location where you cloned the repository
 - Install dependencies: pip install agno mcp
 - Set environment variables: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, OPENAI_API_KEY
 - Run this example: python cookbook/tools/mcp/stagehand.py
@@ -30,6 +31,7 @@ from mcp import StdioServerParameters
 async def run_agent(message: str) -> None:
     server_params = StdioServerParameters(
         command="node",
+        # Update this path to the location where you cloned the repository
         args=["mcp-server-browserbase/stagehand/dist/index.js"],
         env=environ.copy(),
     )
