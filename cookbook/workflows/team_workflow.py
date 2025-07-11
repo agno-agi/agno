@@ -1,8 +1,9 @@
 from textwrap import dedent
 from typing import Iterator
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.response import RunResponseContentEvent
 from agno.run.team import TeamRunResponse
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -64,7 +65,6 @@ class TeamWorkflow(Workflow):
         enable_agentic_context=True,
         show_tool_calls=True,
         markdown=True,
-        debug_mode=True,
         show_members_responses=True,
     )
 
@@ -86,13 +86,13 @@ class TeamWorkflow(Workflow):
         ],
     )
 
-    def run(self) -> Iterator[RunResponse]:
+    def run(self) -> Iterator[RunResponseContentEvent]:
         logger.info("Getting top stories from HackerNews.")
         discussion: TeamRunResponse = self.agent_team.run(
             "Getting 2 top stories from HackerNews and reddit and write a brief report on them"
         )
         if discussion is None or not discussion.content:
-            yield RunResponse(
+            yield RunResponseContentEvent(
                 run_id=self.run_id, content="Sorry, could not get the top stories."
             )
             return
@@ -103,6 +103,6 @@ class TeamWorkflow(Workflow):
 
 if __name__ == "__main__":
     # Run workflow
-    report: Iterator[RunResponse] = TeamWorkflow(debug_mode=False).run()
+    report: Iterator[RunResponseContentEvent] = TeamWorkflow(debug_mode=False).run()
     # Print the report
     pprint_run_response(report, markdown=True, show_time=True)

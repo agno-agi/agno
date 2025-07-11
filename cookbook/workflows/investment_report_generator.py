@@ -31,7 +31,8 @@ from shutil import rmtree
 from textwrap import dedent
 from typing import Iterator
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
+from agno.run.response import RunResponseContentEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.log import logger
@@ -160,22 +161,20 @@ class InvestmentReportGenerator(Workflow):
         save_response_to_file=investment_report,
     )
 
-    def run(self, companies: str) -> Iterator[RunResponse]:
+    def run(self, companies: str) -> Iterator[RunResponseContentEvent]:
         logger.info(f"Getting investment reports for companies: {companies}")
-        initial_report: RunResponse = self.stock_analyst.run(companies)
+        initial_report = self.stock_analyst.run(companies)
         if initial_report is None or not initial_report.content:
-            yield RunResponse(
+            yield RunResponseContentEvent(
                 run_id=self.run_id,
                 content="Sorry, could not get the stock analyst report.",
             )
             return
 
         logger.info("Ranking companies based on investment potential.")
-        ranked_companies: RunResponse = self.research_analyst.run(
-            initial_report.content
-        )
+        ranked_companies = self.research_analyst.run(initial_report.content)
         if ranked_companies is None or not ranked_companies.content:
-            yield RunResponse(
+            yield RunResponseContentEvent(
                 run_id=self.run_id, content="Sorry, could not get the ranked companies."
             )
             return
@@ -225,7 +224,9 @@ if __name__ == "__main__":
     )
 
     # Execute the workflow
-    report: Iterator[RunResponse] = investment_report_generator.run(companies=companies)
+    report: Iterator[RunResponseContentEvent] = investment_report_generator.run(
+        companies=companies
+    )
 
     # Print the report
     pprint_run_response(report, markdown=True)

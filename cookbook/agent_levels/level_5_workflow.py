@@ -34,10 +34,14 @@ class CacheWorkflow(Workflow):
 if __name__ == "__main__":
     workflow = CacheWorkflow()
     # Run workflow (this is takes ~1s)
-    response: Iterator[RunResponseContentEvent] = workflow.run(message="Tell me a joke.")
+    response: Iterator[RunResponseContentEvent] = workflow.run(
+        message="Tell me a joke."
+    )
     # Print the response
     pprint_run_response(response, markdown=True, show_time=True)
     # Run workflow again (this is immediate because of caching)
-    response: Iterator[RunResponseContentEvent] = workflow.run(message="Tell me a joke.")
+    response: Iterator[RunResponseContentEvent] = workflow.run(
+        message="Tell me a joke."
+    )
     # Print the response
     pprint_run_response(response, markdown=True, show_time=True)
