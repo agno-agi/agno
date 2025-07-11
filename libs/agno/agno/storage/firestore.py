@@ -30,7 +30,7 @@ class FirestoreStorage(Storage):
         db_name: Optional[str] = "(default)",
         project_id: Optional[str] = None,
         client: Optional[Client] = None,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         super().__init__(mode)
         self.collection_name = collection_name
@@ -94,6 +94,8 @@ class FirestoreStorage(Storage):
             elif self.mode == "team":
                 query = query.where(filter=FieldFilter("team_id", "==", entity_id))
             elif self.mode == "workflow":
+                query = query.where(filter=FieldFilter("workflow_id", "==", entity_id))
+            elif self.mode == "workflow_v2":
                 query = query.where(filter=FieldFilter("workflow_id", "==", entity_id))
 
         return query

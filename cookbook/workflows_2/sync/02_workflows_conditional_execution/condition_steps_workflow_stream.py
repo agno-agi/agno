@@ -1,5 +1,4 @@
 from agno.agent.agent import Agent
-from agno.models.anthropic import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.step import Step
@@ -11,26 +10,22 @@ researcher = Agent(
     name="Researcher",
     instructions="Research the given topic and provide detailed findings.",
     tools=[DuckDuckGoTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 summarizer = Agent(
     name="Summarizer",
     instructions="Create a clear summary of the research findings.",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 fact_checker = Agent(
     name="Fact Checker",
     instructions="Verify facts and check for accuracy in the research.",
     tools=[DuckDuckGoTools()],
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 writer = Agent(
     name="Writer",
     instructions="Write a comprehensive article based on all available research and verification.",
-    model=Claude(id="claude-sonnet-4-20250514"),
 )
 
 # === CONDITION EVALUATOR ===
