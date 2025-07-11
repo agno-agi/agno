@@ -311,7 +311,9 @@ async def test_tool_call_requires_confirmation_stream_async():
             assert response.tools[0].tool_args == {"city": "Tokyo"}
 
             # Mark the tool as confirmed
-            response.tools[0].confirmed = True
+            for tool_response in response.tools:
+                if tool_response.requires_confirmation:
+                    tool_response.confirmed = True
             found_confirmation = True
     assert found_confirmation, "No tools were found to require confirmation"
 

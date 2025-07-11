@@ -130,7 +130,8 @@ class Loop:
         user_id: Optional[str] = None,
     ) -> List[StepOutput]:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
-        logger.info(f"Executing loop: {self.name} (max_iterations: {self.max_iterations})")
+        # Use workflow logger for loop orchestration
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -139,8 +140,6 @@ class Loop:
         iteration = 0
 
         while iteration < self.max_iterations:
-            log_debug(f"Loop iteration {iteration + 1}/{self.max_iterations}")
-
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
@@ -182,15 +181,13 @@ class Loop:
             if self.end_condition and callable(self.end_condition):
                 try:
                     should_break = self.end_condition(iteration_results)
-                    log_debug(f"End condition returned: {should_break}")
                     if should_break:
-                        log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                         break
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
                     # Continue with loop if end condition fails
 
-        log_debug(f"Loop completed after {iteration} iterations")
+        log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
         flattened_results = []
@@ -206,10 +203,10 @@ class Loop:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
-        log_debug(f"Streaming loop: {self.name} (max_iterations: {self.max_iterations})")
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -253,6 +250,15 @@ class Loop:
 
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
+
+                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
+                if isinstance(step_index, tuple):
+                    # Handle nested loops/parallel - extend the tuple
+                    composite_step_index = step_index + (i,)
+                else:
+                    # Create new tuple for loop sub-steps
+                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+
                 # Stream step execution
                 for event in step.execute_stream(
                     current_step_input,
@@ -260,7 +266,7 @@ class Loop:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=composite_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -333,6 +339,8 @@ class Loop:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
 
+        log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
+
         if stream_intermediate_steps:
             # Yield loop completed event
             yield LoopExecutionCompletedEvent(
@@ -358,7 +366,8 @@ class Loop:
         user_id: Optional[str] = None,
     ) -> List[StepOutput]:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
-        logger.info(f"Async executing loop: {self.name} (max_iterations: {self.max_iterations})")
+        # Use workflow logger for async loop orchestration
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -367,8 +376,6 @@ class Loop:
         iteration = 0
 
         while iteration < self.max_iterations:
-            log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")
-
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
@@ -413,14 +420,13 @@ class Loop:
                         should_break = await self.end_condition(iteration_results)
                     else:
                         should_break = self.end_condition(iteration_results)
-                    log_debug(f"End condition returned: {should_break}")
                     if should_break:
-                        log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                         break
                 except Exception as e:
                     logger.warning(f"End condition evaluation failed: {e}")
 
-        log_debug(f"Async loop completed after {iteration} iterations")
+        # Use workflow logger for async loop completion
+        log_debug(f"Async Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         # Return flattened results from all iterations
         flattened_results = []
@@ -436,10 +442,10 @@ class Loop:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
-        log_debug(f"Async streaming loop: {self.name} (max_iterations: {self.max_iterations})")
+        log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
@@ -484,6 +490,14 @@ class Loop:
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
 
+                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
+                if isinstance(step_index, tuple):
+                    # Handle nested loops/parallel - extend the tuple
+                    composite_step_index = step_index + (i,)
+                else:
+                    # Create new tuple for loop sub-steps
+                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+
                 # Stream step execution - mirroring workflow logic
                 async for event in step.aexecute_stream(
                     current_step_input,
@@ -491,7 +505,7 @@ class Loop:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=composite_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -566,6 +580,8 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early due to end_condition at iteration {iteration}")
                 break
+
+        log_debug(f"Loop End: {self.name} ({iteration} iterations)", center=True, symbol="=")
 
         if stream_intermediate_steps:
             # Yield loop completed event
