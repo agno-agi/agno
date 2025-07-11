@@ -266,6 +266,15 @@ class Condition:
         for i, step in enumerate(self.steps):
             try:
                 step_outputs_for_step = []
+
+                # Create child index for each step within condition
+                if step_index is None or isinstance(step_index, int):
+                    # Condition is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)
+                else:
+                    # Condition is already a child step - child steps get same parent number: x.y, x.y, x.y
+                    child_step_index = step_index
+
                 # Stream step execution
                 for event in step.execute_stream(
                     current_step_input,
@@ -273,7 +282,7 @@ class Condition:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -463,6 +472,14 @@ class Condition:
             try:
                 step_outputs_for_step = []
 
+                # Create child index for each step within condition
+                if step_index is None or isinstance(step_index, int):
+                    # Condition is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)
+                else:
+                    # Condition is already a child step - child steps get same parent number: x.y, x.y, x.y
+                    child_step_index = step_index
+
                 # Stream step execution - mirroring Loop logic
                 async for event in step.aexecute_stream(
                     current_step_input,
@@ -470,7 +487,7 @@ class Condition:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=step_index,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

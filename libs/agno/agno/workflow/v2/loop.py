@@ -251,13 +251,13 @@ class Loop:
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
 
-                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
-                if isinstance(step_index, tuple):
-                    # Handle nested loops/parallel - extend the tuple
-                    composite_step_index = step_index + (i,)
+                # Loop children always get sequential sub-indices: parent_index.1, parent_index.2, etc.
+                if step_index is None or isinstance(step_index, int):
+                    # Loop is a main step
+                    composite_step_index = (step_index if step_index is not None else 0, i)
                 else:
-                    # Create new tuple for loop sub-steps
-                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+                    # Loop is a nested step - extend the tuple
+                    composite_step_index = step_index + (i,)
 
                 # Stream step execution
                 for event in step.execute_stream(
@@ -490,13 +490,13 @@ class Loop:
             for i, step in enumerate(self.steps):
                 step_outputs_for_iteration = []
 
-                # Create composite step index for loop sub-steps: (parent_step_index, sub_step_index)
-                if isinstance(step_index, tuple):
-                    # Handle nested loops/parallel - extend the tuple
-                    composite_step_index = step_index + (i,)
+                # Loop children always get sequential sub-indices: parent_index.1, parent_index.2, etc.
+                if step_index is None or isinstance(step_index, int):
+                    # Loop is a main step
+                    composite_step_index = (step_index if step_index is not None else 0, i)
                 else:
-                    # Create new tuple for loop sub-steps
-                    composite_step_index = (step_index, i) if step_index is not None else (0, i)
+                    # Loop is a nested step - extend the tuple
+                    composite_step_index = step_index + (i,)
 
                 # Stream step execution - mirroring workflow logic
                 async for event in step.aexecute_stream(
