@@ -5,7 +5,6 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.memory import Memory
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
-from agno.os.managers import MetricsManager, SessionManager
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -34,7 +33,6 @@ agent_os = AgentOS(
     description="Example app showcasing the MetricsManager",
     os_id="metrics-demo",
     agents=[basic_agent],
-    managers=[SessionManager(db=db), MetricsManager(db=db)],
 )
 app = agent_os.get_app()
 

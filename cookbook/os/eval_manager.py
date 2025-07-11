@@ -5,7 +5,6 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers import EvalManager
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -39,7 +38,6 @@ agent_os = AgentOS(
     description="Example app for basic agent with eval capabilities",
     os_id="eval-demo",
     agents=[basic_agent],
-    managers=[EvalManager(db=db)],
 )
 app = agent_os.get_app()
 

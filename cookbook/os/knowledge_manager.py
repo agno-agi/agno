@@ -1,10 +1,8 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.local_store import LocalStore
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers import KnowledgeManager
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -50,7 +48,6 @@ agent_os = AgentOS(
     agents=[
         basic_agent,
     ],
-    managers=[KnowledgeManager(knowledge=knowledge)],
 )
 app = agent_os.get_app()
 
