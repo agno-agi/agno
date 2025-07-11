@@ -18,8 +18,58 @@ def get_supabase_mcp_tools():
         f"{npx_cmd} -y @supabase/mcp-server-supabase@latest --access-token {token}"
     )
 
+database_setup_agent = Agent(
+    name="Database Setup Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[get_supabase_mcp_tools()],
+    role="Expert Supabase database architect for investment analysis",
+    instructions="""
+    You are an expert Supabase MCP architect for investment analysis. Follow these steps precisely:
 
-# Investment Analysis Agents
+    **SECURITY NOTE: DO NOT print or expose any API keys, URLs, tokens, or sensitive credentials in your responses.**
+
+    1. **Plan Database Schema**: Design a complete normalized schema for investment analysis with:
+       - companies table (id SERIAL PRIMARY KEY, name VARCHAR(255), ticker VARCHAR(10), sector VARCHAR(100), market_cap BIGINT, founded_year INTEGER, headquarters VARCHAR(255), created_at TIMESTAMP DEFAULT NOW())
+       - analysis_sessions table (session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), analysis_date TIMESTAMP DEFAULT NOW(), investment_type VARCHAR(50), investment_amount DECIMAL(15,2), target_return DECIMAL(5,2), risk_tolerance VARCHAR(20))
+       - financial_metrics table (id SERIAL PRIMARY KEY, company_id INTEGER REFERENCES companies(id), metric_type VARCHAR(100), value DECIMAL(20,4), period VARCHAR(50), currency VARCHAR(10), created_at TIMESTAMP DEFAULT NOW())
+       - valuation_models table (id SERIAL PRIMARY KEY, company_id INTEGER REFERENCES companies(id), dcf_value DECIMAL(15,2), target_price DECIMAL(15,2), upside_potential DECIMAL(8,4), methodology VARCHAR(100), created_at TIMESTAMP DEFAULT NOW())
+       - risk_assessments table (id SERIAL PRIMARY KEY, company_id INTEGER REFERENCES companies(id), risk_category VARCHAR(100), score INTEGER CHECK (score >= 1 AND score <= 10), explanation TEXT, created_at TIMESTAMP DEFAULT NOW())
+       - investment_recommendations table (id SERIAL PRIMARY KEY, company_id INTEGER REFERENCES companies(id), recommendation VARCHAR(50), conviction_level INTEGER CHECK (conviction_level >= 1 AND conviction_level <= 10), rationale TEXT, created_at TIMESTAMP DEFAULT NOW())
+
+    2. **Create Supabase Project**:
+       - Call `list_organizations` and select the first organization
+       - Use `get_cost(type='project')` to estimate costs (mention cost but don't expose details)
+       - Create project with `create_project` using the cost ID
+       - Poll with `get_project` until status is `ACTIVE_HEALTHY`
+
+    3. **Deploy Schema**:
+       - Apply complete schema using `apply_migration` named 'investment_analysis_schema'
+       - Validate with `list_tables` and `list_extensions`
+
+    4. **Insert Sample Data**:
+       - Insert sample companies data for Apple, Microsoft, Google with realistic values:
+         * Apple: ticker='AAPL', sector='Technology', market_cap=3000000000000, founded_year=1976, headquarters='Cupertino, CA'
+         * Microsoft: ticker='MSFT', sector='Technology', market_cap=2800000000000, founded_year=1975, headquarters='Redmond, WA'  
+         * Google: ticker='GOOGL', sector='Technology', market_cap=1800000000000, founded_year=1998, headquarters='Mountain View, CA'
+       
+       - Insert analysis session record with current analysis parameters
+       
+       - Insert sample financial metrics for each company:
+         * Revenue, net_income, pe_ratio, debt_to_equity, current_ratio, roe
+       
+       - Verify data insertion with SELECT queries
+
+    5. **Setup Complete**:
+       - Deploy simple health check with `deploy_edge_function`
+       - Confirm project is ready for analysis (DO NOT expose URLs or keys)
+       - Report successful setup without sensitive details
+
+    Focus on creating a production-ready investment analysis database with sample data.
+    **IMPORTANT: Never print API keys, project URLs, tokens, or any sensitive credentials.**
+    """,
+    markdown=True,
+)
+
 company_research_agent = Agent(
     name="Company Research Agent",
     model=OpenAIChat(id="gpt-4o"),
