@@ -48,8 +48,12 @@ def generate_supplier_profile(step_input: StepInput) -> StepOutput:
 
     crawler_data: str = step_input.get_step_content("Gathering Information")["Crawler"]
     search_data: str = step_input.get_step_content("Gathering Information")["Search"]
-    wikipedia_data: str = step_input.get_step_content("Gathering Information")["Wikipedia"]
-    competitor_data: str = step_input.get_step_content("Gathering Information")["Competitor"]
+    wikipedia_data: str = step_input.get_step_content("Gathering Information")[
+        "Wikipedia"
+    ]
+    competitor_data: str = step_input.get_step_content("Gathering Information")[
+        "Competitor"
+    ]
 
     log_info(f"Crawler data: {crawler_data}")
     log_info(f"Search data: {search_data}")
@@ -138,7 +142,6 @@ company_description_workflow = Workflow(
         generate_supplier_profile_step,
         send_email_step,
     ],
-    debug_mode=True,
 )
 
 if __name__ == "__main__":
