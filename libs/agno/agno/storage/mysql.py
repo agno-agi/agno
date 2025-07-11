@@ -5,8 +5,8 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
@@ -572,7 +572,7 @@ class MySQLStorage(Storage):
                 elif self.mode == "workflow_v2":
                     # Convert session to dict to ensure proper serialization
                     session_dict = session.to_dict()
-                    
+
                     stmt = mysql.insert(self.table).values(
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore

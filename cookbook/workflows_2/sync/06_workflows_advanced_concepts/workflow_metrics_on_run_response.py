@@ -73,6 +73,6 @@ if __name__ == "__main__":
         print("\n" + "-" * 60)
         print("WORKFLOW METRICS")
         print("-" * 60)
-        print(json.dumps(workflow_run_response.workflow_metrics, indent=2))
+        print(json.dumps(workflow_run_response.workflow_metrics.to_dict(), indent=2))
     else:
         print("\nNo workflow metrics available")

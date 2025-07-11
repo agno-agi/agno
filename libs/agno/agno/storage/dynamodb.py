@@ -7,8 +7,8 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, logger
 
 try:
@@ -198,7 +198,7 @@ class DynamoDbStorage(Storage):
                             "IndexName": "workflow_id-index",
                             "KeySchema": [
                                 {"AttributeName": "workflow_id", "KeyType": "HASH"},
-                                {"AttributeName": "created_at", "KeyType": "RANGE"},    
+                                {"AttributeName": "created_at", "KeyType": "RANGE"},
                             ],
                             "Projection": {"ProjectionType": "ALL"},
                             "ProvisionedThroughput": {

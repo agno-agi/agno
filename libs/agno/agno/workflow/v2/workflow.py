@@ -1170,7 +1170,7 @@ class Workflow:
         if session_id is not None:
             self.session_id = session_id
             log_debug(f"Session ID: {session_id}")
-            
+
         if self.session_id is None:
             self.session_id = str(uuid4())
 

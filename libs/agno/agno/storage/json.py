@@ -8,13 +8,15 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
 
 class JsonStorage(Storage):
-    def __init__(self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent"):
+    def __init__(
+        self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent"
+    ):
         super().__init__(mode)
         self.dir_path = Path(dir_path)
         self.dir_path.mkdir(parents=True, exist_ok=True)

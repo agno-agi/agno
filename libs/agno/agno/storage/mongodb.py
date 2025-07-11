@@ -6,8 +6,8 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
-from agno.storage.session.workflow import WorkflowSession
 from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 
 try:
@@ -221,7 +221,7 @@ class MongoDbStorage(Storage):
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(doc)
                 elif self.mode == "workflow_v2":
-                    session = WorkflowSessionV2.from_dict(doc)  
+                    session = WorkflowSessionV2.from_dict(doc)
                 if session is not None:
                     sessions.append(session)
 
