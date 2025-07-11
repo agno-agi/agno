@@ -62,6 +62,7 @@ def test_team_session_state(route_team, team_storage):
     assert route_team.session_name == "my_test_session"
     assert route_team.session_state == {"test_key": "test_value"}
 
+
 def test_team_session_state_switch_session_id(route_team):
     session_id_1 = "session_1"
     session_id_2 = "session_2"
@@ -112,8 +113,12 @@ def test_team_session_state_on_run(route_team):
     assert route_team.session_state == {}
 
     # Third run with the original session ID
-    response = route_team.run("What can you do?", session_id=session_id_1, session_state={"something_else": "other_value"})
+    response = route_team.run(
+        "What can you do?", session_id=session_id_1, session_state={"something_else": "other_value"}
+    )
     assert response.run_id is not None
     assert route_team.session_id == session_id_1
     assert route_team.session_name is None
-    assert route_team.session_state == {"test_key": "test_value", "something_else": "other_value"}, "Merging session state should work"
+    assert route_team.session_state == {"test_key": "test_value", "something_else": "other_value"}, (
+        "Merging session state should work"
+    )

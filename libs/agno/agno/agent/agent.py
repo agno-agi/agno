@@ -16,6 +16,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     cast,
@@ -698,18 +699,24 @@ class Agent:
             self.session_state["current_session_id"] = session_id
             if self.team_session_state is not None:
                 self.team_session_state["current_session_id"] = session_id
-    
+
     def _reset_session_state(self) -> None:
         """Reset the session state for the agent."""
         if self.team_session_state is not None:
             self.team_session_state.pop("current_session_id", None)
             self.team_session_state.pop("current_user_id", None)
-        self.session_state.pop("current_session_id", None)
-        self.session_state.pop("current_user_id", None)
-    
-    def _initialize_session(self, session_id: Optional[str] = None, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None) -> None:
+        if self.session_state is not None:
+            self.session_state.pop("current_session_id", None)
+            self.session_state.pop("current_user_id", None)
+
+    def _initialize_session(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[str]]:
         """Initialize the session for the agent."""
-        
+
         self.reset_run_state()
 
         # Determine the session_id
@@ -726,7 +733,7 @@ class Agent:
             else:
                 # Generate a new session_id and store it in the agent
                 self.session_id = session_id = str(uuid4())
-        
+
         # Use the default user_id when necessary
         user_id = user_id if user_id is not None else self.user_id
 
@@ -735,12 +742,12 @@ class Agent:
             self.session_state = session_state
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
         return session_id, user_id
-    
+
     def _run(
         self,
         run_response: RunResponse,
@@ -954,8 +961,6 @@ class Agent:
         **kwargs: Any,
     ) -> Iterator[RunResponseEvent]: ...
 
-
-
     def run(
         self,
         message: Optional[Union[str, List, Dict, Message]] = None,
@@ -976,8 +981,10 @@ class Agent:
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id, session_state=session_state)
-        
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
         session_id = cast(str, session_id)
 
         log_debug(f"Session ID: {session_id}", center=True)
@@ -1347,8 +1354,10 @@ class Agent:
     ) -> Any:
         """Async Run the Agent and return the response."""
 
-        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id, session_state=session_state)
-        
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
         session_id = cast(str, session_id)
 
         log_debug(f"Session ID: {session_id}", center=True)
@@ -3385,7 +3394,6 @@ class Agent:
             rr.model = model
         return rr
 
-
     def _make_memories_and_summaries(
         self,
         run_messages: RunMessages,
@@ -3625,7 +3633,6 @@ class Agent:
         if self.knowledge is not None or self.retriever is not None:
             # Check if retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
-
 
             if not async_mode and self.retriever and iscoroutinefunction(self.retriever):
                 log_warning(
@@ -7044,7 +7051,7 @@ class Agent:
                     messages=messages,
                     session_id=session_id,
                     session_state=session_state,
-                        user_id=user_id,
+                    user_id=user_id,
                     audio=audio,
                     images=images,
                     videos=videos,
