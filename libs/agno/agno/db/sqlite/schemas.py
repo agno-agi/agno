@@ -1,4 +1,4 @@
-"""Table schemas and related utils used by the PostgresDb class"""
+"""Table schemas and related utils used by the SqliteDb class"""
 
 from typing import Any
 
@@ -6,6 +6,7 @@ try:
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
 
 SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
@@ -77,8 +78,8 @@ METRICS_TABLE_SCHEMA = {
     "team_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "workflow_sessions_count": {"type": BigInteger, "nullable": False, "default": 0},
     "users_count": {"type": BigInteger, "nullable": False, "default": 0},
-    "token_metrics": {"type": JSON, "nullable": False, "default": {}},
-    "model_metrics": {"type": JSON, "nullable": False, "default": {}},
+    "token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
+    "model_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "date": {"type": Date, "nullable": False},
     "aggregation_period": {"type": String, "nullable": False},
     "created_at": {"type": BigInteger, "nullable": False},
@@ -110,12 +111,10 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
-        "knowledge_sources": KNOWLEDGE_TABLE_SCHEMA,
+        "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
-
     schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-
     return schema

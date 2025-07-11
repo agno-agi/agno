@@ -261,6 +261,7 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name(session.to_dict())
+
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -275,7 +276,7 @@ class AgentSessionDetailSchema(BaseModel):
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
-            metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
+            metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             chat_history=[message.to_dict() for message in session.chat_history] if session.chat_history else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,

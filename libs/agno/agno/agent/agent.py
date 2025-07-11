@@ -3291,7 +3291,6 @@ class Agent:
                 self.session_summary_model = self.model
             tasks.append(
                 self.agent_session.acreate_session_summary(
-                    session_id=session_id,
                     session_summary_model=self.session_summary_model,
                     session_summary_prompt=self.session_summary_prompt,
                 )
