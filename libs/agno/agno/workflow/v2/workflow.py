@@ -316,6 +316,7 @@ class Workflow:
             message=execution_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=previous_step_outputs,
+            additional_data=execution_input.additional_data,
             images=shared_images or [],
             videos=shared_videos or [],
             audio=shared_audio or [],
@@ -1138,6 +1139,7 @@ class Workflow:
     def run(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1195,6 +1197,7 @@ class Workflow:
 
         inputs = WorkflowExecutionInput(
             message=message,
+            additional_data=additional_data,
             audio=audio,
             images=images,
             videos=videos,
@@ -1244,6 +1247,7 @@ class Workflow:
     async def arun(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1301,6 +1305,7 @@ class Workflow:
 
         inputs = WorkflowExecutionInput(
             message=message,
+            additional_data=additional_data,
             audio=audio,
             images=images,
             videos=videos,
@@ -1478,6 +1483,7 @@ class Workflow:
     def print_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1517,6 +1523,7 @@ class Workflow:
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
+                additional_data=additional_data,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -1532,6 +1539,7 @@ class Workflow:
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
+                additional_data=additional_data,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -1547,6 +1555,7 @@ class Workflow:
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -1622,6 +1631,7 @@ class Workflow:
                     message=message,
                     user_id=user_id,
                     session_id=session_id,
+                    additional_data=additional_data,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -1701,6 +1711,7 @@ class Workflow:
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -1869,6 +1880,7 @@ class Workflow:
                     message=message,
                     user_id=user_id,
                     session_id=session_id,
+                    additional_data=additional_data,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -2287,6 +2299,7 @@ class Workflow:
     async def aprint_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2320,6 +2333,7 @@ class Workflow:
         if stream:
             await self._aprint_response_stream(
                 message=message,
+                additional_data=additional_data,
                 user_id=user_id,
                 session_id=session_id,
                 audio=audio,
@@ -2335,6 +2349,7 @@ class Workflow:
         else:
             await self._aprint_response(
                 message=message,
+                additional_data=additional_data,
                 user_id=user_id,
                 session_id=session_id,
                 audio=audio,
@@ -2350,6 +2365,7 @@ class Workflow:
     async def _aprint_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2425,6 +2441,7 @@ class Workflow:
                 # Execute workflow and get the response directly
                 workflow_response: WorkflowRunResponse = await self.arun(
                     message=message,
+                    additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -2505,6 +2522,7 @@ class Workflow:
     async def _aprint_response_stream(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2673,6 +2691,7 @@ class Workflow:
             try:
                 async for response in await self.arun(
                     message=message,
+                    additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,

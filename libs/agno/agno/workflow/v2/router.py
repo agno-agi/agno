@@ -100,6 +100,7 @@ class Router:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
+            additional_data=step_input.additional_data,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
