@@ -10,6 +10,7 @@ This agent answers questions using knowledge from a PDF stored in a Google Cloud
  -> Update 'bucket_name' and 'blob_name' in the script to your PDF's location.
 """
 
+import asyncio
 from agno.agent import Agent
 from agno.knowledge.gcs.pdf import GCSPDFKnowledgeBase
 from agno.vectordb.pgvector import PgVector
@@ -21,7 +22,9 @@ knowledge_base = GCSPDFKnowledgeBase(
     blob_name="path/to/your.pdf",
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
-knowledge_base.load(recreate=False)  # Comment out after first run
-
 agent = Agent(knowledge=knowledge_base, search_knowledge=True)
-agent.print_response("How to make Thai curry?", markdown=True)
+
+if __name__ == "__main__":
+    asyncio.run(knowledge_base.aload(recreate=False))  # Comment out after first run
+
+    asyncio.run(agent.aprint_response("How to make Thai curry?", markdown=True))
