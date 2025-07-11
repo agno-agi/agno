@@ -65,11 +65,11 @@ def test_agent_session_state_switch_session_id(chat_agent):
     chat_agent.session_name = "my_test_session"
     chat_agent.session_state = {"test_key": "test_value"}
 
-    # First run with a different session ID
+    # First run with a session ID (reset should not happen)
     response = chat_agent.run("What can you do?", session_id=session_id_1)
     assert response.run_id is not None
     assert chat_agent.session_id == session_id_1
-    assert chat_agent.session_name is None
+    assert chat_agent.session_name == "my_test_session"
     assert chat_agent.session_state == {"test_key": "test_value"}
 
     # Second run with different session ID
@@ -83,7 +83,7 @@ def test_agent_session_state_switch_session_id(chat_agent):
     response = chat_agent.run("What can you do?", session_id=session_id_1)
     assert response.run_id is not None
     assert chat_agent.session_id == session_id_1
-    assert chat_agent.session_name is None
+    assert chat_agent.session_name == "my_test_session"
     assert chat_agent.session_state == {"test_key": "test_value"}
     
 

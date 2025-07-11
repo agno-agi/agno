@@ -622,6 +622,7 @@ class Agent:
             self.num_history_runs = self.num_history_responses
 
     def reset_session(self) -> None:
+        self.session_state = None
         self.session_name = None
         self.session_metrics = None
         self.images = None
@@ -714,10 +715,9 @@ class Agent:
         # Determine the session_id
         if session_id is not None and session_id != "":
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session()
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
-                self.session_state = None
+                self.reset_session()
 
             self.session_id = session_id
         else:

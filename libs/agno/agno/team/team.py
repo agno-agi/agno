@@ -588,6 +588,7 @@ class Team:
     def _reset_session(self) -> None:
         self.session_name = None
         self.session_metrics = None
+        self.session_state = None
         self.images = None
         self.videos = None
         self.audio = None
@@ -680,14 +681,9 @@ class Team:
         # Determine the session_id
         if session_id is not None and session_id != "":
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self._reset_session()
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
-                self.session_state = None
-                
-                # If not part of a team (i.e. not a sub-team), reset the team session state
-                if self.parent_team_id is None:
-                    self.team_session_state = None
+                self._reset_session()
 
             self.session_id = session_id
         else:
