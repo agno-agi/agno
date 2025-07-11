@@ -11,6 +11,21 @@ def test_convert_schema_simple_string():
     assert result.description == "A string field"
 
 
+def test_convert_schema_string_with_format():
+    """Test converting a string schema with a specific format"""
+    schema_dict = {
+        "type": "string",
+        "description": "A date field",
+        "format": "date",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.format == "date"
+
+
 def test_convert_schema_simple_integer():
     """Test converting a simple integer schema"""
     schema_dict = {"type": "integer", "description": "An integer field", "default": 42}
@@ -20,6 +35,23 @@ def test_convert_schema_simple_integer():
     assert result.type == "INTEGER"
     assert result.description == "An integer field"
     assert result.default == 42
+
+
+def test_convert_schema_integer_with_range():
+    """Test converting an integer schema with minimum and maximum"""
+    schema_dict = {
+        "type": "integer",
+        "description": "Bounded integer",
+        "minimum": 0,
+        "maximum": 10,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "INTEGER"
+    assert result.minimum == 0
+    assert result.maximum == 10
 
 
 def test_convert_schema_object_with_properties():
@@ -58,6 +90,25 @@ def test_convert_schema_array():
     assert result.description == "An array of strings"
     assert result.items is not None
     assert result.items.type == "STRING"
+
+
+def test_convert_schema_array_with_min_max_items():
+    """Test converting an array schema with minItems and maxItems"""
+    schema_dict = {
+        "type": "array",
+        "description": "An array with limits",
+        "items": {"type": "integer"},
+        "minItems": 1,
+        "maxItems": 5,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "ARRAY"
+    assert result.min_items == 1
+    assert result.max_items == 5
+    assert result.items.type == "INTEGER"
 
 
 def test_convert_schema_nullable_property():

@@ -175,7 +175,37 @@ def convert_schema(schema_dict: Dict[str, Any], root_schema: Optional[Dict[str, 
 
     elif schema_type == "array" and "items" in schema_dict:
         items = convert_schema(schema_dict["items"], root_schema)
-        return Schema(type=Type.ARRAY, description=description, items=items)
+        min_items = schema_dict.get("minItems")
+        max_items = schema_dict.get("maxItems")
+        return Schema(
+            type=Type.ARRAY,
+            description=description,
+            items=items,
+            min_items=min_items,
+            max_items=max_items,
+        )
+
+    elif schema_type == "string":
+        schema_kwargs = {
+            "type": Type.STRING,
+            "description": description,
+            "default": default,
+        }
+        if "format" in schema_dict:
+            schema_kwargs["format"] = schema_dict["format"]
+        return Schema(**schema_kwargs)
+
+    elif schema_type in ("integer", "number"):
+        schema_kwargs = {
+            "type": schema_type.upper(),
+            "description": description,
+            "default": default,
+        }
+        if "maximum" in schema_dict:
+            schema_kwargs["maximum"] = schema_dict["maximum"]
+        if "minimum" in schema_dict:
+            schema_kwargs["minimum"] = schema_dict["minimum"]
+        return Schema(**schema_kwargs)
 
     elif schema_type == "" and "anyOf" in schema_dict:
         any_of = []
