@@ -1,8 +1,4 @@
-"""
-This workflow is a simple example of a recruitment workflow where in you can also pass custom prameters like job description,
-candidate resume urls, etc. (**kwargs) in the workflow along with workflow execution input.
-"""
-
+import asyncio
 import io
 import random
 from datetime import datetime, timedelta
@@ -132,12 +128,12 @@ email_sender_agent = Agent(
 
 
 # --- Execution function ---
-def recruitment_execution(
+async def recruitment_execution(
     workflow: Workflow,
     execution_input: WorkflowExecutionInput,
     job_description: str,
     **kwargs: Any,
-) -> str:
+):
     """Execute the complete recruitment workflow"""
 
     # Get inputs
@@ -146,10 +142,10 @@ def recruitment_execution(
     resumes: List[str] = kwargs.get("candidate_resume_urls", [])
 
     if not resumes:
-        return "❌ No candidate resume URLs provided"
+        yield "❌ No candidate resume URLs provided"
 
     if not jd:
-        return "❌ No job description provided"
+        yield "❌ No job description provided"
 
     print(f"🚀 Starting recruitment process for {len(resumes)} candidates")
     print(f"📋 Job Description: {jd[:100]}{'...' if len(jd) > 100 else ''}")
@@ -190,8 +186,11 @@ def recruitment_execution(
         Evaluate how well this candidate matches the job requirements and provide a score from 0-10.
         """
 
-        result = screening_agent.run(screening_prompt)
-        candidate = result.content
+        async for response in await screening_agent.arun(
+            screening_prompt, stream=True, stream_intermediate_steps=True
+        ):
+            if hasattr(response, "content") and response.content:
+                candidate = response.content
 
         print(f"👤 Candidate: {candidate.name}")
         print(f"📧 Email: {candidate.email}")
@@ -226,8 +225,11 @@ def recruitment_execution(
             Use the simulate_zoom_scheduling tool to create the meeting.
             """
 
-            call_result = scheduler_agent.run(schedule_prompt)
-            scheduled_call = call_result.content
+            async for response in await scheduler_agent.arun(
+                schedule_prompt, stream=True, stream_intermediate_steps=True
+            ):
+                if hasattr(response, "content") and response.content:
+                    scheduled_call = response.content
 
             print(f"📅 Scheduled for: {scheduled_call.call_time}")
             print(f"🔗 Meeting URL: {scheduled_call.url}")
@@ -242,8 +244,11 @@ def recruitment_execution(
             - Include next steps and what to expect
             """
 
-            email_result = email_writer_agent.run(email_prompt)
-            email_content = email_result.content
+            async for response in await email_writer_agent.arun(
+                email_prompt, stream=True, stream_intermediate_steps=True
+            ):
+                if hasattr(response, "content") and response.content:
+                    email_content = response.content
 
             print(f"✏️ Email subject: {email_content.subject}")
 
@@ -257,28 +262,10 @@ def recruitment_execution(
             Use the simulate_email_sending tool.
             """
 
-            send_result = email_sender_agent.run(send_prompt)
-            print(f"📧 Email sent to {candidate.email}")
-
-    # Final summary
-    summary = f"""
-    🎉 RECRUITMENT WORKFLOW COMPLETED!
-
-    📊 Summary:
-    • Processed: {len(resumes)} candidate resumes
-    • Selected: {len(selected_candidates)} candidates for interviews
-    • Interviews scheduled: {len(selected_candidates)}
-    • Emails sent: {len(selected_candidates)}
-
-    ✅ Selected candidates:
-    """
-
-    for candidate in selected_candidates:
-        summary += (
-            f"\n   • {candidate.name} ({candidate.email}) - Score: {candidate.score}/10"
-        )
-
-    return summary
+            async for response in await email_sender_agent.arun(
+                send_prompt, stream=True, stream_intermediate_steps=True
+            ):
+                yield response
 
 
 # --- Workflow definition ---
@@ -286,7 +273,7 @@ recruitment_workflow = Workflow(
     name="Employee Recruitment Workflow (Simulated)",
     description="Automated candidate screening with simulated scheduling and email",
     steps=recruitment_execution,
-    workflow_session_state={},  # Initialize empty workflow session state
+    workflow_session_state={},
 )
 
 
@@ -295,13 +282,14 @@ if __name__ == "__main__":
     print("🧪 Testing Employee Recruitment Workflow with Simulated Tools")
     print("=" * 60)
 
-    result = recruitment_workflow.print_response(
-        message="Process candidates for backend engineer position",
-        candidate_resume_urls=[
-            "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_1.pdf",
-            "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_2.pdf",
-        ],
-        job_description="""
+    asyncio.run(
+        recruitment_workflow.aprint_response(
+            message="Process candidates for backend engineer position",
+            candidate_resume_urls=[
+                "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_1.pdf",
+                "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_2.pdf",
+            ],
+            job_description="""
         We are hiring for backend and systems engineers!
         Join our team building the future of agentic software
 
@@ -313,4 +301,7 @@ if __name__ == "__main__":
         🌟 Bonus: experience with infrastructure as code.
         🌟 Bonus: starred Agno repo.
         """,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
     )

@@ -4,7 +4,7 @@ import pytest
 
 from agno.run.v2.workflow import WorkflowCompletedEvent, WorkflowRunResponse
 from agno.workflow.v2 import Workflow
-from agno.workflow.v2.parallel import Parallel
+from agno.workflow.parallel import Parallel
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 

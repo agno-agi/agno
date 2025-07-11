@@ -23,7 +23,7 @@ from typing import Dict, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
@@ -451,41 +451,3 @@ blog_generator_workflow = Workflow(
     workflow_session_state={},  # Initialize empty session state for caching
 )
 
-
-if __name__ == "__main__":
-    import random
-
-    async def main():
-        # Fun example topics to showcase the generator's versatility
-        example_topics = [
-            "The Rise of Artificial General Intelligence: Latest Breakthroughs",
-            "How Quantum Computing is Revolutionizing Cybersecurity",
-            "Sustainable Living in 2024: Practical Tips for Reducing Carbon Footprint",
-            "The Future of Work: AI and Human Collaboration",
-            "Space Tourism: From Science Fiction to Reality",
-            "Mindfulness and Mental Health in the Digital Age",
-            "The Evolution of Electric Vehicles: Current State and Future Trends",
-            "Why Cats Secretly Run the Internet",
-            "The Science Behind Why Pizza Tastes Better at 2 AM",
-            "How Rubber Ducks Revolutionized Software Development",
-        ]
-
-        # Test with a random topic
-        topic = random.choice(example_topics)
-
-        print("🧪 Testing Blog Post Generator")
-        print("=" * 60)
-        print(f"📝 Topic: {topic}")
-        print()
-
-        # Generate the blog post
-        resp = await blog_generator_workflow.arun(
-            topic=topic,
-            use_search_cache=True,
-            use_scrape_cache=True,
-            use_blog_cache=True,
-        )
-
-        pprint_run_response(resp, markdown=True, show_time=True)
-
-    asyncio.run(main())

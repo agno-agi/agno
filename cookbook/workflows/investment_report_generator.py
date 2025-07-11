@@ -26,206 +26,345 @@ Example companies to analyze:
 Run `pip install openai yfinance agno` to install dependencies.
 """
 
+import asyncio
+import random
 from pathlib import Path
 from shutil import rmtree
 from textwrap import dedent
-from typing import Iterator
 
-from agno.agent import Agent, RunResponse
-from agno.db.sqlite import SqliteStorage
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import Workflow
+from agno.workflow.types import WorkflowExecutionInput
+from agno.workflow.workflow import Workflow
+from pydantic import BaseModel
 
+
+# --- Response models ---
+class StockAnalysisResult(BaseModel):
+    company_symbols: str
+    market_analysis: str
+    financial_metrics: str
+    risk_assessment: str
+    recommendations: str
+
+
+class InvestmentRanking(BaseModel):
+    ranked_companies: str
+    investment_rationale: str
+    risk_evaluation: str
+    growth_potential: str
+
+
+class PortfolioAllocation(BaseModel):
+    allocation_strategy: str
+    investment_thesis: str
+    risk_management: str
+    final_recommendations: str
+
+
+# --- File management ---
 reports_dir = Path(__file__).parent.joinpath("reports", "investment")
 if reports_dir.is_dir():
     rmtree(path=reports_dir, ignore_errors=True)
 reports_dir.mkdir(parents=True, exist_ok=True)
+
 stock_analyst_report = str(reports_dir.joinpath("stock_analyst_report.md"))
 research_analyst_report = str(reports_dir.joinpath("research_analyst_report.md"))
 investment_report = str(reports_dir.joinpath("investment_report.md"))
 
 
-class InvestmentReportGenerator(Workflow):
-    """Advanced workflow for generating professional investment analysis with strategic recommendations."""
-
-    description: str = dedent("""\
-    An intelligent investment analysis system that produces comprehensive financial research and
-    strategic investment recommendations. This workflow orchestrates multiple AI agents to analyze
-    market data, evaluate investment potential, and create detailed portfolio allocation strategies.
-    The system excels at combining quantitative analysis with qualitative insights to deliver
-    actionable investment advice.
-    """)
-
-    stock_analyst: Agent = Agent(
-        name="Stock Analyst",
-        tools=[
-            YFinanceTools(
-                company_info=True, analyst_recommendations=True, company_news=True
-            )
-        ],
-        description=dedent("""\
-        You are MarketMaster-X, an elite Senior Investment Analyst at Goldman Sachs with expertise in:
-
-        - Comprehensive market analysis
-        - Financial statement evaluation
-        - Industry trend identification
-        - News impact assessment
-        - Risk factor analysis
-        - Growth potential evaluation\
-        """),
-        instructions=dedent("""\
-        1. Market Research 📊
-           - Analyze company fundamentals and metrics
-           - Review recent market performance
-           - Evaluate competitive positioning
-           - Assess industry trends and dynamics
-        2. Financial Analysis 💹
-           - Examine key financial ratios
-           - Review analyst recommendations
-           - Analyze recent news impact
-           - Identify growth catalysts
-        3. Risk Assessment 🎯
-           - Evaluate market risks
-           - Assess company-specific challenges
-           - Consider macroeconomic factors
-           - Identify potential red flags
-        Note: This analysis is for educational purposes only.\
-        """),
-        expected_output="Comprehensive market analysis report in markdown format",
-        save_response_to_file=stock_analyst_report,
-    )
-
-    research_analyst: Agent = Agent(
-        name="Research Analyst",
-        description=dedent("""\
-        You are ValuePro-X, an elite Senior Research Analyst at Goldman Sachs specializing in:
-
-        - Investment opportunity evaluation
-        - Comparative analysis
-        - Risk-reward assessment
-        - Growth potential ranking
-        - Strategic recommendations\
-        """),
-        instructions=dedent("""\
-        1. Investment Analysis 🔍
-           - Evaluate each company's potential
-           - Compare relative valuations
-           - Assess competitive advantages
-           - Consider market positioning
-        2. Risk Evaluation 📈
-           - Analyze risk factors
-           - Consider market conditions
-           - Evaluate growth sustainability
-           - Assess management capability
-        3. Company Ranking 🏆
-           - Rank based on investment potential
-           - Provide detailed rationale
-           - Consider risk-adjusted returns
-           - Explain competitive advantages\
-        """),
-        expected_output="Detailed investment analysis and ranking report in markdown format",
-        save_response_to_file=research_analyst_report,
-    )
-
-    investment_lead: Agent = Agent(
-        name="Investment Lead",
-        description=dedent("""\
-        You are PortfolioSage-X, a distinguished Senior Investment Lead at Goldman Sachs expert in:
-
-        - Portfolio strategy development
-        - Asset allocation optimization
-        - Risk management
-        - Investment rationale articulation
-        - Client recommendation delivery\
-        """),
-        instructions=dedent("""\
-        1. Portfolio Strategy 💼
-           - Develop allocation strategy
-           - Optimize risk-reward balance
-           - Consider diversification
-           - Set investment timeframes
-        2. Investment Rationale 📝
-           - Explain allocation decisions
-           - Support with analysis
-           - Address potential concerns
-           - Highlight growth catalysts
-        3. Recommendation Delivery 📊
-           - Present clear allocations
-           - Explain investment thesis
-           - Provide actionable insights
-           - Include risk considerations\
-        """),
-        save_response_to_file=investment_report,
-    )
-
-    def run(self, companies: str) -> Iterator[RunResponse]:
-        logger.info(f"Getting investment reports for companies: {companies}")
-        initial_report: RunResponse = self.stock_analyst.run(companies)
-        if initial_report is None or not initial_report.content:
-            yield RunResponse(
-                run_id=self.run_id,
-                content="Sorry, could not get the stock analyst report.",
-            )
-            return
-
-        logger.info("Ranking companies based on investment potential.")
-        ranked_companies: RunResponse = self.research_analyst.run(
-            initial_report.content
+# --- Agents ---
+stock_analyst = Agent(
+    name="Stock Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        YFinanceTools(
+            company_info=True, analyst_recommendations=True, company_news=True
         )
-        if ranked_companies is None or not ranked_companies.content:
-            yield RunResponse(
-                run_id=self.run_id, content="Sorry, could not get the ranked companies."
-            )
-            return
+    ],
+    description=dedent("""\
+    You are MarketMaster-X, an elite Senior Investment Analyst at Goldman Sachs with expertise in:
 
-        logger.info(
-            "Reviewing the research report and producing an investment proposal."
+    - Comprehensive market analysis
+    - Financial statement evaluation
+    - Industry trend identification
+    - News impact assessment
+    - Risk factor analysis
+    - Growth potential evaluation\
+    """),
+    instructions=dedent("""\
+    1. Market Research 📊
+       - Analyze company fundamentals and metrics
+       - Review recent market performance
+       - Evaluate competitive positioning
+       - Assess industry trends and dynamics
+    2. Financial Analysis 💹
+       - Examine key financial ratios
+       - Review analyst recommendations
+       - Analyze recent news impact
+       - Identify growth catalysts
+    3. Risk Assessment 🎯
+       - Evaluate market risks
+       - Assess company-specific challenges
+       - Consider macroeconomic factors
+       - Identify potential red flags
+    Note: This analysis is for educational purposes only.\
+    """),
+    response_model=StockAnalysisResult,
+)
+
+research_analyst = Agent(
+    name="Research Analyst",
+    model=OpenAIChat(id="gpt-4o"),
+    description=dedent("""\
+    You are ValuePro-X, an elite Senior Research Analyst at Goldman Sachs specializing in:
+
+    - Investment opportunity evaluation
+    - Comparative analysis
+    - Risk-reward assessment
+    - Growth potential ranking
+    - Strategic recommendations\
+    """),
+    instructions=dedent("""\
+    1. Investment Analysis 🔍
+       - Evaluate each company's potential
+       - Compare relative valuations
+       - Assess competitive advantages
+       - Consider market positioning
+    2. Risk Evaluation 📈
+       - Analyze risk factors
+       - Consider market conditions
+       - Evaluate growth sustainability
+       - Assess management capability
+    3. Company Ranking 🏆
+       - Rank based on investment potential
+       - Provide detailed rationale
+       - Consider risk-adjusted returns
+       - Explain competitive advantages\
+    """),
+    response_model=InvestmentRanking,
+)
+
+investment_lead = Agent(
+    name="Investment Lead",
+    model=OpenAIChat(id="gpt-4o"),
+    description=dedent("""\
+    You are PortfolioSage-X, a distinguished Senior Investment Lead at Goldman Sachs expert in:
+
+    - Portfolio strategy development
+    - Asset allocation optimization
+    - Risk management
+    - Investment rationale articulation
+    - Client recommendation delivery\
+    """),
+    instructions=dedent("""\
+    1. Portfolio Strategy 💼
+       - Develop allocation strategy
+       - Optimize risk-reward balance
+       - Consider diversification
+       - Set investment timeframes
+    2. Investment Rationale 📝
+       - Explain allocation decisions
+       - Support with analysis
+       - Address potential concerns
+       - Highlight growth catalysts
+    3. Recommendation Delivery 📊
+       - Present clear allocations
+       - Explain investment thesis
+       - Provide actionable insights
+       - Include risk considerations\
+    """),
+    response_model=PortfolioAllocation,
+)
+
+
+# --- Execution function ---
+async def investment_analysis_execution(
+    execution_input: WorkflowExecutionInput,
+    companies: str,
+) -> str:
+    """Execute the complete investment analysis workflow"""
+
+    # Get inputs
+    message: str = execution_input.message
+    company_symbols: str = companies
+
+    if not company_symbols:
+        return "❌ No company symbols provided"
+
+    print(f"🚀 Starting investment analysis for companies: {company_symbols}")
+    print(f"💼 Analysis request: {message}")
+
+    # Phase 1: Stock Analysis
+    print(f"\n📊 PHASE 1: COMPREHENSIVE STOCK ANALYSIS")
+    print("=" * 60)
+
+    analysis_prompt = f"""
+    {message}
+
+    Please conduct a comprehensive analysis of the following companies: {company_symbols}
+
+    For each company, provide:
+    1. Current market position and financial metrics
+    2. Recent performance and analyst recommendations
+    3. Industry trends and competitive landscape
+    4. Risk factors and growth potential
+    5. News impact and market sentiment
+
+    Companies to analyze: {company_symbols}
+    """
+
+    print(f"🔍 Analyzing market data and fundamentals...")
+    stock_analysis_result = await stock_analyst.arun(analysis_prompt)
+    stock_analysis = stock_analysis_result.content
+
+    # Save to file
+    with open(stock_analyst_report, "w") as f:
+        f.write(f"# Stock Analysis Report\n\n")
+        f.write(f"**Companies:** {stock_analysis.company_symbols}\n\n")
+        f.write(f"## Market Analysis\n{stock_analysis.market_analysis}\n\n")
+        f.write(f"## Financial Metrics\n{stock_analysis.financial_metrics}\n\n")
+        f.write(f"## Risk Assessment\n{stock_analysis.risk_assessment}\n\n")
+        f.write(f"## Recommendations\n{stock_analysis.recommendations}\n")
+
+    print(f"✅ Stock analysis completed and saved to {stock_analyst_report}")
+
+    # Phase 2: Investment Ranking
+    print(f"\n🏆 PHASE 2: INVESTMENT POTENTIAL RANKING")
+    print("=" * 60)
+
+    ranking_prompt = f"""
+    Based on the comprehensive stock analysis below, please rank these companies by investment potential.
+
+    STOCK ANALYSIS:
+    - Market Analysis: {stock_analysis.market_analysis}
+    - Financial Metrics: {stock_analysis.financial_metrics}
+    - Risk Assessment: {stock_analysis.risk_assessment}
+    - Initial Recommendations: {stock_analysis.recommendations}
+
+    Please provide:
+    1. Detailed ranking of companies from best to worst investment potential
+    2. Investment rationale for each company
+    3. Risk evaluation and mitigation strategies
+    4. Growth potential assessment
+    """
+
+    print(f"📈 Ranking companies by investment potential...")
+    ranking_result = await research_analyst.arun(ranking_prompt)
+    ranking_analysis = ranking_result.content
+
+    # Save to file
+    with open(research_analyst_report, "w") as f:
+        f.write(f"# Investment Ranking Report\n\n")
+        f.write(f"## Company Rankings\n{ranking_analysis.ranked_companies}\n\n")
+        f.write(f"## Investment Rationale\n{ranking_analysis.investment_rationale}\n\n")
+        f.write(f"## Risk Evaluation\n{ranking_analysis.risk_evaluation}\n\n")
+        f.write(f"## Growth Potential\n{ranking_analysis.growth_potential}\n")
+
+    print(f"✅ Investment ranking completed and saved to {research_analyst_report}")
+
+    # Phase 3: Portfolio Allocation Strategy
+    print(f"\n💼 PHASE 3: PORTFOLIO ALLOCATION STRATEGY")
+    print("=" * 60)
+
+    portfolio_prompt = f"""
+    Based on the investment ranking and analysis below, create a strategic portfolio allocation.
+
+    INVESTMENT RANKING:
+    - Company Rankings: {ranking_analysis.ranked_companies}
+    - Investment Rationale: {ranking_analysis.investment_rationale}
+    - Risk Evaluation: {ranking_analysis.risk_evaluation}
+    - Growth Potential: {ranking_analysis.growth_potential}
+
+    Please provide:
+    1. Specific allocation percentages for each company
+    2. Investment thesis and strategic rationale
+    3. Risk management approach
+    4. Final actionable recommendations
+    """
+
+    print(f"💰 Developing portfolio allocation strategy...")
+    portfolio_result = await investment_lead.arun(portfolio_prompt)
+    portfolio_strategy = portfolio_result.content
+
+    # Save to file
+    with open(investment_report, "w") as f:
+        f.write(f"# Investment Portfolio Report\n\n")
+        f.write(f"## Allocation Strategy\n{portfolio_strategy.allocation_strategy}\n\n")
+        f.write(f"## Investment Thesis\n{portfolio_strategy.investment_thesis}\n\n")
+        f.write(f"## Risk Management\n{portfolio_strategy.risk_management}\n\n")
+        f.write(
+            f"## Final Recommendations\n{portfolio_strategy.final_recommendations}\n"
         )
-        yield from self.investment_lead.run(ranked_companies.content, stream=True)
+
+    print(f"✅ Portfolio strategy completed and saved to {investment_report}")
+
+    # Final summary
+    summary = f"""
+    🎉 INVESTMENT ANALYSIS WORKFLOW COMPLETED!
+
+    📊 Analysis Summary:
+    • Companies Analyzed: {company_symbols}
+    • Market Analysis: ✅ Completed
+    • Investment Ranking: ✅ Completed
+    • Portfolio Strategy: ✅ Completed
+
+    📁 Reports Generated:
+    • Stock Analysis: {stock_analyst_report}
+    • Investment Ranking: {research_analyst_report}
+    • Portfolio Strategy: {investment_report}
+
+    💡 Key Insights:
+    {portfolio_strategy.allocation_strategy[:200]}...
+
+    ⚠️ Disclaimer: This analysis is for educational purposes only and should not be considered as financial advice.
+    """
+
+    return summary
 
 
-# Run the workflow if the script is executed directly
+# --- Workflow definition ---
+investment_workflow = Workflow(
+    name="Investment Report Generator",
+    description="Automated investment analysis with market research and portfolio allocation",
+    steps=investment_analysis_execution,
+    workflow_session_state={},  # Initialize empty workflow session state
+)
+
+
 if __name__ == "__main__":
-    import random
 
-    from rich.prompt import Prompt
+    async def main():
+        from rich.prompt import Prompt
 
-    # Example investment scenarios to showcase the analyzer's capabilities
-    example_scenarios = [
-        "AAPL, MSFT, GOOGL",  # Tech Giants
-        "NVDA, AMD, INTC",  # Semiconductor Leaders
-        "TSLA, F, GM",  # Automotive Innovation
-        "JPM, BAC, GS",  # Banking Sector
-        "AMZN, WMT, TGT",  # Retail Competition
-        "PFE, JNJ, MRNA",  # Healthcare Focus
-        "XOM, CVX, BP",  # Energy Sector
-    ]
+        # Example investment scenarios to showcase the analyzer's capabilities
+        example_scenarios = [
+            "AAPL, MSFT, GOOGL",  # Tech Giants
+            "NVDA, AMD, INTC",  # Semiconductor Leaders
+            "TSLA, F, GM",  # Automotive Innovation
+            "JPM, BAC, GS",  # Banking Sector
+            "AMZN, WMT, TGT",  # Retail Competition
+            "PFE, JNJ, MRNA",  # Healthcare Focus
+            "XOM, CVX, BP",  # Energy Sector
+        ]
 
-    # Get companies from user with example suggestion
-    companies = Prompt.ask(
-        "[bold]Enter company symbols (comma-separated)[/bold] "
-        "(or press Enter for a suggested portfolio)\n✨",
-        default=random.choice(example_scenarios),
-    )
+        # Get companies from user with example suggestion
+        companies = Prompt.ask(
+            "[bold]Enter company symbols (comma-separated)[/bold] "
+            "(or press Enter for a suggested portfolio)\n✨",
+            default=random.choice(example_scenarios),
+        )
 
-    # Convert companies to URL-safe string for session_id
-    url_safe_companies = companies.lower().replace(" ", "-").replace(",", "")
+        print("🧪 Testing Investment Report Generator with New Workflow Structure")
+        print("=" * 70)
 
-    # Initialize the investment analyst workflow
-    investment_report_generator = InvestmentReportGenerator(
-        session_id=f"investment-report-{url_safe_companies}",
-        storage=SqliteStorage(
-            table_name="investment_report_workflows",
-            mode="workflow",
-            auto_upgrade_schema=True,
-            db_file="tmp/agno_workflows.db",
-        ),
-    )
+        result = await investment_workflow.arun(
+            message="Generate comprehensive investment analysis and portfolio allocation recommendations",
+            companies=companies,
+        )
 
-    # Execute the workflow
-    report: Iterator[RunResponse] = investment_report_generator.run(companies=companies)
+        pprint_run_response(result, markdown=True)
 
-    # Print the report
-    pprint_run_response(report, markdown=True)
+    asyncio.run(main())

@@ -45,20 +45,19 @@ The workflow will guide you through validating your startup idea with AI-powered
 analysis and research. Use the insights to refine your concept and business plan!
 """
 
-import json
-from typing import Iterator, Optional
+import asyncio
+from typing import Any
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.googlesearch import GoogleSearchTools
-from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunResponse, Workflow
+from agno.workflow.types import WorkflowExecutionInput
+from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
 
 
+# --- Response models ---
 class IdeaClarification(BaseModel):
     originality: str = Field(..., description="Originality of the idea.")
     mission: str = Field(..., description="Mission of the company.")
@@ -78,196 +77,327 @@ class MarketResearch(BaseModel):
     target_customer_segments: str = Field(..., description="Target customer segments.")
 
 
-class StartupIdeaValidator(Workflow):
-    idea_clarifier_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions=[
-            "Given a user's startup idea, its your goal to refine that idea. ",
-            "Evaluates the originality of the idea by comparing it with existing concepts. ",
-            "Define the mission and objectives of the startup.",
-        ],
-        add_history_to_messages=True,
-        add_datetime_to_instructions=True,
-        response_model=IdeaClarification,
-        debug_mode=False,
+class CompetitorAnalysis(BaseModel):
+    competitors: str = Field(..., description="List of identified competitors.")
+    swot_analysis: str = Field(..., description="SWOT analysis for each competitor.")
+    positioning: str = Field(
+        ..., description="Startup's potential positioning relative to competitors."
     )
 
-    market_research_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearchTools()],
-        instructions=[
-            "You are provided with a startup idea and the company's mission and objectives. ",
-            "Estimate the total addressable market (TAM), serviceable available market (SAM), and serviceable obtainable market (SOM). ",
-            "Define target customer segments and their characteristics. ",
-            "Search the web for resources if you need to.",
-        ],
-        add_history_to_messages=True,
-        add_datetime_to_instructions=True,
-        response_model=MarketResearch,
+
+class ValidationReport(BaseModel):
+    executive_summary: str = Field(
+        ..., description="Executive summary of the validation."
     )
-
-    competitor_analysis_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[GoogleSearchTools()],
-        instructions=[
-            "You are provided with a startup idea and some market research related to the idea. ",
-            "Identify existing competitors in the market. ",
-            "Perform Strengths, Weaknesses, Opportunities, and Threats (SWOT) analysis for each competitor. ",
-            "Assess the startup’s potential positioning relative to competitors.",
-        ],
-        add_history_to_messages=True,
-        add_datetime_to_instructions=True,
-        markdown=True,
-        debug_mode=False,
+    idea_assessment: str = Field(..., description="Assessment of the startup idea.")
+    market_opportunity: str = Field(..., description="Market opportunity analysis.")
+    competitive_landscape: str = Field(
+        ..., description="Competitive landscape overview."
     )
-
-    report_agent: Agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        instructions=[
-            "You are provided with a startup idea and other data about the idea. ",
-            "Summarise everything into a single report.",
-        ],
-        add_history_to_messages=True,
-        add_datetime_to_instructions=True,
-        markdown=True,
-        debug_mode=False,
-    )
-
-    def get_idea_clarification(self, startup_idea: str) -> Optional[IdeaClarification]:
-        try:
-            response: RunResponse = self.idea_clarifier_agent.run(startup_idea)
-
-            # Check if we got a valid response
-            if not response or not response.content:
-                logger.warning("Empty Idea Clarification response")
-            # Check if the response is of the expected type
-            if not isinstance(response.content, IdeaClarification):
-                logger.warning("Invalid response type")
-
-            return response.content
-
-        except Exception as e:
-            logger.warning(f"Failed: {str(e)}")
-
-        return None
-
-    def get_market_research(
-        self, startup_idea: str, idea_clarification: IdeaClarification
-    ) -> Optional[MarketResearch]:
-        agent_input = {"startup_idea": startup_idea, **idea_clarification.model_dump()}
-
-        try:
-            response: RunResponse = self.market_research_agent.run(
-                json.dumps(agent_input, indent=4)
-            )
-
-            # Check if we got a valid response
-            if not response or not response.content:
-                logger.warning("Empty Market Research response")
-
-            # Check if the response is of the expected type
-            if not isinstance(response.content, MarketResearch):
-                logger.warning("Invalid response type")
-
-            return response.content
-
-        except Exception as e:
-            logger.warning(f"Failed: {str(e)}")
-
-        return None
-
-    def get_competitor_analysis(
-        self, startup_idea: str, market_research: MarketResearch
-    ) -> Optional[str]:
-        agent_input = {"startup_idea": startup_idea, **market_research.model_dump()}
-
-        try:
-            response: RunResponse = self.competitor_analysis_agent.run(
-                json.dumps(agent_input, indent=4)
-            )
-
-            # Check if we got a valid response
-            if not response or not response.content:
-                logger.warning("Empty Competitor Analysis response")
-
-            return response.content
-
-        except Exception as e:
-            logger.warning(f"Failed: {str(e)}")
-
-        return None
-
-    def run(self, startup_idea: str) -> Iterator[RunResponse]:
-        logger.info(f"Generating a startup validation report for: {startup_idea}")
-
-        # Clarify and quantify the idea
-        idea_clarification: Optional[IdeaClarification] = self.get_idea_clarification(
-            startup_idea
-        )
-
-        if idea_clarification is None:
-            yield WorkflowCompletedEvent(
-                run_id=self.run_id,
-                content=f"Sorry, could not even clarify the idea: {startup_idea}",
-            )
-            return
-
-        # Do some market research
-        market_research: Optional[MarketResearch] = self.get_market_research(
-            startup_idea, idea_clarification
-        )
-
-        if market_research is None:
-            yield WorkflowCompletedEvent(
-                run_id=self.run_id,
-                content="Market research failed",
-            )
-            return
-
-        competitor_analysis: Optional[str] = self.get_competitor_analysis(
-            startup_idea, market_research
-        )
-
-        # Compile the final report
-        final_response: RunResponse = self.report_agent.run(
-            json.dumps(
-                {
-                    "startup_idea": startup_idea,
-                    **idea_clarification.model_dump(),
-                    **market_research.model_dump(),
-                    "competitor_analysis_report": competitor_analysis,
-                },
-                indent=4,
-            )
-        )
-
-        yield WorkflowCompletedEvent(run_id=self.run_id, content=final_response.content)
+    recommendations: str = Field(..., description="Strategic recommendations.")
+    next_steps: str = Field(..., description="Recommended next steps.")
 
 
-# Run the workflow if the script is executed directly
+# --- Agents ---
+idea_clarifier_agent = Agent(
+    name="Idea Clarifier",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    instructions=[
+        "Given a user's startup idea, your goal is to refine that idea.",
+        "Evaluate the originality of the idea by comparing it with existing concepts.",
+        "Define the mission and objectives of the startup.",
+        "Provide clear, actionable insights about the core business concept.",
+    ],
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    response_model=IdeaClarification,
+    debug_mode=False,
+)
+
+market_research_agent = Agent(
+    name="Market Research Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[GoogleSearchTools()],
+    instructions=[
+        "You are provided with a startup idea and the company's mission and objectives.",
+        "Estimate the total addressable market (TAM), serviceable available market (SAM), and serviceable obtainable market (SOM).",
+        "Define target customer segments and their characteristics.",
+        "Search the web for resources and data to support your analysis.",
+        "Provide specific market size estimates with supporting data sources.",
+    ],
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    response_model=MarketResearch,
+)
+
+competitor_analysis_agent = Agent(
+    name="Competitor Analysis Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    tools=[GoogleSearchTools()],
+    instructions=[
+        "You are provided with a startup idea and market research data.",
+        "Identify existing competitors in the market.",
+        "Perform Strengths, Weaknesses, Opportunities, and Threats (SWOT) analysis for each competitor.",
+        "Assess the startup's potential positioning relative to competitors.",
+        "Search for recent competitor information and market positioning.",
+    ],
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    response_model=CompetitorAnalysis,
+    debug_mode=False,
+)
+
+report_agent = Agent(
+    name="Report Generator",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    instructions=[
+        "You are provided with comprehensive data about a startup idea including clarification, market research, and competitor analysis.",
+        "Synthesize all information into a comprehensive validation report.",
+        "Provide clear executive summary, assessment, and actionable recommendations.",
+        "Structure the report professionally with clear sections and insights.",
+        "Include specific next steps for the entrepreneur.",
+    ],
+    add_history_to_messages=True,
+    add_datetime_to_instructions=True,
+    response_model=ValidationReport,
+    debug_mode=False,
+)
+
+
+# --- Execution function ---
+async def startup_validation_execution(
+    workflow: Workflow,
+    execution_input: WorkflowExecutionInput,
+    startup_idea: str,
+    **kwargs: Any,
+) -> str:
+    """Execute the complete startup idea validation workflow"""
+
+    # Get inputs
+    message: str = execution_input.message
+    idea: str = startup_idea
+
+    if not idea:
+        return "❌ No startup idea provided"
+
+    print(f"🚀 Starting startup idea validation for: {idea}")
+    print(f"💡 Validation request: {message}")
+
+    # Phase 1: Idea Clarification
+    print(f"\n🎯 PHASE 1: IDEA CLARIFICATION & REFINEMENT")
+    print("=" * 60)
+
+    clarification_prompt = f"""
+    {message}
+
+    Please analyze and refine the following startup idea:
+
+    STARTUP IDEA: {idea}
+
+    Evaluate:
+    1. The originality of this idea compared to existing solutions
+    2. Define a clear mission statement for this startup
+    3. Outline specific, measurable objectives
+
+    Provide insights on how to strengthen and focus the core concept.
+    """
+
+    print(f"🔍 Analyzing and refining the startup concept...")
+
+    try:
+        clarification_result = await idea_clarifier_agent.arun(clarification_prompt)
+        idea_clarification = clarification_result.content
+
+        print(f"✅ Idea clarification completed")
+        print(f"📝 Mission: {idea_clarification.mission[:100]}...")
+
+    except Exception as e:
+        return f"❌ Failed to clarify idea: {str(e)}"
+
+    # Phase 2: Market Research
+    print(f"\n📊 PHASE 2: MARKET RESEARCH & ANALYSIS")
+    print("=" * 60)
+
+    market_research_prompt = f"""
+    Based on the refined startup idea and clarification below, conduct comprehensive market research:
+
+    STARTUP IDEA: {idea}
+    ORIGINALITY: {idea_clarification.originality}
+    MISSION: {idea_clarification.mission}
+    OBJECTIVES: {idea_clarification.objectives}
+
+    Please research and provide:
+    1. Total Addressable Market (TAM) - overall market size
+    2. Serviceable Available Market (SAM) - portion you could serve
+    3. Serviceable Obtainable Market (SOM) - realistic market share
+    4. Target customer segments with detailed characteristics
+
+    Use web search to find current market data and trends.
+    """
+
+    print(f"📈 Researching market size and customer segments...")
+
+    try:
+        market_result = await market_research_agent.arun(market_research_prompt)
+        market_research = market_result.content
+
+        print(f"✅ Market research completed")
+        print(f"🎯 TAM: {market_research.total_addressable_market[:100]}...")
+
+    except Exception as e:
+        return f"❌ Failed to complete market research: {str(e)}"
+
+    # Phase 3: Competitor Analysis
+    print(f"\n🏢 PHASE 3: COMPETITIVE LANDSCAPE ANALYSIS")
+    print("=" * 60)
+
+    competitor_prompt = f"""
+    Based on the startup idea and market research below, analyze the competitive landscape:
+
+    STARTUP IDEA: {idea}
+    TAM: {market_research.total_addressable_market}
+    SAM: {market_research.serviceable_available_market}
+    SOM: {market_research.serviceable_obtainable_market}
+    TARGET SEGMENTS: {market_research.target_customer_segments}
+
+    Please research and provide:
+    1. Identify direct and indirect competitors
+    2. SWOT analysis for each major competitor
+    3. Assessment of startup's potential competitive positioning
+    4. Market gaps and opportunities
+
+    Use web search to find current competitor information.
+    """
+
+    print(f"🔎 Analyzing competitive landscape...")
+
+    try:
+        competitor_result = await competitor_analysis_agent.arun(competitor_prompt)
+        competitor_analysis = competitor_result.content
+
+        print(f"✅ Competitor analysis completed")
+        print(f"🏆 Positioning: {competitor_analysis.positioning[:100]}...")
+
+    except Exception as e:
+        return f"❌ Failed to complete competitor analysis: {str(e)}"
+
+    # Phase 4: Final Validation Report
+    print(f"\n📋 PHASE 4: COMPREHENSIVE VALIDATION REPORT")
+    print("=" * 60)
+
+    report_prompt = f"""
+    Synthesize all the research and analysis into a comprehensive startup validation report:
+
+    STARTUP IDEA: {idea}
+
+    IDEA CLARIFICATION:
+    - Originality: {idea_clarification.originality}
+    - Mission: {idea_clarification.mission}
+    - Objectives: {idea_clarification.objectives}
+
+    MARKET RESEARCH:
+    - TAM: {market_research.total_addressable_market}
+    - SAM: {market_research.serviceable_available_market}
+    - SOM: {market_research.serviceable_obtainable_market}
+    - Target Segments: {market_research.target_customer_segments}
+
+    COMPETITOR ANALYSIS:
+    - Competitors: {competitor_analysis.competitors}
+    - SWOT: {competitor_analysis.swot_analysis}
+    - Positioning: {competitor_analysis.positioning}
+
+    Create a professional validation report with:
+    1. Executive summary
+    2. Idea assessment (strengths/weaknesses)
+    3. Market opportunity analysis
+    4. Competitive landscape overview
+    5. Strategic recommendations
+    6. Specific next steps for the entrepreneur
+    """
+
+    print(f"📝 Generating comprehensive validation report...")
+
+    try:
+        final_result = await report_agent.arun(report_prompt)
+        validation_report = final_result.content
+
+        print(f"✅ Validation report completed")
+
+    except Exception as e:
+        return f"❌ Failed to generate final report: {str(e)}"
+
+    # Final summary
+    summary = f"""
+    🎉 STARTUP IDEA VALIDATION COMPLETED!
+
+    📊 Validation Summary:
+    • Startup Idea: {idea}
+    • Idea Clarification: ✅ Completed
+    • Market Research: ✅ Completed
+    • Competitor Analysis: ✅ Completed
+    • Final Report: ✅ Generated
+
+    📈 Key Market Insights:
+    • TAM: {market_research.total_addressable_market[:150]}...
+    • Target Segments: {market_research.target_customer_segments[:150]}...
+
+    🏆 Competitive Positioning:
+    {competitor_analysis.positioning[:200]}...
+
+    📋 COMPREHENSIVE VALIDATION REPORT:
+
+    ## Executive Summary
+    {validation_report.executive_summary}
+
+    ## Idea Assessment
+    {validation_report.idea_assessment}
+
+    ## Market Opportunity
+    {validation_report.market_opportunity}
+
+    ## Competitive Landscape
+    {validation_report.competitive_landscape}
+
+    ## Strategic Recommendations
+    {validation_report.recommendations}
+
+    ## Next Steps
+    {validation_report.next_steps}
+
+    ⚠️ Disclaimer: This validation is for informational purposes only. Conduct additional due diligence before making investment decisions.
+    """
+
+    return summary
+
+
+# --- Workflow definition ---
+startup_validation_workflow = Workflow(
+    name="Startup Idea Validator",
+    description="Comprehensive startup idea validation with market research and competitive analysis",
+    steps=startup_validation_execution,
+    workflow_session_state={},  # Initialize empty workflow session state
+)
+
+
 if __name__ == "__main__":
-    from rich.prompt import Prompt
 
-    # Get idea from user
-    idea = Prompt.ask(
-        "[bold]What is your startup idea?[/bold]\n✨",
-        default="A marketplace for Christmas Ornaments made from leather",
-    )
+    async def main():
+        from rich.prompt import Prompt
 
-    # Convert the idea to a URL-safe string for use in session_id
-    url_safe_idea = idea.lower().replace(" ", "-")
+        # Get idea from user
+        idea = Prompt.ask(
+            "[bold]What is your startup idea?[/bold]\n✨",
+            default="A marketplace for Christmas Ornaments made from leather",
+        )
 
-    startup_idea_validator = StartupIdeaValidator(
-        description="Startup Idea Validator",
-        session_id=f"validate-startup-idea-{url_safe_idea}",
-        storage=SqliteStorage(
-            table_name="validate_startup_ideas_workflow",
-            mode="workflow",
-            auto_upgrade_schema=True,
-            db_file="tmp/agno_workflows.db",
-        ),
-    )
+        print("🧪 Testing Startup Idea Validator with New Workflow Structure")
+        print("=" * 70)
 
-    final_report: Iterator[RunResponse] = startup_idea_validator.run(startup_idea=idea)
+        result = await startup_validation_workflow.arun(
+            message="Please validate this startup idea with comprehensive market research and competitive analysis",
+            startup_idea=idea,
+        )
 
-    pprint_run_response(final_report, markdown=True)
+        pprint_run_response(result, markdown=True)
+
+    asyncio.run(main())
