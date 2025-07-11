@@ -93,10 +93,6 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def delete_session(session_id: str = Path(...)) -> None:
         db.delete_session(session_id=session_id)
 
-    @router.delete("/sessions/{session_id}", status_code=204)
-    async def delete_session(session_id: str = Path(...)) -> None:
-        db.delete_session(session_id=session_id)
-
     @router.delete("/sessions", status_code=204)
     async def delete_sessions(request: DeleteSessionRequest) -> None:
         if len(request.session_ids) != len(request.session_types):

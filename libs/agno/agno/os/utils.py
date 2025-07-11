@@ -1,4 +1,3 @@
-import json
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
@@ -6,7 +5,6 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.models.message import Message
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -26,19 +24,13 @@ def get_run_input(run_dict: Dict[str, Any]) -> str:
 def get_session_name(session: Dict[str, Any]) -> str:
     """Get the session name from the given session dictionary"""
     session_data = session.get("session_data")
-    if isinstance(session_data, str):
-        session_data = json.loads(session_data)
     if session_data is not None and session_data.get("session_name") is not None:
         return session_data["session_name"]
     else:
         runs = session.get("runs", [])
-        if isinstance(runs, str):
-            runs = json.loads(runs)
-        for message in runs[0]["messages"]:
-            if isinstance(message, Message):
-                message = message.to_dict()
-            if message["role"] == "user":
-                return message["content"]
+        for message in runs[0].messages:
+            if message.role == "user":
+                return message.content
     return ""
 
 

@@ -1,85 +1,17 @@
 """Utility functions for the MongoDB database class."""
 
-import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
-from agno.models.message import Message
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from pymongo.collection import Collection
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
-
-
-class CustomEncoder(json.JSONEncoder):
-    """Custom encoder to handle non JSON serializable types."""
-
-    def default(self, obj):
-        if isinstance(obj, UUID):
-            return str(obj)
-        elif isinstance(obj, (date, datetime)):
-            return obj.isoformat()
-        elif isinstance(obj, Message):
-            return obj.to_dict()
-
-        return super().default(obj)
-
-
-# TODO: abstract?
-def serialize_session_json_fields(session: dict) -> dict:
-    """Serialize all JSON fields in the given Session dictionary.
-
-    Args:
-        data (dict): The dictionary to serialize JSON fields in.
-
-    Returns:
-        dict: The dictionary with JSON fields serialized.
-    """
-    if session.get("session_data") is not None:
-        session["session_data"] = json.dumps(session["session_data"])
-    if session.get("agent_data") is not None:
-        session["agent_data"] = json.dumps(session["agent_data"])
-    if session.get("team_data") is not None:
-        session["team_data"] = json.dumps(session["team_data"])
-    if session.get("workflow_data") is not None:
-        session["workflow_data"] = json.dumps(session["workflow_data"])
-    if session.get("extra_data") is not None:
-        session["extra_data"] = json.dumps(session["extra_data"])
-    if session.get("chat_history") is not None:
-        session["chat_history"] = json.dumps(session["chat_history"])
-    if session.get("summary") is not None:
-        session["summary"] = json.dumps(session["summary"], cls=CustomEncoder)
-    if session.get("runs") is not None:
-        session["runs"] = json.dumps(session["runs"], cls=CustomEncoder)
-
-    return session
-
-
-def deserialize_session_json_fields(document: dict) -> dict:
-    """Deserialize the session document from a JSON string."""
-    if document.get("session_data") is not None:
-        document["session_data"] = json.loads(document["session_data"])
-    if document.get("agent_data") is not None:
-        document["agent_data"] = json.loads(document["agent_data"])
-    if document.get("team_data") is not None:
-        document["team_data"] = json.loads(document["team_data"])
-    if document.get("workflow_data") is not None:
-        document["workflow_data"] = json.loads(document["workflow_data"])
-    if document.get("extra_data") is not None:
-        document["extra_data"] = json.loads(document["extra_data"])
-    if document.get("chat_history") is not None:
-        document["chat_history"] = json.loads(document["chat_history"])
-    if document.get("summary") is not None:
-        document["summary"] = json.loads(document["summary"])
-    if document.get("runs") is not None:
-        document["runs"] = json.loads(document["runs"])
-
-    return document
 
 
 # TODO: ensure idempotency

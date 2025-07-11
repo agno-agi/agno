@@ -14,13 +14,12 @@ from agno.db.sqlite.utils import (
     apply_sorting,
     bulk_upsert_metrics,
     calculate_date_metrics,
-    deserialize_session_json_fields,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
-    serialize_session_json_fields,
 )
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -635,7 +634,7 @@ class SqliteDb(BaseDb):
                 if records is None:
                     return [], 0
 
-                return [record._mapping for record in records], total_count
+                return [deserialize_session_json_fields(dict(record._mapping)) for record in records], total_count
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
@@ -733,15 +732,15 @@ class SqliteDb(BaseDb):
                 if not row:
                     return None
 
-            session = deserialize_session_json_fields(dict(row._mapping))
+            deserialized_session = deserialize_session_json_fields(dict(row._mapping))
 
             # Return the appropriate session type
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
+                return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
+                return TeamSession.from_dict(deserialized_session)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
+                return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")

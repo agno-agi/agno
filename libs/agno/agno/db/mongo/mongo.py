@@ -10,13 +10,12 @@ from agno.db.mongo.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes,
-    deserialize_session_json_fields,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_session_json_fields,
 )
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
 from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -25,6 +24,7 @@ try:
     from pymongo import MongoClient, ReturnDocument
     from pymongo.collection import Collection
     from pymongo.database import Database
+    from pymongo.errors import OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
@@ -485,7 +485,7 @@ class MongoDb(BaseDb):
 
             records = list(cursor)
 
-            return records, total_count
+            return [deserialize_session_json_fields(record) for record in records], total_count
 
         except Exception as e:
             log_debug(f"Exception reading sessions: {e}")
@@ -566,16 +566,32 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="sessions")
 
-            result = collection.update_one(
-                {"session_id": session_id},
-                {"$set": {"session_data.session_name": session_name, "updated_at": int(time.time())}},
-            )
+            try:
+                result = collection.find_one_and_update(
+                    {"session_id": session_id},
+                    {"$set": {"session_data.session_name": session_name, "updated_at": int(time.time())}},
+                    return_document=ReturnDocument.AFTER,
+                    upsert=False,
+                )
+            except OperationFailure:
+                # If the update fails because session_data doesn't contain a session_name yet, we initialize session_data
+                result = collection.find_one_and_update(
+                    {"session_id": session_id},
+                    {"$set": {"session_data": {"session_name": session_name}, "updated_at": int(time.time())}},
+                    return_document=ReturnDocument.AFTER,
+                    upsert=False,
+                )
+            if not result:
+                return None
 
-            # TODO: optimize
-            if result.matched_count > 0:
-                return self.get_session(session_id=session_id, session_type=session_type)
+            deserialized_session = deserialize_session_json_fields(result)
 
-            return None
+            if session_type == SessionType.AGENT.value:
+                return AgentSession.from_dict(deserialized_session)
+            elif session_type == SessionType.TEAM.value:
+                return TeamSession.from_dict(deserialized_session)
+            elif session_type == SessionType.WORKFLOW.value:
+                return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")

@@ -33,7 +33,7 @@ basic_agent = Agent(
     add_datetime_to_instructions=True,
     markdown=True,
 )
-team_agent = Team(
+basic_team = Team(
     team_id="basic",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -59,7 +59,7 @@ agent_os = AgentOS(
     description="Example app for basic agent with playground capabilities",
     os_id="basic-app",
     agents=[basic_agent],
-    teams=[team_agent],
+    teams=[basic_team],
 )
 app = agent_os.get_app()
 
