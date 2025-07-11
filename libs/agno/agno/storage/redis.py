@@ -107,6 +107,7 @@ class RedisStorage(Storage):
                 return WorkflowSession.from_dict(session_data)
             elif self.mode == "workflow_v2":
                 return WorkflowSessionV2.from_dict(session_data)
+
         except Exception as e:
             logger.error(f"Error reading session: {e}")
             return None
