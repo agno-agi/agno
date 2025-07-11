@@ -62,7 +62,6 @@ class StepInput:
 
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
-    workflow_message: Optional[str] = None  # Original workflow message
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -144,16 +143,6 @@ class StepInput:
             else:
                 message_dict = str(self.message)
 
-        # Handle workflow_message (also updated to support all types)
-        workflow_message_dict = None
-        if self.workflow_message is not None:
-            if isinstance(self.workflow_message, BaseModel):
-                workflow_message_dict = self.workflow_message.model_dump(exclude_none=True)
-            elif isinstance(self.workflow_message, (dict, list)):
-                workflow_message_dict = self.workflow_message
-            else:
-                workflow_message_dict = str(self.workflow_message)
-
         previous_step_content_str: Optional[str] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
@@ -173,7 +162,6 @@ class StepInput:
 
         return {
             "message": message_dict,
-            "workflow_message": workflow_message_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
             "images": [img.to_dict() for img in self.images] if self.images else None,

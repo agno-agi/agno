@@ -1,9 +1,6 @@
-import json
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunResponse
-from agno.storage.sqlite import SqliteStorage
+from agno.storage.json import JsonStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -57,22 +54,13 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=SqliteStorage(
-            table_name="workflow_v2",
-            db_file="tmp/workflow_v2.db",
+        storage=JsonStorage(
+            dir_path="tmp/workflow_v2",
             mode="workflow_v2",
         ),
         steps=[research_step, content_planning_step],
     )
-    workflow_run_response: WorkflowRunResponse = content_creation_workflow.run(
+    content_creation_workflow.print_response(
         message="AI trends in 2024",
+        markdown=True,
     )
-
-    # Print workflow metrics
-    if workflow_run_response.workflow_metrics:
-        print("\n" + "-" * 60)
-        print("WORKFLOW METRICS")
-        print("-" * 60)
-        print(json.dumps(workflow_run_response.workflow_metrics.to_dict(), indent=2))
-    else:
-        print("\nNo workflow metrics available")

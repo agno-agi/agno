@@ -48,7 +48,6 @@ class WorkflowRunEvent(str, Enum):
 class BaseWorkflowRunResponseEvent:
     """Base class for all workflow run response events"""
 
-    run_id: str
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
 
@@ -56,6 +55,7 @@ class BaseWorkflowRunResponseEvent:
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
+    run_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
@@ -515,6 +515,13 @@ class WorkflowRunResponse:
         messages = data.pop("messages", [])
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
+        workflow_metrics_dict = data.pop("workflow_metrics", {})
+        workflow_metrics = None
+        if workflow_metrics_dict:
+            from agno.workflow.v2.workflow import WorkflowMetrics
+
+            workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
+
         step_responses = data.pop("step_responses", [])
         parsed_step_responses: List["StepOutput"] = []
         if step_responses:
@@ -547,6 +554,7 @@ class WorkflowRunResponse:
             audio=audio,
             response_audio=response_audio,
             events=events,
+            workflow_metrics=workflow_metrics,
             **data,
         )
 

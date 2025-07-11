@@ -449,7 +449,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     """
 
     # Access original workflow input
-    original_topic = step_input.workflow_message or ""
+    original_topic = step_input.message or ""
 
     # Access specific step outputs by name
     hackernews_data = step_input.get_step_content("research_hackernews") or ""
@@ -493,7 +493,7 @@ workflow = Workflow(
 > **Key Methods:**
 > - `step_input.get_step_content("step_name")` - Get content from specific step by name
 > - `step_input.get_all_previous_content()` - Get all previous step content combined
-> - `step_input.workflow_message` - Access the original workflow input message
+> - `step_input.message` - Access the original workflow input message
 > - `step_input.previous_step_content` - Get content from immediate previous step
 
 ### Event Storage and Filtering
