@@ -1811,8 +1811,8 @@ class Workflow:
 
                     # Check context for parallel special case
                     if current_primitive_context and current_primitive_context["type"] == "parallel":
-                        # For parallel child steps, all get the same number
-                        return f"Step {base_idx + 1}.1"
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
                     elif current_primitive_context and current_primitive_context["type"] == "loop":
                         iteration = current_primitive_context.get("current_iteration", 1)
                         return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
@@ -2584,8 +2584,8 @@ class Workflow:
 
                     # Check context for parallel special case
                     if current_primitive_context and current_primitive_context["type"] == "parallel":
-                        # For parallel child steps, all get the same number
-                        return f"Step {base_idx + 1}.1"
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
                     elif current_primitive_context and current_primitive_context["type"] == "loop":
                         iteration = current_primitive_context.get("current_iteration", 1)
                         return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"

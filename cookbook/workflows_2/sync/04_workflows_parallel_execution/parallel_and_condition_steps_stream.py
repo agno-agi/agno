@@ -149,7 +149,7 @@ if __name__ == "__main__":
             ),
             # Content preparation and writing
             prepare_input_for_write_step,
-            # write_step,
+            write_step,
         ],
     )
 

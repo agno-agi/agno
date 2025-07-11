@@ -102,7 +102,15 @@ def should_conduct_research(step_input: StepInput) -> bool:
 def is_tech_related(step_input: StepInput) -> bool:
     """Check if the topic is tech-related for additional tech research"""
     topic = step_input.message or step_input.previous_step_content or ""
-    tech_keywords = ["ai", "machine learning", "programming", "software", "tech", "startup", "coding"]
+    tech_keywords = [
+        "ai",
+        "machine learning",
+        "programming",
+        "software",
+        "tech",
+        "startup",
+        "coding",
+    ]
     return any(keyword in topic.lower() for keyword in tech_keywords)
 
 
