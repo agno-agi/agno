@@ -12,6 +12,7 @@ from agno.db.postgres.utils import (
     bulk_upsert_metrics,
     calculate_date_metrics,
     create_schema,
+    deserialize_session,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
     is_table_available,
@@ -24,7 +25,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import String, and_, cast, func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -530,7 +531,7 @@ class PostgresDb(BaseDb):
                 if result is None:
                     return None
 
-                return result._mapping
+                return deserialize_session(dict(result._mapping))
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
@@ -650,7 +651,7 @@ class PostgresDb(BaseDb):
                 if records is None:
                     return [], 0
 
-                return [record._mapping for record in records], total_count
+                return [deserialize_session(dict(record._mapping)) for record in records], total_count
 
         except Exception as e:
             log_debug(f"Exception reading from table: {e}")
@@ -733,17 +734,35 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
-                stmt = update(table).where(table.c.session_id == session_id).values(name=session_name)
+                stmt = (
+                    update(table)
+                    .where(table.c.session_id == session_id)
+                    .values(
+                        session_data=func.cast(
+                            func.jsonb_set(
+                                func.cast(table.c.session_data, postgresql.JSONB),
+                                text("'{session_name}'"),
+                                func.to_jsonb(session_name),
+                            ),
+                            postgresql.JSON,
+                        )
+                    )
+                    .returning(*table.c)
+                )
                 result = sess.execute(stmt)
                 row = result.fetchone()
-                sess.commit()
+                if not row:
+                    return None
 
+            deserialized_session = deserialize_session(dict(row._mapping))
+
+            # Return the appropriate session type
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(row._mapping)
+                return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(row._mapping)
+                return TeamSession.from_dict(deserialized_session)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(row._mapping)
+                return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")

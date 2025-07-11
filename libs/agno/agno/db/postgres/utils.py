@@ -7,7 +7,11 @@ from uuid import uuid4
 
 from sqlalchemy import Engine
 
+from agno.db.base import SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
+from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -18,6 +22,22 @@ try:
     from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+def deserialize_session(session: dict) -> dict:
+    """Deserialize the given session dictionary.
+
+    Args:
+        session (dict): The session dictionary to deserialize.
+    """
+    if session.get("summary") is not None:
+        session["summary"] = SessionSummary.from_dict(session["summary"])
+    if session.get("runs") is not None:
+        if session["session_type"] == SessionType.AGENT.value:
+            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
+        elif session["session_type"] == SessionType.TEAM.value:
+            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+    return session
 
 
 # -- DB util methods --
