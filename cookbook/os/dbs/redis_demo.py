@@ -6,7 +6,6 @@ from agno.eval.accuracy import AccuracyEval
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces import Whatsapp
 from agno.team.team import Team
 
 # Setup the Redis database
@@ -61,7 +60,6 @@ agent_os = AgentOS(
     os_id="basic-app",
     agents=[agent],
     teams=[team],
-    interfaces=[Whatsapp(agent=agent)],
 )
 app = agent_os.get_app()
 

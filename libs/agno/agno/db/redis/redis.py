@@ -1225,7 +1225,7 @@ class RedisDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_document(self, document_id: str):
+    def delete_knowledge_source(self, source_id: str):
         """Delete a knowledge document from Redis.
 
         Args:
@@ -1235,7 +1235,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while deleting the document.
         """
         try:
-            self._delete_record("knowledge", document_id)
+            self._delete_record("knowledge", source_id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge document: {e}")
@@ -1260,7 +1260,7 @@ class RedisDb(BaseDb):
             log_error(f"Error getting document status: {e}")
             return None
 
-    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_source(self, source_id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge document from Redis.
 
         Args:
@@ -1273,7 +1273,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the document.
         """
         try:
-            document_raw = self._get_record("knowledge", document_id)
+            document_raw = self._get_record("knowledge", source_id)
             if document_raw is None:
                 return None
 
@@ -1320,7 +1320,19 @@ class RedisDb(BaseDb):
             log_error(f"Error getting knowledge documents: {e}")
             return [], 0
 
-    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
+    def get_source_status(self, source_id: str):
+        pass
+
+    def get_knowledge_sources(
+        self,
+        limit: int | None = None,
+        page: int | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+    ):
+        pass
+
+    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
         """Upsert a knowledge document in Redis.
 
         Args:

@@ -1,12 +1,13 @@
 """Utility functions for the MongoDB database class."""
 
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_error, log_warning
 
 try:
     from pymongo.collection import Collection
@@ -14,7 +15,6 @@ except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
 
-# TODO: ensure idempotency
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
     """Create all required indexes for a collection"""
     try:
@@ -28,7 +28,6 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
             else:
                 collection.create_index([(key, 1)], unique=unique)
 
-        log_debug(f"Successfully ensured indexes for {collection_type} collection")
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {e}")
 
@@ -93,8 +92,12 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         for session in sessions:
             if session.get("user_id"):
                 all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
+            runs = session.get("runs", []) or []
+            metrics[runs_count_key] += len(sessions)
+
             if runs := session.get("runs", []):
+                if isinstance(runs, str):
+                    runs = json.loads(runs)
                 for run in runs:
                     if model_id := run.get("model"):
                         model_provider = run.get("model_provider", "")
@@ -102,7 +105,10 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_data = session.get("session_data", {})
+            if isinstance(session_data, str):
+                session_data = json.loads(session_data)
+            session_metrics = session_data.get("session_metrics", {})
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 
@@ -156,19 +162,33 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
 
 
 def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Bulk upsert metrics into the database."""
+    """Bulk upsert metrics into the database.
+
+    Args:
+        collection (Collection): The collection to upsert the metrics into.
+        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
+
+    Returns:
+        The list of upserted metrics records.
+    """
     if not metrics_records:
         return []
 
     results = []
     for record in metrics_records:
+        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
-            result = collection.replace_one(
-                {"date": record["date"], "aggregation_period": record["aggregation_period"]}, record, upsert=True
+            collection.replace_one(
+                {
+                    "date": record["date"],
+                    "aggregation_period": record["aggregation_period"],
+                },
+                record,
+                upsert=True,
             )
-            if result.upserted_id:
-                record["_id"] = result.upserted_id
+
             results.append(record)
+
         except Exception as e:
             log_error(f"Error upserting metrics record: {e}")
             continue

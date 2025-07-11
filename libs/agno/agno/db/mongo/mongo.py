@@ -949,6 +949,7 @@ class MongoDb(BaseDb):
                 "user_id": memory.user_id,
                 "agent_id": memory.agent_id,
                 "team_id": memory.team_id,
+                "workflow_id": None,
                 "memory_id": memory.id,
                 "memory": memory.memory,
                 "topics": memory.memory.get("topics", []),
@@ -1025,10 +1026,11 @@ class MongoDb(BaseDb):
             result = collection.find_one({}, sort=[("date", -1)], limit=1)
 
             if result is not None:
+                result_date = datetime.strptime(result["date"], "%Y-%m-%d").date()
                 if result.get("completed"):
-                    return result["date"] + timedelta(days=1)
+                    return result_date + timedelta(days=1)
                 else:
-                    return result["date"]
+                    return result_date
 
             # No metrics records. Return the date of the first recorded session.
             first_session_result = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
@@ -1196,15 +1198,13 @@ class MongoDb(BaseDb):
             log_error(f"Error getting knowledge sources: {e}")
             return [], 0
 
-    # TODO:
     def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
         """Upsert a knowledge document in the database."""
         try:
             collection = self._get_collection(table_type="knowledge")
 
             update_doc = knowledge_row.model_dump()
-
-            result = collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
+            collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
 
             return knowledge_row
 
