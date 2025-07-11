@@ -102,7 +102,6 @@ class Steps:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
-            workflow_message=step_input.workflow_message,
             additional_data=step_input.additional_data,
             images=current_images + step_images,
             videos=current_videos + step_videos,
