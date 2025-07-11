@@ -117,6 +117,7 @@ class Loop:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
+            additional_data=step_input.additional_data,
             workflow_message=step_input.workflow_message,
             images=current_images + all_images,
             videos=current_videos + all_videos,

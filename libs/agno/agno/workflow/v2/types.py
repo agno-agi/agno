@@ -14,6 +14,8 @@ class WorkflowExecutionInput:
 
     message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
+    additional_data: Optional[Dict[str, Any]] = None
+
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
@@ -48,6 +50,7 @@ class WorkflowExecutionInput:
 
         return {
             "message": message_dict,
+            "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
@@ -63,6 +66,8 @@ class StepInput:
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
     workflow_message: Optional[str] = None  # Original workflow message
+
+    additional_data: Optional[Dict[str, Any]] = None
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -176,6 +181,7 @@ class StepInput:
             "workflow_message": workflow_message_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
+            "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
