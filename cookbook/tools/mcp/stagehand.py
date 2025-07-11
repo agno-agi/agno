@@ -14,10 +14,11 @@ Prerequisites:
 - Build the Stagehand MCP server: cd mcp-server-browserbase/stagehand && npm install && npm run build
 - Install dependencies: pip install agno mcp
 - Set environment variables: BROWSERBASE_API_KEY, BROWSERBASE_PROJECT_ID, OPENAI_API_KEY
+- Run this example: python cookbook/tools/mcp/stagehand.py
 """
 
 import asyncio
-from os import getenv
+from os import environ
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -30,7 +31,7 @@ async def run_agent(message: str) -> None:
     server_params = StdioServerParameters(
         command="node",
         args=["mcp-server-browserbase/stagehand/dist/index.js"],
-        env=os.environ.copy(),
+        env=environ.copy(),
     )
 
     async with MCPTools(server_params=server_params, timeout_seconds=60) as mcp_tools:
@@ -39,27 +40,27 @@ async def run_agent(message: str) -> None:
             tools=[mcp_tools],
             instructions=dedent("""\
                 You are a web scraping assistant that creates concise reader's digests from Hacker News.
-                
+
                 CRITICAL INITIALIZATION RULES - FOLLOW EXACTLY:
                 1. NEVER use screenshot tool until AFTER successful navigation
                 2. ALWAYS start with stagehand_navigate first
                 3. Wait for navigation success message before any other actions
                 4. If you see initialization errors, restart with navigation only
                 5. Use stagehand_observe and stagehand_extract to explore pages safely
-                
+
                 Available tools and safe usage order:
                 - stagehand_navigate: Use FIRST to initialize browser
                 - stagehand_extract: Use to extract structured data from pages
                 - stagehand_observe: Use to find elements and understand page structure
                 - stagehand_act: Use to click links and navigate to comments
                 - screenshot: Use ONLY after navigation succeeds and page loads
-                
+
                 Your goal is to create a comprehensive but concise digest that includes:
                 - Top headlines with brief summaries
                 - Key themes and trends
                 - Notable comments and insights
                 - Overall tech news landscape overview
-                
+
                 Be methodical, extract structured data, and provide valuable insights.
             """),
             markdown=True,
