@@ -316,7 +316,6 @@ class Workflow:
             message=execution_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=previous_step_outputs,
-            workflow_message=execution_input.message,
             images=shared_images or [],
             videos=shared_videos or [],
             audio=shared_audio or [],
