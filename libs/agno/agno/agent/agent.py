@@ -4579,7 +4579,6 @@ class Agent:
             # If copy fails, return as is
             return field_value
 
-
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:

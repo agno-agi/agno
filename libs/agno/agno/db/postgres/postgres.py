@@ -63,7 +63,7 @@ class PostgresDb(BaseDb):
             user_memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
-            knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
+            knowledge_table (Optional[str]): Name of the table to store knowledge content.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
@@ -1401,29 +1401,29 @@ class PostgresDb(BaseDb):
 
             log_info(f"Getting knowledge table: {self.knowledge_table_name}")
             self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name, table_type="knowledge_sources", db_schema=self.db_schema
+                table_name=self.knowledge_table_name, table_type="knowledge_contents", db_schema=self.db_schema
             )
 
         return self.knowledge_table
 
-    def delete_knowledge_source(self, id: str):
-        table = self.get_knowledge_table()
+    def delete_knowledge_content(self, id: str):
+        table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == id)
             sess.execute(stmt)
             sess.commit()
         return
 
-    def get_source_status(self, id: str) -> Optional[str]:
+    def get_content_status(self, id: str) -> Optional[str]:
         table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = select(table.c.status).where(table.c.id == id)
             result = sess.execute(stmt).fetchone()
             return result._mapping["status"]
 
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         table = self._get_knowledge_table()
-        print(f"Getting knowledge source: {id}, {table}")
+        print(f"Getting knowledge content: {id}, {table}")
         with self.Session() as sess, sess.begin():
             stmt = select(table).where(table.c.id == id)
             result = sess.execute(stmt).fetchone()
@@ -1431,23 +1431,23 @@ class PostgresDb(BaseDb):
                 return None
             return KnowledgeRow.model_validate(result._mapping)
 
-    def get_knowledge_sources(
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database.
+        """Get all knowledge contents from the database.
 
         Args:
-            limit (Optional[int]): The maximum number of knowledge documents to return.
+            limit (Optional[int]): The maximum number of knowledge contents to return.
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
 
         Returns:
-            List[KnowledgeRow]: The knowledge documents.
+            List[KnowledgeRow]: The knowledge contents.
         """
         table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
@@ -1470,14 +1470,14 @@ class PostgresDb(BaseDb):
             result = sess.execute(stmt).fetchall()
             return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database.
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database.
 
         Args:
-            knowledge_document (KnowledgeRow): The knowledge document to upsert.
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
 
         Returns:
-            Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
             table = self._get_knowledge_table()
@@ -1494,6 +1494,7 @@ class PostgresDb(BaseDb):
                         "linked_to": knowledge_row.linked_to,
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
+                        "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                     }.items()
@@ -1509,7 +1510,7 @@ class PostgresDb(BaseDb):
                 sess.commit()
             return knowledge_row
         except Exception as e:
-            log_error(f"Error upserting knowledge document: {e}")
+            log_error(f"Error upserting knowledge row: {e}")
             return None
 
     # -- Eval methods --

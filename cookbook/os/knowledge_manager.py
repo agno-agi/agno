@@ -13,15 +13,15 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 #     storage_path="tmp/sources",
 # )
 
-vector_store = PgVector(
+vector_db = PgVector(
     table_name="vectors",
     # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
     db_url=db_url,
 )
 
-document_db = PostgresDb(
+contents_db = PostgresDb(
     db_url=db_url,
-    knowledge_table="knowledge_sources",
+    knowledge_table="knowledge_contents",
 )
 
 # Create knowledge base
@@ -29,8 +29,8 @@ knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
     # document_store=document_store,
-    sources_db=document_db,
-    vector_store=vector_store,
+    contents_db=contents_db,
+    vector_store=vector_db,
 )
 
 basic_agent = Agent(

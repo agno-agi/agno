@@ -16,6 +16,7 @@ class KnowledgeRow(BaseModel):
     linked_to: Optional[str] = None
     access_count: Optional[int] = None
     status: Optional[str] = None
+    status_message: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 

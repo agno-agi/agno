@@ -176,34 +176,34 @@ class BaseDb(ABC):
     # --- Knowledge ---
 
     @abstractmethod
-    def get_source_status(self, id: str) -> Optional[str]:
-        """Get the status of a knowledge source by ID."""
+    def get_content_status(self, id: str) -> Optional[str]:
+        """Get the status of knowledge content by ID."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document by ID."""
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get knowledge content by ID."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_sources(
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database."""
+        """Get all knowledge content from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database."""
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database."""
         raise NotImplementedError
 
     @abstractmethod
-    def delete_knowledge_source(self, id: str):
-        """Delete a knowledge document by ID."""
+    def delete_knowledge_content(self, id: str):
+        """Delete knowledge content by ID."""
         raise NotImplementedError
 
     # --- Eval ---

@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
-class SourceResponseSchema(BaseModel):
+class ContentResponseSchema(BaseModel):
     id: str
     name: Optional[str] = None
     description: Optional[str] = None
