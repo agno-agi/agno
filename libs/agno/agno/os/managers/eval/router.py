@@ -31,7 +31,7 @@ def parse_eval_types_filter(
         raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
 
 
-def attach_routes(router: APIRouter, db: BaseDb, agents, teams) -> APIRouter:
+def attach_routes(router: APIRouter, db: BaseDb, agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None) -> APIRouter:
     @router.get("/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200)
     async def get_eval_runs(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
