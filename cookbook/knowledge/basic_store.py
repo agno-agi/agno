@@ -26,8 +26,8 @@ document_seed_store = None
 knowledge = Knowledge(
     name="My Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
-    document_store=document_store,
-    vector_store=PgVector(
+    store=document_store,
+    vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
 )

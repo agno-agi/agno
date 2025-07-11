@@ -20,7 +20,7 @@ sources_db = PostgresDb(
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
-    vector_store=PgVector(
+    vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
     sources_db=sources_db,
@@ -29,66 +29,99 @@ knowledge = Knowledge(
 custom_reader = Reader(name="Custom Reader", description="Custom Reader")
 knowledge.add_reader(custom_reader)
 
-readers = knowledge.get_readers()
-for k, v in readers.items():
-    print(k, v.name, v.description)
 
+# print("Use Case 1")
+# # Add from path to the knowledge base
+# knowledge.add_source(
+#     name="CV1",
+#     path="tmp/cv_1.pdf",
+#     metadata={"user_tag": "Engineering candidates"},
+# )
 
-print("Use Case 1")
-# Add from path to the knowledge base
-knowledge.add_source(
-    name="CV1",
-    path="tmp/cv_1.pdf",
+# print("Using source dicts")
+# knowledge.add_sources(
+#     [
+#         {
+#             "name": "CV's",
+#             "path": "tmp/",
+#             "metadata": {"user_tag": "Engineering candidates"},
+#         },
+#         {
+#             "name": "Docs",
+#             "path": "my_documents/",
+#             "metadata": {"user_tag": "Engineering documents"},
+#         },
+#         {
+#             "name": "JSON",
+#             "url": "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+#             "metadata": {"user_tag": "URL document"},
+#         }
+#     ]
+# )
+
+print("Using structured inputs with kwargs")
+knowledge.add_sources(
+    name="CV's",
+    description="Engineering candidates",
     metadata={"user_tag": "Engineering candidates"},
-)
-
-print("Use Case 2")
-# Add from URL to the knowledge base
-knowledge.add_source(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Recipes"},
-)
-
-print("Use Case 3")
-# Specify a customer reader
-knowledge.add_source(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Recipes"},
-    reader=WebsiteReader(),
-)
-
-print("Use Case 4")
-# Add manual content
-knowledge.add_source(
-    text_content="Hello world",
-    metadata={"user_tag": "Manual Text Document"},
-)
-
-print("Use Case 5")
-# Add manual JSON content
-knowledge.add_source(
-    name="Manual JSON Document",
-    text_content="""
-    {
-        "name": "John Doe",
-        "age": 30,
-        "email": "john.doe@example.com"
-    }
-    """,
-    metadata={"user_tag": "Manual JSON Document"},
-    reader=JSONReader(),
+    # paths = [
+    #     "tmp/",
+    #     "docs/"
+    # ],
+    urls = [
+        "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        "https://forum.vorondesign.com/threads/voron-0-2-r1.2379/"
+    ]
 )
 
 
-print("Use Case 6")
-# Add from Wikipedia
-knowledge.add_source(
-    metadata={"user_tag": "Manual Document String Content"},
-    topics=["Manchester United", "dclbc sjkckja"],
-    reader=WikipediaReader(),
-)
+# print("Use Case 2")
+# # Add from URL to the knowledge base
+# knowledge.add_source(
+#     name="Recipes",
+#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+#     metadata={"user_tag": "Recipes"},
+# )
+
+# print("Use Case 3")
+# # Specify a customer reader
+# knowledge.add_source(
+#     name="Recipes",
+#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+#     metadata={"user_tag": "Recipes"},
+#     reader=WebsiteReader(),
+# )
+
+# print("Use Case 4")
+# # Add manual content
+# knowledge.add_source(
+#     text_content="Hello world",
+#     metadata={"user_tag": "Manual Text Document"},
+# )
+
+# print("Use Case 5")
+# # Add manual JSON content
+# knowledge.add_source(
+#     name="Manual JSON Document",
+#     text_content="""
+#     {
+#         "name": "John Doe",
+#         "age": 30,
+#         "email": "john.doe@example.com"
+#     }
+#     """,
+#     metadata={"user_tag": "Manual JSON Document"},
+#     reader=JSONReader(),
+# )
+
+
+# print("Use Case 6")
+# # Add from Wikipedia
+# knowledge.add_source(
+#     metadata={"user_tag": "Manual Document String Content"},
+#     topics=["Manchester United", "dclbc sjkckja"],
+#     reader=WikipediaReader(),
+# )
 
 # print("Use Case 7")
 # # TODO: We need to add a reader for Arxiv
@@ -120,19 +153,19 @@ knowledge.add_source(
 #     name="S3",
 #     config=s3_config,
 #     metadata={"user_tag": "Recipes"},
-#     # reader=S3PDFReader(),
+#     # reader=S3PDFReader(),s
 # )
 
 
-agent = Agent(
-    name="My Agent",
-    description="Agno 2.0 Agent Implementation",
-    knowledge=knowledge,
-    search_knowledge=True,
-    debug_mode=True,
-)
+# agent = Agent(
+#     name="My Agent",
+#     description="Agno 2.0 Agent Implementation",
+#     knowledge=knowledge,
+#     search_knowledge=True,
+#     debug_mode=True,
+# )
 
-agent.print_response(
-    "Give me a list of all candidates that have software engineering experience.",
-    markdown=True,
-)
+# agent.print_response(
+#     "Give me a list of all candidates that have software engineering experience.",
+#     markdown=True,
+# )

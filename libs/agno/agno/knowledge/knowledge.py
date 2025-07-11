@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
 
 from agno.db.postgres.postgres import PostgresDb
@@ -28,13 +28,15 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
 
+SourceDict = Dict[str, Union[str, Dict[str, str]]]
+
 @dataclass
 class Knowledge:
     """Knowledge class"""
 
     name: str
     description: Optional[str] = None
-    vector_store: Optional[VectorDb] = None
+    vector_db: Optional[VectorDb] = None
     store: Optional[Union[Store, List[Store]]] = None
     sources_db: Optional[PostgresDb] = None
     sources: Optional[Union[Source, List[Source]]] = None
@@ -45,8 +47,8 @@ class Knowledge:
     readers: Optional[Dict[str, Reader]] = None
 
     def __post_init__(self):
-        if self.vector_store and not self.vector_store.exists():
-            self.vector_store.create()
+        if self.vector_db and not self.vector_db.exists():
+            self.vector_db.create()
 
         if self.store is not None:
             self.store.read_from_store = True
@@ -58,13 +60,13 @@ class Knowledge:
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
-            if self.vector_store is None:
+            if self.vector_db is None:
                 log_warning("No vector db provided")
                 return []
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -74,14 +76,14 @@ class Knowledge:
     ) -> List[Document]:
         """Returns relevant documents matching a query"""
         try:
-            if self.vector_store is None:
+            if self.vector_db is None:
                 log_warning("No vector db provided")
                 return []
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
+                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
                 return self.search(query=query, max_results=_max_results, filters=filters)
@@ -118,10 +120,10 @@ class Knowledge:
                     _pdf = io.BytesIO(file_content) if isinstance(file_content, bytes) else file_content
                     document = self.pdf_reader.read(pdf=_pdf, name=metadata["name"])
 
-                    if self.vector_store.upsert_available():
-                        self.vector_store.upsert(documents=document, filters=metadata)
+                    if self.vector_db.upsert_available():
+                        self.vector_db.upsert(documents=document, filters=metadata)
                     else:
-                        self.vector_store.insert(document)
+                        self.vector_db.insert(document)
 
         if store.copy_to_store:
             # TODO: Need to implement this part. Copy only when the file does not already exist in that store.
@@ -131,9 +133,10 @@ class Knowledge:
         self,
         source: Source,
     ):
-        log_info("Adding source from path")
+        log_info(f"Adding source from path, {source.id}, {source.name}, {source.path}, {source.description}")
         path = Path(source.path)
         if path.is_file():
+            source.id = str(uuid4())
             if source.reader:
                 read_documents = source.reader.read(path, name=source.name or path.name)
             else:
@@ -141,6 +144,10 @@ class Knowledge:
                 print(f"Using Reader: {reader.__class__.__name__}")
                 if reader:
                     read_documents = reader.read(path, name=source.name or path.name)
+
+
+            if not source.file_type:
+                source.file_type = path.suffix
 
             if not source.size and source.content:
                 source.size = len(source.content.content)
@@ -150,39 +157,42 @@ class Knowledge:
                 except (OSError, IOError) as e:
                     log_warning(f"Could not get file size for {path}: {e}")
                     source.size = 0
+            self._add_to_sources_db(source)
 
             for read_document in read_documents:
                 read_document.source_id = source.id
-                if self.vector_store.upsert_available():
+                if self.vector_db.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        self.vector_db.upsert(documents=[read_document], filters=source.metadata)
+                        self._update_source_status(source.id, "Completed")
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
                         self._update_source_status(source.id, "Failed - Could not upsert embedding")
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=source.metadata)
+                        self._update_source_status(source.id, "Completed")
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
                         self._update_source_status(source.id, "Failed - Could not insert embedding")
+
 
         elif path.is_dir():
             for file in path.iterdir():
                 id = str(uuid4())
                 # Create a new Source object for each file in the directory
                 file_source = Source(
-                    id=id, name=source.name, path=str(file), metadata=source.metadata, reader=source.reader
+                    id=id, name=source.name, path=str(file), metadata=source.metadata, description=source.description, reader=source.reader
                 )
                 self._load_from_path(file_source)
         else:
-            self._update_source_status(source.id, "Failed")
             log_warning(f"Invalid path: {path}")
-
-        self._update_source_status(source.id, "Completed")
 
     def _load_from_url(self, source: Source):
         log_info("Adding source from URL")
         from urllib.parse import urlparse
+        source.file_type = "url"
+        self._add_to_sources_db(source)
 
         # Validate URL
         try:
@@ -222,15 +232,15 @@ class Knowledge:
                 if read_document.size:
                     file_size += read_document.size
                 read_document.source_id = source.id
-                if self.vector_store.upsert_available():
+                if self.vector_db.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        self.vector_db.upsert(documents=[read_document], filters=source.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
                         self._update_source_status(source.id, "Failed - Could not upsert embedding")
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=source.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
                         self._update_source_status(source.id, "Failed - Could not insert embedding")
@@ -274,15 +284,15 @@ class Knowledge:
                     read_document.source_id = source.id
 
                     # Add to vector store - pass as a list
-                    if self.vector_store and self.vector_store.upsert_available():
+                    if self.vector_db and self.vector_db.upsert_available():
                         try:
-                            self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                            self.vector_db.upsert(documents=[read_document], filters=source.metadata)
                         except Exception as e:
                             log_error(f"Error upserting document: {e}")
                             self._update_source_status(source.id, "Failed - Could not upsert embedding")
                     else:
                         try:
-                            self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                            self.vector_db.insert(documents=[read_document], filters=source.metadata)
                         except Exception as e:
                             log_error(f"Error inserting document: {e}")
                             self._update_source_status(source.id, "Failed - Could not insert embedding")
@@ -320,10 +330,10 @@ class Knowledge:
                 for read_document in read_documents:
                     if read_document.content:
                         read_document.size = len(read_document.content.encode("utf-8"))
-                    if self.vector_store.upsert_available():
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                    if self.vector_db.upsert_available():
+                        self.vector_db.upsert(documents=[read_document], filters=source.metadata)
                     else:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=source.metadata)
                 self._update_source_status(id, "Completed")
             else:
                 self._update_source_status(id, "Failed - No content found for topic")
@@ -333,9 +343,6 @@ class Knowledge:
     def _load_source(self, source: Source) -> None:
         log_info(f"Loading source: {source.id}")
         # Don't add for topics, they need to create their own documents.
-        if source.path or source.url or source.content:
-            log_info(f"Adding source to sources db: {source.id}")
-            self._add_to_sources_db(source)
 
         if source.path:
             self._load_from_path(source)
@@ -344,6 +351,7 @@ class Knowledge:
             self._load_from_url(source)
 
         if source.content:
+            self._add_to_sources_db(source)
             self._load_from_content(source)
 
         if source.topics:
@@ -370,9 +378,76 @@ class Knowledge:
         else:
             log_warning("No sources db provided")
 
+
+    @overload
+    def add_sources(self, sources: List[SourceDict]) -> None: ...
+    
+    @overload
+    def add_sources(
+        self,
+        *,
+        paths: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> None: ...
+    
+    def add_sources(self, *args, **kwargs) -> None:
+        if args and isinstance(args[0], list):
+            sources = args[0]
+            print("Case 1: List of source dicts")
+            for src in sources:
+                print(f"Adding source: {src}")
+                self.add_source(
+                    name=src.get("name"),
+                    description=src.get("description"),
+                    path=src.get("path"),
+                    url=src.get("url"),
+                    metadata=src.get("metadata"),
+                    topics=src.get("topics"),
+                    reader=src.get("reader"),
+                )
+        
+        elif kwargs:
+            name = kwargs.get("name", [])
+            metadata = kwargs.get("metadata", {})
+            description = kwargs.get("description", [])
+            topics = kwargs.get("topics", [])
+            paths = kwargs.get("paths", [])
+            urls = kwargs.get("urls", [])
+
+            print("Case 2: Structured inputs with kwargs")
+            for path in paths:
+                self.add_source(
+                    name=name,
+                    description=description,
+                    path=path,
+                    metadata=metadata,
+                )
+                print(f"Adding path source: {path} with metadata: {metadata}")
+            for url in urls:
+                self.add_source(
+                    name=name,
+                    description=description,
+                    url=url,
+                    metadata=metadata,
+                )
+                print(f"Adding url source: {url} with metadata: {metadata}")
+            if topics:
+                self.add_source(
+                    name=name,
+                    description=description,
+                    topics=topics,
+                    metadata=metadata,
+                )
+        
+        else:
+            raise ValueError("Invalid usage of add_sources.")
+        
+
     def add_source(
         self,
         name: Optional[str] = None,
+        description: Optional[str] = None,
         path: Optional[str] = None,
         url: Optional[str] = None,
         text_content: Optional[str] = None,
@@ -394,6 +469,7 @@ class Knowledge:
         source = Source(
             id=str(uuid4()),
             name=name,
+            description=description,
             path=path,
             url=url,
             content=content if content else None,
@@ -473,8 +549,8 @@ class Knowledge:
         if self.store is not None:
             self.store.delete_source(source_id)
 
-        if self.vector_store is not None:
-            self.vector_store.delete_by_source_id(source_id)
+        if self.vector_db is not None:
+            self.vector_db.delete_by_source_id(source_id)
 
     def remove_all_sources(self):
         if self.store is not None:
@@ -488,7 +564,7 @@ class Knowledge:
             created_at = source.created_at if source.created_at else int(time.time())
             updated_at = source.updated_at if source.updated_at else int(time.time())
 
-            file_type = source.content.type if source.content and source.content.type else None
+            file_type = source.file_type if source.file_type else source.content.type if source.content and source.content.type else None
 
             source_row = KnowledgeRow(
                 id=source.id,
@@ -512,6 +588,7 @@ class Knowledge:
     def _update_source_status(self, source_id: str, status: str):
         if self.sources_db:
             source_row = self.sources_db.get_knowledge_source(source_id)
+
             source_row.status = status
             source_row.updated_at = int(time.time())
             self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
@@ -524,7 +601,7 @@ class Knowledge:
                     path, name=path
                 )  # TODO: Need to make naming consistent with files and their extensions.
                 self.store.add_source(document)
-                self.vector_store.insert(document)
+                self.vector_db.insert(document)
         elif path.is_dir():
             pass
         else:

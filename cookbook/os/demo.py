@@ -31,13 +31,13 @@ store = LocalStore(
     storage_path="tmp/documents",
 )
 
-vector_store_1 = PgVector(
+vector_db_1 = PgVector(
     table_name="pdf_documents",
     # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
     db_url=db_url,
 )
 
-vector_store_2 = PgVector(
+vector_db_2 = PgVector(
     table_name="pdf_documents_2",
     # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
     db_url=db_url,
@@ -54,7 +54,7 @@ knowledge1 = Knowledge(
     description="A simple knowledge base",
     store=store,
     sources_db=document_db,
-    vector_store=vector_store_1,
+    vector_db=vector_db_1,
 )
 
 knowledge2 = Knowledge(
@@ -62,7 +62,7 @@ knowledge2 = Knowledge(
     description="A simple knowledge base 2",
     # document_store=document_store,
     sources_db=document_db,
-    vector_store=vector_store_2,
+    vector_db=vector_db_2,
 )
 
 

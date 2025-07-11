@@ -12,10 +12,10 @@ documents_db = PostgresDb(
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
-    vector_store=PgVector(
+    vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
-    documents_db=documents_db,
+    sources_db=documents_db,
 )
 
 agent = Agent(

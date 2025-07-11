@@ -21,6 +21,7 @@ class Source:
     content: Optional[Union[str, SourceContent]] = None
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
+    file_type: Optional[str] = None
     config: Optional[CloudStorageConfig] = None
     reader: Optional[Reader] = None
     size: Optional[int] = None
