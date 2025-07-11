@@ -14,7 +14,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from atla_insights import configure, instrument_agno
 
-configure(token=os.getenv("ATLA_API_KEY"))
+configure(token=getenv("ATLA_API_KEY"))
 
 agent = Agent(
     name="Stock Price Agent",
