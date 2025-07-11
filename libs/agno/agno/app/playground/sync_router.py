@@ -157,7 +157,7 @@ def workflow_response_streamer(
         run_response = workflow.run(
             **body.input,
             user_id=body.user_id,
-            session_id=body.session_id,
+            session_id=body.session_id or str(uuid4()),
             stream=True,
             stream_intermediate_steps=True,
         )
@@ -709,7 +709,7 @@ def get_sync_playground_router(
                     )
                 else:
                     # Return as a normal response
-                    return workflow.arun(**body.input)
+                    return workflow.arun(**body.input, session_id=body.session_id or str(uuid4()), user_id=body.user_id)
             except Exception as e:
                 # Handle unexpected runtime errors
                 raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
