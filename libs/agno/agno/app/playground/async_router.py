@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from io import BytesIO
 from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
@@ -389,7 +388,7 @@ def get_async_playground_router(
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 chat_response_streamer(
                     agent,
@@ -458,7 +457,7 @@ def get_async_playground_router(
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 agent_acontinue_run_streamer(
                     agent,
@@ -650,7 +649,7 @@ def get_async_playground_router(
             else:
                 # Return as a streaming response
                 return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
+                    (result.to_json() for result in new_workflow_instance.run(**body.input)),
                     media_type="text/event-stream",
                 )
         except Exception as e:
@@ -827,7 +826,7 @@ def get_async_playground_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and team.is_streamable:
+        if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
                     team,

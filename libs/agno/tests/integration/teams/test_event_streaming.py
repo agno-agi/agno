@@ -1,6 +1,7 @@
 from textwrap import dedent
 
 import pytest
+from pydantic import BaseModel
 
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
@@ -336,6 +337,111 @@ def test_intermediate_steps_with_memory(team_storage, memory):
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
+
+
+def test_intermediate_steps_with_structured_output(team_storage):
+    """Test that the agent streams events."""
+
+    class Person(BaseModel):
+        name: str
+        description: str
+        age: int
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        storage=team_storage,
+        response_model=Person,
+        instructions="You have no members, answer directly",
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.run_response_content]) == 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+
+    assert events[TeamRunEvent.run_response_content][0].content is not None
+    assert events[TeamRunEvent.run_response_content][0].content_type == "Person"
+    assert events[TeamRunEvent.run_response_content][0].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_response_content][0].content.description) > 1
+
+    assert events[TeamRunEvent.run_completed][0].content is not None
+    assert events[TeamRunEvent.run_completed][0].content_type == "Person"
+    assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
+
+
+def test_intermediate_steps_with_parser_model(team_storage):
+    """Test that the agent streams events."""
+
+    class Person(BaseModel):
+        name: str
+        description: str
+        age: int
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        storage=team_storage,
+        response_model=Person,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You have no members, answer directly",
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = team.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.parser_model_response_started,
+        TeamRunEvent.parser_model_response_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    assert len(events[TeamRunEvent.parser_model_response_started]) == 1
+    assert len(events[TeamRunEvent.parser_model_response_completed]) == 1
+    assert (
+        len(events[TeamRunEvent.run_response_content]) >= 2
+    )  # The first model streams, then the parser model has a single content event
+    assert len(events[TeamRunEvent.run_completed]) == 1
+
+    assert events[TeamRunEvent.run_response_content][-1].content is not None
+    assert events[TeamRunEvent.run_response_content][-1].content_type == "Person"
+    assert events[TeamRunEvent.run_response_content][-1].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_response_content][-1].content.description) > 1
+
+    assert events[TeamRunEvent.run_completed][0].content is not None
+    assert events[TeamRunEvent.run_completed][0].content_type == "Person"
+    assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
+
+    assert team.run_response.content is not None
+    assert team.run_response.content_type == "Person"
+    assert team.run_response.content.name == "Elon Musk"
 
 
 def test_intermediate_steps_with_member_agents():

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -19,7 +20,7 @@ class CerebrasOpenAI(OpenAILike):
     base_url: str = "https://api.cerebras.ai/v1"
     api_key: Optional[str] = getenv("CEREBRAS_API_KEY", None)
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -32,7 +33,7 @@ class CerebrasOpenAI(OpenAILike):
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
         # Get base request kwargs from the parent class
-        request_params = super().get_request_kwargs(
+        request_params = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice
         )
 
@@ -53,6 +54,8 @@ class CerebrasOpenAI(OpenAILike):
             # Cerebras requires parallel_tool_calls=False for llama-4-scout-17b-16e-instruct
             request_params["parallel_tool_calls"] = self.parallel_tool_calls
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:

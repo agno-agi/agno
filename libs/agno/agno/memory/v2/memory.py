@@ -190,6 +190,7 @@ class Memory:
                 all_memories = self.db.read_memories()
             else:
                 all_memories = self.db.read_memories(user_id=user_id)
+
             # Reset the memories
             self.memories = {}
             for memory in all_memories:
@@ -238,13 +239,12 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+
+        self.refresh_from_db(user_id=user_id)
 
         if self.memories is None:
             return []
@@ -254,19 +254,16 @@ class Memory:
         """Get the session summaries for a given user id"""
         if user_id is None:
             user_id = "default"
+        self.refresh_from_db(user_id=user_id)
         if self.summaries is None:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        self.refresh_from_db(user_id=user_id)
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
@@ -986,27 +983,6 @@ class Memory:
         self.summaries = {}
         self.runs = {}
 
-    def deep_copy(self) -> "Memory":
-        from copy import deepcopy
-
-        # Create a shallow copy of the object
-        copied_obj = self.__class__(**self.to_dict())
-
-        # Manually deepcopy fields that are known to be safe
-        for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "memory_manager", "summary_manager"]:
-                try:
-                    setattr(copied_obj, field_name, deepcopy(field_value))
-                except Exception as e:
-                    logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
-                    setattr(copied_obj, field_name, field_value)
-
-        copied_obj.db = self.db
-        copied_obj.memory_manager = self.memory_manager
-        copied_obj.summary_manager = self.summary_manager
-
-        return copied_obj
-
     # -*- Team Functions
     def add_interaction_to_team_context(
         self, session_id: str, member_name: str, task: str, run_response: Union[RunResponse, TeamRunResponse]
@@ -1110,16 +1086,12 @@ class Memory:
         from copy import deepcopy
 
         # Create a new instance without calling __init__
-        cls = self.__class__
-        copied_obj = cls.__new__(cls)
+        copied_obj = self.__class__.__new__(self.__class__)
         memo[id(self)] = copied_obj
 
-        # Deep copy attributes
+        # Copy attributes, reusing specific objects
+        shared_objects = {"db", "memory_manager", "summary_manager", "team_context"}
         for k, v in self.__dict__.items():
-            # Reuse db
-            if k in {"db", "memory_manager", "summary_manager", "team_context"}:
-                setattr(copied_obj, k, v)
-            else:
-                setattr(copied_obj, k, deepcopy(v, memo))
+            setattr(copied_obj, k, v if k in shared_objects else deepcopy(v, memo))
 
         return copied_obj

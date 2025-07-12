@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
 try:
@@ -107,7 +107,7 @@ class MistralChat(Model):
         # Remove None values
         return {k: v for k, v in client_params.items() if v is not None}
 
-    def get_request_kwargs(
+    def get_request_params(
         self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
@@ -137,6 +137,9 @@ class MistralChat(Model):
                 _request_params["tool_choice"] = tool_choice
         if self.request_params:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -181,13 +184,13 @@ class MistralChat(Model):
                     model=self.id,
                     messages=mistral_messages,
                     response_format=response_format_from_pydantic_model(response_format),
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
                 response = self.get_client().chat.complete(
                     model=self.id,
                     messages=mistral_messages,
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             return response
 
@@ -213,7 +216,7 @@ class MistralChat(Model):
             stream = self.get_client().chat.stream(
                 model=self.id,
                 messages=mistral_messages,
-                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
             return stream
         except HTTPValidationError as e:
@@ -245,13 +248,13 @@ class MistralChat(Model):
                     model=self.id,
                     messages=mistral_messages,
                     response_format=response_format_from_pydantic_model(response_format),
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
                     messages=mistral_messages,
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             return response
         except HTTPValidationError as e:
@@ -276,7 +279,7 @@ class MistralChat(Model):
             stream = await self.get_client().chat.stream_async(
                 model=self.id,
                 messages=mistral_messages,
-                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
             if stream is None:
                 raise ValueError("Chat stream returned None")
