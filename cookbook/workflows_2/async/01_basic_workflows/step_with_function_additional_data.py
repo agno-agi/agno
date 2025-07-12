@@ -3,13 +3,13 @@ from typing import AsyncIterator, Union
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.v2.workflow import WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step, StepInput, StepOutput
 from agno.workflow.v2.workflow import Workflow
-from agno.run.v2.workflow import WorkflowRunResponseEvent
 
 # Define agents
 hackernews_agent = Agent(
@@ -44,14 +44,16 @@ content_planner = Agent(
 )
 
 
-async def custom_content_planning_function(step_input: StepInput) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+async def custom_content_planning_function(
+    step_input: StepInput,
+) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
     """
     Custom function that does intelligent content planning with context awareness
     Now also uses additional_data for extra context
     """
     message = step_input.message
     previous_step_content = step_input.previous_step_content
-    
+
     # Access additional_data that was passed with the workflow
     additional_data = step_input.additional_data or {}
     user_email = additional_data.get("user_email", "No email provided")
@@ -82,8 +84,10 @@ async def custom_content_planning_function(step_input: StepInput) -> AsyncIterat
         Please create a detailed, actionable content plan.
     """
 
-    try:    
-        response_iterator = await content_planner.arun(planning_prompt, stream=True, stream_intermediate_steps=True)
+    try:
+        response_iterator = await content_planner.arun(
+            planning_prompt, stream=True, stream_intermediate_steps=True
+        )
         async for event in response_iterator:
             yield event
         response = content_planner.run_response
@@ -144,18 +148,20 @@ if __name__ == "__main__":
         ),
         steps=[research_step, content_planning_step],
     )
-    
+
     # Run workflow with additional_data
-    asyncio.run(content_creation_workflow.aprint_response(
-        message="AI trends in 2024",
-        additional_data={
-            "user_email": "kaustubh@agno.com",
-            "priority": "high",
-            "client_type": "enterprise"
-        },
-        markdown=True,
-        stream=True,
-        stream_intermediate_steps=True,
-    ))
+    asyncio.run(
+        content_creation_workflow.aprint_response(
+            message="AI trends in 2024",
+            additional_data={
+                "user_email": "kaustubh@agno.com",
+                "priority": "high",
+                "client_type": "enterprise",
+            },
+            markdown=True,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
 
     print("\n" + "=" * 60 + "\n")

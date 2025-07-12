@@ -1794,82 +1794,42 @@ class Workflow:
         step_display_cache = {}
 
         def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
-            """Generate smart step numbering based on current context"""
+            """Generate clean two-level step numbering: x.y format only"""
 
-            # Handle tuple format for nested parallel/loop sub-steps
+            # Handle tuple format for child steps
             if isinstance(step_index, tuple):
-                if len(step_index) == 2:
-                    parent_idx, sub_idx = step_index
+                if len(step_index) >= 2:
+                    parent_idx, sub_idx = step_index[0], step_index[1]
 
-                    # Extract the base parent index if it's nested
+                    # Extract base parent index if it's nested
                     if isinstance(parent_idx, tuple):
-                        # For deeply nested cases, extract the root index
                         base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
                         while isinstance(base_idx, tuple) and len(base_idx) > 0:
                             base_idx = base_idx[0]
                     else:
                         base_idx = parent_idx
 
-                    # Check context for special formatting
-                    if current_primitive_context:
-                        context_type = current_primitive_context["type"]
-
-                        if context_type == "loop":
-                            iteration = current_primitive_context.get("current_iteration", 1)
-                            return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
-                        elif context_type == "parallel":
-                            # For parallel steps if inside some other nested step, all use the same parent number (your preferred approach)
-                            # Step 1.1, Step 1.1, Step 1.1 instead of Step 1.1, Step 1.2, Step 1.3
-                            return f"Step {base_idx + 1}.{sub_idx + 1}"
-
-                    # Default: regular hierarchical numbering
-                    return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    # Check context for parallel special case
+                    if current_primitive_context and current_primitive_context["type"] == "parallel":
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    elif current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # Regular child step numbering
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
                 else:
-                    # Fallback for other tuple formats
+                    # Single element tuple - treat as main step
                     return f"Step {step_index[0] + 1}"
 
-            # Handle simple integer step_index
-            step_key = f"{step_index}:{step_name}"
-
-            # Return cached value if we've already computed it
-            if step_key in step_display_cache:
-                return step_display_cache[step_key]
-
+            # Handle integer step_index - main step
             if not current_primitive_context:
-                # Regular sequential step
-                display_number = f"Step {step_index + 1}"
+                # Regular main step
+                return f"Step {step_index + 1}"
             else:
-                primitive_type = current_primitive_context["type"]
-                primitive_step_index = current_primitive_context["step_index"]
-
-                # Extract integer from primitive_step_index if it's a tuple
-                if isinstance(primitive_step_index, tuple):
-                    base_primitive_idx = primitive_step_index[0]
-                    while isinstance(base_primitive_idx, tuple) and len(base_primitive_idx) > 0:
-                        base_primitive_idx = base_primitive_idx[0]
-                else:
-                    base_primitive_idx = primitive_step_index
-
-                if primitive_type == "parallel":
-                    # For parallel: All parallel steps get the same number
-                    display_number = f"Step {base_primitive_idx + 1}.1"
-
-                elif primitive_type == "loop":
-                    # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
-                    iteration = current_primitive_context.get("current_iteration", 1)
-                    existing_loop_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"loop:{base_primitive_idx}:")
-                    ]
-                    sub_index = len(existing_loop_keys) + 1
-                    display_number = f"Step {base_primitive_idx + 1}.{sub_index} (Iteration {iteration})"
-
-                else:
-                    # Fallback
-                    display_number = f"Step {step_index + 1}"
-
-            # Cache the result
-            step_display_cache[step_key] = display_number
-            return display_number
+                # This shouldn't happen with the new logic, but fallback
+                return f"Step {step_index + 1}"
 
         with Live(console=console, refresh_per_second=10) as live_log:
             status = Status("Starting workflow...", spinner="dots")
@@ -2607,82 +2567,42 @@ class Workflow:
         step_display_cache = {}
 
         def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
-            """Generate smart step numbering based on current context"""
+            """Generate clean two-level step numbering: x.y format only"""
 
-            # Handle tuple format for nested parallel/loop sub-steps
+            # Handle tuple format for child steps
             if isinstance(step_index, tuple):
-                if len(step_index) == 2:
-                    parent_idx, sub_idx = step_index
+                if len(step_index) >= 2:
+                    parent_idx, sub_idx = step_index[0], step_index[1]
 
-                    # Extract the base parent index if it's nested
+                    # Extract base parent index if it's nested
                     if isinstance(parent_idx, tuple):
-                        # For deeply nested cases, extract the root index
                         base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
                         while isinstance(base_idx, tuple) and len(base_idx) > 0:
                             base_idx = base_idx[0]
                     else:
                         base_idx = parent_idx
 
-                    # Check context for special formatting
-                    if current_primitive_context:
-                        context_type = current_primitive_context["type"]
-
-                        if context_type == "loop":
-                            iteration = current_primitive_context.get("current_iteration", 1)
-                            return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
-                        elif context_type == "parallel":
-                            # For parallel steps if inside some other nested step, all use the same parent number (your preferred approach)
-                            # Step 1.1, Step 1.1, Step 1.1 instead of Step 1.1, Step 1.2, Step 1.3
-                            return f"Step {base_idx + 1}.{sub_idx + 1}"
-
-                    # Default: regular hierarchical numbering
-                    return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    # Check context for parallel special case
+                    if current_primitive_context and current_primitive_context["type"] == "parallel":
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    elif current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # Regular child step numbering
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
                 else:
-                    # Fallback for other tuple formats
+                    # Single element tuple - treat as main step
                     return f"Step {step_index[0] + 1}"
 
-            # Handle simple integer step_index
-            step_key = f"{step_index}:{step_name}"
-
-            # Return cached value if we've already computed it
-            if step_key in step_display_cache:
-                return step_display_cache[step_key]
-
+            # Handle integer step_index - main step
             if not current_primitive_context:
-                # Regular sequential step
-                display_number = f"Step {step_index + 1}"
+                # Regular main step
+                return f"Step {step_index + 1}"
             else:
-                primitive_type = current_primitive_context["type"]
-                primitive_step_index = current_primitive_context["step_index"]
-
-                # Extract integer from primitive_step_index if it's a tuple
-                if isinstance(primitive_step_index, tuple):
-                    base_primitive_idx = primitive_step_index[0]
-                    while isinstance(base_primitive_idx, tuple) and len(base_primitive_idx) > 0:
-                        base_primitive_idx = base_primitive_idx[0]
-                else:
-                    base_primitive_idx = primitive_step_index
-
-                if primitive_type == "parallel":
-                    # For parallel: All parallel steps get the same number
-                    display_number = f"Step {base_primitive_idx + 1}.1"
-
-                elif primitive_type == "loop":
-                    # For loop: Step 1.1 (Iteration 1), Step 1.2 (Iteration 1), etc.
-                    iteration = current_primitive_context.get("current_iteration", 1)
-                    existing_loop_keys = [
-                        k for k in step_display_cache.keys() if k.startswith(f"loop:{base_primitive_idx}:")
-                    ]
-                    sub_index = len(existing_loop_keys) + 1
-                    display_number = f"Step {base_primitive_idx + 1}.{sub_index} (Iteration {iteration})"
-
-                else:
-                    # Fallback
-                    display_number = f"Step {step_index + 1}"
-
-            # Cache the result
-            step_display_cache[step_key] = display_number
-            return display_number
+                # This shouldn't happen with the new logic, but fallback
+                return f"Step {step_index + 1}"
 
         with Live(console=console, refresh_per_second=10) as live_log:
             status = Status("Starting async workflow...", spinner="dots")
@@ -3073,8 +2993,9 @@ class Workflow:
 
                             # Live update the step panel with streaming content
                             if show_step_details and not step_started_printed:
-                                # For callable functions, show different title during streaming
-                                title = f"Step {current_step_index + 1}: {current_step_name} (Streaming...)"
+                                # Generate smart step number for streaming title (will use cached value)
+                                step_display = get_step_display_number(current_step_index, current_step_name)
+                                title = f"{step_display}: {current_step_name} (Streaming...)"
                                 if is_callable_function:
                                     title = "Custom Function (Streaming...)"
 

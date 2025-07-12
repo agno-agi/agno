@@ -320,10 +320,16 @@ class Parallel:
             index, step = step_with_index
             try:
                 events = []
-                if isinstance(step_index, tuple):
-                    sub_step_index = index
+
+                # If step_index is None or integer (main step): create (step_index, sub_index)
+                # If step_index is tuple (child step): all parallel sub-steps get same index
+                if step_index is None or isinstance(step_index, int):
+                    # Parallel is a main step - sub-steps get sequential numbers: 1.1, 1.2, 1.3
+                    sub_step_index = (step_index if step_index is not None else 0, index)
                 else:
-                    sub_step_index = (step_index, index)
+                    # Parallel is a child step - all sub-steps get the same parent number: 1.1, 1.1, 1.1
+                    sub_step_index = step_index
+
                 # All workflow step types have execute_stream() method
                 for event in step.execute_stream(
                     step_input,
@@ -541,10 +547,16 @@ class Parallel:
             index, step = step_with_index
             try:
                 events = []
-                if isinstance(step_index, tuple):
-                    sub_step_index = index
+
+                # If step_index is None or integer (main step): create (step_index, sub_index)
+                # If step_index is tuple (child step): all parallel sub-steps get same index
+                if step_index is None or isinstance(step_index, int):
+                    # Parallel is a main step - sub-steps get sequential numbers: 1.1, 1.2, 1.3
+                    sub_step_index = (step_index if step_index is not None else 0, index)
                 else:
-                    sub_step_index = (step_index, index)
+                    # Parallel is a child step - all sub-steps get the same parent number: 1.1, 1.1, 1.1
+                    sub_step_index = step_index
+
                 # All workflow step types have aexecute_stream() method
                 async for event in step.aexecute_stream(
                     step_input,

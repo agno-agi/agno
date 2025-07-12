@@ -47,7 +47,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     """
     message = step_input.message
     previous_step_content = step_input.previous_step_content
-    
+
     # Access additional_data that was passed with the workflow
     additional_data = step_input.additional_data or {}
     user_email = additional_data.get("user_email", "No email provided")
@@ -137,14 +137,14 @@ if __name__ == "__main__":
         ),
         steps=[research_step, content_planning_step],
     )
-    
+
     # Run workflow with additional_data
     content_creation_workflow.print_response(
         message="AI trends in 2024",
         additional_data={
             "user_email": "kaustubh@agno.com",
             "priority": "high",
-            "client_type": "enterprise"
+            "client_type": "enterprise",
         },
         markdown=True,
         stream=True,

@@ -14,7 +14,8 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
   - [5. Conditional Workflows](#5-conditional-workflows)
   - [6. Loop/Iteration Workflows](#6-loopiteration-workflows)
   - [7. Condition-Based Branching](#7-Condition-based-branching)
-  - [8. Complex Combinations](#8-complex-combinations)
+  - [8. Steps: Grouping a list of steps](#8-steps)
+  - [9. Complex Combinations](#9-complex-combinations)
 - [Advanced Features](#advanced-features)
 - [Best Practices](#best-practices)
 - [Migration from Workflows 1.0](#migration-from-workflows-10)
@@ -297,7 +298,99 @@ workflow.print_response("Latest developments in artificial intelligence and mach
 - [`router_steps_workflow.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/router_steps_workflow.py)
 - [`router_steps_workflow_stream.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/router_steps_workflow_stream.py)
 
-### 8. Complex Combinations
+### 8. Steps: Grouping a list of steps
+
+**When to use**: When you need to group multiple steps into logical sequences, create reusable workflows, or organize complex workflows with multiple branching paths.
+
+Better Routing: Use with Router for clean branching logic
+
+```python
+from agno.workflow.v2 import Steps, Step, Workflow
+
+# Create a reusable content creation sequence
+article_creation_sequence = Steps(
+    name="ArticleCreation",
+    description="Complete article creation workflow from research to final edit",
+    steps=[
+        Step(name="research", agent=researcher),
+        Step(name="writing", agent=writer), 
+        Step(name="editing", agent=editor),
+    ],
+)
+
+# Use the sequence in a workflow
+workflow = Workflow(
+    name="Article Creation Workflow",
+    steps=[article_creation_sequence]  # Single sequence
+)
+
+workflow.print_response("Write an article about renewable energy", markdown=True)
+```
+
+#### Steps with Router for Clean Branching
+This is where Steps really shines - creating distinct sequences for different content types or workflows:
+
+```python
+from agno.workflow.v2 import Steps, Router, Step, Workflow
+
+# Define two completely different workflows as Steps
+image_sequence = Steps(
+    name="image_generation",
+    description="Complete image generation and analysis workflow",
+    steps=[
+        Step(name="generate_image", agent=image_generator),
+        Step(name="describe_image", agent=image_describer),
+    ],
+)
+
+video_sequence = Steps(
+    name="video_generation", 
+    description="Complete video production and analysis workflow",
+    steps=[
+        Step(name="generate_video", agent=video_generator),
+        Step(name="describe_video", agent=video_describer),
+    ],
+)
+
+def media_sequence_selector(step_input) -> List[Step]:
+    """Route to appropriate media generation pipeline"""
+    if not step_input.message:
+        return [image_sequence]
+        
+    message_lower = step_input.message.lower()
+    
+    if "video" in message_lower:
+        return [video_sequence]
+    elif "image" in message_lower:
+        return [image_sequence]
+    else:
+        return [image_sequence]  # Default
+
+# Clean workflow with clear branching
+media_workflow = Workflow(
+    name="AI Media Generation Workflow",
+    description="Generate and analyze images or videos using AI agents",
+    steps=[
+        Router(
+            name="Media Type Router",
+            description="Routes to appropriate media generation pipeline",
+            selector=media_sequence_selector,
+            choices=[image_sequence, video_sequence],  # Clear choices
+        )
+    ],
+)
+
+# Usage examples
+media_workflow.print_response("Create an image of a magical forest", markdown=True)
+media_workflow.print_response("Create a cinematic video of city timelapse", markdown=True)
+```
+
+**See Examples**
+- [`workflow_using_steps.py`](/cookbook/workflows_2/sync/01_basic_workflows/workflow_using_steps.py)
+- [`workflow_using_steps_nested.py`](/cookbook/workflows_2/sync/01_basic_workflows/workflow_using_steps_nested.py)
+- [`selector_for_image_video_generation_pipelines.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/selector_for_image_video_generation_pipelines.py)
+
+### 9. Complex Combinations
 
 **When to use**: Sophisticated workflows requiring multiple patterns.
 
