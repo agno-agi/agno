@@ -14,7 +14,7 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
   - [5. Conditional Workflows](#5-conditional-workflows)
   - [6. Loop/Iteration Workflows](#6-loopiteration-workflows)
   - [7. Condition-Based Branching](#7-Condition-based-branching)
-  - [8. Steps: Grouping a list of steps](#8-steps)
+  - [8. Steps: Grouping a list of steps](#8-steps-grouping-a-list-of-steps)
   - [9. Complex Combinations](#9-complex-combinations)
 - [Advanced Features](#advanced-features)
 - [Best Practices](#best-practices)
