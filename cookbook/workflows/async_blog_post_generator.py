@@ -23,19 +23,21 @@ Example blog topics to try:
 - "Mindfulness and Mental Health in the Digital Age"
 - "The Evolution of Electric Vehicles: Current State and Future Trends"
 
-Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
+Run `pip install openai newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
+
+Export SERPER_API_KEY=your_api_key_here to use the Serper API.
 """
 
+import asyncio
 import json
 from textwrap import dedent
-from typing import Dict, Iterator, Optional
+from typing import Dict, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.tools.serper import SerperTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
 from agno.workflow import RunResponse, Workflow
@@ -80,7 +82,7 @@ class BlogPostGenerator(Workflow):
     # Search Agent: Handles intelligent web searching and source gathering
     searcher: Agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[SerperTools()],
         description=dedent("""\
         You are BlogResearch-X, an elite research assistant specializing in discovering
         high-quality sources for compelling blog content. Your expertise includes:
@@ -204,24 +206,23 @@ class BlogPostGenerator(Workflow):
         markdown=True,
     )
 
-    def run(
+    async def arun(
         self,
         topic: str,
         use_search_cache: bool = True,
         use_scrape_cache: bool = True,
         use_cached_report: bool = True,
-    ) -> Iterator[RunResponse]:
+    ) -> RunResponse:
         logger.info(f"Generating a blog post on: {topic}")
 
         # Use the cached blog post if use_cache is True
         if use_cached_report:
             cached_blog_post = self.get_cached_blog_post(topic)
             if cached_blog_post:
-                yield WorkflowCompletedEvent(
+                return RunResponse(
                     run_id=self.run_id,
                     content=cached_blog_post,
                 )
-                return
 
         # Search the web for articles on the topic
         search_results: Optional[SearchResults] = self.get_search_results(
@@ -229,11 +230,10 @@ class BlogPostGenerator(Workflow):
         )
         # If no search_results are found for the topic, end the workflow
         if search_results is None or len(search_results.articles) == 0:
-            yield WorkflowCompletedEvent(
+            return RunResponse(
                 run_id=self.run_id,
                 content=f"Sorry, could not find any articles on the topic: {topic}",
             )
-            return
 
         # Scrape the search results
         scraped_articles: Dict[str, ScrapedArticle] = self.scrape_articles(
@@ -246,11 +246,15 @@ class BlogPostGenerator(Workflow):
             "articles": [v.model_dump() for v in scraped_articles.values()],
         }
 
-        # Run the writer and yield the response
-        yield from self.writer.run(json.dumps(writer_input, indent=4), stream=True)
+        # Run the writer response
+        writer_response: RunResponse = self.writer.run(
+            json.dumps(writer_input, indent=4)
+        )
 
         # Save the blog post in the cache
-        self.add_blog_post_to_cache(topic, self.writer.run_response.content)
+        self.add_blog_post_to_cache(topic, writer_response.content)
+
+        return writer_response
 
     def get_cached_blog_post(self, topic: str) -> Optional[str]:
         logger.info("Checking if cached blog post exists")
@@ -422,11 +426,13 @@ if __name__ == "__main__":
 
     # Execute the workflow with caching enabled
     # Returns an iterator of RunResponse objects containing the generated content
-    blog_post: Iterator[RunResponse] = generate_blog_post.run(
-        topic=topic,
-        use_search_cache=True,
-        use_scrape_cache=True,
-        use_cached_report=True,
+    blog_post: RunResponse = asyncio.run(
+        generate_blog_post.arun(
+            topic=topic,
+            use_search_cache=True,
+            use_scrape_cache=True,
+            use_cached_report=True,
+        )
     )
 
     # Print the response
