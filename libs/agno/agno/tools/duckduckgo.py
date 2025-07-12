@@ -3,7 +3,9 @@ from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
-from tenacity import stop_after_attempt, stop_after_delay, wait_exponential_jitter, Retrying, retry_if_exception_type
+
+from tenacity import stop_after_attempt, wait_exponential_jitter, Retrying, retry_if_exception_type
+from duckduckgo_search.exceptions import RatelimitException
 
 try:
     from duckduckgo_search import DDGS
