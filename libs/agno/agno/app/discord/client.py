@@ -8,8 +8,6 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunResponse
 from agno.utils.log import log_info, log_warning
 
-from typing import List
-from agno.tools.function import UserInputField
 
 from textwrap import dedent
 
@@ -137,39 +135,24 @@ class DiscordClient:
                     )
                     await self._handle_response_in_thread(team_response, thread)
 
-    async def _handle_hitl(self, run_response: RunResponse, thread: discord.Thread):
-        for tool in run_response.tools_requiring_confirmation:
-            view = RequiresConfirmationView()
-            await thread.send(f"Tool requiring confirmation: {tool.tool_name}", view=view)
-            await view.wait()
-            tool.confirmed = view.value if view.value is not None else False
+    async def handle_hitl(self, run_response: RunResponse, thread: discord.Thread) -> RunResponse:
+        """Handles optional Human-In-The-Loop interaction."""
+        if run_response.is_paused:
+            for tool in run_response.tools_requiring_confirmation:
+                view = RequiresConfirmationView()
+                await thread.send(f"Tool requiring confirmation: {tool.tool_name}", view=view)
+                await view.wait()
+                tool.confirmed = view.value if view.value is not None else False
 
-        # for tool in run_response.tools_requiring_user_input:
-        #     input_schema: List[UserInputField] = tool.user_input_schema
-        #
-        #     class RequiresUserInputModal(discord.ui.Modal, title=tool.tool_name):
-        #         def __init__(self, ):
-        #             for field in input_schema:
-        #                 setattr(self, field.name, discord.ui.TextInput(
-        #                     label=field.name, required=True, placeholder=field.description,
-        #                     style=discord.TextStyle.short))
-        #
-        #         async def on_submit(self, interaction: discord.Interaction):
-        #             for field in input_schema:
-        #                 field.value = getattr(self, field.name).value
-        #             await interaction.response.send_message(f'Thanks for your feedback!', ephemeral=True)
-        #
-        #     modal = RequiresUserInputModal()
-        #     await thread.send_modal(modal)
+            if self.agent:
+                run_response = await self.agent.acontinue_run(run_response=run_response, )
 
-        if self.agent:
-            return await self.agent.acontinue_run(run_response=run_response, )
-        return None
+        return run_response
 
     async def _handle_response_in_thread(self, response: Union[RunResponse, TeamRunResponse],
                                          thread: discord.TextChannel):
-        if isinstance(response, RunResponse) and response.is_paused:
-            response = await self._handle_hitl(response, thread)
+        if isinstance(response, RunResponse):
+            response = await self.handle_hitl(response, thread)
 
         if response.reasoning_content:
             await self._send_discord_messages(
