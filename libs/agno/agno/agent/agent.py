@@ -6628,53 +6628,6 @@ class Agent:
 
         return run_data
 
-    def register_agent(self) -> None:
-        """Register this agent with Agno's platform."""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, create_agent
-
-        try:
-            # Ensure we have a valid session_id
-            if not self.session_id:
-                self.session_id = str(uuid4())
-
-            create_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_warning(f"Could not create Agent: {e}")
-
-    async def _aregister_agent(self) -> None:
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, acreate_agent
-
-        try:
-            await acreate_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()
 
