@@ -3,6 +3,7 @@ from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
+from tenacity import stop_after_attempt, stop_after_delay, wait_exponential_jitter, Retrying, retry_if_exception_type
 
 try:
     from duckduckgo_search import DDGS
@@ -54,12 +55,13 @@ class DuckDuckGoTools(Toolkit):
 
         super().__init__(name="duckduckgo", tools=tools, **kwargs)
 
-    def duckduckgo_search(self, query: str, max_results: int = 5) -> str:
+    def duckduckgo_search(self, query: str, max_results: int = 5, retry_attempts: int = 3) -> str:
         """Use this function to search DuckDuckGo for a query.
 
         Args:
             query(str): The query to search for.
             max_results (optional, default=5): The maximum number of results to return.
+            retry_attempts (optional, default=3): The maximum number of retry attempts on RateLimitException.
 
         Returns:
             The result from DuckDuckGo.
@@ -68,12 +70,18 @@ class DuckDuckGoTools(Toolkit):
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
         log_debug(f"Searching DDG for: {search_query}")
-        ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
-        )
+        for attempt in Retrying(stop=stop_after_attempt(retry_attempts),
+                                retry=retry_if_exception_type(RatelimitException),
+                                wait=wait_exponential_jitter(3, 13), ):
+            with attempt:
+                ddgs = DDGS(
+                    headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout,
+                    verify=self.verify_ssl
+                )
 
-        return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
+                return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
 
+        return json.dumps({})
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
 
