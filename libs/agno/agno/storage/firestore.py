@@ -6,6 +6,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 
@@ -29,7 +30,7 @@ class FirestoreStorage(Storage):
         db_name: Optional[str] = "(default)",
         project_id: Optional[str] = None,
         client: Optional[Client] = None,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         super().__init__(mode)
         self.collection_name = collection_name
@@ -94,6 +95,8 @@ class FirestoreStorage(Storage):
                 query = query.where(filter=FieldFilter("team_id", "==", entity_id))
             elif self.mode == "workflow":
                 query = query.where(filter=FieldFilter("workflow_id", "==", entity_id))
+            elif self.mode == "workflow_v2":
+                query = query.where(filter=FieldFilter("workflow_id", "==", entity_id))
 
         return query
 
@@ -109,6 +112,8 @@ class FirestoreStorage(Storage):
                 return TeamSession.from_dict(doc_data)
             elif self.mode == "workflow":
                 return WorkflowSession.from_dict(doc_data)
+            elif self.mode == "workflow_v2":
+                return WorkflowSessionV2.from_dict(doc_data)
         except Exception as e:
             logger.error(f"Error parsing session data: {e}")
             return None
