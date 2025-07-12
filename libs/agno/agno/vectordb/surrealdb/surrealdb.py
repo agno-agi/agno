@@ -61,7 +61,7 @@ class SurrealDb(VectorDb):
             meta_data,
             vector::distance::knn() as distance
         FROM {collection}
-        WHERE embedding <|{limit},{distance}|> $query_embedding
+        WHERE embedding <|{limit}|> $query_embedding
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit};
