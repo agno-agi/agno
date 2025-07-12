@@ -1,29 +1,36 @@
 from typing import List
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 
 import pytest
 
 from agno.document import Document
 from agno.vectordb.distance import Distance
-from agno.vectordb.surrealdb import SurrealVectorDb
+from agno.vectordb.surrealdb import SurrealDb
+
+
+@pytest.fixture
+def mock_embedder():
+    """Fixture to create a mock embedder"""
+    embedder = Mock()
+    embedder.dimensions = 1024
+    embedder.get_embedding = Mock(return_value=[0.1] * 1024)
+    embedder.get_embedding_and_usage = Mock(return_value=([0.1] * 1024, None))
+    return embedder
 
 
 @pytest.fixture
 def mock_surrealdb_client():
     """Fixture to create a mock SurrealDB client"""
-    with patch("surrealdb.SurrealDB") as mock_client_class:
+    with patch("agno.vectordb.surrealdb.surrealdb.Surreal") as mock_client_class:
         client = Mock()
 
         # Mock methods
         client.connect = Mock()
-        client.sign_in = Mock()
-        client.use = Mock()
-        client.close = Mock()
-        client.query = Mock()
-        client.create = Mock()
-
-        # Mock query responses
-        client.query.return_value = [{"result": []}]
+        client.signin = Mock(return_value=None)
+        client.use = Mock(return_value=None)
+        client.close = Mock(return_value=None)
+        client.query = Mock(return_value=[{"result": []}])
+        client.create = Mock(return_value=None)
 
         mock_client_class.return_value = client
         yield client
@@ -32,16 +39,16 @@ def mock_surrealdb_client():
 @pytest.fixture
 def mock_async_surrealdb_client():
     """Fixture to create a mock AsyncSurrealDB client"""
-    with patch("surrealdb.AsyncSurrealDB") as mock_async_client_class:
-        client = Mock()
+    with patch("agno.vectordb.surrealdb.surrealdb.AsyncSurreal") as mock_async_client_class:
+        client = AsyncMock()
 
-        # Mock methods
-        client.connect = Mock(return_value=None)
-        client.sign_in = Mock(return_value=None)
-        client.use = Mock(return_value=None)
-        client.close = Mock(return_value=None)
-        client.query = Mock(return_value=[{"result": []}])
-        client.create = Mock(return_value=None)
+        # Mock methods - use AsyncMock for async methods
+        client.connect = AsyncMock(return_value=None)
+        client.signin = AsyncMock(return_value=None)
+        client.use = AsyncMock(return_value=None)
+        client.close = AsyncMock(return_value=None)
+        client.query = AsyncMock(return_value=[{"result": []}])
+        client.create = AsyncMock(return_value=None)
 
         mock_async_client_class.return_value = client
         yield client
@@ -49,8 +56,8 @@ def mock_async_surrealdb_client():
 
 @pytest.fixture
 def surrealdb_vector(mock_surrealdb_client, mock_embedder):
-    """Fixture to create a SurrealVectorDb instance with mocked client"""
-    db = SurrealVectorDb(
+    """Fixture to create a SurrealDb instance with mocked client"""
+    db = SurrealDb(
         url="ws://localhost:8000/rpc",
         namespace="test",
         database="test",
@@ -86,7 +93,7 @@ def sample_documents() -> List[Document]:
 
 def test_init_params(mock_embedder):
     """Test initialization parameters"""
-    db = SurrealVectorDb(
+    db = SurrealDb(
         url="ws://localhost:8000/rpc",
         namespace="test",
         database="test",
@@ -118,9 +125,7 @@ def test_connect_context_manager(surrealdb_vector, mock_surrealdb_client):
     """Test connect context manager"""
     with surrealdb_vector.connect():
         pass
-
-    mock_surrealdb_client.connect.assert_called_once()
-    mock_surrealdb_client.sign_in.assert_called_once_with(surrealdb_vector.username, surrealdb_vector.password)
+    mock_surrealdb_client.signin.assert_called_once_with({"username": surrealdb_vector.username, "password": surrealdb_vector.password})
     mock_surrealdb_client.use.assert_called_once_with(surrealdb_vector.namespace, surrealdb_vector.database)
     mock_surrealdb_client.close.assert_called_once()
 
@@ -212,16 +217,16 @@ def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     with patch.object(surrealdb_vector.embedder, "get_embedding", return_value=[0.1] * 1024):
         surrealdb_vector.upsert(sample_documents)
 
-        # Verify query was called for each document
-        assert mock_surrealdb_client.query.call_count == 3
+    # Verify query was called for each document
+    assert mock_surrealdb_client.query.call_count == 3
 
-        # Check args for first call
-        args, kwargs = mock_surrealdb_client.query.call_args_list[0]
-        assert "INSERT INTO test_collection" in args[0]
-        assert "ON DUPLICATE KEY UPDATE" in args[0]
-        assert "content" in args[1]
-        assert "embedding" in args[1]
-        assert "meta_data" in args[1]
+    # Check args for first call
+    args, kwargs = mock_surrealdb_client.query.call_args_list[0]
+    assert "UPSERT test_collection" in args[0]
+    assert "SET content = $content" in args[0]
+    assert "content" in args[1]
+    assert "embedding" in args[1]
+    assert "meta_data" in args[1]
 
 
 def test_search(surrealdb_vector, mock_surrealdb_client):
@@ -257,7 +262,7 @@ def test_search(surrealdb_vector, mock_surrealdb_client):
         args, kwargs = mock_surrealdb_client.query.call_args
         assert "SELECT" in args[0]
         assert "FROM test_collection" in args[0]
-        assert "WHERE embedding <|2," in args[0]
+        assert "WHERE embedding <|2, 40|>" in args[0]
         assert "LIMIT 2" in args[0]
 
 
@@ -299,9 +304,7 @@ async def test_async_connect_context_manager(surrealdb_vector, mock_async_surrea
     """Test async connect context manager"""
     async with surrealdb_vector.async_connect():
         pass
-
-    mock_async_surrealdb_client.connect.assert_awaited_once()
-    mock_async_surrealdb_client.sign_in.assert_awaited_once_with(surrealdb_vector.username, surrealdb_vector.password)
+    mock_async_surrealdb_client.signin.assert_awaited_once_with({"username": surrealdb_vector.username, "password": surrealdb_vector.password})
     mock_async_surrealdb_client.use.assert_awaited_once_with(surrealdb_vector.namespace, surrealdb_vector.database)
     mock_async_surrealdb_client.close.assert_awaited_once()
 
@@ -379,8 +382,8 @@ async def test_async_upsert(surrealdb_vector, mock_async_surrealdb_client, sampl
 
         # Check args for first call
         args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
-        assert "INSERT INTO test_collection" in args[0]
-        assert "ON DUPLICATE KEY UPDATE" in args[0]
+        assert "UPSERT test_collection" in args[0]
+        assert "SET content = $content" in args[0]
         assert "content" in args[1]
         assert "embedding" in args[1]
         assert "meta_data" in args[1]
@@ -420,7 +423,7 @@ async def test_async_search(surrealdb_vector, mock_async_surrealdb_client):
         args, kwargs = mock_async_surrealdb_client.query.await_args
         assert "SELECT" in args[0]
         assert "FROM test_collection" in args[0]
-        assert "WHERE embedding <|2," in args[0]
+        assert "WHERE embedding <|2, 40|>" in args[0]
         assert "LIMIT 2" in args[0]
 
 

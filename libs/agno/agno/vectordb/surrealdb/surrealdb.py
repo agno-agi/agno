@@ -27,7 +27,7 @@ class SurrealDb(VectorDb):
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
         DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object;
-        DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST COSINE;
+        DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
     DOC_EXISTS_QUERY: Final[str] = """
@@ -61,7 +61,7 @@ class SurrealDb(VectorDb):
             meta_data,
             vector::distance::knn() as distance
         FROM {collection}
-        WHERE embedding <|{limit}|> $query_embedding
+        WHERE embedding <|{limit}, {search_ef}|> $query_embedding
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit};
@@ -147,7 +147,7 @@ class SurrealDb(VectorDb):
             self.sync_client.use(self.namespace, self.database)
             yield self.sync_client
         finally:
-            if self.sync_client:
+            if self.sync_client and hasattr(self.sync_client, 'close'):
                 self.sync_client.close()
 
     @asynccontextmanager
@@ -159,7 +159,7 @@ class SurrealDb(VectorDb):
             await self.async_client.use(self.namespace, self.database)
             yield self.async_client
         finally:
-            if self.async_client:
+            if self.async_client and hasattr(self.async_client, 'close'):
                 await self.async_client.close()
 
     # Synchronous methods
@@ -215,7 +215,8 @@ class SurrealDb(VectorDb):
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document: {doc.name} ({doc.meta_data})")
-                client.query(self.UPSERT_QUERY.format(thing=doc.id if doc.id else self.collection), data)
+                thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
+                client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search for similar documents"""
@@ -224,14 +225,14 @@ class SurrealDb(VectorDb):
             if query_embedding is None:
                 log_error(f"Error getting embedding for Query: {query}")
                 return []
-
             filter_condition = self._build_filter_condition(filters)
             log_debug(f"Filter condition: {filter_condition}")
-            query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, filter_condition=filter_condition, distance=self.distance
+            search_query = self.SEARCH_QUERY.format(
+                collection=self.collection, limit=limit, search_ef=self.search_ef, filter_condition=filter_condition, distance=self.distance
             )
+            log_debug(f"Search query: {search_query}")
             response = client.query(
-                query,
+                search_query,
                 {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
             )
             log_debug(f"Search response: {response}")
@@ -334,7 +335,8 @@ class SurrealDb(VectorDb):
                 if filters:
                     data["meta_data"].update(filters)
                 log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-                await client.query(self.UPSERT_QUERY.format(thing=doc.id if doc.id else self.collection), data)
+                thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
+                await client.query(self.UPSERT_QUERY.format(thing=thing), data)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -347,14 +349,11 @@ class SurrealDb(VectorDb):
                 return []
 
             filter_condition = self._build_filter_condition(filters)
-            query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, filter_condition=filter_condition, distance=self.distance
+            search_query = self.SEARCH_QUERY.format(
+                collection=self.collection, limit=limit, search_ef=self.search_ef, filter_condition=filter_condition, distance=self.distance
             )
-            if self.async_client is None:
-                log_error("Async client is not initialized")
-                return []
             response = await client.query(
-                query,
+                search_query,
                 {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
             )
             log_debug(f"Search response: {response}")
