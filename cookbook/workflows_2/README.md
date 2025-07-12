@@ -660,6 +660,90 @@ fast_workflow = Workflow(
 **See Examples**:
 - [`store_events_and_events_to_skip_in_a_workflow.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/store_events_and_events_to_skip_in_a_workflow.py)
 
+### Additional Data
+
+**When to use**: When you need to pass metadata, configuration, or contextual information to specific steps without it being part of the main workflow message flow.
+- Separation of Concerns: Keep workflow logic separate from metadata
+- Step-Specific Context: Access additional information in custom functions
+- Clean Message Flow: Main message stays focused on content
+- Flexible Configuration: Pass user info, priorities, settings, etc.
+
+Access Pattern: `step_input.additional_data` provides dictionary access to all additional data
+
+```python
+from agno.workflow.v2 import Step, Workflow
+from agno.workflow.v2.types import StepInput, StepOutput
+
+def custom_content_planning_function(step_input: StepInput) -> StepOutput:
+    """Custom function that uses additional_data for enhanced context"""
+    
+    # Access the main workflow message
+    message = step_input.message
+    previous_content = step_input.previous_step_content
+    
+    # Access additional_data that was passed with the workflow
+    additional_data = step_input.additional_data or {}
+    user_email = additional_data.get("user_email", "No email provided")
+    priority = additional_data.get("priority", "normal")
+    client_type = additional_data.get("client_type", "standard")
+    
+    # Create enhanced planning prompt with context
+    planning_prompt = f"""
+        STRATEGIC CONTENT PLANNING REQUEST:
+        
+        Core Topic: {message}
+        Research Results: {previous_content[:500] if previous_content else "No research results"}
+        
+        Additional Context:
+        - Client Type: {client_type}
+        - Priority Level: {priority}
+        - Contact Email: {user_email}
+        
+        {"🚨 HIGH PRIORITY - Expedited delivery required" if priority == "high" else "📝 Standard delivery timeline"}
+        
+        Please create a detailed, actionable content plan.
+    """
+    
+    response = content_planner.run(planning_prompt)
+    
+    enhanced_content = f"""
+        ## Strategic Content Plan
+        
+        **Planning Topic:** {message}
+        **Client Details:** {client_type} | {priority.upper()} priority | {user_email}
+        
+        **Content Strategy:**
+        {response.content}
+    """
+    
+    return StepOutput(content=enhanced_content, response=response)
+
+# Define workflow with steps
+workflow = Workflow(
+    name="Content Creation Workflow",
+    steps=[
+        Step(name="Research Step", team=research_team),
+        Step(name="Content Planning Step", executor=custom_content_planning_function),
+    ]
+)
+
+# Run workflow with additional_data
+workflow.print_response(
+    message="AI trends in 2024",
+    additional_data={
+        "user_email": "kaustubh@agno.com",
+        "priority": "high",
+        "client_type": "enterprise",
+        "budget": "$50000",
+        "deadline": "2024-12-15"
+    },
+    markdown=True,
+    stream=True
+)
+```
+
+**See**: [`step_with_function_additional_data.py`](/cookbook/workflows_2/sync/01_basic_workflows/step_with_function_additional_data.py)
+
 ### Streaming Support
 
 This adds support for having streaming event-based information for your workflows:
@@ -741,7 +825,9 @@ workflow = Workflow(
 workflow.print_response("Add apples and oranges to my shopping list")
 ```
 
-**See**: [`shared_session_state_with_agent.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/shared_session_state_with_agent.py)
+**See**: 
+- [`shared_session_state_with_agent.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/shared_session_state_with_agent.py)
+- [`shared_session_state_with_team.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/shared_session_state_with_team.py)
 
 ### Structured Inputs
 
