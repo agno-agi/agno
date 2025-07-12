@@ -102,6 +102,7 @@ class Steps:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
+            additional_data=step_input.additional_data,
             images=current_images + step_images,
             videos=current_videos + step_videos,
             audio=current_audio + step_audio,
@@ -209,6 +210,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
+
+                if step_index is None or isinstance(step_index, int):
+                    # Steps is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)  # Use i, not i+1
+                else:
+                    # Steps is already a child step - child steps get parent.1, parent.2, parent.3
+                    child_step_index = step_index + (i,)  # Extend the tuple
+
                 # Stream step execution
                 for event in step.execute_stream(
                     current_step_input,
@@ -216,7 +225,7 @@ class Steps:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=i,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -378,6 +387,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
+
+                if step_index is None or isinstance(step_index, int):
+                    # Steps is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)  # Use i, not i+1
+                else:
+                    # Steps is already a child step - child steps get parent.1, parent.2, parent.3
+                    child_step_index = step_index + (i,)  # Extend the tuple
+
                 # Stream step execution
                 async for event in step.aexecute_stream(
                     current_step_input,
@@ -385,7 +402,7 @@ class Steps:
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=i,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
