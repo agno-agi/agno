@@ -1,4 +1,5 @@
 from os import getenv
+from textwrap import dedent
 from typing import Optional, Union
 
 import requests
@@ -7,9 +8,6 @@ from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunResponse
 from agno.utils.log import log_info, log_warning
-
-
-from textwrap import dedent
 
 try:
     import discord
@@ -24,7 +22,11 @@ class RequiresConfirmationView(discord.ui.View):
         self.value = None
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.primary)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button, ):
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         self.value = True
         button.disabled = True
         await interaction.response.edit_message(view=self)
@@ -32,7 +34,11 @@ class RequiresConfirmationView(discord.ui.View):
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button, ):
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
         self.value = False
         button.disabled = True
         await interaction.response.edit_message(view=self)
@@ -44,10 +50,9 @@ class RequiresConfirmationView(discord.ui.View):
 
 
 class DiscordClient:
-    def __init__(self,
-                 agent: Optional[Agent] = None,
-                 team: Optional[Team] = None,
-                 client: Optional[discord.Client] = None):
+    def __init__(
+        self, agent: Optional[Agent] = None, team: Optional[Team] = None, client: Optional[discord.Client] = None
+    ):
         self.agent = agent
         self.team = team
         if client is None:
@@ -95,7 +100,7 @@ class DiscordClient:
             if isinstance(message.channel, discord.Thread):
                 thread = message.channel
             elif isinstance(message.channel, discord.channel.DMChannel):
-                thread = message.channel
+                thread = message.channel  # type: ignore
             elif isinstance(message.channel, discord.TextChannel):
                 thread = await message.create_thread(name=f"{message_user}'s thread")
             else:
@@ -114,11 +119,10 @@ class DiscordClient:
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
-
                         images=[Image(url=message_image)] if message_image else None,
                         videos=[Video(content=message_video)] if message_video else None,
                         audio=[Audio(url=message_audio)] if message_audio else None,
-                        document=[File(url=message_file)] if message_file else None,
+                        files=[File(content=message_file)] if message_file else None,
                     )
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
@@ -127,15 +131,16 @@ class DiscordClient:
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
-
                         images=[Image(url=message_image)] if message_image else None,
                         videos=[Video(content=message_video)] if message_video else None,
                         audio=[Audio(url=message_audio)] if message_audio else None,
-                        document=[File(url=message_file)] if message_file else None,
+                        files=[File(content=message_file)] if message_file else None,
                     )
                     await self._handle_response_in_thread(team_response, thread)
 
-    async def handle_hitl(self, run_response: RunResponse, thread: discord.Thread) -> RunResponse:
+    async def handle_hitl(
+        self, run_response: RunResponse, thread: Union[discord.Thread, discord.TextChannel]
+    ) -> RunResponse:
         """Handles optional Human-In-The-Loop interaction."""
         if run_response.is_paused:
             for tool in run_response.tools_requiring_confirmation:
@@ -145,12 +150,15 @@ class DiscordClient:
                 tool.confirmed = view.value if view.value is not None else False
 
             if self.agent:
-                run_response = await self.agent.acontinue_run(run_response=run_response, )
+                run_response = await self.agent.acontinue_run(
+                    run_response=run_response,
+                )
 
         return run_response
 
-    async def _handle_response_in_thread(self, response: Union[RunResponse, TeamRunResponse],
-                                         thread: discord.TextChannel):
+    async def _handle_response_in_thread(
+        self, response: Union[RunResponse, TeamRunResponse], thread: Union[discord.TextChannel, discord.Thread]
+    ):
         if isinstance(response, RunResponse):
             response = await self.handle_hitl(response, thread)
 
@@ -161,8 +169,7 @@ class DiscordClient:
 
         await self._send_discord_messages(thread=thread, message=str(response.content))
 
-    async def _send_discord_messages(self, thread: discord.channel, message: str,
-                                     italics: bool = False):  # type: ignore
+    async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
         if len(message) < 1500:
             if italics:
                 formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
@@ -171,7 +178,7 @@ class DiscordClient:
                 await thread.send(message)  # type: ignore
             return
 
-        message_batches = [message[i: i + 1500] for i in range(0, len(message), 1500)]
+        message_batches = [message[i : i + 1500] for i in range(0, len(message), 1500)]
 
         for i, batch in enumerate(message_batches, 1):
             batch_message = f"[{i}/{len(message_batches)}] {batch}"
