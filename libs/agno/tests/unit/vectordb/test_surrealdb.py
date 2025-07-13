@@ -1,5 +1,5 @@
 from typing import List
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -125,7 +125,9 @@ def test_connect_context_manager(surrealdb_vector, mock_surrealdb_client):
     """Test connect context manager"""
     with surrealdb_vector.connect():
         pass
-    mock_surrealdb_client.signin.assert_called_once_with({"username": surrealdb_vector.username, "password": surrealdb_vector.password})
+    mock_surrealdb_client.signin.assert_called_once_with(
+        {"username": surrealdb_vector.username, "password": surrealdb_vector.password}
+    )
     mock_surrealdb_client.use.assert_called_once_with(surrealdb_vector.namespace, surrealdb_vector.database)
     mock_surrealdb_client.close.assert_called_once()
 
@@ -300,7 +302,9 @@ async def test_async_connect_context_manager(surrealdb_vector, mock_async_surrea
     """Test async connect context manager"""
     async with surrealdb_vector.async_connect():
         pass
-    mock_async_surrealdb_client.signin.assert_awaited_once_with({"username": surrealdb_vector.username, "password": surrealdb_vector.password})
+    mock_async_surrealdb_client.signin.assert_awaited_once_with(
+        {"username": surrealdb_vector.username, "password": surrealdb_vector.password}
+    )
     mock_async_surrealdb_client.use.assert_awaited_once_with(surrealdb_vector.namespace, surrealdb_vector.database)
     mock_async_surrealdb_client.close.assert_awaited_once()
 

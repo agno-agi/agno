@@ -147,7 +147,7 @@ class SurrealDb(VectorDb):
             self.sync_client.use(self.namespace, self.database)
             yield self.sync_client
         finally:
-            if self.sync_client and hasattr(self.sync_client, 'close'):
+            if self.sync_client and hasattr(self.sync_client, "close"):
                 self.sync_client.close()
 
     @asynccontextmanager
@@ -159,7 +159,7 @@ class SurrealDb(VectorDb):
             await self.async_client.use(self.namespace, self.database)
             yield self.async_client
         finally:
-            if self.async_client and hasattr(self.async_client, 'close'):
+            if self.async_client and hasattr(self.async_client, "close"):
                 await self.async_client.close()
 
     # Synchronous methods
@@ -228,7 +228,11 @@ class SurrealDb(VectorDb):
             filter_condition = self._build_filter_condition(filters)
             log_debug(f"Filter condition: {filter_condition}")
             search_query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, search_ef=self.search_ef, filter_condition=filter_condition, distance=self.distance
+                collection=self.collection,
+                limit=limit,
+                search_ef=self.search_ef,
+                filter_condition=filter_condition,
+                distance=self.distance,
             )
             log_debug(f"Search query: {search_query}")
             response = client.query(
@@ -350,7 +354,11 @@ class SurrealDb(VectorDb):
 
             filter_condition = self._build_filter_condition(filters)
             search_query = self.SEARCH_QUERY.format(
-                collection=self.collection, limit=limit, search_ef=self.search_ef, filter_condition=filter_condition, distance=self.distance
+                collection=self.collection,
+                limit=limit,
+                search_ef=self.search_ef,
+                filter_condition=filter_condition,
+                distance=self.distance,
             )
             response = await client.query(
                 search_query,
