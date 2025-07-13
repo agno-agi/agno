@@ -233,22 +233,18 @@ def test_search(surrealdb_vector, mock_surrealdb_client):
     """Test search functionality"""
     # Set up mock embedding
     with patch.object(surrealdb_vector.embedder, "get_embedding", return_value=[0.1] * 1024):
-        # Set up mock search results
+        # Set up mock search results - the search method iterates directly over response
         mock_surrealdb_client.query.return_value = [
             {
-                "result": [
-                    {
-                        "content": "Tom Kha Gai is a Thai coconut soup with chicken",
-                        "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
-                        "distance": 0.1,
-                    },
-                    {
-                        "content": "Green curry is a spicy Thai curry with coconut milk",
-                        "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
-                        "distance": 0.2,
-                    },
-                ]
-            }
+                "content": "Tom Kha Gai is a Thai coconut soup with chicken",
+                "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
+                "distance": 0.1,
+            },
+            {
+                "content": "Green curry is a spicy Thai curry with coconut milk",
+                "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
+                "distance": 0.2,
+            },
         ]
 
         # Test search
@@ -259,7 +255,7 @@ def test_search(surrealdb_vector, mock_surrealdb_client):
 
         # Verify search query
         mock_surrealdb_client.query.assert_called_once()
-        args, kwargs = mock_surrealdb_client.query.call_args
+        args, _ = mock_surrealdb_client.query.call_args
         assert "SELECT" in args[0]
         assert "FROM test_collection" in args[0]
         assert "WHERE embedding <|2, 40|>" in args[0]
@@ -394,22 +390,18 @@ async def test_async_search(surrealdb_vector, mock_async_surrealdb_client):
     """Test async search functionality"""
     # Set up mock embedding
     with patch.object(surrealdb_vector.embedder, "get_embedding", return_value=[0.1] * 1024):
-        # Set up mock search results
+        # Set up mock search results - the async search method iterates directly over response
         mock_async_surrealdb_client.query.return_value = [
             {
-                "result": [
-                    {
-                        "content": "Tom Kha Gai is a Thai coconut soup with chicken",
-                        "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
-                        "distance": 0.1,
-                    },
-                    {
-                        "content": "Green curry is a spicy Thai curry with coconut milk",
-                        "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
-                        "distance": 0.2,
-                    },
-                ]
-            }
+                "content": "Tom Kha Gai is a Thai coconut soup with chicken",
+                "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
+                "distance": 0.1,
+            },
+            {
+                "content": "Green curry is a spicy Thai curry with coconut milk",
+                "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
+                "distance": 0.2,
+            },
         ]
 
         # Test search
@@ -420,7 +412,7 @@ async def test_async_search(surrealdb_vector, mock_async_surrealdb_client):
 
         # Verify search query
         mock_async_surrealdb_client.query.assert_awaited_once()
-        args, kwargs = mock_async_surrealdb_client.query.await_args
+        args, _ = mock_async_surrealdb_client.query.await_args
         assert "SELECT" in args[0]
         assert "FROM test_collection" in args[0]
         assert "WHERE embedding <|2, 40|>" in args[0]
