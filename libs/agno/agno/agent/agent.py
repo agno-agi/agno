@@ -985,8 +985,6 @@ class Agent:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
-        session_id = cast(str, session_id)
-
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize the Agent
@@ -1358,8 +1356,6 @@ class Agent:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
-        session_id = cast(str, session_id)
-
         log_debug(f"Session ID: {session_id}", center=True)
 
         effective_filters = knowledge_filters
@@ -1608,8 +1604,6 @@ class Agent:
                 self.session_id = session_id
         else:
             self.session_id = session_id
-
-        session_id = cast(str, session_id)
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 
@@ -2000,8 +1994,6 @@ class Agent:
                 self.session_id = session_id
         else:
             self.session_id = session_id
-
-        session_id = cast(str, session_id)
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 

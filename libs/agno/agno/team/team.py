@@ -771,7 +771,6 @@ class Team:
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
-        session_id = cast(str, session_id)
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Team
@@ -1173,7 +1172,6 @@ class Team:
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
-        session_id = cast(str, session_id)
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
