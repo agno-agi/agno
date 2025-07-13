@@ -108,13 +108,13 @@ class StepInput:
         # If this is a parallel step with sub-outputs, return structured dict
         if step_output.parallel_step_outputs:
             return {
-                sub_step_name: sub_output.content
+                sub_step_name: sub_output.content  # type: ignore[misc]
                 for sub_step_name, sub_output in step_output.parallel_step_outputs.items()
                 if sub_output.content
             }
 
         # Regular step, return content directly
-        return step_output.content
+        return step_output.content  # type: ignore[return-value]
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""

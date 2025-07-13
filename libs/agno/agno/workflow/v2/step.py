@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.media import Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
@@ -93,7 +93,7 @@ class Step:
     def executor_name(self) -> str:
         """Get the name of the current executor"""
         if hasattr(self.active_executor, "name"):
-            return self.active_executor.name
+            return self.active_executor.name or "unnamed_executor"
         elif self._executor_type == "function":
             return getattr(self.active_executor, "__name__", "anonymous_function")
         else:
@@ -132,17 +132,19 @@ class Step:
                 f"Please use only one of: agent=, team=, or executor="
             )
 
-    def _set_active_executor(self):
+    def _set_active_executor(self) -> None:  # Fix line 160
         """Set the active executor based on what was provided"""
         if self.agent is not None:
-            self.active_executor = self.agent
+            self.active_executor = self.agent  # type: ignore[assignment]
             self._executor_type = "agent"
         elif self.team is not None:
-            self.active_executor = self.team
+            self.active_executor = self.team  # type: ignore[assignment]
             self._executor_type = "team"
         elif self.executor is not None:
-            self.active_executor = self.executor
+            self.active_executor = self.executor  # type: ignore[assignment]
             self._executor_type = "function"
+        else:
+            raise ValueError("No executor configured")
 
     def _extract_metrics_from_response(self, response: Union[RunResponse, TeamRunResponse]) -> Optional[Dict[str, Any]]:
         """Extract metrics from agent or team response"""
@@ -167,6 +169,7 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
+                response: Union[RunResponse, TeamRunResponse, StepOutput]  # Fix line 234
                 if self._executor_type == "function":
                     if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
                         self.active_executor
@@ -176,7 +179,7 @@ class Step:
                         content = ""
                         final_response = None
                         try:
-                            for chunk in self.active_executor(step_input):
+                            for chunk in self.active_executor(step_input):  # type: ignore
                                 if (
                                     hasattr(chunk, "content")
                                     and chunk.content is not None
@@ -226,11 +229,12 @@ class Step:
                         videos = (
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
-                        response = self.active_executor.run(
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        response = self.active_executor.run(  # type: ignore[misc]
                             message=message,
                             images=images,
                             videos=videos,
-                            audio=step_input.audio,
+                            audio=audios,
                             session_id=session_id,
                             user_id=user_id,
                         )
@@ -241,7 +245,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response)
+                step_output = self._process_step_output(response) # type: ignore
 
                 return step_output
 
@@ -256,6 +260,8 @@ class Step:
                         return StepOutput(content=f"Step {self.name} failed but skipped", success=False, error=str(e))
                     else:
                         raise e
+
+        return StepOutput(content=f"Step {self.name} failed but skipped", success=False)
 
     def execute_stream(
         self,
@@ -272,7 +278,7 @@ class Step:
             step_input.previous_step_content = step_input.get_last_step_content()
 
         # Emit StepStartedEvent
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
@@ -300,7 +306,7 @@ class Step:
                         log_debug("Function returned iterable, streaming events")
                         content = ""
                         try:
-                            for event in self.active_executor(step_input):
+                            for event in self.active_executor(step_input):  # type: ignore
                                 if (
                                     hasattr(event, "content")
                                     and event.content is not None
@@ -313,7 +319,7 @@ class Step:
                                     final_response = event
                                     break
                                 else:
-                                    yield event
+                                    yield event  # type: ignore[misc]
                             if not final_response:
                                 final_response = StepOutput(content=content)
                         except StopIteration as e:
@@ -347,11 +353,12 @@ class Step:
                         videos = (
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
-                        response_stream = self.active_executor.run(
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             message=message,
                             images=images,
                             videos=videos,
-                            audio=step_input.audio,
+                            audio=audios,
                             session_id=session_id,
                             user_id=user_id,
                             stream=True,
@@ -359,8 +366,8 @@ class Step:
                         )
 
                         for event in response_stream:
-                            yield event
-                        final_response = self._process_step_output(self.active_executor.run_response)
+                            yield event  # type: ignore[misc]
+                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -377,7 +384,7 @@ class Step:
                 yield final_response
 
                 # Emit StepCompletedEvent
-                if stream_intermediate_steps:
+                if stream_intermediate_steps and workflow_run_response:
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
                         workflow_name=workflow_run_response.workflow_name or "",
@@ -406,6 +413,8 @@ class Step:
                     else:
                         raise e
 
+        return
+
     async def aexecute(
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> StepOutput:
@@ -429,7 +438,7 @@ class Step:
                         final_response = None
                         try:
                             if inspect.isgeneratorfunction(self.active_executor):
-                                for chunk in self.active_executor(step_input):
+                                for chunk in self.active_executor(step_input):  # type: ignore
                                     if (
                                         hasattr(chunk, "content")
                                         and chunk.content is not None
@@ -441,17 +450,19 @@ class Step:
                                     if isinstance(chunk, StepOutput):
                                         final_response = chunk
                             else:
-                                async for chunk in self.active_executor(step_input):
-                                    if (
-                                        hasattr(chunk, "content")
-                                        and chunk.content is not None
-                                        and isinstance(chunk.content, str)
-                                    ):
-                                        content += chunk.content
-                                    else:
-                                        content += str(chunk)
-                                    if isinstance(chunk, StepOutput):
-                                        final_response = chunk
+                                # Fix line 444 - handle async generator properly
+                                if inspect.isasyncgenfunction(self.active_executor):
+                                    async for chunk in self.active_executor(step_input):  # type: ignore
+                                        if (
+                                            hasattr(chunk, "content")
+                                            and chunk.content is not None
+                                            and isinstance(chunk.content, str)
+                                        ):
+                                            content += chunk.content
+                                        else:
+                                            content += str(chunk)
+                                        if isinstance(chunk, StepOutput):
+                                            final_response = chunk
 
                         except StopIteration as e:
                             if hasattr(e, "value") and isinstance(e.value, StepOutput):
@@ -463,16 +474,15 @@ class Step:
                             response = StepOutput(content=content)
                     else:
                         if inspect.iscoroutinefunction(self.active_executor):
-                            # type: ignore
-                            result = await self.active_executor(step_input)
+                            result = await self.active_executor(step_input)  # type: ignore
                         else:
                             result = self.active_executor(step_input)  # type: ignore
 
-                    # If function returns StepOutput, use it directly
-                    if isinstance(result, StepOutput):
-                        response = result
-                    else:
-                        response = StepOutput(content=str(result))
+                        # If function returns StepOutput, use it directly
+                        if isinstance(result, StepOutput):
+                            response = result
+                        else:
+                            response = StepOutput(content=str(result))
 
                 else:
                     # For agents and teams, prepare message with context
@@ -495,11 +505,12 @@ class Step:
                         videos = (
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
-                        response = await self.active_executor.arun(
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        response = await self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,
                             videos=videos,
-                            audio=step_input.audio,
+                            audio=audios,
                             session_id=session_id,
                             user_id=user_id,
                         )
@@ -510,7 +521,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response)
+                step_output = self._process_step_output(response) # type: ignore
 
                 return step_output
 
@@ -526,6 +537,8 @@ class Step:
                     else:
                         raise e
 
+        return StepOutput(content=f"Step {self.name} failed but skipped", success=False)
+
     async def aexecute_stream(
         self,
         step_input: StepInput,
@@ -540,7 +553,7 @@ class Step:
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Emit StepStartedEvent
             yield StepStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -565,7 +578,7 @@ class Step:
                     if inspect.isasyncgenfunction(self.active_executor):
                         content = ""
                         # It's an async generator - iterate over it
-                        async for event in self.active_executor(step_input):
+                        async for event in self.active_executor(step_input):  # type: ignore
                             if (
                                 hasattr(event, "content")
                                 and event.content is not None
@@ -578,12 +591,12 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event
+                                yield event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     elif inspect.iscoroutinefunction(self.active_executor):
                         # It's a regular async function - await it
-                        result = await self.active_executor(step_input)
+                        result = await self.active_executor(step_input)  # type: ignore
                         if isinstance(result, StepOutput):
                             final_response = result
                         else:
@@ -591,7 +604,7 @@ class Step:
                     elif inspect.isgeneratorfunction(self.active_executor):
                         content = ""
                         # It's a regular generator function - iterate over it
-                        for event in self.active_executor(step_input):
+                        for event in self.active_executor(step_input):  # type: ignore
                             if (
                                 hasattr(event, "content")
                                 and event.content is not None
@@ -604,7 +617,7 @@ class Step:
                                 final_response = event
                                 break
                             else:
-                                yield event
+                                yield event  # type: ignore[misc]
                         if not final_response:
                             final_response = StepOutput(content=content)
                     else:
@@ -634,11 +647,12 @@ class Step:
                         videos = (
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
+                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
                         response_stream = await self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,
                             videos=videos,
-                            audio=step_input.audio,
+                            audio=audios,
                             session_id=session_id,
                             user_id=user_id,
                             stream=True,
@@ -647,7 +661,7 @@ class Step:
 
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
-                            yield event
+                            yield event  # type: ignore[misc]
                         final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -662,7 +676,7 @@ class Step:
                 # Yield the final response
                 yield final_response
 
-                if stream_intermediate_steps:
+                if stream_intermediate_steps and workflow_run_response:
                     # Emit StepCompletedEvent
                     yield StepCompletedEvent(
                         run_id=workflow_run_response.run_id or "",
@@ -691,11 +705,13 @@ class Step:
                     else:
                         raise e
 
+        return
+
     def _prepare_message(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
         previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
-    ) -> Union[str, list, Dict[str, Any], BaseModel]:
+    ) -> Optional[Union[str, List[Any], Dict[str, Any], BaseModel]]:
         """Prepare the primary input by combining message and previous step outputs"""
 
         if previous_step_outputs and self._executor_type in ["agent", "team"]:
@@ -751,6 +767,19 @@ class Step:
             # Convert any other type to string
             return RunResponse(content=str(result))
 
+    def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[AudioArtifact]) -> List[Audio]:
+        """Convert AudioArtifact objects to Audio objects"""
+        audios = []
+        for audio_artifact in audio_artifacts:
+            if audio_artifact.url:
+                audios.append(Audio(url=audio_artifact.url))
+            elif audio_artifact.base64_audio:  # use base64_audio instead of content
+                audios.append(Audio(content=audio_artifact.base64_audio))
+            else:
+                logger.warning(f"Skipping AudioArtifact with no URL or base64_audio: {audio_artifact}")
+                continue
+        return audios
+
     def _convert_image_artifacts_to_images(self, image_artifacts: List[ImageArtifact]) -> List[Image]:
         """
         Convert ImageArtifact objects to Image objects with proper content handling.
@@ -775,8 +804,8 @@ class Step:
                     # Try to decode as base64 first (for images from OpenAI tools)
                     if isinstance(img_artifact.content, bytes):
                         # Decode bytes to string, then decode base64 to get actual image bytes
-                        base64_string = img_artifact.content.decode("utf-8")
-                        actual_image_bytes = base64.b64decode(base64_string)
+                        base64_str: str = img_artifact.content.decode("utf-8")  # Fix line 824
+                        actual_image_bytes = base64.b64decode(base64_str)
                     else:
                         # If it's already actual image bytes
                         actual_image_bytes = img_artifact.content
@@ -787,7 +816,7 @@ class Step:
                         # Convert mime_type to format (e.g., "image/png" -> "png")
                         if "/" in img_artifact.mime_type:
                             format_from_mime = img_artifact.mime_type.split("/")[-1]
-                            image_kwargs["format"] = format_from_mime
+                            image_kwargs["format"] = format_from_mime  # type: ignore[assignment]
 
                     images.append(Image(**image_kwargs))
 
@@ -815,7 +844,7 @@ class Step:
         """
         videos = []
         for i, video_artifact in enumerate(video_artifacts):
-            # Create Image object with proper data from ImageArtifact
+            # Create Video object with proper data from VideoArtifact
             if video_artifact.url:
                 videos.append(Video(url=video_artifact.url))
 
@@ -823,7 +852,7 @@ class Step:
                 videos.append(Video(content=video_artifact.content))
 
             else:
-                # Skip images that have neither URL nor content
+                # Skip videos that have neither URL nor content
                 logger.warning(f"Skipping VideoArtifact {i} with no URL or content: {video_artifact}")
                 continue
 
