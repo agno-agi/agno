@@ -119,7 +119,9 @@ async def test_tool_call_requires_user_input_async():
     assert response.tools[0].tool_args == {"city": "Tokyo"}
 
     # Provide user input
-    response.tools[0].user_input_schema[0].value = "Tokyo"
+    for tool_response in response.tools:
+        if tool_response.requires_user_input:
+            tool_response.user_input_schema[0].value = "Tokyo"
 
     response = await agent.acontinue_run(response)
     assert response.is_paused is False
