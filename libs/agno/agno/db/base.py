@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
-from datetime import date
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.db.schemas import MemoryRow
-from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
 
@@ -44,29 +43,13 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_session_raw(
-        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
     def get_session(
-        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
-    ) -> Optional[Session]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_sessions_raw(
         self,
+        session_id: str,
         session_type: SessionType,
         user_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        serialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -80,15 +63,20 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> List[Session]:
+        serialize: Optional[bool] = True,
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
-    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
+    def rename_session(
+        self, session_id: str, session_type: SessionType, session_name: str, serialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_session(self, session: Session) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, serialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
     # --- User Memory ---
@@ -106,27 +94,9 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_user_memories_raw(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        search_content: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    def get_user_memory(
+        self, memory_id: str, serialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -142,7 +112,8 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> List[MemoryRow]:
+        serialize: Optional[bool] = True,
+    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -154,23 +125,15 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
+    def upsert_user_memory(
+        self, memory: MemoryRow, serialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         raise NotImplementedError
 
     # --- Metrics ---
 
     @abstractmethod
     def calculate_metrics(self) -> Optional[Any]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_metrics_raw(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
-    ) -> Tuple[List[Any], Optional[int]]:
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -217,28 +180,9 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_eval_runs_raw(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
-        filter_type: Optional[EvalFilterType] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    def get_eval_run(
+        self, eval_run_id: str, serialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -254,9 +198,12 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
-    ) -> List[EvalRunRecord]:
+        serialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
-    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, serialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError

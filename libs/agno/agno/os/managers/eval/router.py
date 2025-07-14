@@ -45,7 +45,7 @@ def attach_routes(
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[EvalSchema]:
-        eval_runs, total_count = db.get_eval_runs_raw(
+        eval_runs, total_count = db.get_eval_runs(
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -56,6 +56,7 @@ def attach_routes(
             model_id=model_id,
             eval_type=eval_types,
             filter_type=filter_type,
+            serialize=False,
         )
 
         return PaginatedResponse(
@@ -70,11 +71,11 @@ def attach_routes(
 
     @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def get_eval_run(eval_run_id: str) -> EvalSchema:
-        eval_run = db.get_eval_run_raw(eval_run_id=eval_run_id)
+        eval_run = db.get_eval_run(eval_run_id=eval_run_id, serialize=False)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
-        return EvalSchema.from_dict(eval_run)
+        return EvalSchema.from_dict(eval_run)  # type: ignore
 
     @router.delete("/eval-runs", status_code=204)
     async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
@@ -86,14 +87,14 @@ def attach_routes(
     @router.patch("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
         try:
-            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name)
+            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, serialize=False)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
-        return EvalSchema.from_dict(eval_run)
+        return EvalSchema.from_dict(eval_run)  # type: ignore
 
     @router.post("/eval-runs", response_model=EvalSchema, status_code=200)
     async def run_eval(eval_run_input: EvalRunInput) -> Optional[EvalSchema]:
