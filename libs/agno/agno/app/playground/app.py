@@ -197,7 +197,7 @@ class Playground:
         # Print the panel
         console.print(panel)
         self.set_app_id()
-        
+
         self.register_app_on_platform()
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

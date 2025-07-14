@@ -1336,10 +1336,13 @@ class Workflow:
                     log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
                 elif isinstance(step, Agent):
-                    log_debug(f"Step {i + 1}: Agent '{step.name}'")
-                    prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Agent '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
                 elif isinstance(step, Team):
-                    log_debug(f"Step {i + 1}: Team '{step.name}' with {len(step.members)} members")
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
+                    prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                     prepared_steps.append(Step(name=step.name, description=step.description, team=step))
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
