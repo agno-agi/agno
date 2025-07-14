@@ -71,6 +71,10 @@ class Step:
         skip_on_failure: bool = False,
         strict_input_validation: bool = False,
     ):
+        # Auto-detect name for function executors if not provided
+        if name is None and executor is not None:
+            name = getattr(executor, "__name__", None)
+            
         self.name = name
         self.agent = agent
         self.team = team
@@ -725,11 +729,10 @@ class Step:
     def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""
         if isinstance(response, StepOutput):
-            response.step_name = self.name
+            response.step_name = self.name or "unnamed_step"
             response.step_id = self.step_id
             response.executor_type = self._executor_type
             response.executor_name = self.executor_name
-
             return response
 
         # Extract media from response
@@ -741,7 +744,7 @@ class Step:
         metrics = self._extract_metrics_from_response(response)
 
         return StepOutput(
-            step_name=self.name,
+            step_name=self.name or "unnamed_step",
             step_id=self.step_id,
             executor_type=self._executor_type,
             executor_name=self.executor_name,

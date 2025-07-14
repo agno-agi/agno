@@ -1,3 +1,10 @@
+"""
+This example shows how to access the output of multiple previous steps in a workflow.
+
+The workflow is defined as a list of steps, where each step is directly an agent or a function. 
+We dont use Step objects in this example.
+"""
+
 from agno.agent.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -7,38 +14,20 @@ from agno.workflow.v2.workflow import Workflow
 
 # Define the research agents
 hackernews_agent = Agent(
-    name="HackerNews Researcher",
     instructions="You are a researcher specializing in finding the latest tech news and discussions from Hacker News. Focus on startup trends, programming topics, and tech industry insights.",
     tools=[HackerNewsTools()],
 )
 
 web_agent = Agent(
-    name="Web Researcher",
     instructions="You are a comprehensive web researcher. Search across multiple sources including news sites, blogs, and official documentation to gather detailed information.",
     tools=[DuckDuckGoTools()],
 )
 
 reasoning_agent = Agent(
-    name="Reasoning Agent",
     instructions="You are an expert analyst who creates comprehensive reports by analyzing and synthesizing information from multiple sources. Create well-structured, insightful reports.",
 )
 
-# Create the research steps
-research_hackernews = Step(
-    name="research_hackernews",
-    agent=hackernews_agent,
-    description="Research latest tech trends from Hacker News",
-)
-
-research_web = Step(
-    name="research_web",
-    agent=web_agent,
-    description="Comprehensive web research on the topic",
-)
-
 # Custom function step that has access to ALL previous step outputs
-
-
 def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     """
     Custom function that creates a report using data from multiple previous steps.
@@ -48,11 +37,9 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     # Access original workflow input
     original_topic = step_input.message or ""
 
-    print(f"--> Original topic: {original_topic}")
-
     # Access specific step outputs by name
-    hackernews_data = step_input.get_step_content("research_hackernews") or ""
-    web_data = step_input.get_step_content("research_web") or ""
+    hackernews_data = step_input.get_step_content("step_1") or ""
+    web_data = step_input.get_step_content("step_2") or ""
 
     # Or access ALL previous content
     all_research = step_input.get_all_previous_content()
@@ -71,16 +58,35 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
         {web_data[:500]}...
     """
 
+    return StepOutput(content=report.strip(), success=True)
+
+# Custom function to print the comprehensive report
+def print_final_report(step_input: StepInput) -> StepOutput:
+    """
+    Custom function that receives the comprehensive report and prints it.
+    """
+    
+    # Get the output from the comprehensive_report step
+    comprehensive_report = step_input.get_step_content("create_comprehensive_report")
+    
+    # Print the report
+    print("=" * 80)
+    print("FINAL COMPREHENSIVE REPORT")
+    print("=" * 80)
+    print(comprehensive_report)
+    print("=" * 80)
+    
+    # Also print all previous step outputs for debugging
+    print("\nDEBUG: All previous step outputs:")
+    if step_input.previous_step_outputs:
+        for step_name, output in step_input.previous_step_outputs.items():
+            print(f"- {step_name}: {len(str(output.content))} characters")
+    
     return StepOutput(
-        step_name="comprehensive_report", content=report.strip(), success=True
+        step_name="print_final_report", 
+        content=f"Printed comprehensive report ({len(comprehensive_report)} characters)",
+        success=True
     )
-
-
-comprehensive_report_step = Step(
-    name="comprehensive_report",
-    executor=create_comprehensive_report,
-    description="Create comprehensive report from all research sources",
-)
 
 # Final reasoning step using reasoning agent
 reasoning_step = Step(
@@ -93,16 +99,14 @@ workflow = Workflow(
     name="Enhanced Research Workflow",
     description="Multi-source research with custom data flow and reasoning",
     steps=[
-        research_hackernews,
-        # research_web,
-        comprehensive_report_step,  # Has access to both previous steps
-        reasoning_step,  # Gets the last step output (comprehensive report)
+        hackernews_agent,
+        web_agent,
+        create_comprehensive_report,  # Has access to both previous steps
+        print_final_report
     ],
 )
 
 if __name__ == "__main__":
     workflow.print_response(
         "Latest developments in artificial intelligence and machine learning",
-        stream=True,
-        stream_intermediate_steps=True,
     )
