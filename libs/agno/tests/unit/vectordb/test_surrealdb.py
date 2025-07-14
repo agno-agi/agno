@@ -22,7 +22,9 @@ def mock_embedder():
 def mock_surrealdb_client():
     """Fixture to create a mock SurrealDB client"""
     with patch("agno.vectordb.surrealdb.surrealdb.Surreal") as mock_client_class:
-        client = Mock()
+        from surrealdb import BlockingWsSurrealConnection
+
+        client = Mock(spec=BlockingWsSurrealConnection)
 
         # Mock methods
         client.connect = Mock()
@@ -40,7 +42,9 @@ def mock_surrealdb_client():
 def mock_async_surrealdb_client():
     """Fixture to create a mock AsyncSurrealDB client"""
     with patch("agno.vectordb.surrealdb.surrealdb.AsyncSurreal") as mock_async_client_class:
-        client = AsyncMock()
+        from surrealdb import AsyncWsSurrealConnection
+
+        client = AsyncMock(spec=AsyncWsSurrealConnection)
 
         # Mock methods - use AsyncMock for async methods
         client.connect = AsyncMock(return_value=None)

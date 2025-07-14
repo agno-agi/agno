@@ -5029,6 +5029,7 @@ class Team:
             _instructions = self.instructions
             if callable(self.instructions):
                 import inspect
+
                 signature = inspect.signature(self.instructions)
                 if "team" in signature.parameters:
                     _instructions = self.instructions(team=self)

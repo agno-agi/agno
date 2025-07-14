@@ -147,7 +147,7 @@ class SurrealDb(VectorDb):
             self.sync_client.use(self.namespace, self.database)
             yield self.sync_client
         finally:
-            if self.sync_client and hasattr(self.sync_client, "close"):
+            if isinstance(self.sync_client, BlockingWsSurrealConnection):
                 self.sync_client.close()
 
     @asynccontextmanager
@@ -159,7 +159,7 @@ class SurrealDb(VectorDb):
             await self.async_client.use(self.namespace, self.database)
             yield self.async_client
         finally:
-            if self.async_client and hasattr(self.async_client, "close"):
+            if isinstance(self.async_client, AsyncWsSurrealConnection):
                 await self.async_client.close()
 
     # Synchronous methods
