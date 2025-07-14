@@ -5028,7 +5028,14 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = self.instructions(agent=self)
+                import inspect
+                signature = inspect.signature(self.instructions)
+                if "team" in signature.parameters:
+                    _instructions = self.instructions(team=self)
+                elif "agent" in signature.parameters:
+                    _instructions = self.instructions(agent=self)
+                else:
+                    _instructions = self.instructions()
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
