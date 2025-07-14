@@ -45,6 +45,7 @@ class WorkflowRunEvent(str, Enum):
 
     step_output = "StepOutput"
 
+
 @dataclass
 class BaseWorkflowRunResponseEvent:
     """Base class for all workflow run response events"""
