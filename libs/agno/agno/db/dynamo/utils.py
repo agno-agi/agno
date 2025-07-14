@@ -3,8 +3,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalRunRecord
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -46,9 +46,9 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
         elif "NS" in value:
             data[key] = [float(n) if "." in n else int(n) for n in value["NS"]]
         elif "M" in value:
-            data[key] = self._deserialize_from_dynamodb_item(value["M"])
+            data[key] = deserialize_from_dynamodb_item(value["M"])
         elif "L" in value:
-            data[key] = [self._deserialize_from_dynamodb_item({"item": item})["item"] for item in value["L"]]
+            data[key] = [deserialize_from_dynamodb_item({"item": item})["item"] for item in value["L"]]
     return data
 
 
@@ -291,14 +291,14 @@ def fetch_all_sessions_data(
     component_id: Optional[str] = None,
     session_name: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch all sessions data from DynamoDB table."""
+    """Fetch all sessions data from DynamoDB table using GSI for session_type."""
     items = []
 
     try:
-        # Build filter expression
+        # Build filter expression for additional filters
         filter_expression = None
         expression_attribute_names = {}
-        expression_attribute_values = {}
+        expression_attribute_values = {":session_type": {"S": session_type}}
 
         if user_id:
             filter_expression = "#user_id = :user_id"
@@ -325,26 +325,27 @@ def fetch_all_sessions_data(
             else:
                 filter_expression = name_filter
 
-        # Scan with filter
-        scan_kwargs = {
+        # Use GSI query for session_type (more efficient than scan)
+        query_kwargs = {
             "TableName": table_name,
-            "FilterExpression": "session_type = :session_type",
-            "ExpressionAttributeValues": {":session_type": {"S": session_type}, **expression_attribute_values},
+            "IndexName": "session_type-created_at-index",
+            "KeyConditionExpression": "session_type = :session_type",
+            "ExpressionAttributeValues": expression_attribute_values,
         }
 
         if filter_expression:
-            scan_kwargs["FilterExpression"] += f" AND {filter_expression}"
+            query_kwargs["FilterExpression"] = filter_expression
 
         if expression_attribute_names:
-            scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+            query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
 
-        response = dynamodb_client.scan(**scan_kwargs)
+        response = dynamodb_client.query(**query_kwargs)
         items.extend(response.get("Items", []))
 
         # Handle pagination
         while "LastEvaluatedKey" in response:
-            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-            response = dynamodb_client.scan(**scan_kwargs)
+            query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+            response = dynamodb_client.query(**query_kwargs)
             items.extend(response.get("Items", []))
 
     except Exception as e:

@@ -6,8 +6,7 @@ from typing import Any, Dict
 SESSION_TABLE_SCHEMA = {
     "TableName": "agno_sessions",
     "KeySchema": [
-        {"AttributeName": "session_id", "KeyType": "HASH"},
-        {"AttributeName": "session_type", "KeyType": "RANGE"}
+        {"AttributeName": "session_id", "KeyType": "HASH"}
     ],
     "AttributeDefinitions": [
         {"AttributeName": "session_id", "AttributeType": "S"},
@@ -20,6 +19,15 @@ SESSION_TABLE_SCHEMA = {
         {"AttributeName": "updated_at", "AttributeType": "N"}
     ],
     "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "session_type-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "session_type", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"}
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        },
         {
             "IndexName": "user_id-created_at-index",
             "KeySchema": [

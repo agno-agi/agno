@@ -21,8 +21,8 @@ from agno.db.dynamo.utils import (
     serialize_to_dynamodb_item,
 )
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import Session
 from agno.utils.log import log_debug, log_error
 
@@ -107,50 +107,51 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT):
-        if not session_id or not self.session_table_name:
-            return
+    def delete_session(self, session_id: Optional[str] = None):
+        """
+        Delete a session from the database.
+
+        Args:
+            session_id: The ID of the session to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the session.
+        """
+        if not session_id:
+            return None
 
         try:
             self.client.delete_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}, "session_type": {"S": session_type.value}},
+                Key={"session_id": {"S": session_id}},
             )
-            log_debug(f"Deleted session {session_id}")
+
         except Exception as e:
             log_error(f"Failed to delete session {session_id}: {e}")
+            raise e
 
-    # TODO: batch_size = 25 because dynamo enforces a limit of 25. find a better way to handle
     def delete_sessions(self, session_ids: List[str]) -> None:
+        """
+        Delete sessions from the database in batches.
+
+        Args:
+            session_ids: List of session IDs to delete
+        """
         if not session_ids or not self.session_table_name:
             return
 
         try:
+            # DynamoDB batch_write_item has a hard limit of 25 items per request
             batch_size = 25
 
             for i in range(0, len(session_ids), batch_size):
                 batch = session_ids[i : i + batch_size]
-
                 delete_requests = []
+
                 for session_id in batch:
-                    try:
-                        response = self.client.scan(
-                            TableName=self.session_table_name,
-                            FilterExpression="session_id = :session_id",
-                            ExpressionAttributeValues={":session_id": {"S": session_id}},
-                        )
+                    delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
 
-                        for item in response.get("Items", []):
-                            delete_requests.append(
-                                {
-                                    "DeleteRequest": {
-                                        "Key": {"session_id": {"S": session_id}, "session_type": item["session_type"]}
-                                    }
-                                }
-                            )
-                    except Exception as e:
-                        log_error(f"Failed to find session {session_id} for deletion: {e}")
-
+                # Execute batch delete
                 if delete_requests:
                     self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
 
@@ -158,7 +159,7 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete sessions: {e}")
 
     def get_session_raw(
-        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
+        self, session_id: str, session_type: Optional[SessionType] = None, user_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         if not self.session_table_name:
             return None
@@ -166,12 +167,16 @@ class DynamoDb(BaseDb):
         try:
             response = self.client.get_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}, "session_type": {"S": session_type.value}},
+                Key={"session_id": {"S": session_id}},
             )
 
             item = response.get("Item")
             if item:
-                return deserialize_from_dynamodb_item(item)
+                session_data = deserialize_from_dynamodb_item(item)
+                # Filter by session_type if provided
+                if session_type and session_data.get("session_type") != session_type.value:
+                    return None
+                return session_data
             return None
 
         except Exception as e:
@@ -179,7 +184,7 @@ class DynamoDb(BaseDb):
             return None
 
     def get_session(
-        self, session_id: str, session_type: SessionType, user_id: Optional[str] = None
+        self, session_id: str, session_type: Optional[SessionType] = None, user_id: Optional[str] = None
     ) -> Optional[Session]:
         session_data = self.get_session_raw(session_id, session_type, user_id)
         if session_data:
@@ -256,14 +261,14 @@ class DynamoDb(BaseDb):
 
         return sessions
 
-    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
+    def rename_session(self, session_id: str, session_name: str) -> Optional[Session]:
         if not self.session_table_name:
             return None
 
         try:
             response = self.client.update_item(
                 TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}, "session_type": {"S": session_type.value}},
+                Key={"session_id": {"S": session_id}},
                 UpdateExpression="SET session_name = :name, updated_at = :updated_at",
                 ExpressionAttributeValues={":name": {"S": session_name}, ":updated_at": {"N": str(int(time.time()))}},
                 ReturnValues="ALL_NEW",
