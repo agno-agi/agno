@@ -441,11 +441,11 @@ class Workflow:
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
                 shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
@@ -578,11 +578,11 @@ class Workflow:
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
                 shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 early_termination = False
 
@@ -810,11 +810,11 @@ class Workflow:
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
                 shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
@@ -952,11 +952,11 @@ class Workflow:
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
                 shared_images: List[ImageArtifact] = execution_input.images or []
-                output_images: List[ImageArtifact] = []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
                 shared_videos: List[VideoArtifact] = execution_input.videos or []
-                output_videos: List[VideoArtifact] = []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
-                output_audio: List[AudioArtifact] = []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 early_termination = False
 
