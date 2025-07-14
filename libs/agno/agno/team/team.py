@@ -1627,7 +1627,9 @@ class Team:
             for run in self.memory.runs.get(session_id, []):  # type: ignore
                 if run.messages is not None:
                     for m in run.messages:
-                        session_messages.append(m)
+                        # Skipping messages from history to avoid duplicates
+                        if not m.from_history:
+                            session_messages.append(m)
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
@@ -1673,7 +1675,9 @@ class Team:
                 for run in self.memory.runs.get(session_id, []):
                     if run.messages is not None:
                         for m in run.messages:
-                            session_messages.append(m)
+                            # Skipping messages from history to avoid duplicates
+                            if not m.from_history:
+                                session_messages.append(m)
 
             # 10. Calculate session metrics
             self.session_metrics = self._calculate_session_metrics(session_messages)
@@ -7740,150 +7744,3 @@ class Team:
 
         log_info(f"Filters used by Agent: {search_filters}")
         return search_filters
-
-    def register_team(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.team import TeamCreate, create_team
-
-        try:
-            create_team(
-                team=TeamCreate(
-                    team_id=self.team_id,
-                    name=self.name,
-                    config=self.to_platform_dict(),
-                    parent_team_id=self.parent_team_id,
-                    app_id=self.app_id,
-                    workflow_id=self.workflow_id,
-                ),
-            )
-
-        except Exception as e:
-            log_debug(f"Could not create team on platform: {e}")
-
-    async def _aregister_team(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.team import TeamCreate, acreate_team
-
-        try:
-            await acreate_team(
-                team=TeamCreate(
-                    team_id=self.team_id,
-                    name=self.name,
-                    config=self.to_platform_dict(),
-                    parent_team_id=self.parent_team_id,
-                    app_id=self.app_id,
-                    workflow_id=self.workflow_id,
-                ),
-            )
-        except Exception as e:
-            log_debug(f"Could not create team on platform: {e}")
-
-    def to_platform_dict(self) -> Dict[str, Any]:
-        model = None
-        if self.model is not None:
-            model = {
-                "name": self.model.__class__.__name__,
-                "model": self.model.id,
-                "provider": self.model.provider,
-            }
-        tools: List[Dict[str, Any]] = []
-        if self.tools is not None:
-            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
-                team_model = self.model
-                if team_model is not None:
-                    self.session_id = cast(str, self.session_id)
-                    self.determine_tools_for_model(model=team_model, session_id=self.session_id)
-
-            if self._tools_for_model is not None:
-                for tool in self._tools_for_model:
-                    if isinstance(tool, dict) and tool.get("type") == "function":
-                        tools.append(tool["function"])
-        payload = {
-            "members": [
-                {
-                    **(
-                        member.get_agent_config_dict()
-                        if isinstance(member, Agent)
-                        else member.to_platform_dict()
-                        if isinstance(member, Team)
-                        else {}
-                    ),
-                    "agent_id": member.agent_id if hasattr(member, "agent_id") else None,
-                    "team_id": member.team_id if hasattr(member, "team_id") else None,
-                    "members": (
-                        [
-                            {
-                                **(
-                                    sub_member.get_agent_config_dict()
-                                    if isinstance(sub_member, Agent)
-                                    else sub_member.to_platform_dict()
-                                    if isinstance(sub_member, Team)
-                                    else {}
-                                ),
-                                "agent_id": sub_member.agent_id if hasattr(sub_member, "agent_id") else None,
-                                "team_id": sub_member.team_id if hasattr(sub_member, "team_id") else None,
-                            }
-                            for sub_member in member.members
-                            if sub_member is not None
-                        ]
-                        if isinstance(member, Team) and hasattr(member, "members")
-                        else []
-                    ),
-                }
-                for member in self.members
-                if member is not None
-            ],
-            "mode": self.mode,
-            "model": model,
-            "tools": tools,
-            "name": self.name,
-            "instructions": self.instructions,
-            "description": self.description,
-            "storage": {
-                "name": self.storage.__class__.__name__,
-            }
-            if self.storage is not None
-            else None,
-            # "tools": [tool.to_dict() for tool in self.tools] if self.tools is not None else None,
-            "memory": (
-                {
-                    "name": self.memory.__class__.__name__,
-                    "model": (
-                        {
-                            "name": self.memory.model.__class__.__name__,
-                            "model": self.memory.model.id,
-                            "provider": self.memory.model.provider,
-                        }
-                        if hasattr(self.memory, "model") and self.memory.model is not None
-                        else (
-                            {
-                                "name": self.model.__class__.__name__,
-                                "model": self.model.id,
-                                "provider": self.model.provider,
-                            }
-                            if self.model is not None
-                            else None
-                        )
-                    ),
-                    "db": (
-                        {
-                            "name": self.memory.db.__class__.__name__,
-                            "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
-                            "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
-                        }
-                        if hasattr(self.memory, "db") and self.memory.db is not None
-                        else None
-                    ),
-                }
-                if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
-                else None
-            ),
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload
