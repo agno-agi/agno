@@ -48,8 +48,6 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     # Access original workflow input
     original_topic = step_input.message or ""
 
-    print(f"--> Original topic: {original_topic}")
-
     # Access specific step outputs by name
     hackernews_data = step_input.get_step_content("research_hackernews") or ""
     web_data = step_input.get_step_content("research_web") or ""
@@ -94,7 +92,7 @@ workflow = Workflow(
     description="Multi-source research with custom data flow and reasoning",
     steps=[
         research_hackernews,
-        # research_web,
+        research_web,
         comprehensive_report_step,  # Has access to both previous steps
         reasoning_step,  # Gets the last step output (comprehensive report)
     ],
@@ -103,6 +101,7 @@ workflow = Workflow(
 if __name__ == "__main__":
     workflow.print_response(
         "Latest developments in artificial intelligence and machine learning",
+        markdown=True,
         stream=True,
         stream_intermediate_steps=True,
     )
