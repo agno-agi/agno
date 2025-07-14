@@ -134,7 +134,7 @@ class StepInput:
             return None
 
         last_output = list(self.previous_step_outputs.values())[-1] if self.previous_step_outputs else None
-        return last_output.content if last_output else None
+        return last_output.content if last_output else None  # type: ignore[return-value]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -297,10 +297,10 @@ class StepMetrics:
 
         # Only include the relevant field based on executor type
         if self.executor_type == "parallel" and self.parallel_steps:
-            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}
+            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}  # type: ignore[assignment]
         elif self.executor_type != "parallel":
             # For non-parallel steps, include metrics (even if None)
-            result["metrics"] = self.metrics
+            result["metrics"] = self.metrics  # type: ignore[assignment]
 
         return result
 

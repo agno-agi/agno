@@ -249,7 +249,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response) # type: ignore
+                step_output = self._process_step_output(response)  # type: ignore
 
                 return step_output
 
@@ -525,7 +525,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response) # type: ignore
+                step_output = self._process_step_output(response)  # type: ignore
 
                 return step_output
 
