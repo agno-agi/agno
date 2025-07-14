@@ -38,6 +38,8 @@ class JiraTools(Toolkit):
 
         if auth:
             self.jira = JIRA(server=self.server_url, basic_auth=cast(tuple[str, str], auth))
+        elif self.token:
+            self.jira = JIRA(server=self.server_url, token_auth=self.token)
         else:
             self.jira = JIRA(server=self.server_url)
 
