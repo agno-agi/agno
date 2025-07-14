@@ -1,13 +1,15 @@
 """
 This agent answers questions using knowledge from a PDF stored in a Google Cloud Storage (GCS) bucket.
 
-- For public GCS buckets: No authentication needed, just set the bucket and PDF path.
-- For private GCS buckets: Grant the service account Storage Object Viewer access to the bucket via Google Cloud Console, and export GOOGLE_APPLICATION_CREDENTIALS with the path to your service account JSON before running the script.
-
-## Prerequisites
-- pip install agno google-cloud-storage psycopg2-binary
-
- -> Update 'bucket_name' and 'blob_name' in the script to your PDF's location.
+Setup Steps:
+1. Install required libraries: agno, google-cloud-storage, psycopg2-binary (for PostgreSQL vector DB).
+2. Set up your GCS bucket and upload your PDF file.
+3. For public GCS buckets: No authentication needed, just set the bucket and PDF path.
+4. For private GCS buckets: 
+   - Grant the service account Storage Object Viewer access to the bucket via Google Cloud Console
+   - Export GOOGLE_APPLICATION_CREDENTIALS with the path to your service account JSON before running the script
+5. Update 'bucket_name' and 'blob_name' in the script to your PDF's location.
+6. Run the script to load the knowledge base and ask questions.
 """
 
 import asyncio
