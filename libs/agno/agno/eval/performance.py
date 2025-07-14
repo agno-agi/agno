@@ -207,8 +207,7 @@ class PerformanceEval:
     # Print detailed results
     print_results: bool = False
     # Print detailed memory growth analysis
-    with_growth_tracking: bool = False
-
+    memory_growth_tracking: bool = False
     # Number of memory allocations to track
     top_n_memory_allocations: int = 5
 
@@ -469,7 +468,7 @@ class PerformanceEval:
         return adjusted_usage, current_snapshot
 
     def run(
-        self, *, print_summary: bool = False, print_results: bool = False, with_growth_tracking: bool = False
+        self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
     ) -> PerformanceResult:
         """
         Main method to run the performance evaluation.
@@ -538,7 +537,7 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    if self.with_growth_tracking or with_growth_tracking:
+                    if self.memory_growth_tracking or memory_growth_tracking:
                         usage, current_snapshot = self._measure_memory_with_growth_tracking(
                             memory_baseline, previous_snapshot
                         )
@@ -586,7 +585,7 @@ class PerformanceEval:
         return self.result
 
     async def arun(
-        self, *, print_summary: bool = False, print_results: bool = False, with_growth_tracking: bool = False
+        self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
     ) -> PerformanceResult:
         """
         Async method to run the performance evaluation of async functions.
@@ -661,7 +660,7 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    if self.with_growth_tracking or with_growth_tracking:
+                    if self.memory_growth_tracking or memory_growth_tracking:
                         usage, current_snapshot = await self._async_measure_memory_with_growth_tracking(
                             memory_baseline, previous_snapshot
                         )

@@ -89,7 +89,7 @@ class TeamSession:
             summary=data.get("summary"),
         )
 
-    def add_run(self, run: RunResponse):
+    def add_run(self, run: TeamRunResponse):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages

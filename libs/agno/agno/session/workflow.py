@@ -31,7 +31,7 @@ class WorkflowSession:
     runs: Optional[list[WorkflowRunResponse]] = None
     # Summary of the session
     summary: Optional[Dict[str, Any]] = None
-    
+
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
     # The unix timestamp when this session was last updated

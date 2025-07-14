@@ -4,6 +4,7 @@ from typing import Iterator
 from agno.agent import Agent
 from agno.models.metrics import Metrics
 from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.yfinance import YFinanceTools
@@ -189,3 +190,33 @@ def test_member_metrics_aggregation():
         team.full_team_session_metrics.total_tokens
         == members_metrics["total_tokens"] + team.session_metrics.total_tokens
     )
+
+
+def test_team_metrics_with_history():
+    """Test session metrics are correctly aggregated when history is enabled"""
+
+    agent = Agent()
+    team = Team(
+        members=[agent],
+        enable_team_history=True,
+        storage=SqliteStorage(table_name="team_metrics_tests", db_file="tmp/team-metrics-tests.db"),
+    )
+
+    team.run("Hi")
+    assert team.session_metrics is not None
+    assert team.run_response.metrics is not None
+    assert team.run_response.metrics["input_tokens"] is not None
+    # Check the session metrics (team.session_metrics) coincide with the sum of run metrics
+    assert sum(team.run_response.metrics["input_tokens"]) == team.session_metrics.input_tokens
+    assert sum(team.run_response.metrics["output_tokens"]) == team.session_metrics.output_tokens
+    assert sum(team.run_response.metrics["total_tokens"]) == team.session_metrics.total_tokens
+
+    # Checking metrics aggregation works with multiple runs
+    team.run("Hi")
+    assert team.session_metrics is not None
+    assert team.run_response.metrics is not None
+    assert team.run_response.metrics["input_tokens"] is not None
+    # Check the session metrics (team.session_metrics) coincide with the sum of run metrics
+    assert sum(team.run_response.metrics["input_tokens"]) == team.session_metrics.input_tokens
+    assert sum(team.run_response.metrics["output_tokens"]) == team.session_metrics.output_tokens
+    assert sum(team.run_response.metrics["total_tokens"]) == team.session_metrics.total_tokens
