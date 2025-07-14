@@ -6550,9 +6550,9 @@ class Agent:
         log_info(f"Adding document to knowledge base: {document_name}: {document_content}")
         self.knowledge.load_document(
             document=Document(
-                    name=document_name,
-                    content=document_content,
-                )
+                name=document_name,
+                content=document_content,
+            )
         )
         return "Successfully added to knowledge base"
 

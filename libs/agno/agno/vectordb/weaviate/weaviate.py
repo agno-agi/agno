@@ -161,8 +161,8 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
         finally:
             await client.close()
-    
-    def doc_content_changed(self, document: Document, check_existing: Optional[bool]=True) -> Optional[bool]:
+
+    def doc_content_changed(self, document: Document, check_existing: Optional[bool] = True) -> Optional[bool]:
         """
         Check if the content of the document has changed by comparing its UUID.
 
@@ -176,11 +176,11 @@ class Weaviate(VectorDb):
         if not document or not document.content:
             logger.warning("Invalid document: Missing content.")
             return None
-        
+
         if check_existing and document.name and not self.name_exists(document.name):
             logger.warning(f"A document by this name does not exist: {document.name}")
             return None
-        
+
         doc_uuid, _ = self._get_doc_uuid(document)
 
         collection = self.get_client().collections.get(self.collection)
@@ -190,7 +190,6 @@ class Weaviate(VectorDb):
             return True
         else:
             return False
-
 
     def doc_delete(self, name: str) -> None:
         """
@@ -203,11 +202,13 @@ class Weaviate(VectorDb):
         filter_expr = Filter.by_property("name").equal(name)
 
         result = collection.data.delete_many(where=filter_expr)
-        
+
         log_debug(f"Deleted document by name: '{name}' - {result.successful} documents deleted.")
         if result.failed > 0:
-            logger.warning(f"Failed to delete (some chunks of) document with name: '{name}' - "
-                           f"Failed {result.failed} out of {result.matches} times. {result.successful} successful deletions.")
+            logger.warning(
+                f"Failed to delete (some chunks of) document with name: '{name}' - "
+                f"Failed {result.failed} out of {result.matches} times. {result.successful} successful deletions."
+            )
 
     def doc_exists(self, document: Document) -> bool:
         """
@@ -384,16 +385,20 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        
+
         _docs_to_insert = []
         for document in documents:
             assert document.name is not None, "Document name must be set for upsert operation."
 
             if self.name_exists(document.name):
                 if self.doc_content_changed(document, check_existing=False):
-                    log_debug(f"Document already exists, but content changed. Document will be deleted and added again: {document.name}")
-                    
-                    is_first_or_only_chunk = ("chunk" in document.meta_data and document.meta_data["chunk"] == 1) or ("chunk" not in document.meta_data)
+                    log_debug(
+                        f"Document already exists, but content changed. Document will be deleted and added again: {document.name}"
+                    )
+
+                    is_first_or_only_chunk = ("chunk" in document.meta_data and document.meta_data["chunk"] == 1) or (
+                        "chunk" not in document.meta_data
+                    )
                     if is_first_or_only_chunk:
                         self.doc_delete(document.name)
                     _docs_to_insert.append(document)
