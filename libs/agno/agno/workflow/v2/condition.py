@@ -44,7 +44,7 @@ class Condition:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def _prepare_steps(self): # type: ignore
+    def _prepare_steps(self):  # type: ignore
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
@@ -56,18 +56,18 @@ class Condition:
 
         prepared_steps = []
         for step in self.steps:
-            if isinstance(step, Callable): # type: ignore
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step)) # type: ignore
+            if isinstance(step, Callable):  # type: ignore
+                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))  # type: ignore
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step) # type: ignore
+                prepared_steps.append(step)  # type: ignore
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-        self.steps = prepared_steps # type: ignore
+        self.steps = prepared_steps  # type: ignore
 
     def _update_step_input_from_outputs(
         self,
@@ -167,7 +167,7 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id) # type: ignore[union-attr]
+                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -276,7 +276,7 @@ class Condition:
                     child_step_index = step_index
 
                 # Stream step execution
-                for event in step.execute_stream( # type: ignore[union-attr]
+                for event in step.execute_stream(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
@@ -372,7 +372,7 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id) # type: ignore[union-attr]
+                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
@@ -481,7 +481,7 @@ class Condition:
                     child_step_index = step_index
 
                 # Stream step execution - mirroring Loop logic
-                async for event in step.aexecute_stream( # type: ignore[union-attr]
+                async for event in step.aexecute_stream(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
