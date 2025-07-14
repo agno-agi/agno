@@ -43,6 +43,8 @@ class WorkflowRunEvent(str, Enum):
     steps_execution_started = "StepsExecutionStarted"
     steps_execution_completed = "StepsExecutionCompleted"
 
+    step_output = "StepOutput"
+
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
