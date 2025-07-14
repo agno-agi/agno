@@ -1,7 +1,7 @@
 """
 This example shows how to access the output of multiple previous steps in a workflow.
 
-The workflow is defined as a list of steps, where each step is directly an agent or a function. 
+The workflow is defined as a list of steps, where each step is directly an agent or a function.
 We dont use Step objects in this example.
 """
 
@@ -26,6 +26,7 @@ web_agent = Agent(
 reasoning_agent = Agent(
     instructions="You are an expert analyst who creates comprehensive reports by analyzing and synthesizing information from multiple sources. Create well-structured, insightful reports.",
 )
+
 
 # Custom function step that has access to ALL previous step outputs
 def create_comprehensive_report(step_input: StepInput) -> StepOutput:
@@ -60,33 +61,35 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
 
     return StepOutput(content=report.strip(), success=True)
 
+
 # Custom function to print the comprehensive report
 def print_final_report(step_input: StepInput) -> StepOutput:
     """
     Custom function that receives the comprehensive report and prints it.
     """
-    
+
     # Get the output from the comprehensive_report step
     comprehensive_report = step_input.get_step_content("create_comprehensive_report")
-    
+
     # Print the report
     print("=" * 80)
     print("FINAL COMPREHENSIVE REPORT")
     print("=" * 80)
     print(comprehensive_report)
     print("=" * 80)
-    
+
     # Also print all previous step outputs for debugging
     print("\nDEBUG: All previous step outputs:")
     if step_input.previous_step_outputs:
         for step_name, output in step_input.previous_step_outputs.items():
             print(f"- {step_name}: {len(str(output.content))} characters")
-    
+
     return StepOutput(
-        step_name="print_final_report", 
+        step_name="print_final_report",
         content=f"Printed comprehensive report ({len(comprehensive_report)} characters)",
-        success=True
+        success=True,
     )
+
 
 # Final reasoning step using reasoning agent
 reasoning_step = Step(
@@ -102,7 +105,7 @@ workflow = Workflow(
         hackernews_agent,
         web_agent,
         create_comprehensive_report,  # Has access to both previous steps
-        print_final_report
+        print_final_report,
     ],
 )
 

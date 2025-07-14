@@ -18,6 +18,7 @@ def get_supabase_mcp_tools():
         f"{npx_cmd} -y @supabase/mcp-server-supabase@latest --access-token {token}"
     )
 
+
 database_setup_agent = Agent(
     name="Database Setup Agent",
     model=OpenAIChat(id="gpt-4o"),

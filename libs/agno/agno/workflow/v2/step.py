@@ -74,7 +74,7 @@ class Step:
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
             name = getattr(executor, "__name__", None)
-            
+
         self.name = name
         self.agent = agent
         self.team = team

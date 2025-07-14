@@ -1,8 +1,8 @@
 import os
 
 from agents import (
-    database_setup_agent,
     company_research_agent,
+    database_setup_agent,
     esg_analysis_agent,
     financial_analysis_agent,
     investment_recommendation_agent,
@@ -17,6 +17,7 @@ from agno.tools.mcp import MCPTools
 from agno.workflow.v2 import Condition, Loop, Parallel, Router, Step, Steps, Workflow
 from agno.workflow.v2.types import StepInput, StepOutput
 from models import InvestmentAnalysisRequest, InvestmentType, RiskLevel
+
 
 ### Evaluators
 def should_run_analysis(analysis_type: str) -> callable:
@@ -71,6 +72,7 @@ def is_multi_company_analysis(step_input: StepInput) -> bool:
         return len(request_data.companies) > 1
     return False
 
+
 ### Routers
 def select_valuation_approach(step_input: StepInput) -> Step:
     """Router to select appropriate valuation approach based on investment type"""
@@ -119,6 +121,7 @@ def select_risk_framework(step_input: StepInput) -> Step:
             return risk_assessment_step
     return risk_assessment_step
 
+
 def analysis_quality_check(step_outputs: list[StepOutput]) -> bool:
     """End condition: Check if analysis quality is sufficient"""
     if not step_outputs:
@@ -154,6 +157,7 @@ def risk_assessment_complete(step_outputs: list[StepOutput]) -> bool:
     )
 
     return has_financial_risk and has_operational_risk
+
 
 ### Steps
 database_setup_step = Step(
@@ -217,7 +221,7 @@ investment_analysis_workflow = Workflow(
     steps=[
         database_setup_step,
         company_research_step,
-        # Phase 3: Multi-company analysis 
+        # Phase 3: Multi-company analysis
         Condition(
             evaluator=is_multi_company_analysis,
             steps=[
