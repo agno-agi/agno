@@ -4684,15 +4684,15 @@ class Agent:
             and references.references is not None
             and len(references.references) > 0
         ):
-            user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-            user_msg_content += "<references>\n"
-            user_msg_content += self.convert_documents_to_string(references.references) + "\n"
-            user_msg_content += "</references>"
+            user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n" # type: ignore
+            user_msg_content += "<references>\n" # type: ignore
+            user_msg_content += self.convert_documents_to_string(references.references) + "\n" # type: ignore
+            user_msg_content += "</references>" # type: ignore
         # 4.2 Add context to user message
         if self.add_context and self.context is not None:
-            user_msg_content += "\n\n<context>\n"
-            user_msg_content += self.convert_context_to_string(self.context) + "\n"
-            user_msg_content += "</context>"
+            user_msg_content += "\n\n<context>\n" # type: ignore
+            user_msg_content += self.convert_context_to_string(self.context) + "\n" # type: ignore
+            user_msg_content += "</context>" # type: ignore
 
         # Return the user message
         return Message(

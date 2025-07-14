@@ -560,7 +560,7 @@ class Team:
             if member.workflow_session_state is not None:
                 member.workflow_session_state = self.workflow_session_state
             else:
-                merge_dictionaries(member.workflow_session_state, self.workflow_session_state)
+                merge_dictionaries(member.workflow_session_state, self.workflow_session_state) # type: ignore
 
         if isinstance(member, Agent):
             member.team_id = self.team_id
@@ -806,7 +806,7 @@ class Team:
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
-            message=message,
+            message=message, # type: ignore
             images=images,
             videos=videos,
             audio=audio,
@@ -850,7 +850,7 @@ class Team:
                 elif isinstance(message, Message):
                     self.run_input = message.to_dict()
                 else:
-                    self.run_input = message
+                    self.run_input = message # type: ignore
 
             # Run the team
             try:
@@ -1220,7 +1220,7 @@ class Team:
             user_id=user_id,
             async_mode=True,
             knowledge_filters=effective_filters,
-            message=message,
+            message=message, # type: ignore
             images=images,
             videos=videos,
             audio=audio,
@@ -1262,7 +1262,7 @@ class Team:
                 elif isinstance(message, Message):
                     self.run_input = message.to_dict()
                 else:
-                    self.run_input = message
+                    self.run_input = message # type: ignore
 
             # Run the team
             try:
@@ -2510,7 +2510,7 @@ class Team:
             # First render the message panel if the message is not None
             if message and show_message:
                 # Convert message to a panel
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
@@ -2808,7 +2808,7 @@ class Team:
             if message and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
@@ -2914,7 +2914,7 @@ class Team:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -3097,7 +3097,7 @@ class Team:
 
             # Start with the message
             if message and show_message:
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
@@ -3374,7 +3374,7 @@ class Team:
             # First render the message panel if the message is not None
             if message and show_message:
                 # Convert message to a panel
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
@@ -3672,7 +3672,7 @@ class Team:
             if message and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
@@ -3772,7 +3772,7 @@ class Team:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -3891,7 +3891,7 @@ class Team:
 
             # Start with the message
             if message and show_message:
-                message_content = get_text_from_message(message)
+                message_content = get_text_from_message(message) # type: ignore
                 message_panel = create_panel(
                     content=Text(message_content, style="green"),
                     title="Message",
