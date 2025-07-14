@@ -245,17 +245,13 @@ class SqliteStorage(Storage):
                     stmt = stmt.where(self.table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if self.mode == "agent":
-                    # type: ignore
-                    return AgentSession.from_dict(result._mapping) if result is not None else None
+                    return AgentSession.from_dict(result._mapping) if result is not None else None # type: ignore
                 elif self.mode == "team":
-                    # type: ignore
-                    return TeamSession.from_dict(result._mapping) if result is not None else None
+                    return TeamSession.from_dict(result._mapping) if result is not None else None # type: ignore
                 elif self.mode == "workflow":
-                    # type: ignore
-                    return WorkflowSession.from_dict(result._mapping) if result is not None else None
+                    return WorkflowSession.from_dict(result._mapping) if result is not None else None # type: ignore
                 elif self.mode == "workflow_v2":
-                    # type: ignore
-                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None # type: ignore
         except Exception as e:
             if "no such table" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -333,17 +329,13 @@ class SqliteStorage(Storage):
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
                     if self.mode == "agent":
-                        # type: ignore
-                        return [AgentSession.from_dict(row._mapping) for row in rows]
+                        return [AgentSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "team":
-                        # type: ignore
-                        return [TeamSession.from_dict(row._mapping) for row in rows]
+                        return [TeamSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "workflow":
-                        # type: ignore
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "workflow_v2":
-                        # type: ignore
-                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows] # type: ignore
                 else:
                     return []
         except Exception as e:
@@ -393,18 +385,14 @@ class SqliteStorage(Storage):
                 # Execute query
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
-                    if self.mode == "agent":
-                        # type: ignore
-                        return [AgentSession.from_dict(row._mapping) for row in rows]
+                    if self.mode == "agent": # type: ignore
+                        return [AgentSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "team":
-                        # type: ignore
-                        return [TeamSession.from_dict(row._mapping) for row in rows]
+                        return [TeamSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "workflow":
-                        # type: ignore
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows] # type: ignore
                     elif self.mode == "workflow_v2":
-                        # type: ignore
-                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows] # type: ignore
                 return []
         except Exception as e:
             if "no such table" in str(e):

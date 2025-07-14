@@ -1041,7 +1041,7 @@ class Agent:
                     elif isinstance(message, Message):
                         self.run_input = message.to_dict()
                     else:
-                        self.run_input = message
+                        self.run_input = message # type: ignore
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
@@ -1430,7 +1430,7 @@ class Agent:
                     elif isinstance(message, Message):
                         self.run_input = message.to_dict()
                     else:
-                        self.run_input = message
+                        self.run_input = message # type: ignore
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
@@ -6795,7 +6795,7 @@ class Agent:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -6861,7 +6861,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(message)
+                        message_content = get_text_from_message(message) # type: ignore
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
@@ -7015,7 +7015,7 @@ class Agent:
                 # First render the message panel if the message is not None
                 if message and show_message:
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -7241,7 +7241,7 @@ class Agent:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -7310,7 +7310,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(message)
+                        message_content = get_text_from_message(message) # type: ignore
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
@@ -7464,7 +7464,7 @@ class Agent:
                 # First render the message panel if the message is not None
                 if message and show_message:
                     # Convert message to a panel
-                    message_content = get_text_from_message(message)
+                    message_content = get_text_from_message(message) # type: ignore
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
