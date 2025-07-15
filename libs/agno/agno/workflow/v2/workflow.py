@@ -514,9 +514,9 @@ class Workflow:
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    else:
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
-                        workflow_run_response.content = last_output.content  # type: ignore[union-attr]
+                        workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -576,7 +576,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)  # type: ignore[arg-type]
+                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)  
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -677,10 +677,10 @@ class Workflow:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content  # type: ignore
-                    else:
+                        workflow_run_response.content = last_output[-1].content
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
-                        workflow_run_response.content = last_output.content  # type: ignore
+                        workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -808,7 +808,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  # type: ignore
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -881,10 +881,10 @@ class Workflow:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content  # type: ignore
-                    else:
+                        workflow_run_response.content = last_output[-1].content  
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
-                        workflow_run_response.content = last_output.content  # type: ignore
+                        workflow_run_response.content = last_output.content  
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -950,7 +950,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  # type: ignore
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -1050,10 +1050,10 @@ class Workflow:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content  # type: ignore[union-attr]
-                    else:
+                        workflow_run_response.content = last_output[-1].content  
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
-                        workflow_run_response.content = last_output.content  # type: ignore[union-attr]
+                        workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -1686,7 +1686,7 @@ class Workflow:
                 # For callable functions, show the content directly since there are no step_responses
                 elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
-                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,
+                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,  # type: ignore
                         title="Custom Function (Completed)",
                         border_style="orange3",
                     )
@@ -2459,7 +2459,7 @@ class Workflow:
                 # For callable functions, show the content directly since there are no step_responses
                 elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
-                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,
+                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,  # type: ignore
                         title="Custom Function (Completed)",
                         border_style="orange3",
                     )

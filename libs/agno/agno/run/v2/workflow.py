@@ -405,7 +405,7 @@ WorkflowRunResponseEvent = Union[
 class WorkflowRunResponse:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
-    content: Optional[Any] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
