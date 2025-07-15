@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union, AsyncIterator
 
 from pydantic import BaseModel
 
@@ -234,14 +234,16 @@ class AwsBedrock(Model):
                         except (json.JSONDecodeError, KeyError) as e:
                             log_warning(f"Failed to parse tool call arguments: {e}")
                             tool_input = {}
-                        
-                        tool_use_content.append({
-                            "toolUse": {
-                                "toolUseId": tool_call["id"],
-                                "name": tool_call["function"]["name"],
-                                "input": tool_input,
+
+                        tool_use_content.append(
+                            {
+                                "toolUse": {
+                                    "toolUseId": tool_call["id"],
+                                    "name": tool_call["function"]["name"],
+                                    "input": tool_input,
+                                }
                             }
-                        })
+                        )
                     formatted_message["content"].extend(tool_use_content)
                 else:
                     formatted_message["content"].append({"text": message.content})
@@ -466,11 +468,7 @@ class AwsBedrock(Model):
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 # Use tool_call_id from message if tool_ids list is insufficient
-                tool_id = (
-                    tool_ids[_fc_message_index] 
-                    if _fc_message_index < len(tool_ids) 
-                    else _fc_message.tool_call_id
-                )
+                tool_id = tool_ids[_fc_message_index] if _fc_message_index < len(tool_ids) else _fc_message.tool_call_id
                 tool_result = {
                     "toolUseId": tool_id,
                     "content": [{"json": {"result": _fc_message.content}}],
@@ -640,37 +638,145 @@ class AwsBedrock(Model):
                 stream_data.extra = {}
             stream_data.extra["tool_ids"] = tool_ids
 
+    async def aprocess_response_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[ModelResponse]:
+        """
+        Process the asynchronous response stream.
+
+        Args:
+            messages (List[Message]): The messages to include in the request.
+            assistant_message (Message): The assistant message.
+            stream_data (MessageData): The stream data.
+        """
+        tool_use: Dict[str, Any] = {}
+        content = []
+        tool_ids = []
+
+        async for response_delta in self.ainvoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
+            model_response = ModelResponse(role="assistant")
+            should_yield = False
+            if "contentBlockStart" in response_delta:
+                # Handle tool use requests
+                tool = response_delta["contentBlockStart"]["start"].get("toolUse")
+                if tool:
+                    tool_use["toolUseId"] = tool["toolUseId"]
+                    tool_use["name"] = tool["name"]
+
+            elif "contentBlockDelta" in response_delta:
+                delta = response_delta["contentBlockDelta"]["delta"]
+                if "toolUse" in delta:
+                    if "input" not in tool_use:
+                        tool_use["input"] = ""
+                    tool_use["input"] += delta["toolUse"]["input"]
+                elif "text" in delta:
+                    model_response.content = delta["text"]
+
+            elif "contentBlockStop" in response_delta:
+                if "input" in tool_use:
+                    # Finish collecting tool use input
+                    try:
+                        tool_use["input"] = json.loads(tool_use["input"])
+                    except json.JSONDecodeError as e:
+                        log_error(f"Failed to parse tool input as JSON: {e}")
+                        tool_use["input"] = {}
+                    content.append({"toolUse": tool_use})
+                    tool_ids.append(tool_use["toolUseId"])
+                    # Prepare the tool call
+                    tool_call = {
+                        "id": tool_use["toolUseId"],
+                        "type": "function",
+                        "function": {
+                            "name": tool_use["name"],
+                            "arguments": json.dumps(tool_use["input"]),
+                        },
+                    }
+                    # Append the tool call to the list of "done" tool calls
+                    model_response.tool_calls.append(tool_call)
+                    # Reset the tool use
+                    tool_use = {}
+                else:
+                    # Finish collecting text content
+                    content.append({"text": stream_data.response_content})
+
+            elif "messageStop" in response_delta or "metadata" in response_delta:
+                body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
+                if "usage" in body:
+                    usage = body["usage"]
+                    model_response.response_usage = {
+                        "input_tokens": usage.get("inputTokens", 0),
+                        "output_tokens": usage.get("outputTokens", 0),
+                        "total_tokens": usage.get("totalTokens", 0),
+                    }
+
+            # Update metrics
+            if not assistant_message.metrics.time_to_first_token:
+                assistant_message.metrics.set_time_to_first_token()
+
+            if model_response.content:
+                stream_data.response_content += model_response.content
+                should_yield = True
+
+            if model_response.tool_calls:
+                if stream_data.response_tool_calls is None:
+                    stream_data.response_tool_calls = []
+                stream_data.response_tool_calls.extend(model_response.tool_calls)
+                should_yield = True
+
+            if model_response.response_usage is not None:
+                _add_usage_metrics_to_assistant_message(
+                    assistant_message=assistant_message, response_usage=model_response.response_usage
+                )
+
+            if should_yield:
+                yield model_response
+
+        if tool_ids:
+            if stream_data.extra is None:
+                stream_data.extra = {}
+            stream_data.extra["tool_ids"] = tool_ids
+
     def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
         """Parse the provider response delta for streaming.
-        
+
         Args:
             response_delta: The streaming response delta from AWS Bedrock
-            
+
         Returns:
             ModelResponse: The parsed model response delta
         """
         model_response = ModelResponse(role="assistant")
-        
+
         # Handle contentBlockDelta - text content
         if "contentBlockDelta" in response_delta:
             delta = response_delta["contentBlockDelta"]["delta"]
             if "text" in delta:
                 model_response.content = delta["text"]
-        
+
         # Handle contentBlockStart - tool use start
         elif "contentBlockStart" in response_delta:
             start = response_delta["contentBlockStart"]["start"]
             if "toolUse" in start:
                 tool_use = start["toolUse"]
-                model_response.tool_calls = [{
-                    "id": tool_use.get("toolUseId", ""),
-                    "type": "function", 
-                    "function": {
-                        "name": tool_use.get("name", ""),
-                        "arguments": ""  # Will be filled in subsequent deltas
+                model_response.tool_calls = [
+                    {
+                        "id": tool_use.get("toolUseId", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tool_use.get("name", ""),
+                            "arguments": "",  # Will be filled in subsequent deltas
+                        },
                     }
-                }]
-        
+                ]
+
         # Handle metadata/usage information
         elif "metadata" in response_delta or "messageStop" in response_delta:
             body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
@@ -681,5 +787,5 @@ class AwsBedrock(Model):
                     "output_tokens": usage.get("outputTokens", 0),
                     "total_tokens": usage.get("totalTokens", 0),
                 }
-        
+
         return model_response
