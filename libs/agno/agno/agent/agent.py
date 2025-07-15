@@ -4209,13 +4209,13 @@ class Agent:
         self.session_id = str(uuid4())
         self.load_session(force=True)
 
-    def format_message_with_state_variables(self, msg: Any) -> Any:
+    def format_message_with_state_variables(self, message: Any) -> Any:
         """Format a message with the session state variables."""
         import re
         import string
 
-        if not isinstance(msg, str):
-            return msg
+        if not isinstance(message, str):
+            return message
 
         format_variables = ChainMap(
             self.session_state or {},
@@ -4224,7 +4224,7 @@ class Agent:
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
-        converted_msg = msg
+        converted_msg = message
         for var_name in format_variables.keys():
             # Only convert standalone {var_name} patterns, not nested ones
             pattern = r"\{" + re.escape(var_name) + r"\}"
@@ -4238,7 +4238,7 @@ class Agent:
             return result
         except Exception as e:
             log_warning(f"Template substitution failed: {e}")
-            return msg
+            return message
 
     def get_system_message(self, session_id: str, user_id: Optional[str] = None) -> Optional[Message]:
         """Return the system message for the Agent.
@@ -4264,6 +4264,7 @@ class Agent:
             # Format the system message with the session state variables
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
+                print("HELLO", sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
@@ -4280,7 +4281,6 @@ class Agent:
 
             # type: ignore
             return Message(role=self.system_message_role, content=sys_message_content)
-
         # 2. If create_default_system_message is False, return None.
         if not self.create_default_system_message:
             return None
