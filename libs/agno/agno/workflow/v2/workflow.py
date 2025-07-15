@@ -150,7 +150,7 @@ class Workflow:
 
         parameters = {}
 
-        if self.steps and isinstance(self.steps, Callable):  # type: ignore
+        if self.steps and callable(self.steps):
             from inspect import Parameter, signature
 
             sig = signature(self.steps)  # type: ignore
@@ -268,7 +268,12 @@ class Workflow:
 
             # Propagate to steps - only if steps is iterable (not callable)
             if self.steps and not callable(self.steps):
-                for step in self.steps:  # type: ignore
+                if isinstance(self.steps, Steps):
+                    steps_to_iterate = self.steps.steps
+                else:
+                    steps_to_iterate = self.steps
+
+                for step in steps_to_iterate:
                     self._propagate_debug_to_step(step)
         else:
             set_log_level_to_info(source_type="workflow")
@@ -328,7 +333,11 @@ class Workflow:
         elif callable(self.steps):
             return 1  # Callable function counts as 1 step
         else:
-            return len(self.steps)  # type: ignore
+            # Handle Steps wrapper
+            if isinstance(self.steps, Steps):
+                return len(self.steps.steps)
+            else:
+                return len(self.steps)
 
     def _convert_dict_to_step_metrics(self, step_name: str, metrics_dict: Dict[str, Any]) -> StepMetrics:
         """Convert dictionary metrics to StepMetrics object"""
@@ -1360,7 +1369,7 @@ class Workflow:
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
         workflow_data = {}
-        if self.steps and not isinstance(self.steps, Callable):  # type: ignore
+        if self.steps and not callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": step.name if hasattr(step, "name") else step.__name__,
@@ -1368,7 +1377,7 @@ class Workflow:
                 }
                 for step in self.steps  # type: ignore
             ]
-        elif isinstance(self.steps, Callable):  # type: ignore
+        elif callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": "Custom Function",
@@ -1675,7 +1684,7 @@ class Workflow:
                                 console.print(step_panel)  # type: ignore
 
                 # For callable functions, show the content directly since there are no step_responses
-                elif show_step_details and isinstance(self.steps, Callable) and workflow_response.content:  # type: ignore
+                elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
                         content=Markdown(workflow_response.content) if markdown else workflow_response.content,
                         title="Custom Function (Completed)",
@@ -1796,7 +1805,7 @@ class Workflow:
         current_step_index = 0
         step_responses = []
         step_started_printed = False
-        is_callable_function = isinstance(self.steps, Callable)  # type: ignore
+        is_callable_function = callable(self.steps)
 
         # Smart step hierarchy tracking
         current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
@@ -2448,7 +2457,7 @@ class Workflow:
                                 console.print(step_panel)  # type: ignore
 
                 # For callable functions, show the content directly since there are no step_responses
-                elif show_step_details and isinstance(self.steps, Callable) and workflow_response.content:  # type: ignore
+                elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
                         content=Markdown(workflow_response.content) if markdown else workflow_response.content,
                         title="Custom Function (Completed)",
@@ -2569,7 +2578,7 @@ class Workflow:
         current_step_index = 0
         step_responses = []
         step_started_printed = False
-        is_callable_function = isinstance(self.steps, Callable)  # type: ignore
+        is_callable_function = callable(self.steps)
 
         # Smart step hierarchy tracking
         current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
@@ -3041,6 +3050,13 @@ class Workflow:
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
         # TODO: Handle nested
+        if self.steps is None or callable(self.steps):
+            steps_list = []
+        elif isinstance(self.steps, Steps):
+            steps_list = self.steps.steps
+        else:
+            steps_list = self.steps
+
         return {
             "name": self.name,
             "workflow_id": self.workflow_id,
@@ -3050,7 +3066,7 @@ class Workflow:
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
                 }
-                for s in (self.steps.steps if isinstance(self.steps, Steps) else self.steps)  # type: ignore
+                for s in steps_list
             ],
             "session_id": self.session_id,
         }
