@@ -4677,6 +4677,10 @@ class Agent:
         # Format the message with the session state variables
         if self.add_state_in_messages:
             user_msg_content = self.format_message_with_state_variables(message)
+        
+        # Convert to string for concatenation operations
+        user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+        
         # 4.1 Add references to user message
         if (
             self.add_references
@@ -4684,15 +4688,18 @@ class Agent:
             and references.references is not None
             and len(references.references) > 0
         ):
-            user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n" # type: ignore
-            user_msg_content += "<references>\n" # type: ignore
-            user_msg_content += self.convert_documents_to_string(references.references) + "\n" # type: ignore
-            user_msg_content += "</references>" # type: ignore
+            user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+            user_msg_content_str += "<references>\n"
+            user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
+            user_msg_content_str += "</references>"
         # 4.2 Add context to user message
         if self.add_context and self.context is not None:
-            user_msg_content += "\n\n<context>\n" # type: ignore
-            user_msg_content += self.convert_context_to_string(self.context) + "\n" # type: ignore
-            user_msg_content += "</context>" # type: ignore
+            user_msg_content_str += "\n\n<context>\n"
+            user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
+            user_msg_content_str += "</context>"
+        
+        # Use the string version for the final content
+        user_msg_content = user_msg_content_str
 
         # Return the user message
         return Message(
@@ -6795,7 +6802,7 @@ class Agent:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message) # type: ignore
+                    message_content = get_text_from_message(message) 
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -6861,7 +6868,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(message) # type: ignore
+                        message_content = get_text_from_message(message) 
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
@@ -7015,7 +7022,7 @@ class Agent:
                 # First render the message panel if the message is not None
                 if message and show_message:
                     # Convert message to a panel
-                    message_content = get_text_from_message(message) # type: ignore
+                    message_content = get_text_from_message(message)
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -7241,7 +7248,7 @@ class Agent:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message) # type: ignore
+                    message_content = get_text_from_message(message)
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -7310,7 +7317,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(message) # type: ignore
+                        message_content = get_text_from_message(message)
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",
@@ -7464,7 +7471,7 @@ class Agent:
                 # First render the message panel if the message is not None
                 if message and show_message:
                     # Convert message to a panel
-                    message_content = get_text_from_message(message) # type: ignore
+                    message_content = get_text_from_message(message)
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
