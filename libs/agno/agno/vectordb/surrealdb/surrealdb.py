@@ -17,6 +17,7 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
 
+# TODO: we should instead have an async wrapper for SurrealDb
 def ensure_async_connection(func):
     def wrapper(self, *args, **kwargs):
         if self.async_client is None:
@@ -95,14 +96,10 @@ class SurrealDb(VectorDb):
 
         Args:
             url: SurrealDB server URL (e.g. ws://localhost:8000/rpc)
-            namespace: SurrealDB namespace
-            database: SurrealDB database name
-            username: SurrealDB username
-            password: SurrealDB password
             client: A blocking connection, either HTTP or WS
+            async_client: An async connection, either HTTP or WS (default: None)
             collection: Collection name to store documents (default: documents)
             distance: Distance metric to use (default: cosine)
-            dimensions: Vector dimensions (default: 1536)
             efc: HNSW construction time/accuracy trade-off (default: 150)
             m: HNSW max number of connections per element (default: 12)
             search_ef: HNSW search time/accuracy trade-off (default: 40)
@@ -116,18 +113,13 @@ class SurrealDb(VectorDb):
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions = self.embedder.dimensions
-
-        # Database connection parameters
-        # self.url = url
-        # self.namespace = namespace
-        # self.database = database
         self.collection = collection
+
         # Convert Distance enum to SurrealDB distance type
         self.distance = {Distance.cosine: "COSINE", Distance.l2: "EUCLIDEAN", Distance.max_inner_product: "DOT"}[
             distance
         ]
-        # self.username = username
-        # self.password = password
+
         self.client: BlockingHttpSurrealConnection | BlockingWsSurrealConnection = client
         self.async_client: AsyncWsSurrealConnection | AsyncHttpSurrealConnection | None = async_client
 
