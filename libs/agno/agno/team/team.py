@@ -557,10 +557,10 @@ class Team:
                 merge_dictionaries(member.team_session_state, self.team_session_state)
 
         if self.workflow_session_state is not None:
-            if member.workflow_session_state is not None:
-                merge_dictionaries(member.workflow_session_state or {}, self.workflow_session_state or {})
-            else:
+            if member.workflow_session_state is None:
                 member.workflow_session_state = self.workflow_session_state
+            else:
+                merge_dictionaries(member.workflow_session_state, self.workflow_session_state)
 
         if isinstance(member, Agent):
             member.team_id = self.team_id
@@ -5399,6 +5399,8 @@ class Team:
                 message_str = message
             elif callable(message):
                 message_str = message(agent=self)
+            elif isinstance(message, BaseModel):
+                message_str = message.model_dump_json(indent=2, exclude_none=True)
             else:
                 raise Exception("message must be a string or a callable when add_references is True")
 
