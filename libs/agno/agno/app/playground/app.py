@@ -198,15 +198,7 @@ class Playground:
         console.print(panel)
         self.set_app_id()
         self.register_app_on_platform()
-        if self.agents:
-            for agent in self.agents:
-                agent.register_agent()
-        if self.teams:
-            for team in self.teams:
-                team.register_team()
-        if self.workflows:
-            for workflow in self.workflows:
-                workflow.register_workflow()
+
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
@@ -225,20 +217,6 @@ class Playground:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": [
-                {**agent.get_agent_config_dict(), "agent_id": agent.agent_id, "team_id": agent.team_id}
-                for agent in self.agents
-            ]
-            if self.agents
-            else [],
-            "teams": [{**team.to_platform_dict(), "team_id": team.team_id} for team in self.teams]
-            if self.teams
-            else [],
-            "workflows": [
-                {**workflow.to_config_dict(), "workflow_id": workflow.workflow_id} for workflow in self.workflows
-            ]
-            if self.workflows
-            else [],
             "endpointData": self.endpoints_created.model_dump(exclude_none=True) if self.endpoints_created else {},
             "type": "playground",
             "description": self.description,

@@ -84,7 +84,7 @@ class Ollama(Model):
 
         return AsyncOllamaClient(**self._get_client_params())
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -94,12 +94,7 @@ class Ollama(Model):
         Returns:
             Dict[str, Any]: The API kwargs for the model.
         """
-        base_params = {
-            "format": self.format,
-            "options": self.options,
-            "keep_alive": self.keep_alive,
-            "request_params": self.request_params,
-        }
+        base_params = {"format": self.format, "options": self.options, "keep_alive": self.keep_alive}
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
         # Add tools
@@ -109,6 +104,9 @@ class Ollama(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -173,7 +171,7 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        request_kwargs = self.get_request_kwargs(tools=tools)
+        request_kwargs = self.get_request_params(tools=tools)
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             log_debug("Using structured outputs")
             format_schema = response_format.model_json_schema()
@@ -231,7 +229,7 @@ class Ollama(Model):
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(tools=tools),
+            **self.get_request_params(tools=tools),
         )  # type: ignore
 
     async def ainvoke_stream(
@@ -248,7 +246,7 @@ class Ollama(Model):
             model=self.id.strip(),
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(tools=tools),
+            **self.get_request_params(tools=tools),
         )
         async for chunk in async_stream:  # type: ignore
             yield chunk

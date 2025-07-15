@@ -4,7 +4,6 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, 
 
 from docstring_parser import parse
 from pydantic import BaseModel, Field, validate_call
-from pydantic._internal._validate_call import ValidateCallWrapper
 
 from agno.exceptions import AgentRunException
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
@@ -327,12 +326,14 @@ class Function(BaseModel):
         # Don't wrap async generator with validate_call
         if isasyncgenfunction(func):
             return func
-        # Don't wrap ValidateCallWrapper with validate_call
-        elif isinstance(func, ValidateCallWrapper):
+        # Don't wrap callables that are already wrapped with validate_call
+        elif getattr(func, "_wrapped_for_validation", False):
             return func
         # Wrap the callable with validate_call
         else:
-            return validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+            return wrapped
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
@@ -516,6 +517,34 @@ class FunctionCall(BaseModel):
             entrypoint_args["fc"] = self
         return entrypoint_args
 
+    def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the arguments for the hook."""
+        from inspect import signature
+
+        hook_args = {}
+        # Check if the hook has an agent argument
+        if "agent" in signature(hook).parameters:
+            hook_args["agent"] = self.function._agent
+        # Check if the hook has an team argument
+        if "team" in signature(hook).parameters:
+            hook_args["team"] = self.function._team
+
+        if "name" in signature(hook).parameters:
+            hook_args["name"] = name
+        if "function_name" in signature(hook).parameters:
+            hook_args["function_name"] = name
+        if "function" in signature(hook).parameters:
+            hook_args["function"] = func
+        if "func" in signature(hook).parameters:
+            hook_args["func"] = func
+        if "function_call" in signature(hook).parameters:
+            hook_args["function_call"] = func
+        if "args" in signature(hook).parameters:
+            hook_args["args"] = args
+        if "arguments" in signature(hook).parameters:
+            hook_args["arguments"] = args
+        return hook_args
+
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
@@ -525,7 +554,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import iscoroutinefunction
 
-        def execute_entrypoint(name, func, args):
+        def execute_entrypoint():
             """Execute the entrypoint function."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -543,9 +572,11 @@ class FunctionCall(BaseModel):
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
                 def next_func(**kwargs):
-                    return inner_func(name, func, kwargs)
+                    return inner_func()
 
-                return hook(name, next_func, args)
+                hook_args = self._build_hook_args(hook, name, func, args)
+
+                return hook(**hook_args)
 
             return wrapper
 
@@ -685,7 +716,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
 
-        async def execute_entrypoint_async(name, func, args):
+        async def execute_entrypoint_async():
             """Execute the entrypoint function asynchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -698,7 +729,7 @@ class FunctionCall(BaseModel):
                 result = await result
             return result
 
-        def execute_entrypoint(name, func, args):
+        def execute_entrypoint():
             """Execute the entrypoint function synchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -719,14 +750,16 @@ class FunctionCall(BaseModel):
                 # The hook will call next_func to continue the chain
                 async def next_func(**kwargs):
                     if iscoroutinefunction(inner_func):
-                        return await inner_func(name, func, kwargs)
+                        return await inner_func()
                     else:
-                        return inner_func(name, func, kwargs)
+                        return inner_func()
+
+                hook_args = self._build_hook_args(hook, name, func, args)
 
                 if iscoroutinefunction(hook):
-                    return await hook(name, next_func, args)
+                    return await hook(**hook_args)
                 else:
-                    return hook(name, next_func, args)
+                    return hook(**hook_args)
 
             return wrapper
 

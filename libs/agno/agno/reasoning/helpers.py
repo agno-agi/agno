@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -8,11 +8,21 @@ from agno.utils.log import logger
 
 
 def get_reasoning_agent(
-    reasoning_model: Model, monitoring: bool = False, telemetry: bool = False, debug_mode: bool = False
+    reasoning_model: Model,
+    monitoring: bool = False,
+    telemetry: bool = False,
+    debug_mode: bool = False,
+    debug_level: Literal[1, 2] = 1,
 ) -> "Agent":  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
-    return Agent(model=reasoning_model, monitoring=monitoring, telemetry=telemetry, debug_mode=debug_mode)
+    return Agent(
+        model=reasoning_model,
+        monitoring=monitoring,
+        telemetry=telemetry,
+        debug_mode=debug_mode,
+        debug_level=debug_level,
+    )
 
 
 def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
