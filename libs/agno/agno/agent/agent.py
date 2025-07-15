@@ -16,6 +16,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
     cast,
@@ -53,6 +54,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
+    create_parser_model_response_completed_event,
+    create_parser_model_response_started_event,
     create_reasoning_completed_event,
     create_reasoning_started_event,
     create_reasoning_step_event,
@@ -324,7 +327,7 @@ class Agent:
     debug_mode: bool = False
     # Debug level: 1 = basic, 2 = detailed
     debug_level: Literal[1, 2] = 1
-    
+
     # monitoring=True logs Agent information to agno.com for monitoring
     monitoring: bool = False
     # telemetry=True logs minimal telemetry for analytics
@@ -619,9 +622,9 @@ class Agent:
         if self.num_history_responses is not None:
             self.num_history_runs = self.num_history_responses
 
-    def reset_session_state(self) -> None:
-        self.session_name = None
+    def reset_session(self) -> None:
         self.session_state = None
+        self.session_name = None
         self.session_metrics = None
         self.images = None
         self.videos = None
@@ -674,7 +677,7 @@ class Agent:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response
+        return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
@@ -685,6 +688,68 @@ class Agent:
     def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = tools
         self._rebuild_tools = True
+
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_user_id"] = user_id
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_session_id"] = session_id
+
+    def _reset_session_state(self) -> None:
+        """Reset the session state for the agent."""
+        if self.team_session_state is not None:
+            self.team_session_state.pop("current_session_id", None)
+            self.team_session_state.pop("current_user_id", None)
+        if self.session_state is not None:
+            self.session_state.pop("current_session_id", None)
+            self.session_state.pop("current_user_id", None)
+
+    def _initialize_session(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the agent."""
+
+        self.reset_run_state()
+
+        # Determine the session_id
+        if session_id is not None and session_id != "":
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self.reset_session()
+
+            self.session_id = session_id
+        else:
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                self.session_id = session_id = str(uuid4())
+
+        # Use the default user_id when necessary
+        if user_id is not None and user_id != "":
+            user_id = user_id
+        else:
+            user_id = self.user_id
+
+        # Determine the session_state
+        if session_state is not None:
+            self.session_state = session_state
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
+
+        return session_id, user_id
 
     def _run(
         self,
@@ -726,27 +791,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = self.parser_model.response(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        self._parse_response_with_parser_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -834,6 +879,11 @@ class Agent:
         ):
             yield event
 
+        # If a parser model is provided, structure the response separately
+        yield from self._parse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        )
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -863,9 +913,6 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
@@ -886,6 +933,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -905,6 +953,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -923,6 +972,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -934,34 +984,14 @@ class Agent:
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
 
-        self.reset_run_state()
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
-        if session_id is not None:
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session_state()
+        log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize the Agent
         self.initialize_agent()
-
-        # Initialize Session
-        # Use the default user_id and session_id when necessary
-        user_id = user_id if user_id is not None else self.user_id
-
-        if session_id is None or session_id == "":
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
-        log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -998,9 +1028,6 @@ class Agent:
 
         self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1116,6 +1143,8 @@ class Agent:
                     )
                 else:
                     return self.run_response
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1171,27 +1200,7 @@ class Agent:
         )
 
         # If a parser model is provided, structure the response separately
-        if self.parser_model is not None:
-            if self.response_model is not None:
-                parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
-                parser_model_response: ModelResponse = await self.parser_model.aresponse(
-                    messages=messages_for_parser_model,
-                    response_format=parser_response_format,
-                )
-                parser_model_response_message: Optional[Message] = None
-                for message in reversed(messages_for_parser_model):
-                    if message.role == "assistant":
-                        parser_model_response_message = message
-                        break
-                if parser_model_response_message is not None:
-                    run_messages.messages.append(parser_model_response_message)
-                    model_response.parsed = parser_model_response.parsed
-                    model_response.content = parser_model_response.content
-                else:
-                    log_warning("Unable to parse response with parser model")
-            else:
-                log_warning("A response model is required to parse the response with a parser model")
+        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1278,6 +1287,12 @@ class Agent:
         ):
             yield event
 
+        # If a parser model is provided, structure the response separately
+        async for event in self._aparse_response_with_parser_model_stream(
+            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+        ):
+            yield event
+
         # 3. Add the run to memory
         self._add_run_to_memory(
             run_response=run_response,
@@ -1309,9 +1324,6 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
@@ -1330,6 +1342,7 @@ class Agent:
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1341,37 +1354,14 @@ class Agent:
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
-        self.reset_run_state()
 
-        if session_id is not None:
-            # Reset session state if a session_id is provided
-            self.reset_session_state()
-
-        # Initialize the Agent
-        self.initialize_agent()
-
-        # Initialize Session
-        # Use the default user_id and session_id when necessary
-        user_id = user_id if user_id is not None else self.user_id
-
-        if session_id is None or session_id == "":
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
 
         log_debug(f"Session ID: {session_id}", center=True)
 
         effective_filters = knowledge_filters
-
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
             """
@@ -1404,9 +1394,6 @@ class Agent:
 
         self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1492,13 +1479,14 @@ class Agent:
                     )  # type: ignore[assignment]
                     return response_iterator
                 else:
-                    return await self._arun(
+                    response = await self._arun(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
                     )
+                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1522,6 +1510,8 @@ class Agent:
                     )
                 else:
                     return self.run_response
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1596,7 +1586,10 @@ class Agent:
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session_state()
+            self.reset_session()
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self.session_state = None
 
         # Initialize the Agent
         self.initialize_agent()
@@ -1614,8 +1607,6 @@ class Agent:
                 self.session_id = session_id
         else:
             self.session_id = session_id
-
-        session_id = cast(str, session_id)
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 
@@ -1744,7 +1735,6 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-
                     return response_iterator
                 else:
                     response = self._continue_run(
@@ -1777,6 +1767,8 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1944,9 +1936,6 @@ class Agent:
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
-
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
@@ -1987,7 +1976,10 @@ class Agent:
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session_state()
+            self.reset_session()
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self.session_state = None
 
         # Initialize the Agent
         self.initialize_agent()
@@ -2005,8 +1997,6 @@ class Agent:
                 self.session_id = session_id
         else:
             self.session_id = session_id
-
-        session_id = cast(str, session_id)
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 
@@ -2144,16 +2134,16 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-
                     return response_iterator
                 else:
-                    return await self._acontinue_run(
+                    response = await self._acontinue_run(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
                     )
+                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2176,6 +2166,8 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2345,9 +2337,6 @@ class Agent:
 
         # 6. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
-
-        # Convert the response to the structured format if needed
-        self._convert_response_to_structured_format(run_response)
 
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
@@ -2585,7 +2574,7 @@ class Agent:
                     _t.tool_call_error = True
                 _t.requires_confirmation = False
 
-                # Case 2: Handle external execution required tools
+            # Case 2: Handle external execution required tools
             elif _t.external_execution_required is not None and _t.external_execution_required is True:
                 self._handle_external_execution_update(run_messages=run_messages, tool=_t)
 
@@ -3012,8 +3001,9 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
         # Determine reasoning completed
@@ -3080,8 +3070,9 @@ class Agent:
                 run_response=run_response,
                 model_response=model_response,
                 model_response_event=model_response_event,
-                stream_intermediate_steps=stream_intermediate_steps,
                 reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
             ):
                 yield event
 
@@ -3118,7 +3109,8 @@ class Agent:
         run_response: RunResponse,
         model_response: ModelResponse,
         model_response_event: Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent],
-        reasoning_state: Dict[str, Any],
+        reasoning_state: Optional[Dict[str, Any]] = None,
+        parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
@@ -3134,12 +3126,13 @@ class Agent:
 
                 # Process content and thinking
                 if model_response_event.content is not None:
-                    if self.should_parse_structured_output:
+                    if parse_structured_output:
                         model_response.content = model_response_event.content
+                        self._convert_response_to_structured_format(model_response)
+
                         content_type = self.response_model.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
-                        self._convert_response_to_structured_format(model_response)
                     else:
                         model_response.content = (model_response.content or "") + model_response_event.content
                         run_response.content = model_response.content
@@ -3299,7 +3292,7 @@ class Agent:
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None:
+                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
                                 ] + float(metrics.time)
@@ -3312,7 +3305,7 @@ class Agent:
 
                 if stream_intermediate_steps:
                     if reasoning_step is not None:
-                        if not reasoning_state["reasoning_started"]:
+                        if reasoning_state and not reasoning_state["reasoning_started"]:
                             yield self._handle_event(
                                 create_reasoning_started_event(from_run_response=run_response), run_response
                             )
@@ -3395,17 +3388,6 @@ class Agent:
         if model is not None:
             rr.model = model
         return rr
-
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
 
     def _make_memories_and_summaries(
         self,
@@ -3777,13 +3759,13 @@ class Agent:
         )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
-        self.model = cast(Model, model or self.model)
+        model = cast(Model, model or self.model)
         if self.response_model is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
-            if self.model.supports_native_structured_outputs:
+            if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
                     log_debug("Setting Model.response_format to Agent.response_model")
                     return self.response_model
@@ -3793,7 +3775,7 @@ class Agent:
                     )
                     return json_response_format
 
-            elif self.model.supports_json_schema_outputs:
+            elif model.supports_json_schema_outputs:
                 if self.use_json_mode or (not self.structured_outputs):
                     log_debug("Setting Model.response_format to JSON response mode")
                     return {
@@ -4312,12 +4294,18 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = self.instructions(agent=self)
+                import inspect
+                signature = inspect.signature(self.instructions)
+                if "agent" in signature.parameters:
+                    _instructions = self.instructions(agent=self)
+                else:
+                    _instructions = self.instructions()
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
+                
         # 3.1.1 Add instructions from the Model
         _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
@@ -4896,7 +4884,7 @@ class Agent:
         system_content = (
             self.parser_model_prompt
             if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
+            else "You are tasked with creating a structured output from the provided user message."
         )
 
         if response_format == {"type": "json_object"} and self.response_model is not None:
@@ -4905,6 +4893,24 @@ class Agent:
         return [
             Message(role="system", content=system_content),
             Message(role="user", content=model_response.content),
+        ]
+
+    def get_messages_for_parser_model_stream(
+        self, run_response: RunResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.response_model is not None:
+            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
         ]
 
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
@@ -4977,11 +4983,11 @@ class Agent:
         from copy import copy, deepcopy
 
         # For memory and reasoning_agent, use their deep_copy methods
-        if field_name in ("memory", "reasoning_agent"):
+        if field_name == "reasoning_agent":
             return field_value.deep_copy()
 
         # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("storage", "model", "reasoning_model"):
+        elif field_name in ("memory", "storage", "model", "reasoning_model"):
             try:
                 return deepcopy(field_value)
             except Exception:
@@ -5415,7 +5421,7 @@ class Agent:
         session_metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 session_metrics += m.metrics
         return session_metrics
 
@@ -6080,6 +6086,154 @@ class Agent:
                     self.run_response,
                 )
 
+    def _process_parser_response(
+        self,
+        model_response: ModelResponse,
+        run_messages: RunMessages,
+        parser_model_response: ModelResponse,
+        messages_for_parser_model: list,
+    ) -> None:
+        """Common logic for processing parser model response."""
+        parser_model_response_message: Optional[Message] = None
+        for message in reversed(messages_for_parser_model):
+            if message.role == "assistant":
+                parser_model_response_message = message
+                break
+
+        if parser_model_response_message is not None:
+            run_messages.messages.append(parser_model_response_message)
+            model_response.parsed = parser_model_response.parsed
+            model_response.content = parser_model_response.content
+        else:
+            log_warning("Unable to parse response with parser model")
+
+    def _parse_response_with_parser_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = self.parser_model.response(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the parser model."""
+        if self.parser_model is None:
+            return
+
+        if self.response_model is not None:
+            parser_response_format = self._get_response_format(self.parser_model)
+            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            parser_model_response: ModelResponse = await self.parser_model.aresponse(
+                messages=messages_for_parser_model,
+                response_format=parser_response_format,
+            )
+            self._process_parser_response(
+                model_response, run_messages, parser_model_response, messages_for_parser_model
+            )
+        else:
+            log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model"""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                for model_response_event in self.parser_model.response_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                ):
+                    yield from self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    )
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_model_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Parse the model response using the parser model stream."""
+        if self.parser_model is not None:
+            if self.response_model is not None:
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
+
+                parser_model_response = ModelResponse(content="")
+                parser_response_format = self._get_response_format(self.parser_model)
+                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                    run_response, parser_response_format
+                )
+                model_response_stream = self.parser_model.aresponse_stream(
+                    messages=messages_for_parser_model,
+                    response_format=parser_response_format,
+                    stream_model_response=False,
+                )
+                async for model_response_event in model_response_stream:  # type: ignore
+                    for event in self._handle_model_response_chunk(
+                        run_response=run_response,
+                        model_response=parser_model_response,
+                        model_response_event=model_response_event,
+                        parse_structured_output=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
+                    ):
+                        yield event
+
+                parser_model_response_message: Optional[Message] = None
+                for message in reversed(messages_for_parser_model):
+                    if message.role == "assistant":
+                        parser_model_response_message = message
+                        break
+                if parser_model_response_message is not None:
+                    if run_response.messages is not None:
+                        run_response.messages.append(parser_model_response_message)
+                else:
+                    log_warning("Unable to parse response with parser model")
+
+                if stream_intermediate_steps:
+                    yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
+            else:
+                log_warning("A response model is required to parse the response with a parser model")
+
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
@@ -6497,53 +6651,6 @@ class Agent:
 
         return run_data
 
-    def register_agent(self) -> None:
-        """Register this agent with Agno's platform."""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, create_agent
-
-        try:
-            # Ensure we have a valid session_id
-            if not self.session_id:
-                self.session_id = str(uuid4())
-
-            create_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_warning(f"Could not create Agent: {e}")
-
-    async def _aregister_agent(self) -> None:
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, acreate_agent
-
-        try:
-            await acreate_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()
 
@@ -6607,6 +6714,7 @@ class Agent:
         message: Optional[Union[List, Dict, str, Message]] = None,
         *,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         messages: Optional[List[Union[Dict, Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -6639,13 +6747,13 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
+            response_content_batch: Union[str, JSON, Markdown] = ""
             reasoning_steps: List[ReasoningStep] = []
 
             with Live(console=console) as live_log:
@@ -6675,6 +6783,7 @@ class Agent:
                     message=message,
                     messages=messages,
                     session_id=session_id,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -6698,12 +6807,16 @@ class Agent:
                                     _response_content += resp.content
                                 elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                     try:
-                                        _response_content += JSON(  # type: ignore
+                                        response_content_batch = JSON(  # type: ignore
                                             resp.content.model_dump_json(exclude_none=True), indent=2
                                         )
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
-
+                                else:
+                                    try:
+                                        response_content_batch = JSON(json.dumps(resp.content), indent=4)
+                                    except Exception as e:
+                                        log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
@@ -6713,12 +6826,11 @@ class Agent:
                         ):
                             reasoning_steps = resp.extra_data.reasoning_steps
 
-                    response_content_stream: Union[str, Markdown] = _response_content
-
+                    response_content_stream: str = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
                         escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
-                        response_content_stream = Markdown(escaped_content)
+                        response_content_batch = Markdown(escaped_content)
                     panels = [status]
 
                     if message and show_message:
@@ -6796,18 +6908,30 @@ class Agent:
                             border_style="yellow",
                         )
                         panels.append(tool_calls_panel)
+                        live_log.update(Group(*panels))
 
-                    if len(_response_content) > 0:
+                    response_panel = None
+                    # Check if we have any response content to display
+                    if response_content_stream and not self.markdown:
+                        response_content = response_content_stream
+                    else:
+                        response_content = response_content_batch  # type: ignore
+
+                    # Sanitize empty Markdown content
+                    if isinstance(response_content, Markdown):
+                        if not (response_content.markup and response_content.markup.strip()):
+                            response_content = None  # type: ignore
+
+                    if response_content:
                         render = True
-                        # Create panel for response
                         response_panel = create_panel(
-                            content=response_content_stream,
+                            content=response_content,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
                         )
                         panels.append(response_panel)
-                    if render:
-                        live_log.update(Group(*panels))
+                        if render:
+                            live_log.update(Group(*panels))
 
                     if (
                         isinstance(resp, tuple(get_args(RunResponseEvent)))
@@ -6880,6 +7004,7 @@ class Agent:
                     message=message,
                     messages=messages,
                     session_id=session_id,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -6960,7 +7085,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:
@@ -7039,6 +7164,7 @@ class Agent:
         *,
         messages: Optional[List[Union[Dict, Message]]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -7070,7 +7196,6 @@ class Agent:
 
         if self.response_model is not None:
             self.markdown = False
-            stream = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
@@ -7078,6 +7203,7 @@ class Agent:
             _response_content: str = ""
             _response_thinking: str = ""
             reasoning_steps: List[ReasoningStep] = []
+            response_content_batch: Union[str, JSON, Markdown] = ""
 
             with Live(console=console) as live_log:
                 status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -7106,6 +7232,7 @@ class Agent:
                     message=message,
                     messages=messages,
                     session_id=session_id,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -7130,7 +7257,14 @@ class Agent:
                                 _response_content += resp.content
                             elif self.response_model is not None and isinstance(resp.content, BaseModel):
                                 try:
-                                    _response_content += JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                                    response_content_batch = JSON(
+                                        resp.content.model_dump_json(exclude_none=True), indent=2
+                                    )  # type: ignore
+                                except Exception as e:
+                                    log_warning(f"Failed to convert response to JSON: {e}")
+                            else:
+                                try:
+                                    response_content_batch = JSON(json.dumps(resp.content), indent=4)
                                 except Exception as e:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
@@ -7143,11 +7277,11 @@ class Agent:
                         ):
                             reasoning_steps = resp.extra_data.reasoning_steps
 
-                    response_content_stream: Union[str, Markdown] = _response_content
+                    response_content_stream: str = _response_content
                     # Escape special tags before markdown conversion
                     if self.markdown:
                         escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
-                        response_content_stream = Markdown(escaped_content)
+                        response_content_batch = Markdown(escaped_content)
 
                     panels = [status]
 
@@ -7228,11 +7362,22 @@ class Agent:
                         panels.append(tool_calls_panel)
                         live_log.update(Group(*panels))
 
-                    if len(_response_content) > 0:
+                    response_panel = None
+                    # Check if we have any response content to display
+                    if response_content_stream and not self.markdown:
+                        response_content = response_content_stream
+                    else:
+                        response_content = response_content_batch  # type: ignore
+
+                    # Sanitize empty Markdown content
+                    if isinstance(response_content, Markdown):
+                        if not (response_content.markup and response_content.markup.strip()):
+                            response_content = None  # type: ignore
+
+                    if response_content:
                         render = True
-                        # Create panel for response
                         response_panel = create_panel(
-                            content=response_content_stream,
+                            content=response_content,
                             title=f"Response ({response_timer.elapsed:.1f}s)",
                             border_style="blue",
                         )
@@ -7311,6 +7456,7 @@ class Agent:
                     message=message,
                     messages=messages,
                     session_id=session_id,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -7388,7 +7534,7 @@ class Agent:
                     panels.append(tool_calls_panel)
                     live_log.update(Group(*panels))
 
-                response_content_batch: Union[str, JSON, Markdown] = ""
+                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
                 if isinstance(run_response, RunResponse):
                     if isinstance(run_response.content, str):
                         if self.markdown:

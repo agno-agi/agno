@@ -1,6 +1,7 @@
 from typing import Any, Callable, Dict
 
 import pytest
+from pydantic import ValidationError
 
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
@@ -118,7 +119,7 @@ def test_wrap_callable():
     """Test wrapping a callable."""
 
     @tool
-    def test_func(param1: str, param2: int = 42) -> str:
+    def test_func(param1: str, param2: int) -> str:
         """Test function with parameters."""
         return f"{param1}-{param2}"
 
@@ -128,10 +129,18 @@ def test_wrap_callable():
     test_func.process_entrypoint()
     assert isinstance(test_func, Function)
     assert test_func.entrypoint is not None
+    assert test_func.entrypoint(param1="test", param2=42) == "test-42"
+    with pytest.raises(ValidationError):
+        test_func.entrypoint(param1="test")
+    assert test_func.entrypoint._wrapped_for_validation is True
 
     test_func.process_entrypoint()
     assert isinstance(test_func, Function)
     assert test_func.entrypoint is not None
+    assert test_func.entrypoint(param1="test", param2=42) == "test-42"
+    with pytest.raises(ValidationError):
+        test_func.entrypoint(param1="test")
+    assert test_func.entrypoint._wrapped_for_validation is True
 
 
 def test_function_from_callable_strict():
