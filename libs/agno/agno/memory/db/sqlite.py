@@ -141,7 +141,7 @@ class SqliteMemoryDb(MemoryDb):
                         )
                     )
         except SQLAlchemyError as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             log_debug(f"Table does not exist: {self.table_name}")
             log_debug("Creating table for future transactions")
             self.create()
@@ -167,7 +167,7 @@ class SqliteMemoryDb(MemoryDb):
                 session.execute(stmt)
                 session.commit()
         except SQLAlchemyError as e:
-            logger.error(f"Exception upserting into table: {e}")
+            logger.error(f"Exception upserting into memory table: {e}")
             if not self.table_exists():
                 log_info(f"Table does not exist: {self.table_name}")
                 log_info("Creating table for future transactions")

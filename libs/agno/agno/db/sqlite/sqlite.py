@@ -340,7 +340,7 @@ class SqliteDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type.value)
+                    stmt = stmt.where(table.c.session_type == session_type)
 
                 result = sess.execute(stmt).fetchone()
                 if result is None:
@@ -358,7 +358,7 @@ class SqliteDb(BaseDb):
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             return None
 
     def get_sessions(
@@ -456,7 +456,7 @@ class SqliteDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             return []
 
     def rename_session(
@@ -729,7 +729,7 @@ class SqliteDb(BaseDb):
                 return [record[0] for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory(
@@ -770,7 +770,7 @@ class SqliteDb(BaseDb):
             )
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memorytable: {e}")
             return None
 
     def get_user_memories(
@@ -845,7 +845,7 @@ class SqliteDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else [], 0
+                    return [] if serialize else ([], 0)
 
                 user_memories_raw = [record._mapping for record in result]
 
@@ -863,7 +863,7 @@ class SqliteDb(BaseDb):
             ]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory_stats(
@@ -1133,7 +1133,7 @@ class SqliteDb(BaseDb):
             log_error(f"Exception refreshing metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
@@ -1508,7 +1508,7 @@ class SqliteDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else [], 0
+                    return [] if serialize else ([], 0)
 
                 eval_runs_raw = [row._mapping for row in result]
                 if not serialize:

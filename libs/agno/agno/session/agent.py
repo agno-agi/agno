@@ -50,7 +50,13 @@ class AgentSession:
     updated_at: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        session_dict = asdict(self)
+
+        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        session_dict["summary"] = self.summary.to_dict() if self.summary else None
+        session_dict["chat_history"] = [msg.to_dict() for msg in self.chat_history] if self.chat_history else None
+
+        return session_dict
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {

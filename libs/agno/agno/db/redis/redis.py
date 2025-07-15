@@ -469,7 +469,7 @@ class RedisDb(BaseDb):
             # Apply filters
             if user_id is not None and data.get("user_id") != user_id:
                 return None
-            if session_type is not None and data.get("session_type") != session_type.value:
+            if session_type is not None and data.get("session_type") != session_type:
                 return None
 
             return deserialize_session(data)
@@ -546,7 +546,7 @@ class RedisDb(BaseDb):
             # Apply filters
             conditions = {}
             if session_type is not None:
-                conditions["session_type"] = session_type.value
+                conditions["session_type"] = session_type
             if user_id is not None:
                 conditions["user_id"] = user_id
 
@@ -1183,7 +1183,7 @@ class RedisDb(BaseDb):
             log_error(f"Exception calculating metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.

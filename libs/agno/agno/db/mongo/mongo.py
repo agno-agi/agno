@@ -230,7 +230,7 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type.value
+                query["session_type"] = session_type
 
             result = collection.find_one(query)
             if result is None:
@@ -296,7 +296,7 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type.value
+                query["session_type"] = session_type
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     query["agent_id"] = component_id
@@ -933,7 +933,7 @@ class MongoDb(BaseDb):
             log_error(f"Exception calculating metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""

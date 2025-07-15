@@ -291,7 +291,7 @@ class SqliteStorage(Storage):
                 log_debug(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                log_debug(f"Exception reading from sessions table: {e}")
         return []
 
     def get_all_sessions(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[Session]:
@@ -339,7 +339,7 @@ class SqliteStorage(Storage):
                 log_debug(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                log_debug(f"Exception reading from sessions table: {e}")
         return []
 
     def get_recent_sessions(
@@ -396,7 +396,7 @@ class SqliteStorage(Storage):
                 log_debug(f"Table does not exist: {self.table.name}")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                log_debug(f"Exception reading from sessions table: {e}")
         return []
 
     def upgrade_schema(self) -> None:

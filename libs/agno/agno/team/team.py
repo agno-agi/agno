@@ -4088,7 +4088,7 @@ class Team:
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
-        for run in self.team_session.runs.get(self.session_id, []):  # type: ignore
+        for run in self.team_session.runs:  # type: ignore
             if run.messages is not None:
                 for m in run.messages:
                     # Skipping messages from history to avoid duplicates
@@ -4174,9 +4174,7 @@ class Team:
             from agno.reasoning.ollama import is_ollama_reasoning_model
             from agno.reasoning.openai import is_openai_reasoning_model
 
-            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model
-            )
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(reasoning_model=reasoning_model)
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
             is_openai = is_openai_reasoning_model(reasoning_model)
@@ -4396,9 +4394,7 @@ class Team:
             from agno.reasoning.ollama import is_ollama_reasoning_model
             from agno.reasoning.openai import is_openai_reasoning_model
 
-            reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model
-            )
+            reasoning_agent = self.reasoning_agent or get_reasoning_agent(reasoning_model=reasoning_model)
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
             is_openai = is_openai_reasoning_model(reasoning_model)

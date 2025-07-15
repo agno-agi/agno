@@ -33,10 +33,11 @@ def deserialize_session(session: dict) -> dict:
     if session.get("summary") is not None:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
-        if session["session_type"] == SessionType.AGENT.value:
+        if session["session_type"] == SessionType.AGENT:
             session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
-        elif session["session_type"] == SessionType.TEAM.value:
+        elif session["session_type"] == SessionType.TEAM:
             session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+
     return session
 
 
@@ -55,7 +56,10 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
     Returns:
         The modified statement with sorting applied
     """
-    if sort_by is None or not hasattr(table.c, sort_by):
+    if sort_by is None:
+        return stmt
+
+    if not hasattr(table.c, sort_by):
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
 

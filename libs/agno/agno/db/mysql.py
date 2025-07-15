@@ -318,7 +318,7 @@ class MySQLStorage(Storage):
                 rows = sess.execute(stmt).fetchall()
                 return [row[0] for row in rows] if rows is not None else []
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             log_debug(f"Table does not exist: {self.table.name}")
             log_debug("Creating table for future transactions")
             self.create()
@@ -362,7 +362,7 @@ class MySQLStorage(Storage):
                 else:
                     return []
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             log_debug(f"Table does not exist: {self.table.name}")
             log_debug("Creating table for future transactions")
             self.create()
@@ -429,7 +429,7 @@ class MySQLStorage(Storage):
                 log_debug("Creating table for future transactions")
                 self.create()
             else:
-                log_debug(f"Exception reading from table: {e}")
+                log_debug(f"Exception reading from sessions table: {e}")
             return []
 
     def upgrade_schema(self) -> None:

@@ -8,7 +8,7 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
     "session_type": {"type": String, "nullable": False},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
@@ -25,6 +25,23 @@ SESSION_TABLE_SCHEMA = {
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {
+            "name": "uq_agent_session",
+            "columns": ["session_id", "agent_id"],
+            "where": "session_type = 'agent'",
+        },
+        {
+            "name": "uq_team_session",
+            "columns": ["session_id", "team_id"],
+            "where": "session_type = 'team'",
+        },
+        {
+            "name": "uq_workflow_session",
+            "columns": ["session_id", "workflow_id"],
+            "where": "session_type = 'workflow'",
+        },
+    ],
 }
 
 USER_MEMORY_TABLE_SCHEMA = {

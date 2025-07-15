@@ -357,14 +357,16 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type.value)
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    stmt = stmt.where(table.c.session_type == session_type_value)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
                 session_raw = deserialize_session(dict(result._mapping))
-                if not serialize:
-                    return session_raw
+
+            if not serialize:
+                return session_raw
 
             if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session_raw)
@@ -374,7 +376,7 @@ class PostgresDb(BaseDb):
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from session table: {e}")
             return None
 
     def get_sessions(
@@ -441,13 +443,15 @@ class PostgresDb(BaseDb):
                         )
                     )
                 if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type.value)
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    stmt = stmt.where(table.c.session_type == session_type_value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
                 total_count = sess.execute(count_stmt).scalar()
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
                 # Paginating
                 if limit is not None:
                     stmt = stmt.limit(limit)
@@ -472,7 +476,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from session table: {e}")
             return []
 
     def rename_session(
@@ -573,7 +577,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "agent_id"],
                         set_=dict(
                             agent_id=session_dict.get("agent_id"),
                             team_session_id=session_dict.get("team_session_id"),
@@ -612,7 +616,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "team_id"],
                         set_=dict(
                             team_id=session_dict.get("team_id"),
                             team_session_id=session_dict.get("team_session_id"),
@@ -650,7 +654,7 @@ class PostgresDb(BaseDb):
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
+                        index_elements=["session_id", "workflow_id"],
                         set_=dict(
                             workflow_id=session_dict.get("workflow_id"),
                             user_id=session_dict.get("user_id"),
@@ -671,7 +675,7 @@ class PostgresDb(BaseDb):
                     return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_warning(f"Exception upserting into table: {e}")
+            log_warning(f"Exception upserting into sessions table: {e}")
             return None
 
     # -- Memory methods --
@@ -740,7 +744,7 @@ class PostgresDb(BaseDb):
                 return [record[0] for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory(self, memory_id: str, serialize: Optional[bool] = True) -> Optional[MemoryRow]:
@@ -780,7 +784,7 @@ class PostgresDb(BaseDb):
             )
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return None
 
     def get_user_memories(
@@ -825,7 +829,6 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
-
                 # Filtering
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
@@ -856,7 +859,7 @@ class PostgresDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else [], 0
+                    return [] if serialize else ([], 0)
 
                 user_memories_raw = [record._mapping for record in result]
                 if not serialize:
@@ -873,7 +876,7 @@ class PostgresDb(BaseDb):
             ]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory_stats(
@@ -1072,7 +1075,7 @@ class PostgresDb(BaseDb):
                     return result._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
+        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, serialize=False)
         first_session_date = first_session[0]["created_at"] if first_session else None
 
         # 3. No metrics records and no sessions records. Return None.
@@ -1494,7 +1497,7 @@ class PostgresDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else [], 0
+                    return [] if serialize else ([], 0)
 
                 eval_runs_raw = [row._mapping for row in result]
                 if not serialize:

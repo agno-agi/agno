@@ -3761,7 +3761,7 @@ class Agent:
 
             self.memory.upsert_session(session=session)
 
-            log_debug(f"Created new AgentSession record: {session_id}")
+            log_debug(f"Created or updated AgentSession record: {session_id}")
 
         return self.agent_session
 
@@ -4578,7 +4578,6 @@ class Agent:
         except Exception:
             # If copy fails, return as is
             return field_value
-
 
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
