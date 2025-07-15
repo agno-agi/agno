@@ -136,7 +136,7 @@ class Step:
                 f"Please use only one of: agent=, team=, or executor="
             )
 
-    def _set_active_executor(self) -> None:  # Fix line 160
+    def _set_active_executor(self) -> None:
         """Set the active executor based on what was provided"""
         if self.agent is not None:
             self.active_executor = self.agent  # type: ignore[assignment]
@@ -173,7 +173,7 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
-                response: Union[RunResponse, TeamRunResponse, StepOutput]  # Fix line 234
+                response: Union[RunResponse, TeamRunResponse, StepOutput]
                 if self._executor_type == "function":
                     if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
                         self.active_executor
@@ -454,7 +454,6 @@ class Step:
                                     if isinstance(chunk, StepOutput):
                                         final_response = chunk
                             else:
-                                # Fix line 444 - handle async generator properly
                                 if inspect.isasyncgenfunction(self.active_executor):
                                     async for chunk in self.active_executor(step_input):  # type: ignore
                                         if (
@@ -807,7 +806,7 @@ class Step:
                     # Try to decode as base64 first (for images from OpenAI tools)
                     if isinstance(img_artifact.content, bytes):
                         # Decode bytes to string, then decode base64 to get actual image bytes
-                        base64_str: str = img_artifact.content.decode("utf-8")  # Fix line 824
+                        base64_str: str = img_artifact.content.decode("utf-8")
                         actual_image_bytes = base64.b64decode(base64_str)
                     else:
                         # If it's already actual image bytes

@@ -43,7 +43,7 @@ class Router:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def _prepare_steps(self):  # type: ignore
+    def _prepare_steps(self): 
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
@@ -53,20 +53,20 @@ class Router:
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.steps import Steps
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.choices:
-            if isinstance(step, Callable):  # type: ignore
-                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))  # type: ignore
+            if callable(step) and hasattr(step, '__name__'):
+                prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
-                prepared_steps.append(step)  # type: ignore
+                prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-        self.choices = prepared_steps  # type: ignore
+        self.steps = prepared_steps
 
     def _update_step_input_from_outputs(
         self,

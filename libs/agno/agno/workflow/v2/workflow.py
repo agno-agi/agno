@@ -1330,15 +1330,15 @@ class Workflow:
         else:
             return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
 
-    def _prepare_steps(self):  # type: ignore[misc]
+    def _prepare_steps(self):
         """Prepare the steps for execution"""
-        prepared_steps = []
-        if not isinstance(self.steps, Callable):  # type: ignore
+        if not callable(self.steps) and self.steps is not None:
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
             for i, step in enumerate(self.steps):  # type: ignore
-                if isinstance(step, Callable):  # type: ignore
-                    step_name = step.__name__  # type: ignore
+                if callable(step) and hasattr(step, '__name__'):
+                    step_name = step.__name__
                     log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
-                    prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))  # type: ignore
+                    prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
                 elif isinstance(step, Agent):
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Agent '{step_name}'")
@@ -1347,11 +1347,11 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
-                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):  # type: ignore
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
                     log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
-                    prepared_steps.append(step)  # type: ignore
+                    prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
@@ -1361,7 +1361,6 @@ class Workflow:
     def get_workflow_session(self) -> WorkflowSessionV2:
         """Get a WorkflowSessionV2 object for storage"""
         workflow_data = {}
-        # TODO: Handle recursive
         if self.steps and not isinstance(self.steps, Callable):  # type: ignore
             workflow_data["steps"] = [
                 {
