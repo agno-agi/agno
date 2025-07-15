@@ -39,9 +39,6 @@ class Knowledge:
     vector_store: Optional[VectorDb] = None
     store: Optional[Union[Store, List[Store]]] = None
     contents_db: Optional[PostgresDb] = None
-    contents: Optional[Union[Content, List[Content]]] = None
-    paths: Optional[List[str]] = None
-    urls: Optional[List[str]] = None
     valid_metadata_filters: Optional[List[str]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
@@ -551,6 +548,7 @@ class Knowledge:
             metadata=content_row.metadata,
             size=content_row.size,
             status=content_row.status,
+            status_message=content_row.status_message,
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
         )
@@ -579,16 +577,20 @@ class Knowledge:
                 metadata=content_row.metadata,
                 size=content_row.size,
                 status=content_row.status,
+                status_message=content_row.status_message,
                 created_at=content_row.created_at,
                 updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
             )
             result.append(content)
         return result, count
 
-    def get_content_status(self, content_id: str) -> Optional[str]:
+    def get_content_status(self, content_id: str) -> Tuple[Optional[str], Optional[str]]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
-        return self.contents_db.get_content_status(content_id)
+        content_row = self.contents_db.get_knowledge_content(content_id)
+        if content_row is None:
+            return None
+        return content_row.status, content_row.status_message
 
     def remove_content_by_id(self, content_id: str):
         if self.contents_db is not None:

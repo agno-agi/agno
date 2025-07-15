@@ -176,11 +176,6 @@ class BaseDb(ABC):
     # --- Knowledge ---
 
     @abstractmethod
-    def get_content_status(self, id: str) -> Optional[str]:
-        """Get the status of knowledge content by ID."""
-        raise NotImplementedError
-
-    @abstractmethod
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get knowledge content by ID."""
         raise NotImplementedError

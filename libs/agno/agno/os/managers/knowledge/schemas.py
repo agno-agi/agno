@@ -14,6 +14,7 @@ class ContentResponseSchema(BaseModel):
     metadata: Optional[dict] = None
     access_count: Optional[int] = None
     status: Optional[str] = None
+    status_message: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

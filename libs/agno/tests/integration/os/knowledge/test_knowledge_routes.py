@@ -177,7 +177,7 @@ class TestKnowledgeContentEndpoints:
         mock_knowledge.get_content_by_id.return_value = None
 
         # Mock the Content constructor to handle None case
-        with patch("agno.knowledge.source.Content") as mock_content_class:
+        with patch("agno.knowledge.content.Content") as mock_content_class:
             mock_content_instance = Mock()
             mock_content_instance.name = "test"
             mock_content_class.return_value = mock_content_instance
@@ -213,13 +213,15 @@ class TestKnowledgeContentEndpoints:
     def test_get_content_status(self, test_app, mock_knowledge):
         """Test getting content status."""
         content_id = str(uuid4())
-        mock_knowledge.get_content_status.return_value = "Completed"
+        # Mock the method to return a tuple (status, status_message)
+        mock_knowledge.get_content_status.return_value = ("Failed", "Could not read content")
 
         response = test_app.get(f"/content/{content_id}/status")
 
         assert response.status_code == 200
         data = response.json()
-        assert data == "Completed"
+        assert data["status"] == "Failed"
+        assert data["status_message"] == "Could not read content"
 
     def test_get_config(self, test_app, mock_knowledge):
         """Test getting configuration."""

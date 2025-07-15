@@ -1414,13 +1414,6 @@ class PostgresDb(BaseDb):
             sess.commit()
         return
 
-    def get_content_status(self, id: str) -> Optional[str]:
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = select(table.c.status).where(table.c.id == id)
-            result = sess.execute(stmt).fetchone()
-            return result._mapping["status"]
-
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         table = self._get_knowledge_table()
         print(f"Getting knowledge content: {id}, {table}")

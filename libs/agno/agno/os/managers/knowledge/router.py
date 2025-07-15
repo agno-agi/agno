@@ -133,6 +133,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     metadata=content.metadata,
                     linked_to=knowledge.name,
                     status=content.status,
+                    status_message=content.status_message,
                     created_at=str(content.created_at) if content.created_at else None,
                     updated_at=str(content.updated_at) if content.updated_at else None,
                 )
@@ -163,6 +164,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             metadata=content.metadata,
             access_count=0,
             status=content.status,
+            status_message=content.status_message,
             created_at=str(content.created_at) if content.created_at else None,
             updated_at=str(content.updated_at) if content.updated_at else None,
         )
@@ -190,9 +192,20 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         return "success"
 
     @router.get("/content/{content_id}/status", status_code=200)
-    def get_content_status(content_id: str) -> str:
+    def get_content_status(content_id: str) -> Dict[str, str]:
         log_info(f"Getting content status: {content_id}")
-        return knowledge.get_content_status(content_id=content_id)
+        result = knowledge.get_content_status(content_id=content_id)
+
+        # Handle the case where get_content_status returns a tuple (status, status_message)
+        if isinstance(result, tuple) and len(result) == 2:
+            status, status_message = result
+            return {"status": status, "status_message": status_message}
+        elif isinstance(result, str):
+            # Handle the case where it returns just a status string
+            return {"status": result, "status_message": ""}
+        else:
+            # Handle the case where it returns None or something else
+            return {"status": "Unknown", "status_message": "Status not available"}
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
