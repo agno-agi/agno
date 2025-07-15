@@ -806,7 +806,7 @@ class Team:
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
-            message=message,  # type: ignore
+            message=message,
             images=images,
             videos=videos,
             audio=audio,
@@ -1262,7 +1262,7 @@ class Team:
                 elif isinstance(message, Message):
                     self.run_input = message.to_dict()
                 else:
-                    self.run_input = message  # type: ignore
+                    self.run_input = message
 
             # Run the team
             try:
