@@ -270,7 +270,7 @@ class PostgresStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None  # type: ignore
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None
         except Exception as e:
             if "does not exist" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -492,7 +492,7 @@ class PostgresStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=getattr(session, 'memory', None),
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -505,7 +505,7 @@ class PostgresStorage(Storage):
                             agent_id=session.agent_id,  # type: ignore
                             team_session_id=session.team_session_id,  # type: ignore
                             user_id=session.user_id,
-                            memory=getattr(session, 'memory', None),
+                            memory=getattr(session, "memory", None),
                             agent_data=session.agent_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
@@ -518,7 +518,7 @@ class PostgresStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=getattr(session, 'memory', None),
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -531,7 +531,7 @@ class PostgresStorage(Storage):
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
                             team_session_id=session.team_session_id,  # type: ignore
-                            memory=getattr(session, 'memory', None),
+                            memory=getattr(session, "memory", None),
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
@@ -543,7 +543,7 @@ class PostgresStorage(Storage):
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=getattr(session, 'memory', None),
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -555,7 +555,7 @@ class PostgresStorage(Storage):
                         set_=dict(
                             workflow_id=session.workflow_id,  # type: ignore
                             user_id=session.user_id,
-                            memory=getattr(session, 'memory', None),
+                            memory=getattr(session, "memory", None),
                             workflow_data=session.workflow_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,

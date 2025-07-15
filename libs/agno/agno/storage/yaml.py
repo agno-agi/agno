@@ -47,7 +47,7 @@ class YamlStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(data)
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(data)  # type: ignore
+                    return WorkflowSessionV2.from_dict(data)
         except FileNotFoundError:
             return None
 
@@ -103,7 +103,7 @@ class YamlStorage(Storage):
                         ):
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore
+                            _session = WorkflowSessionV2.from_dict(data)
                     elif user_id and data["user_id"] == user_id:
                         if self.mode == "agent":
                             _session = AgentSession.from_dict(data)
@@ -112,7 +112,7 @@ class YamlStorage(Storage):
                         elif self.mode == "workflow":
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2":
-                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore
+                            _session = WorkflowSessionV2.from_dict(data)
                     elif entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id:
                             _session = AgentSession.from_dict(data)
