@@ -758,6 +758,7 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        refresh_session_before_write: Optional[bool] = False,
     ) -> RunResponse:
         """Run the Agent and return the RunResponse.
 
@@ -825,7 +826,7 @@ class Agent:
         self._convert_response_to_structured_format(run_response)
 
         # 6. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
+        self.write_to_storage(user_id=user_id, session_id=session_id, refresh_session=refresh_session_before_write)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
@@ -845,6 +846,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        refresh_session_before_write: Optional[bool] = False,
     ) -> Iterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -917,7 +919,7 @@ class Agent:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
         # 7. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
+        self.write_to_storage(user_id=user_id, session_id=session_id, refresh_session=refresh_session_before_write)
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
@@ -941,6 +943,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> RunResponse: ...
 
@@ -961,6 +964,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> Iterator[RunResponseEvent]: ...
 
@@ -980,6 +984,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
@@ -1109,6 +1114,7 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        refresh_session_before_write=refresh_session_before_write,
                     )
                     return response_iterator
                 else:
@@ -1118,6 +1124,7 @@ class Agent:
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
+                        refresh_session_before_write=refresh_session_before_write,
                     )
                     return response
             except ModelProviderError as e:
@@ -1167,6 +1174,7 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        refresh_session_before_write: Optional[bool] = False,
     ) -> RunResponse:
         """Run the Agent and yield the RunResponse.
 
@@ -1233,7 +1241,7 @@ class Agent:
         self._convert_response_to_structured_format(run_response)
 
         # 6. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
+        self.write_to_storage(user_id=user_id, session_id=session_id, refresh_session=refresh_session_before_write)
 
         # 7. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
@@ -1253,6 +1261,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        refresh_session_before_write: Optional[bool] = False,
     ) -> AsyncIterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -1328,7 +1337,7 @@ class Agent:
             yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
 
         # 7. Save session to storage
-        self.write_to_storage(user_id=user_id, session_id=session_id)
+        self.write_to_storage(user_id=user_id, session_id=session_id, refresh_session=refresh_session_before_write)
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
@@ -1351,6 +1360,7 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
@@ -1360,6 +1370,9 @@ class Agent:
         )
 
         log_debug(f"Session ID: {session_id}", center=True)
+
+        # Initialize the Agent
+        self.initialize_agent()
 
         effective_filters = knowledge_filters
         # When filters are passed manually
@@ -1476,6 +1489,7 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        refresh_session_before_write=refresh_session_before_write,
                     )  # type: ignore[assignment]
                     return response_iterator
                 else:
@@ -1485,6 +1499,7 @@ class Agent:
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
+                        refresh_session_before_write=refresh_session_before_write,
                     )
                     return response
             except ModelProviderError as e:
@@ -4122,14 +4137,41 @@ class Agent:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
         return self.agent_session
+    
+    def refresh_from_storage(self, session_id: str) -> None:
+        """Refresh the AgentSession from storage
+        
+        Args:
+            session_id: The session_id to refresh from storage.
+        """
+        agent_session_from_db = self.storage.read(session_id=session_id)
+        if agent_session_from_db is not None and agent_session_from_db.memory is not None and "runs" in agent_session_from_db.memory:
+            try:
+                if self.memory.runs is None:
+                    self.memory.runs = {}
+                if session_id not in self.memory.runs:
+                    self.memory.runs[session_id] = []
+                for run in agent_session_from_db.memory["runs"]:
+                    run_session_id = run["session_id"]
+                    if "team_id" in run:
+                        self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
+                    else:
+                        self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
+            except Exception as e:
+                log_warning(f"Failed to load runs from memory: {e}")
+        
 
-    def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+    def write_to_storage(self, session_id: str, user_id: Optional[str] = None, refresh_session: bool = False) -> Optional[AgentSession]:
         """Save the AgentSession to storage
 
         Returns:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
+            print("refresh_session", refresh_session)
+            if refresh_session:
+                self.refresh_from_storage(session_id=session_id)
+
             self.agent_session = cast(
                 AgentSession,
                 self.storage.upsert(session=self.get_agent_session(session_id=session_id, user_id=user_id)),

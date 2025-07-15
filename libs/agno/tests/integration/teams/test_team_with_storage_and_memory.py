@@ -321,7 +321,7 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
 
     # Should create a new team session and agent session
     await route_team.arun(
-        "Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id
+        "Ask both a big and a small question to your member agents. Make sure to call both agents.", user_id=user_id, session_id=session_id
     )
 
     team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
@@ -331,8 +331,10 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
 
     agent_sessions = agent_storage.get_all_sessions()
+    
     # Single shared session for both agents
     assert len(agent_sessions) == 1
+    print(agent_sessions[0].memory)
     assert agent_sessions[0].session_id == session_id
     assert agent_sessions[0].user_id == user_id
     assert len(agent_sessions[0].memory["runs"]) == 2
