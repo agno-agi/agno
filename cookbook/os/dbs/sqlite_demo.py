@@ -63,12 +63,6 @@ agent_os = AgentOS(
     description="Example app for basic agent with playground capabilities",
     agents=[basic_agent],
     teams=[team_agent],
-    apps=[
-        SessionApp(db=db),
-        EvalApp(db=db),
-        MetricsApp(db=db),
-        MemoryApp(memory=memory),
-    ],
 )
 app = agent_os.get_app()
 
