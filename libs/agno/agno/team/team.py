@@ -709,7 +709,7 @@ class Team:
             self.session_state = session_state
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
@@ -5053,6 +5053,7 @@ class Team:
             _instructions = self.instructions
             if callable(self.instructions):
                 import inspect
+
                 signature = inspect.signature(self.instructions)
                 if "team" in signature.parameters:
                     _instructions = self.instructions(team=self)

@@ -4137,38 +4137,53 @@ class Agent:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
         return self.agent_session
-    
+
     def refresh_from_storage(self, session_id: str) -> None:
         """Refresh the AgentSession from storage
-        
+
         Args:
             session_id: The session_id to refresh from storage.
         """
+        if not self.storage:
+            return
+
         agent_session_from_db = self.storage.read(session_id=session_id)
-        if agent_session_from_db is not None and agent_session_from_db.memory is not None and "runs" in agent_session_from_db.memory:
+        if (
+            agent_session_from_db is not None
+            and agent_session_from_db.memory is not None
+            and "runs" in agent_session_from_db.memory  # type: ignore
+        ):
+            if isinstance(self.memory, AgentMemory):
+                return
             try:
-                if self.memory.runs is None:
-                    self.memory.runs = {}
-                if session_id not in self.memory.runs:
-                    self.memory.runs[session_id] = []
-                for run in agent_session_from_db.memory["runs"]:
+                if self.memory.runs is None:  # type: ignore
+                    self.memory.runs = {}  # type: ignore
+                if session_id not in self.memory.runs:  # type: ignore
+                    self.memory.runs[session_id] = []  # type: ignore
+                for run in agent_session_from_db.memory["runs"]:  # type: ignore
                     run_session_id = run["session_id"]
+                    for existing_run in self.memory.runs[run_session_id]:  # type: ignore
+                        if existing_run.run_id == run["run_id"]:
+                            skip = True
+                            break
+                    if skip:
+                        continue
                     if "team_id" in run:
-                        self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
+                        self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))  # type: ignore
                     else:
-                        self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
+                        self.memory.runs[run_session_id].append(RunResponse.from_dict(run))  # type: ignore
             except Exception as e:
                 log_warning(f"Failed to load runs from memory: {e}")
-        
 
-    def write_to_storage(self, session_id: str, user_id: Optional[str] = None, refresh_session: bool = False) -> Optional[AgentSession]:
+    def write_to_storage(
+        self, session_id: str, user_id: Optional[str] = None, refresh_session: Optional[bool] = False
+    ) -> Optional[AgentSession]:
         """Save the AgentSession to storage
 
         Returns:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
         if self.storage is not None:
-            print("refresh_session", refresh_session)
             if refresh_session:
                 self.refresh_from_storage(session_id=session_id)
 
@@ -4337,6 +4352,7 @@ class Agent:
             _instructions = self.instructions
             if callable(self.instructions):
                 import inspect
+
                 signature = inspect.signature(self.instructions)
                 if "agent" in signature.parameters:
                     _instructions = self.instructions(agent=self)
@@ -4347,7 +4363,7 @@ class Agent:
                 instructions.append(_instructions)
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
-                
+
         # 3.1.1 Add instructions from the Model
         _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
