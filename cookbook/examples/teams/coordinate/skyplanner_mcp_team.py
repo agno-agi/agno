@@ -74,7 +74,7 @@ async def run_team():
         command="npx", args=["-y", "@modelcontextprotocol/server-google-maps"], env=env
     )
 
-    # Use AsyncExitStack to manage multiple context apps
+    # Use AsyncExitStack to manage multiple context managers
     async with (
         MCPTools(server_params=airbnb_server_params) as airbnb_tools,
         MCPTools(server_params=maps_server_params) as maps_tools,
