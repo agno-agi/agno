@@ -4,8 +4,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
-
 from agno.db.base import BaseDb, SessionType
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType

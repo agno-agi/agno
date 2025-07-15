@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.document.local_store import LocalDocumentStore
+from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.source import DocumentV2
 
 # from agno.document.s3_document_store import S3DocumentStore
 from agno.vectordb.pgvector import PgVector
@@ -26,7 +26,7 @@ document_seed_store = None
 knowledge = Knowledge(
     name="My Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
-    document_store=document_store,
+    store=document_store,
     vector_store=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
@@ -35,10 +35,10 @@ knowledge = Knowledge(
 # This will add a document to the document store
 
 knowledge.load()
-knowledge.add_documents(
-    DocumentV2(
+knowledge.add_contents(
+    Content(
         name="CV1",
-        paths=["tmp/cv_1.pdf"],
+        path="tmp/cv_1.pdf",
         metadata={"user_tag": "Engineering candidates"},
     )
 )

@@ -7428,8 +7428,6 @@ class Team:
             team_id=self.team_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
-            workflow_session_id=self.workflow_session_id,
-            memory=memory_dict,
             team_data=self._get_team_data(),
             session_data=self.get_team_session_data(),
             extra_data=self.extra_data,

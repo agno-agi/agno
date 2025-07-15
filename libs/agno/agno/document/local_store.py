@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Generator, Optional, Tuple
 
 from agno.document.store import Store
-from agno.knowledge.source import Source
+from agno.knowledge.content import Content
 
 
 class LocalStore(Store):
@@ -33,19 +33,19 @@ class LocalStore(Store):
         """Get the file path for a source by ID."""
         return self._storage_path / f"{source_id}.json"
 
-    def _generate_source_hash(self, source: Source) -> str:
-        """Generate a hash of the source content to be used as the source ID."""
-        cleaned_content = source.content.replace("\x00", "\ufffd")
+    def _generate_content_hash(self, content: Content) -> str:
+        """Generate a hash of the content to be used as the content ID."""
+        cleaned_content = content.content_data.content.replace("\x00", "\ufffd")
         content_hash = md5(cleaned_content.encode()).hexdigest()
         return content_hash
 
-    def add_source(self, id: str, source: Source) -> str:
-        """Add a source to the store. Returns the source ID."""
+    def add_content(self, id: str, content: Content) -> str:
+        """Add content to the store. Returns the content ID."""
         pass
 
-    def delete_source(self, source_id: str) -> bool:
-        """Delete a source by ID. Returns True if successful."""
-        file_path = self._get_document_file_path(source_id)
+    def delete_content(self, content_id: str) -> bool:
+        """Delete content by ID. Returns True if successful."""
+        file_path = self._get_document_file_path(content_id)
 
         if file_path.exists():
             try:
@@ -55,8 +55,8 @@ class LocalStore(Store):
                 return False
         return False
 
-    def delete_all_sources(self) -> bool:
-        """Delete all sources from the store. Returns True if successful."""
+    def delete_all_contents(self) -> bool:
+        """Delete all contents from the store. Returns True if successful."""
         try:
             for file_path in self._storage_path.glob("*.json"):
                 file_path.unlink()
@@ -64,8 +64,8 @@ class LocalStore(Store):
         except OSError:
             return False
 
-    def get_all_sources(self) -> Generator[Tuple[bytes, Dict], None, None]:
-        """Get all sources from the store."""
+    def get_all_contents(self) -> Generator[Tuple[bytes, Dict], None, None]:
+        """Get all contents from the store."""
         for file_path in self._storage_path.glob("**/*"):
             if file_path.is_file() and file_path.suffix == ".pdf":
                 pdf_bytes = file_path.read_bytes()
@@ -77,26 +77,26 @@ class LocalStore(Store):
                 }
                 yield pdf_bytes, metadata
 
-    def get_source_by_id(self, source_id: str) -> Optional[Source]:
-        """Get a source by its ID."""
-        file_path = self._get_document_file_path(source_id)
+    def get_content_by_id(self, content_id: str) -> Optional[Content]:
+        """Get content by its ID."""
+        file_path = self._get_document_file_path(content_id)
 
         if not file_path.exists():
             return None
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                source_dict = json.load(f)
-                return Source.from_dict(source_dict)
+                content_dict = json.load(f)
+                return Content.from_dict(content_dict)
         except (json.JSONDecodeError, FileNotFoundError):
             return None
 
-    def get_source_by_name(self, name: str) -> Optional[Source]:
-        """Get a source by its name."""
-        for source in self.get_all_sources():
-            if source.name == name:
-                return source
+    def get_content_by_name(self, name: str) -> Optional[Content]:
+        """Get content by its name."""
+        for content in self.get_all_contents():
+            if content.name == name:
+                return content
         return None
 
-    def enhance_source(self, source_id: str, **kwargs) -> bool:
+    def enhance_content(self, content_id: str, **kwargs) -> bool:
         pass
