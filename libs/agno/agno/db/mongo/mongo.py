@@ -169,22 +169,31 @@ class MongoDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """Delete a session from the database.
 
         Args:
             session_id (str): The ID of the session to delete.
+
+        Returns:
+            bool: True if the session was deleted, False otherwise.
+
+        Raises:
+            Exception: If there is an error deleting the session.
         """
         try:
             collection = self._get_collection(table_type="sessions")
             result = collection.delete_one({"session_id": session_id})
             if result.deleted_count == 0:
-                log_debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found to delete with session_id: {session_id}")
+                return False
             else:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
+                return True
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
+            return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.

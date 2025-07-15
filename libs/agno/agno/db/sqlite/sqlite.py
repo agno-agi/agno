@@ -258,7 +258,7 @@ class SqliteDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
 
@@ -275,12 +275,15 @@ class SqliteDb(BaseDb):
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found with session_id: {session_id} in table {table.name}")
+                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    return False
                 else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    return True
 
         except Exception as e:
-            log_error(f"Exception deleting session: {e}")
+            log_error(f"Error deleting session: {e}")
+            return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.

@@ -36,7 +36,7 @@ class BaseDb(ABC):
     # --- Sessions ---
 
     @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT):
+    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT) -> bool:
         raise NotImplementedError
 
     @abstractmethod

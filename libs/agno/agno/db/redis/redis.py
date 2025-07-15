@@ -19,9 +19,9 @@ from agno.db.redis.utils import (
     remove_index_entries,
     serialize_data,
 )
-from agno.db.schemas.memory import MemoryRow
-from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.memory import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -396,7 +396,7 @@ class RedisDb(BaseDb):
             log_error(f"Exception upserting workflow session: {e}")
             return None
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """Delete a session from Redis.
 
         Args:
@@ -412,13 +412,16 @@ class RedisDb(BaseDb):
                 index_fields=["user_id", "agent_id", "team_id", "workflow_id", "session_type"],
             ):
                 log_debug(f"Successfully deleted session: {session_id}")
+                return True
             else:
-                log_debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found to delete with session_id: {session_id}")
+                return False
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
+            return False
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str]) -> bool:
         """Delete multiple sessions from Redis.
 
         Args:
