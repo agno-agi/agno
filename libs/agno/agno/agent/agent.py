@@ -5,7 +5,6 @@ from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
-from tkinter import BaseWidget
 from typing import (
     Any,
     AsyncIterator,
@@ -1042,7 +1041,7 @@ class Agent:
                     elif isinstance(message, Message):
                         self.run_input = message.to_dict()
                     else:
-                        self.run_input = message 
+                        self.run_input = message
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
@@ -4678,10 +4677,10 @@ class Agent:
         # Format the message with the session state variables
         if self.add_state_in_messages:
             user_msg_content = self.format_message_with_state_variables(message)
-        
+
         # Convert to string for concatenation operations
         user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
-        
+
         # 4.1 Add references to user message
         if (
             self.add_references
@@ -4698,7 +4697,7 @@ class Agent:
             user_msg_content_str += "\n\n<context>\n"
             user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
             user_msg_content_str += "</context>"
-        
+
         # Use the string version for the final content
         user_msg_content = user_msg_content_str
 
@@ -6803,7 +6802,7 @@ class Agent:
                 if message and show_message:
                     render = True
                     # Convert message to a panel
-                    message_content = get_text_from_message(message) 
+                    message_content = get_text_from_message(message)
                     message_panel = create_panel(
                         content=Text(message_content, style="green"),
                         title="Message",
@@ -6869,7 +6868,7 @@ class Agent:
                     if message and show_message:
                         render = True
                         # Convert message to a panel
-                        message_content = get_text_from_message(message) 
+                        message_content = get_text_from_message(message)
                         message_panel = create_panel(
                             content=Text(message_content, style="green"),
                             title="Message",

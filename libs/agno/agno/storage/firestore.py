@@ -113,7 +113,7 @@ class FirestoreStorage(Storage):
             elif self.mode == "workflow":
                 return WorkflowSession.from_dict(doc_data)
             elif self.mode == "workflow_v2":
-                return WorkflowSessionV2.from_dict(doc_data) # type: ignore
+                return WorkflowSessionV2.from_dict(doc_data)  # type: ignore
         except Exception as e:
             logger.error(f"Error parsing session data: {e}")
             return None

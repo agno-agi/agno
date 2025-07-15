@@ -284,7 +284,7 @@ class MySQLStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None # type: ignore[return-value]
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None  # type: ignore[return-value]
         except Exception as e:
             if "doesn't exist" in str(e) or "doesn't exist" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")

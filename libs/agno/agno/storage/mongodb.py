@@ -95,7 +95,7 @@ class MongoDbStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(doc)
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(doc) # type: ignore
+                    return WorkflowSessionV2.from_dict(doc)  # type: ignore
             return None
         except PyMongoError as e:
             logger.error(f"Error reading session: {e}")
@@ -221,7 +221,7 @@ class MongoDbStorage(Storage):
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(doc)
                 elif self.mode == "workflow_v2":
-                    session = WorkflowSessionV2.from_dict(doc) # type: ignore
+                    session = WorkflowSessionV2.from_dict(doc)  # type: ignore
                 if session is not None:
                     sessions.append(session)
 

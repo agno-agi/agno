@@ -106,7 +106,7 @@ class RedisStorage(Storage):
             elif self.mode == "workflow":
                 return WorkflowSession.from_dict(session_data)
             elif self.mode == "workflow_v2":
-                return WorkflowSessionV2.from_dict(session_data) # type: ignore
+                return WorkflowSessionV2.from_dict(session_data)  # type: ignore
 
         except Exception as e:
             logger.error(f"Error reading session: {e}")
@@ -132,7 +132,7 @@ class RedisStorage(Storage):
                         ):
                             session_ids.append(data["session_id"])
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            session_ids.append(data["session_id"]) # type: ignore
+                            session_ids.append(data["session_id"])  # type: ignore
                     elif user_id and data["user_id"] == user_id:
                         session_ids.append(data["session_id"])
                     elif entity_id:
@@ -174,7 +174,7 @@ class RedisStorage(Storage):
                         ):
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            _session = WorkflowSessionV2.from_dict(data) # type: ignore
+                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore
                     elif user_id and data["user_id"] == user_id:
                         if self.mode == "agent":
                             _session = AgentSession.from_dict(data)
@@ -183,7 +183,7 @@ class RedisStorage(Storage):
                         elif self.mode == "workflow":
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            _session = WorkflowSessionV2.from_dict(data) # type: ignore
+                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore
                     elif entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id:
                             _session = AgentSession.from_dict(data)
@@ -192,7 +192,7 @@ class RedisStorage(Storage):
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            _session = WorkflowSessionV2.from_dict(data) # type: ignore
+                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore
 
                     if _session:
                         sessions.append(_session)
@@ -206,7 +206,7 @@ class RedisStorage(Storage):
                     elif self.mode == "workflow":
                         _session = WorkflowSession.from_dict(data)
                     elif self.mode == "workflow_v2":
-                        _session = WorkflowSessionV2.from_dict(data) # type: ignore
+                        _session = WorkflowSessionV2.from_dict(data)  # type: ignore
                     if _session:
                         sessions.append(_session)
 
@@ -277,7 +277,7 @@ class RedisStorage(Storage):
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(data)
                 elif self.mode == "workflow_v2":
-                    session = WorkflowSessionV2.from_dict(data) # type: ignore
+                    session = WorkflowSessionV2.from_dict(data)  # type: ignore
                 if session is not None:
                     sessions.append(session)
 

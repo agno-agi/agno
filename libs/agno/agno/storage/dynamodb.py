@@ -249,9 +249,9 @@ class DynamoDbStorage(Storage):
                 elif self.mode == "team":
                     return TeamSession.from_dict(item)
                 elif self.mode == "workflow":
-                    return WorkflowSession.from_dict(item) 
+                    return WorkflowSession.from_dict(item)
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(item) # type: ignore[return-value]
+                    return WorkflowSessionV2.from_dict(item)  # type: ignore[return-value]
         except Exception as e:
             logger.error(f"Error reading session_id '{session_id}' with user_id '{user_id}': {e}")
         return None
@@ -552,7 +552,7 @@ class DynamoDbStorage(Storage):
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(item)
                 elif self.mode == "workflow_v2":
-                    session = WorkflowSessionV2.from_dict(item) # type: ignore[assignment]
+                    session = WorkflowSessionV2.from_dict(item)  # type: ignore[assignment]
                 if session is not None:
                     sessions.append(session)
 
