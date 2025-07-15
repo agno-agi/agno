@@ -267,9 +267,8 @@ class Workflow:
             set_log_level_to_debug(source_type="workflow")
 
             # Propagate to steps - only if steps is iterable (not callable)
-            if self.steps and not isinstance(self.steps, Callable):  # type: ignore
+            if self.steps and not callable(self.steps):
                 for step in self.steps:  # type: ignore
-                    # TODO: Handle properly steps inside other primitives
                     self._propagate_debug_to_step(step)
         else:
             set_log_level_to_info(source_type="workflow")
@@ -326,7 +325,7 @@ class Workflow:
         """Get the number of steps in the workflow"""
         if self.steps is None:
             return 0
-        elif isinstance(self.steps, Callable):  # type: ignore
+        elif callable(self.steps):
             return 1  # Callable function counts as 1 step
         else:
             return len(self.steps)  # type: ignore
@@ -418,7 +417,7 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
-        if isinstance(self.steps, Callable):  # type: ignore
+        if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
             elif isgeneratorfunction(self.steps):
@@ -554,7 +553,7 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
-        if isinstance(self.steps, Callable):  # type: ignore
+        if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
             elif isgeneratorfunction(self.steps):
@@ -776,7 +775,7 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
-        if isinstance(self.steps, Callable):  # type: ignore
+        if callable(self.steps):
             # Execute the workflow with the custom executor
             content = ""
 
@@ -917,7 +916,7 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
-        if isinstance(self.steps, Callable):  # type: ignore
+        if callable(self.steps):
             if iscoroutinefunction(self.steps):  # type: ignore
                 workflow_run_response.content = await self._acall_custom_function(
                     self.steps, self, execution_input, **kwargs
@@ -1335,7 +1334,7 @@ class Workflow:
         if not callable(self.steps) and self.steps is not None:
             prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
             for i, step in enumerate(self.steps):  # type: ignore
-                if callable(step) and hasattr(step, '__name__'):
+                if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
                     log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
                     prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
@@ -1414,7 +1413,7 @@ class Workflow:
         """Save the WorkflowSessionV2 to storage"""
         if self.storage is not None:
             session_to_save = self.get_workflow_session()
-            saved_session = self.storage.upsert(session=session_to_save)  # type: ignore
+            saved_session = self.storage.upsert(session=session_to_save)
             if saved_session and isinstance(saved_session, WorkflowSessionV2):
                 self.workflow_session = saved_session
                 return saved_session
@@ -1434,8 +1433,13 @@ class Workflow:
             # Create new session if it doesn't exist
             if existing_session is None:
                 log_debug("Creating new WorkflowSessionV2")
+
+                # Ensure we have a session_id
+                if self.session_id is None:
+                    self.session_id = str(uuid4())
+
                 self.workflow_session = WorkflowSessionV2(
-                    session_id=self.session_id,  # type: ignore
+                    session_id=self.session_id,
                     user_id=self.user_id,
                     workflow_id=self.workflow_id,
                     workflow_name=self.name,

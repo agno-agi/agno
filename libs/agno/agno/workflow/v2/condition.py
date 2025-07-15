@@ -44,7 +44,7 @@ class Condition:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def _prepare_steps(self): 
+    def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
@@ -56,7 +56,7 @@ class Condition:
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
-            if callable(step) and hasattr(step, '__name__'):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
