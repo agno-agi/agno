@@ -547,7 +547,7 @@ class Agent:
         self.session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict, Message]] = None
+        self.run_input: Optional[Union[str, List, Dict, Message, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[RunResponse] = None
 
@@ -4325,6 +4325,7 @@ class Agent:
             _instructions = self.instructions
             if callable(self.instructions):
                 import inspect
+
                 signature = inspect.signature(self.instructions)
                 if "agent" in signature.parameters:
                     _instructions = self.instructions(agent=self)
@@ -4335,7 +4336,7 @@ class Agent:
                 instructions.append(_instructions)
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
-                
+
         # 3.1.1 Add instructions from the Model
         _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
@@ -4658,10 +4659,28 @@ class Agent:
             )
 
         # 2. If create_default_user_message is False or message is a list, return the message as is.
-        if not self.create_default_user_message or isinstance(message, list):
+        if not self.create_default_user_message:
             return Message(
                 role=self.user_message_role,
                 content=message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
+            )
+        
+        # Handle list messages by converting to string
+        if isinstance(message, list):
+            # Convert list to string (join with newlines if all elements are strings)
+            if all(isinstance(item, str) for item in message):
+                message_content = "\n".join(message)
+            else:
+                message_content = str(message)
+            
+            return Message(
+                role=self.user_message_role,
+                content=message_content,
                 images=images,
                 audio=audio,
                 videos=videos,
@@ -4690,6 +4709,10 @@ class Agent:
         # Format the message with the session state variables
         if self.add_state_in_messages:
             user_msg_content = self.format_message_with_state_variables(message)
+
+        # Convert to string for concatenation operations
+        user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
         # 4.1 Add references to user message
         if (
             self.add_references
@@ -4697,15 +4720,18 @@ class Agent:
             and references.references is not None
             and len(references.references) > 0
         ):
-            user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-            user_msg_content += "<references>\n"
-            user_msg_content += self.convert_documents_to_string(references.references) + "\n"
-            user_msg_content += "</references>"
+            user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+            user_msg_content_str += "<references>\n"
+            user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
+            user_msg_content_str += "</references>"
         # 4.2 Add context to user message
         if self.add_context and self.context is not None:
-            user_msg_content += "\n\n<context>\n"
-            user_msg_content += self.convert_context_to_string(self.context) + "\n"
-            user_msg_content += "</context>"
+            user_msg_content_str += "\n\n<context>\n"
+            user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
+            user_msg_content_str += "</context>"
+
+        # Use the string version for the final content
+        user_msg_content = user_msg_content_str
 
         # Return the user message
         return Message(

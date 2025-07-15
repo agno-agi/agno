@@ -450,8 +450,8 @@ class SingleStoreStorage(Storage):
                             "agent_id": session.agent_id,  # type: ignore
                             "team_session_id": session.team_session_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
                             "agent_data": json.dumps(session.agent_data, ensure_ascii=False)  # type: ignore
                             if session.agent_data is not None  # type: ignore
@@ -472,8 +472,8 @@ class SingleStoreStorage(Storage):
                             "team_id": session.team_id,  # type: ignore
                             "user_id": session.user_id,
                             "team_session_id": session.team_session_id,  # type: ignore
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
                             "team_data": json.dumps(session.team_data, ensure_ascii=False)  # type: ignore
                             if session.team_data is not None  # type: ignore
@@ -493,8 +493,8 @@ class SingleStoreStorage(Storage):
                             "session_id": session.session_id,
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
                             "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
                             if session.workflow_data is not None  # type: ignore

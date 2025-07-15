@@ -370,7 +370,7 @@ class MySQLStorage(Storage):
                     elif self.mode == "workflow":
                         return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
                     elif self.mode == "workflow_v2":
-                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]  # type: ignore
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]  # type: ignore[misc]
                 else:
                     return []
         except Exception as e:
@@ -508,7 +508,7 @@ class MySQLStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -519,7 +519,7 @@ class MySQLStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -531,7 +531,7 @@ class MySQLStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -542,7 +542,7 @@ class MySQLStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -553,7 +553,7 @@ class MySQLStorage(Storage):
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -563,7 +563,7 @@ class MySQLStorage(Storage):
                     stmt = stmt.on_duplicate_key_update(
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -589,7 +589,7 @@ class MySQLStorage(Storage):
                         workflow_id=session.workflow_id,  # type: ignore
                         workflow_name=session.workflow_name,  # type: ignore
                         user_id=session.user_id,
-                        runs=session.runs,
+                        runs=session_dict.get("runs"),  # type: ignore
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,

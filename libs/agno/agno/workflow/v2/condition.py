@@ -20,11 +20,11 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",  # noqa: F821
-        "Loop",  # noqa: F821
-        "Parallel",  # noqa: F821
-        "Condition",  # noqa: F821
-        "Router",  # noqa: F821
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
     ]
 ]
 
@@ -54,9 +54,9 @@ class Condition:
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.steps import Steps
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.steps:
-            if isinstance(step, Callable):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
@@ -161,13 +161,13 @@ class Condition:
             return []
 
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -230,7 +230,7 @@ class Condition:
         condition_result = self._evaluate_condition(step_input)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield condition started event
             yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -243,7 +243,7 @@ class Condition:
             )
 
         if not condition_result:
-            if stream_intermediate_steps:
+            if stream_intermediate_steps and workflow_run_response:
                 # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -276,7 +276,7 @@ class Condition:
                     child_step_index = step_index
 
                 # Stream step execution
-                for event in step.execute_stream(
+                for event in step.execute_stream(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
@@ -330,7 +330,7 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -366,13 +366,13 @@ class Condition:
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
 
         # Chain steps sequentially like Loop does
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
@@ -433,7 +433,7 @@ class Condition:
         condition_result = await self._aevaluate_condition(step_input)
         log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield condition started event
             yield ConditionExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -446,7 +446,7 @@ class Condition:
             )
 
         if not condition_result:
-            if stream_intermediate_steps:
+            if stream_intermediate_steps and workflow_run_response:
                 # Yield condition completed event for empty case
                 yield ConditionExecutionCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -481,7 +481,7 @@ class Condition:
                     child_step_index = step_index
 
                 # Stream step execution - mirroring Loop logic
-                async for event in step.aexecute_stream(
+                async for event in step.aexecute_stream(  # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
@@ -536,7 +536,7 @@ class Condition:
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield condition completed event
             yield ConditionExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

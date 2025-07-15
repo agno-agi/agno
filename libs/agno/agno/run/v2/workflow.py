@@ -11,7 +11,7 @@ from agno.run.base import RunStatus
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
-    from agno.workflow.v2.types import WorkflowMetrics
+    from agno.workflow.v2.types import StepOutput, WorkflowMetrics
 
 
 class WorkflowRunEvent(str, Enum):
@@ -349,7 +349,7 @@ class StepOutputEvent(BaseWorkflowRunResponseEvent):
 
     # Properties for backward compatibility
     @property
-    def content(self) -> Optional[str]:
+    def content(self) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]]:
         return self.step_output.content if self.step_output else None
 
     @property
@@ -405,7 +405,7 @@ WorkflowRunResponseEvent = Union[
 class WorkflowRunResponse:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
-    content: Optional[Any] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
@@ -525,7 +525,7 @@ class WorkflowRunResponse:
             workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
         step_responses = data.pop("step_responses", [])
-        parsed_step_responses: List["StepOutput"] = []
+        parsed_step_responses: List[Union["StepOutput", List["StepOutput"]]] = []
         if step_responses:
             for step_output_dict in step_responses:
                 # Reconstruct StepOutput from dict

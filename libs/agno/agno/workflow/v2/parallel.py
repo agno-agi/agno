@@ -23,11 +23,11 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",  # noqa: F821
-        "Loop",  # noqa: F821
-        "Parallel",  # noqa: F821
-        "Condition",  # noqa: F821
-        "Router",  # noqa: F821
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
     ]
 ]
 
@@ -55,14 +55,14 @@ class Parallel:
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.agent.agent import Agent
         from agno.team.team import Team
-        from agno.workflow.v2.condition import Condition
         from agno.workflow.v2.loop import Loop
         from agno.workflow.v2.router import Router
         from agno.workflow.v2.step import Step
+        from agno.workflow.v2.steps import Steps
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.steps:
-            if isinstance(step, Callable):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
@@ -200,7 +200,7 @@ class Parallel:
                 status_icon = "✅ SUCCESS:"
 
             aggregated += f"### {status_icon} {step_name}\n"
-            if content.strip():
+            if content and str(content).strip():
                 aggregated += f"{content}\n\n"
             else:
                 aggregated += "*(No content)*\n\n"
@@ -223,7 +223,7 @@ class Parallel:
             """Execute a single step and preserve its original index"""
             index, step = step_with_index
             try:
-                result = step.execute(step_input, session_id=session_id, user_id=user_id)
+                result = step.execute(step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
                 return (index, result)
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{index}")
@@ -274,7 +274,7 @@ class Parallel:
         results = [result for _, result in results_with_indices]
 
         # Flatten results - handle steps that return List[StepOutput] (like Condition/Loop)
-        flattened_results = []
+        flattened_results: List[StepOutput] = []
         for result in results:
             if isinstance(result, list):
                 flattened_results.extend(result)
@@ -303,7 +303,7 @@ class Parallel:
 
         self._prepare_steps()
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -331,7 +331,7 @@ class Parallel:
                     sub_step_index = step_index
 
                 # All workflow step types have execute_stream() method
-                for event in step.execute_stream(
+                for event in step.execute_stream(  # type: ignore[union-attr]
                     step_input,
                     session_id=session_id,
                     user_id=user_id,
@@ -405,7 +405,7 @@ class Parallel:
                     yield event
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
-        flattened_step_results = []
+        flattened_step_results: List[StepOutput] = []
         for result in step_results:
             if isinstance(result, list):
                 flattened_step_results.extend(result)
@@ -420,7 +420,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -449,7 +449,7 @@ class Parallel:
             """Execute a single step asynchronously and preserve its original index"""
             index, step = step_with_index
             try:
-                result = await step.aexecute(step_input, session_id=session_id, user_id=user_id)
+                result = await step.aexecute(step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
                 return (index, result)
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{index}")
@@ -491,7 +491,7 @@ class Parallel:
                     )
                 )
             else:
-                index, step_result = result
+                index, step_result = result  # type: ignore[misc]
                 processed_results_with_indices.append((index, step_result))
                 step_name = getattr(self.steps[index], "name", f"step_{index}")
                 log_debug(f"Parallel step {step_name} completed")
@@ -501,7 +501,7 @@ class Parallel:
         results = [result for _, result in processed_results_with_indices]
 
         # Flatten results - handle steps that return List[StepOutput] (like Condition/Loop)
-        flattened_results = []
+        flattened_results: List[StepOutput] = []
         for result in results:
             if isinstance(result, list):
                 flattened_results.extend(result)
@@ -530,7 +530,7 @@ class Parallel:
 
         self._prepare_steps()
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step started event
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -565,7 +565,7 @@ class Parallel:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
-                ):
+                ):  # type: ignore[union-attr]
                     events.append(event)
                 return (index, events)
             except Exception as e:
@@ -608,7 +608,7 @@ class Parallel:
                 all_events_with_indices.append((i, [error_event]))
                 step_results.append(error_event)
             else:
-                index, events = result
+                index, events = result  # type: ignore[misc]
                 all_events_with_indices.append((index, events))
 
                 # Extract StepOutput from events for the final result
@@ -630,7 +630,7 @@ class Parallel:
                     yield event
 
         # Flatten step_results - handle steps that return List[StepOutput] (like Condition/Loop)
-        flattened_step_results = []
+        flattened_step_results: List[StepOutput] = []
         for result in step_results:
             if isinstance(result, list):
                 flattened_step_results.extend(result)
@@ -645,7 +645,7 @@ class Parallel:
 
         log_debug(f"Parallel End: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield parallel step completed event
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

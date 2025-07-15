@@ -479,7 +479,7 @@ class Team:
         self.full_team_session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict]] = None
+        self.run_input: Optional[Union[str, List, Dict, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[TeamRunResponse] = None
 
@@ -557,7 +557,7 @@ class Team:
                 merge_dictionaries(member.team_session_state, self.team_session_state)
 
         if self.workflow_session_state is not None:
-            if member.workflow_session_state is not None:
+            if member.workflow_session_state is None:
                 member.workflow_session_state = self.workflow_session_state
             else:
                 merge_dictionaries(member.workflow_session_state, self.workflow_session_state)
@@ -4821,7 +4821,7 @@ class Team:
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -5071,6 +5071,7 @@ class Team:
             _instructions = self.instructions
             if callable(self.instructions):
                 import inspect
+
                 signature = inspect.signature(self.instructions)
                 if "team" in signature.parameters:
                     _instructions = self.instructions(team=self)
@@ -5416,6 +5417,8 @@ class Team:
                 message_str = message
             elif callable(message):
                 message_str = message(agent=self)
+            elif isinstance(message, BaseModel):
+                message_str = message.model_dump_json(indent=2, exclude_none=True)
             else:
                 raise Exception("message must be a string or a callable when add_references is True")
 

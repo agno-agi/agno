@@ -181,8 +181,9 @@ def test_basic_condition_false(workflow_storage):
     response = workflow.run(message="General market overview")
     assert isinstance(response, WorkflowRunResponse)
 
-    # The step_responses will be empty due to the error
-    assert len(response.step_responses) == 0
+    # Should have 2 step responses: research_step + empty condition result
+    assert len(response.step_responses) == 2
+    assert response.step_responses[1] == []  # Condition returned empty list
 
 
 def test_parallel_with_conditions(workflow_storage):

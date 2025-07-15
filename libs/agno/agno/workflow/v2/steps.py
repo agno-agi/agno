@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -18,11 +18,11 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",  # noqa: F821
-        "Loop",  # noqa: F821
-        "Parallel",  # noqa: F821
-        "Condition",  # noqa: F821
-        "Router",  # noqa: F821
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
     ]
 ]
 
@@ -38,7 +38,9 @@ class Steps:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def __init__(self, name: Optional[str] = None, description: Optional[str] = None, steps: Optional[List] = None):
+    def __init__(
+        self, name: Optional[str] = None, description: Optional[str] = None, steps: Optional[List[Any]] = None
+    ):  # Change to List[Any]
         self.name = name
         self.description = description
         self.steps = steps if steps else []
@@ -53,9 +55,9 @@ class Steps:
         from agno.workflow.v2.router import Router
         from agno.workflow.v2.step import Step
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.steps:
-            if isinstance(step, Callable):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
@@ -120,7 +122,7 @@ class Steps:
             return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         steps_step_outputs = {}
 
@@ -130,7 +132,7 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -219,7 +221,7 @@ class Steps:
                     child_step_index = step_index + (i,)  # Extend the tuple
 
                 # Stream step execution
-                for event in step.execute_stream(
+                for event in step.execute_stream(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
@@ -299,7 +301,7 @@ class Steps:
             return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         steps_step_outputs = {}
 
@@ -309,7 +311,7 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -396,7 +398,7 @@ class Steps:
                     child_step_index = step_index + (i,)  # Extend the tuple
 
                 # Stream step execution
-                async for event in step.aexecute_stream(
+                async for event in step.aexecute_stream(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
