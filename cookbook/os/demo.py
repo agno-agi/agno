@@ -2,8 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.local_store import LocalStore
-from agno.knowledge.content import Content
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -19,16 +17,12 @@ db = PostgresDb(
     user_memory_table="user_memory",
     eval_table="eval_runs",
     metrics_table="metrics",
+    knowledge_table="knowledge_contents",
 )
 
 # Setup the memory
 memory = Memory(db=db)
 
-store = LocalStore(
-    name="local_document_store",
-    description="Local document store",
-    storage_path="tmp/documents",
-)
 
 vector_db_1 = PgVector(
     table_name="pdf_documents",
@@ -42,25 +36,18 @@ vector_db_2 = PgVector(
     db_url=db_url,
 )
 
-contents_db = PostgresDb(
-    db_url=db_url,
-    knowledge_table="knowledge_contents",
-)
-
 # Create knowledge base
 knowledge1 = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
-    store=store,
-    contents_db=contents_db,
+    contents_db=db,
     vector_store=vector_db_1,
 )
 
 knowledge2 = Knowledge(
     name="My Knowledge Base 2",
     description="A simple knowledge base 2",
-    # document_store=document_store,
-    contents_db=contents_db,
+    contents_db=db,
     vector_store=vector_db_2,
 )
 
