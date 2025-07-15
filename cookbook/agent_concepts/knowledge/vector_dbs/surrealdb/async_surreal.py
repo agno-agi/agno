@@ -3,6 +3,8 @@
 
 import asyncio
 
+from surrealdb import AsyncSurreal
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -15,12 +17,11 @@ SURREALDB_PASSWORD = "root"
 SURREALDB_NAMESPACE = "test"
 SURREALDB_DATABASE = "test"
 
+# Create a client
+client = AsyncSurreal(url=SURREALDB_URL)
+
 surrealdb = SurrealDb(
-    url=SURREALDB_URL,
-    username=SURREALDB_USER,
-    password=SURREALDB_PASSWORD,
-    namespace=SURREALDB_NAMESPACE,
-    database=SURREALDB_DATABASE,
+    async_client=client,
     collection="recipes",  # Collection name for storing documents
     efc=150,  # HNSW construction time/accuracy trade-off
     m=12,  # HNSW max number of connections per element
@@ -30,6 +31,10 @@ surrealdb = SurrealDb(
 
 async def async_demo():
     """Demonstrate asynchronous usage of SurrealDb"""
+
+    await client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
+    await client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
+
     knowledge_base = PDFUrlKnowledgeBase(
         urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
         vector_db=surrealdb,

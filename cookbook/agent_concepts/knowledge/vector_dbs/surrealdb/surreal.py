@@ -1,6 +1,8 @@
 # Run SurrealDB in a container before running this script
 # docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start --user root --pass root
 
+from surrealdb import Surreal
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
@@ -13,12 +15,13 @@ SURREALDB_PASSWORD = "root"
 SURREALDB_NAMESPACE = "test"
 SURREALDB_DATABASE = "test"
 
+# Create a client
+client = Surreal(url=SURREALDB_URL)
+client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
+client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
+
 surrealdb = SurrealDb(
-    url=SURREALDB_URL,
-    username=SURREALDB_USER,
-    password=SURREALDB_PASSWORD,
-    namespace=SURREALDB_NAMESPACE,
-    database=SURREALDB_DATABASE,
+    client=client,
     collection="recipes",  # Collection name for storing documents
     efc=150,  # HNSW construction time/accuracy trade-off
     m=12,  # HNSW max number of connections per element
