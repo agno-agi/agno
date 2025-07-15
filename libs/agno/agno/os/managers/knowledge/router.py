@@ -23,11 +23,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         file: Optional[UploadFile] = File(None),
         reader_id: Optional[str] = Form(None),
     ):
-        log_info(f"Adding content: {name}, {description}, {url}, {metadata}")
-        # # Generate ID immediately
         content_id = str(uuid4())
-        log_info(f"Content ID: {content_id}")
-        # # Read the content once and store it
+        log_info(f"Adding content: {name}, {description}, {url}, {metadata} with ID: {content_id}")
 
         parsed_metadata = None
         if metadata:
@@ -78,10 +75,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             size=file.size if file else None,
         )
 
-        # Add the processing task to background tasks
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
 
-        # Return immediately with the ID
         return {"content_id": content_id, "status": "processing"}
 
     @router.patch("/content/{content_id}", status_code=200)
@@ -196,15 +191,12 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         log_info(f"Getting content status: {content_id}")
         result = knowledge.get_content_status(content_id=content_id)
 
-        # Handle the case where get_content_status returns a tuple (status, status_message)
         if isinstance(result, tuple) and len(result) == 2:
             status, status_message = result
             return {"status": status, "status_message": status_message}
         elif isinstance(result, str):
-            # Handle the case where it returns just a status string
             return {"status": result, "status_message": ""}
         else:
-            # Handle the case where it returns None or something else
             return {"status": "Unknown", "status_message": "Status not available"}
 
     @router.get("/config", status_code=200)
@@ -222,13 +214,10 @@ def process_content(knowledge: Knowledge, content_id: str, content: Content, rea
     """Background task to process the content"""
     log_info(f"Processing content {content_id}")
     try:
-        # Set the document ID
         content.id = content_id
-        # Process the content
         if reader_id:
             content.reader = knowledge.readers[reader_id]
         knowledge._add_content_from_api(content)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")
-        # You might want to update a status in the database here

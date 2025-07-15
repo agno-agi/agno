@@ -389,7 +389,6 @@ class Knowledge:
 
     def _load_content(self, content: Content) -> None:
         log_info(f"Loading content: {content.id}")
-        # Don't add for topics, they need to create their own documents.
 
         if content.path:
             self._load_from_path(content)
