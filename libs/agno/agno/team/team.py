@@ -598,12 +598,12 @@ class Team:
         if self.num_of_interactions_from_history is not None:
             self.num_history_runs = self.num_of_interactions_from_history
 
-    def _reset_session_state(self) -> None:
+    def _reset_session(self) -> None:
         self.session_name = None
         self.session_state = None
         self.team_session_state = None
-        self.workflow_session_state = self.workflow_session_state  # being set by Workflow, at Team.run cannot be None
         self.session_metrics = None
+        self.session_state = None
         self.images = None
         self.videos = None
         self.audio = None
@@ -666,6 +666,73 @@ class Team:
         self.tools = tools
         self._rebuild_tools = True
 
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_user_id"] = user_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_session_id"] = session_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+    def _reset_session_state(self) -> None:
+        """Reset the session state for the agent."""
+        if self.team_session_state is not None:
+            self.team_session_state.pop("current_session_id", None)
+            self.team_session_state.pop("current_user_id", None)
+        if self.session_state is not None:
+            self.session_state.pop("current_session_id", None)
+            self.session_state.pop("current_user_id", None)
+
+    def _initialize_session(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the agent."""
+
+        self._reset_run_state()
+
+        # Determine the session_id
+        if session_id is not None and session_id != "":
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self._reset_session()
+
+            self.session_id = session_id
+        else:
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                self.session_id = session_id = str(uuid4())
+
+        # Use the default user_id when necessary
+        if user_id is not None and user_id != "":
+            user_id = user_id
+        else:
+            user_id = self.user_id
+
+        # Determine the session_state
+        if session_state is not None:
+            self.session_state = session_state
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
+
+        return session_id, user_id
+
     @overload
     def run(
         self,
@@ -674,6 +741,7 @@ class Team:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -692,6 +760,7 @@ class Team:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -709,6 +778,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -720,31 +790,9 @@ class Team:
     ) -> Union[TeamRunResponse, Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team and return the response."""
 
-        self._reset_run_state()
-
-        if session_id is not None:
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self._reset_session_state()
-
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            # Default to the team's session_id if no session_id is provided
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Team
@@ -785,9 +833,6 @@ class Team:
 
         self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -923,6 +968,8 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1095,6 +1142,7 @@ class Team:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1113,6 +1161,7 @@ class Team:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1130,6 +1179,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1141,31 +1191,9 @@ class Team:
     ) -> Union[TeamRunResponse, AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team asynchronously and return the response."""
 
-        self._reset_run_state()
-
-        if session_id is not None:
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self._reset_session_state()
-
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            # Default to the team's session_id if no session_id is provided
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the team
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
         log_debug(f"Session ID: {session_id}", center=True)
 
         self.initialize_team(session_id=session_id)
@@ -1199,9 +1227,6 @@ class Team:
 
         self.stream = self.stream or stream
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         # Read existing session from storage
         if self.context is not None:
@@ -1329,6 +1354,8 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2092,29 +2119,6 @@ class Team:
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
-
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_session_id"] = session_id
-
     def _make_memories_and_summaries(
         self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None
     ) -> Iterator[TeamRunResponseEvent]:
@@ -2407,6 +2411,7 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -2438,6 +2443,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -2457,6 +2463,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -2476,6 +2483,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2528,6 +2536,7 @@ class Team:
                 files=files,
                 stream=False,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -2758,6 +2767,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2828,6 +2838,7 @@ class Team:
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -3271,6 +3282,7 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3302,6 +3314,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -3321,6 +3334,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -3340,6 +3354,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -3392,6 +3407,7 @@ class Team:
                 files=files,
                 stream=False,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -3620,6 +3636,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -3692,6 +3709,7 @@ class Team:
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 **kwargs,
             )
@@ -6812,9 +6830,6 @@ class Team:
             self.team_session = cast(TeamSession, self.storage.read(session_id=session_id))
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
-            else:
-                # New session, just reset the state
-                self.session_name = None
         return self.team_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
@@ -6873,7 +6888,6 @@ class Team:
             # Get the session_name from database and update the current session_name if not set
             if self.session_name is None and "session_name" in session.session_data:
                 self.session_name = session.session_data.get("session_name")
-
             # Get the session_state from the database and update the current session_state
             if "session_state" in session.session_data:
                 session_state_from_db = session.session_data.get("session_state")
