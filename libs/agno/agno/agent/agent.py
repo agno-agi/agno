@@ -4162,6 +4162,7 @@ class Agent:
                     self.memory.runs[session_id] = []  # type: ignore
                 for run in agent_session_from_db.memory["runs"]:  # type: ignore
                     run_session_id = run["session_id"]
+                    skip = False
                     for existing_run in self.memory.runs[run_session_id]:  # type: ignore
                         if existing_run.run_id == run["run_id"]:
                             skip = True
