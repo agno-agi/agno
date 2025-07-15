@@ -1,8 +1,6 @@
 import io
-import os
 import time
 from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
@@ -10,17 +8,7 @@ from uuid import uuid4
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
-from agno.document.reader import Reader
-from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
-from agno.document.reader.docx_reader import DocxReader
-from agno.document.reader.firecrawl_reader import FirecrawlReader
-from agno.document.reader.json_reader import JSONReader
-from agno.document.reader.markdown_reader import MarkdownReader
-from agno.document.reader.pdf_reader import PDFReader, PDFUrlReader
-from agno.document.reader.text_reader import TextReader
-from agno.document.reader.url_reader import URLReader
-from agno.document.reader.website_reader import WebsiteReader
-from agno.document.reader.youtube_reader import YouTubeReader
+from agno.document.reader import Reader, ReaderFactory
 from agno.document.store import Store
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.content import Content, ContentData
@@ -88,28 +76,6 @@ class Knowledge:
             log_error(f"Error searching for documents: {e}")
             return []
 
-    def load(self):
-        log_info("Loading contents into KnowledgeBase")
-
-        if self.contents:
-            if isinstance(self.contents, list):
-                for content in self.contents:
-                    self.add_content(content=content)
-            else:
-                self.add_content(content=self.contents)
-
-        if self.store is not None:
-            if isinstance(self.store, list):
-                for store in self.store:
-                    # Process each store in the list
-                    log_info(f"Processing document store: {store.name}")
-                    if store.read_from_store:
-                        self.load_from_document_store(store)
-            else:
-                log_info(f"Processing single document store: {self.store.name}")
-                if self.store.read_from_store:
-                    self.load_from_document_store(self.store)
-
     def load_from_document_store(self, store: Store):
         if store.read_from_store:
             for file_content, metadata in store.get_all_documents():
@@ -139,7 +105,7 @@ class Knowledge:
             if content.reader:
                 read_documents = content.reader.read(path, name=content.name or path.name)
             else:
-                reader = self._select_reader(path.suffix)
+                reader = ReaderFactory.get_reader_for_extension(path.suffix)
                 print(f"Using Reader: {reader.__class__.__name__}")
                 if reader:
                     read_documents = reader.read(path, name=content.name or path.name)
@@ -185,7 +151,6 @@ class Knowledge:
         elif path.is_dir():
             for file in path.iterdir():
                 id = str(uuid4())
-                # Create a new Source object for each file in the directory
                 file_content = Content(
                     id=id,
                     name=content.name,
@@ -505,7 +470,6 @@ class Knowledge:
             log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
             return
 
-        # Create Source from individual parameters
         content = None
         if text_content:
             content = ContentData(content=text_content, type="Text")
@@ -676,66 +640,47 @@ class Knowledge:
 
         return valid_filters, invalid_keys
 
-    # --- Readers Setup ---
+    # --- Reader Factory Integration ---
 
-    # TODO: Rework these into a map we can use for selection, but also return to API.
+    def construct_readers(self):
+        """Construct readers using the ReaderFactory."""
+        self.readers = ReaderFactory.create_all_readers()
+
+    def add_reader(self, reader: Reader):
+        """Add a custom reader to the knowledge base."""
+        if self.readers is None:
+            self.readers = {}
+        
+        # Generate a key for the reader
+        reader_key = self._generate_reader_key(reader)
+        self.readers[reader_key] = reader
+        return reader
+
+    def get_readers(self) -> List[Reader]:
+        """Get all available readers."""
+        if self.readers is None:
+            return []
+        return list(self.readers.values())
+
     def _generate_reader_key(self, reader: Reader) -> str:
+        """Generate a key for a reader instance."""
         if reader.name:
             return f"{reader.name.lower().replace(' ', '_')}"
         else:
             return f"{reader.__class__.__name__.lower().replace(' ', '_')}"
 
-    def construct_readers(self):
-        self.readers = {
-            self._generate_reader_key(self.pdf_reader): self.pdf_reader,
-            self._generate_reader_key(self.csv_reader): self.csv_reader,
-            self._generate_reader_key(self.docx_reader): self.docx_reader,
-            self._generate_reader_key(self.json_reader): self.json_reader,
-            self._generate_reader_key(self.markdown_reader): self.markdown_reader,
-            self._generate_reader_key(self.text_reader): self.text_reader,
-            self._generate_reader_key(self.url_reader): self.url_reader,
-            self._generate_reader_key(self.website_reader): self.website_reader,
-            self._generate_reader_key(self.firecrawl_reader): self.firecrawl_reader,
-            self._generate_reader_key(self.youtube_reader): self.youtube_reader,
-            self._generate_reader_key(self.csv_url_reader): self.csv_url_reader,
-        }
-
-    def add_reader(self, reader: Reader):
-        self.readers[self._generate_reader_key(reader)] = reader
-        return reader
-
-    def get_readers(self) -> List[Reader]:
-        return self.readers
-
     def _select_reader(self, extension: str) -> Reader:
+        """Select the appropriate reader for a file extension."""
         log_info(f"Selecting reader for extension: {extension}")
-        extension = extension.lower()
-        if "pdf" in extension:
-            return self.pdf_reader
-        elif "csv" in extension:
-            return self.csv_reader
-        elif any(ext in extension for ext in ["docx", "doc", "word"]):
-            return self.docx_reader
-        elif "json" in extension:
-            return self.json_reader
-        elif any(ext in extension for ext in ["md", "markdown"]):
-            return self.markdown_reader
-        else:
-            return self.text_reader
+        return ReaderFactory.get_reader_for_extension(extension)
 
     def _select_url_reader(self, url: str) -> Reader:
-        if any(domain in url for domain in ["youtube.com", "youtu.be"]):
-            return self.youtube_reader
-        else:
-            return self.url_reader
+        """Select the appropriate reader for a URL."""
+        return ReaderFactory.get_reader_for_url(url)
 
     def _select_url_file_reader(self, extension: str) -> Reader:
-        if extension == ".pdf":
-            return self.pdf_url_reader
-        if extension == ".csv":
-            return self.csv_url_reader
-        else:
-            return self.url_reader
+        """Select the appropriate reader for a URL file extension."""
+        return ReaderFactory.get_reader_for_url_file(extension)
 
     def get_filters(self) -> List[str]:
         return [
@@ -743,70 +688,64 @@ class Knowledge:
             "filter_tag2",
         ]
 
-    # --- File Readers ---
-    @cached_property
-    def pdf_reader(self) -> PDFReader:
-        """PDF reader - lazy loaded and cached."""
-        return PDFReader(chunk=True, chunk_size=100)
+    # --- Convenience Properties for Backward Compatibility ---
 
-    @cached_property
-    def csv_reader(self) -> CSVReader:
-        """CSV reader - lazy loaded and cached."""
-        return CSVReader(name="CSV Reader", description="Reads CSV files")
+    @property
+    def pdf_reader(self) -> Reader:
+        """PDF reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("pdf")
 
-    @cached_property
-    def docx_reader(self) -> DocxReader:
-        """Docx reader - lazy loaded and cached."""
-        return DocxReader(name="Docx Reader", description="Reads Docx files")
+    @property
+    def csv_reader(self) -> Reader:
+        """CSV reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("csv")
 
-    @cached_property
-    def json_reader(self) -> JSONReader:
-        """JSON reader - lazy loaded and cached."""
-        return JSONReader(name="JSON Reader", description="Reads JSON files")
+    @property
+    def docx_reader(self) -> Reader:
+        """Docx reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("docx")
 
-    @cached_property
-    def markdown_reader(self) -> MarkdownReader:
-        """Markdown reader - lazy loaded and cached."""
-        return MarkdownReader(name="Markdown Reader", description="Reads Markdown files")
+    @property
+    def json_reader(self) -> Reader:
+        """JSON reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("json")
 
-    @cached_property
-    def text_reader(self) -> TextReader:
-        """Txt reader - lazy loaded and cached."""
-        return TextReader(name="Text Reader", description="Reads Text files")
+    @property
+    def markdown_reader(self) -> Reader:
+        """Markdown reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("markdown")
 
-    # --- URL Readers ---
+    @property
+    def text_reader(self) -> Reader:
+        """Text reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("text")
 
-    @cached_property
-    def website_reader(self) -> WebsiteReader:
-        """Website reader - lazy loaded and cached."""
-        return WebsiteReader(name="Website Reader", description="Reads Website files")
+    @property
+    def website_reader(self) -> Reader:
+        """Website reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("website")
 
-    @cached_property
-    def firecrawl_reader(self) -> FirecrawlReader:
-        """Firecrawl reader - lazy loaded and cached."""
-        return FirecrawlReader(
-            api_key=os.getenv("FIRECRAWL_API_KEY"),
-            mode="crawl",
-            name="Firecrawl Reader",
-            description="Crawls websites",
-        )
+    @property
+    def firecrawl_reader(self) -> Reader:
+        """Firecrawl reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("firecrawl")
 
-    @cached_property
-    def url_reader(self) -> URLReader:
-        """URL reader - lazy loaded and cached."""
-        return URLReader(name="URL Reader", description="Reads URLs")
+    @property
+    def url_reader(self) -> Reader:
+        """URL reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("url")
 
-    @cached_property
-    def pdf_url_reader(self) -> PDFUrlReader:
-        """PDF URL reader - lazy loaded and cached."""
-        return PDFUrlReader(name="PDF URL Reader", description="Reads PDF URLs")
+    @property
+    def pdf_url_reader(self) -> Reader:
+        """PDF URL reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("pdf_url")
 
-    @cached_property
-    def youtube_reader(self) -> YouTubeReader:
-        """YouTube reader - lazy loaded and cached."""
-        return YouTubeReader(name="YouTube Reader", description="Reads YouTube videos")
+    @property
+    def youtube_reader(self) -> Reader:
+        """YouTube reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("youtube")
 
-    @cached_property
-    def csv_url_reader(self) -> CSVUrlReader:
-        """CSV URL reader - lazy loaded and cached."""
-        return CSVUrlReader(name="CSV URL Reader", description="Reads CSV URLs")
+    @property
+    def csv_url_reader(self) -> Reader:
+        """CSV URL reader - lazy loaded via factory."""
+        return ReaderFactory.create_reader("csv_url")

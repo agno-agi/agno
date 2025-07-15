@@ -90,6 +90,9 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
+    def _build_chunked_documents_async(self, documents: List[Document]) -> List[Document]:
+        return self.chunk_documents_async(documents)
+
     def _extract_text_with_error_handling(self, page: Any, page_number: int, doc_name: str) -> str:
         """Extract text from a PDF page with comprehensive error handling for encoding issues."""
         try:
@@ -186,6 +189,7 @@ class PDFReader(BasePDFReader):
         )
 
         if self.chunk:
+            # return self._build_chunked_documents_async(documents)
             return self._build_chunked_documents(documents)
         return documents
 
