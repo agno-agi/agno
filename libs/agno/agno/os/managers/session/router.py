@@ -36,7 +36,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
-            serialize=False,
+            deserialize=False,
         )
 
         return PaginatedResponse(
@@ -76,7 +76,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
     ) -> Union[List[RunSchema], List[TeamRunSchema]]:
-        session = db.get_session(session_id=session_id, session_type=session_type, serialize=False)
+        session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 

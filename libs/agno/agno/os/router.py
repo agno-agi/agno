@@ -427,7 +427,7 @@ def get_base_router(
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
-            serialize=False,
+            deserialize=False,
         )
 
         return PaginatedResponse(
@@ -661,7 +661,7 @@ def get_base_router(
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
-            serialize=False,
+            deserialize=False,
         )
 
         return PaginatedResponse(

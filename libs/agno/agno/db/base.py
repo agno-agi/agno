@@ -49,7 +49,7 @@ class BaseDb(ABC):
         session_id: str,
         session_type: SessionType,
         user_id: Optional[str] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -64,19 +64,19 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, serialize: Optional[bool] = True
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
     def upsert_session(
-        self, session: Session, serialize: Optional[bool] = True
+        self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -96,7 +96,7 @@ class BaseDb(ABC):
 
     @abstractmethod
     def get_user_memory(
-        self, memory_id: str, serialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -113,7 +113,7 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -127,7 +127,7 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_user_memory(
-        self, memory: MemoryRow, serialize: Optional[bool] = True
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
     ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -183,7 +183,7 @@ class BaseDb(ABC):
 
     @abstractmethod
     def get_eval_run(
-        self, eval_run_id: str, serialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -200,12 +200,12 @@ class BaseDb(ABC):
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     def rename_eval_run(
-        self, eval_run_id: str, name: str, serialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError

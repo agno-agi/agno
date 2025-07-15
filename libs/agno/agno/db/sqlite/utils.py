@@ -18,6 +18,9 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+# -- DB util methods --
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
     Args:

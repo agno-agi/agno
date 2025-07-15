@@ -25,7 +25,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             memory=MemoryRow(
                 id=None, memory={"memory": payload.memory, "topics": payload.topics}, user_id=payload.user_id
             ),
-            serialize=False,
+            deserialize=False,
         )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to create memory")
@@ -66,7 +66,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             search_content=search_content,
             sort_by=sort_by,
             sort_order=sort_order,
-            serialize=False,
+            deserialize=False,
         )
 
         return PaginatedResponse(
@@ -84,7 +84,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
-        user_memory = memory.db.get_user_memory(memory_id=memory_id, serialize=False)
+        user_memory = memory.db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -106,7 +106,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             memory=MemoryRow(
                 id=memory_id, memory={"memory": payload.memory, "topics": payload.topics or []}, user_id=payload.user_id
             ),
-            serialize=False,
+            deserialize=False,
         )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to update memory")

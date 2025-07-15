@@ -56,7 +56,7 @@ def attach_routes(
             model_id=model_id,
             eval_type=eval_types,
             filter_type=filter_type,
-            serialize=False,
+            deserialize=False,
         )
 
         return PaginatedResponse(
@@ -71,7 +71,7 @@ def attach_routes(
 
     @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def get_eval_run(eval_run_id: str) -> EvalSchema:
-        eval_run = db.get_eval_run(eval_run_id=eval_run_id, serialize=False)
+        eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -87,7 +87,7 @@ def attach_routes(
     @router.patch("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
     async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
         try:
-            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, serialize=False)
+            eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 

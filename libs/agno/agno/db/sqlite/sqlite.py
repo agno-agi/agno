@@ -312,7 +312,7 @@ class SqliteDb(BaseDb):
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -321,12 +321,12 @@ class SqliteDb(BaseDb):
             session_id (str): ID of the session to read.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             session_type (Optional[SessionType]): Type of session to read. Defaults to None.
-            serialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
-                - When serialize=True: Session object
-                - When serialize=False: Session dictionary
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -348,7 +348,7 @@ class SqliteDb(BaseDb):
                     return None
 
                 session_raw = deserialize_session_json_fields(dict(result._mapping))
-                if not session_raw or not serialize:
+                if not session_raw or not deserialize:
                     return session_raw
 
             if session_type == SessionType.AGENT:
@@ -374,7 +374,7 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -389,12 +389,12 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
-            serialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
 
         Returns:
             List[Session]:
-                - When serialize=True: List of Session objects matching the criteria.
-                - When serialize=False: List of Session dictionaries matching the criteria.
+                - When deserialize=True: List of Session objects matching the criteria.
+                - When deserialize=False: List of Session dictionaries matching the criteria.
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -444,7 +444,7 @@ class SqliteDb(BaseDb):
                     return [], 0
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
-                if not sessions_raw or not serialize:
+                if not sessions_raw or not deserialize:
                     return sessions_raw, total_count
 
             if session_type == SessionType.AGENT:
@@ -461,7 +461,7 @@ class SqliteDb(BaseDb):
             return []
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, serialize: Optional[bool] = True
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -470,12 +470,12 @@ class SqliteDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
-            serialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
-                - When serialize=True: Session object
-                - When serialize=False: Session dictionary
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
             Exception: If an error occurs during renaming.
@@ -503,7 +503,7 @@ class SqliteDb(BaseDb):
                     return None
 
             session_raw = deserialize_session_json_fields(dict(row._mapping))
-            if not session_raw or not serialize:
+            if not session_raw or not deserialize:
                 return session_raw
 
             # Return the appropriate session type
@@ -519,19 +519,19 @@ class SqliteDb(BaseDb):
             return None
 
     def upsert_session(
-        self, session: Session, serialize: Optional[bool] = True
+        self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Insert or update a session in the database.
 
         Args:
             session (Session): The session data to upsert.
-            serialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
             Optional[Session]:
-                - When serialize=True: Session object
-                - When serialize=False: Session dictionary
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
             Exception: If an error occurs during upserting.
@@ -577,7 +577,7 @@ class SqliteDb(BaseDb):
                     row = result.fetchone()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not serialize:
+                    if session_raw is None or not deserialize:
                         return session_raw
                     return AgentSession.from_dict(session_raw)
 
@@ -617,7 +617,7 @@ class SqliteDb(BaseDb):
                     row = result.fetchone()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not serialize:
+                    if session_raw is None or not deserialize:
                         return session_raw
                     return TeamSession.from_dict(session_raw)
 
@@ -656,7 +656,7 @@ class SqliteDb(BaseDb):
                     row = result.fetchone()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not serialize:
+                    if session_raw is None or not deserialize:
                         return session_raw
                     return WorkflowSession.from_dict(session_raw)
 
@@ -734,18 +734,18 @@ class SqliteDb(BaseDb):
             return []
 
     def get_user_memory(
-        self, memory_id: str, serialize: Optional[bool] = True
+        self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
-            serialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[MemoryRow, Dict[str, Any]]]:
-                - When serialize=True: MemoryRow object
-                - When serialize=False: Memory dictionary
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -760,7 +760,7 @@ class SqliteDb(BaseDb):
                     return None
 
                 memory_raw = dict(result._mapping)
-                if not memory_raw or not serialize:
+                if not memory_raw or not deserialize:
                     return memory_raw
 
             return MemoryRow(
@@ -786,7 +786,7 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as MemoryRow objects.
 
@@ -801,12 +801,12 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            serialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
         Returns:
             Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
-                - When serialize=True: List of MemoryRow objects
-                - When serialize=False: List of Memory dictionaries and total count
+                - When deserialize=True: List of MemoryRow objects
+                - When deserialize=False: List of Memory dictionaries and total count
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -850,7 +850,7 @@ class SqliteDb(BaseDb):
 
                 user_memories_raw = [record._mapping for record in result]
 
-                if not serialize:
+                if not deserialize:
                     return user_memories_raw, total_count
 
             return [
@@ -935,18 +935,18 @@ class SqliteDb(BaseDb):
             return [], 0
 
     def upsert_user_memory(
-        self, memory: MemoryRow, serialize: Optional[bool] = True
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
     ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         """Upsert a user memory in the database.
 
         Args:
             memory (MemoryRow): The user memory to upsert.
-            serialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
             Optional[Union[MemoryRow, Dict[str, Any]]]:
-                - When serialize=True: MemoryRow object
-                - When serialize=False: Memory dictionary
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
 
         Raises:
             Exception: If an error occurs during upsert.
@@ -981,7 +981,7 @@ class SqliteDb(BaseDb):
                 row = result.fetchone()
 
             user_memory_raw = row._mapping
-            if not user_memory_raw or not serialize:
+            if not user_memory_raw or not deserialize:
                 return user_memory_raw
 
             return MemoryRow(
@@ -1064,7 +1064,7 @@ class SqliteDb(BaseDb):
                     return result._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, serialize=False)
+        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
         first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore
 
         # 3. No metrics records and no sessions records. Return None.
@@ -1395,18 +1395,18 @@ class SqliteDb(BaseDb):
             raise
 
     def get_eval_run(
-        self, eval_run_id: str, serialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
-            serialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-                - When serialize=True: EvalRunRecord object
-                - When serialize=False: EvalRun dictionary
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -1421,7 +1421,7 @@ class SqliteDb(BaseDb):
                     return None
 
                 eval_run_raw = result._mapping
-                if not eval_run_raw or not serialize:
+                if not eval_run_raw or not deserialize:
                     return eval_run_raw
 
             return EvalRunRecord.model_validate(eval_run_raw)
@@ -1442,7 +1442,7 @@ class SqliteDb(BaseDb):
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
-        serialize: Optional[bool] = True,
+        deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1457,12 +1457,12 @@ class SqliteDb(BaseDb):
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-            serialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
-                - When serialize=True: List of EvalRunRecord objects
-                - When serialize=False: List of EvalRun dictionaries and total count
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of EvalRun dictionaries and total count
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -1512,7 +1512,7 @@ class SqliteDb(BaseDb):
                     return [] if serialize else ([], 0)
 
                 eval_runs_raw = [row._mapping for row in result]
-                if not serialize:
+                if not deserialize:
                     return eval_runs_raw, total_count
 
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
@@ -1533,8 +1533,8 @@ class SqliteDb(BaseDb):
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-                - When serialize=True: EvalRunRecord object
-                - When serialize=False: EvalRun dictionary
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
 
         Raises:
             Exception: If an error occurs during update.
@@ -1548,7 +1548,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
             eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id)
-            if not eval_run_raw or not serialize:
+            if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
             return EvalRunRecord.model_validate(eval_run_raw)

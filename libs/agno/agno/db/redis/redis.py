@@ -11,11 +11,11 @@ from agno.db.redis.utils import (
     calculate_date_metrics,
     create_index_entries,
     deserialize_data,
-    deserialize_session,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
+    hydrate_session,
     remove_index_entries,
     serialize_data,
 )
@@ -421,7 +421,7 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting session: {e}")
             return False
 
-    def delete_sessions(self, session_ids: List[str]) -> bool:
+    def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from Redis.
 
         Args:
@@ -444,22 +444,22 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
 
-    def get_session_raw(
+    def get_session(
         self,
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Get a session as a raw dictionary.
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+        """Read a session from Redis.
 
         Args:
             session_id (str): The ID of the session to get.
             user_id (Optional[str]): The ID of the user to filter by.
             session_type (Optional[SessionType]): The type of session to filter by.
-            table (Optional[Any]): The table to get the session from.
 
         Returns:
-            Optional[Dict[str, Any]]: The session data if found, None otherwise.
+            Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
 
         Raises:
             Exception: If any error occurs while getting the session.
@@ -475,42 +475,16 @@ class RedisDb(BaseDb):
             if session_type is not None and data.get("session_type") != session_type:
                 return None
 
-            return deserialize_session(data)
-
-        except Exception as e:
-            log_debug(f"Exception reading session: {e}")
-            return None
-
-    def get_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        """Read a session from Redis.
-
-        Args:
-            session_id (str): The ID of the session to get.
-            user_id (Optional[str]): The ID of the user to filter by.
-            session_type (Optional[SessionType]): The type of session to filter by.
-
-        Returns:
-            Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session if found, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while getting the session.
-        """
-        try:
-            session_raw = self.get_session_raw(session_id=session_id, user_id=user_id, session_type=session_type)
-            if session_raw is None:
-                return None
+            session = hydrate_session(data)
+            if not deserialize:
+                return session
 
             if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(session_raw)
+                return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(session_raw)
+                return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW.value:
-                return WorkflowSession.from_dict(session_raw)
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_debug(f"Exception reading session: {e}")
@@ -669,7 +643,7 @@ class RedisDb(BaseDb):
                 return None
 
             # Return appropriate session object depending on session_type
-            session = deserialize_session(session_data)
+            session = hydrate_session(session_data)
             if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:

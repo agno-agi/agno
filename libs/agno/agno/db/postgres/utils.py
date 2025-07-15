@@ -24,11 +24,14 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
-def deserialize_session(session: dict) -> dict:
-    """Deserialize the given session dictionary.
+def hydrate_session(session: dict) -> dict:
+    """Convert nested dictionaries to their corresponding object types.
 
     Args:
-        session (dict): The session dictionary to deserialize.
+        session (dict): The session dictionary to hydrate.
+
+    Returns:
+        dict: The hydrated session dictionary.
     """
     if session.get("summary") is not None:
         session["summary"] = SessionSummary.from_dict(session["summary"])
