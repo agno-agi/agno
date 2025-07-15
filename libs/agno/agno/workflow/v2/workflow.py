@@ -640,7 +640,7 @@ class Workflow:
                                 output_audio.extend(step_output.audio or [])
 
                                 # Only yield StepOutputEvent for function executors, not for agents/teams
-                                if getattr(step, "executor_type", None) == "function":  # type: ignore[union-attr]
+                                if getattr(step, "executor_type", None) == "function":
                                     yield step_output_event
 
                                 # Break out of the step loop
@@ -656,7 +656,7 @@ class Workflow:
                             output_audio.extend(step_output.audio or [])
 
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
-                            if getattr(step, "executor_type", None) == "function":  # type: ignore[union-attr]
+                            if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
@@ -1012,7 +1012,7 @@ class Workflow:
                                 output_videos.extend(step_output.videos or [])
                                 output_audio.extend(step_output.audio or [])
 
-                                if getattr(step, "executor_type", None) == "function":  # type: ignore[union-attr]
+                                if getattr(step, "executor_type", None) == "function":
                                     yield step_output_event
 
                                 # Break out of the step loop
@@ -1028,7 +1028,7 @@ class Workflow:
                             output_audio.extend(step_output.audio or [])
 
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
-                            if getattr(step, "executor_type", None) == "function":  # type: ignore[union-attr]
+                            if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
