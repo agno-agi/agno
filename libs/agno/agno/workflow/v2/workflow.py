@@ -576,7 +576,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)  
+                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -808,7 +808,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -881,10 +881,10 @@ class Workflow:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content  
+                        workflow_run_response.content = last_output[-1].content
                     elif not isinstance(last_output, list):
                         # Single StepOutput
-                        workflow_run_response.content = last_output.content  
+                        workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
 
@@ -950,7 +950,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)  
+                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -1050,7 +1050,7 @@ class Workflow:
                     last_output = collected_step_outputs[-1]
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content  
+                        workflow_run_response.content = last_output[-1].content
                     elif not isinstance(last_output, list):
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
@@ -1385,8 +1385,11 @@ class Workflow:
                 }
             ]
 
+        if self.session_id is None:
+            raise ValueError("Session ID is required")
+
         return WorkflowSessionV2(
-            session_id=self.session_id,  # type: ignore
+            session_id=self.session_id,
             user_id=self.user_id,
             workflow_id=self.workflow_id,
             workflow_name=self.name,
