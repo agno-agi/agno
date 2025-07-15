@@ -1,4 +1,4 @@
-"""Simple example creating a session and using the AgentOS with a SessionManager to expose it"""
+"""Simple example creating a session and using the AgentOS with a SessionApp to expose it"""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
@@ -35,7 +35,6 @@ evaluation = AccuracyEval(
 
 # Setup the Agno API App
 agent_os = AgentOS(
-    name="Example App: Eval Agent",
     description="Example app for basic agent with eval capabilities",
     os_id="eval-demo",
     agents=[basic_agent],
@@ -54,4 +53,4 @@ if __name__ == "__main__":
     - http://localhost:8001/eval/{index}/eval-runs/performance
     - http://localhost:8001/eval/{index}/eval-runs/reliability
     """
-    agent_os.serve(app="eval_manager:app", reload=True)
+    agent_os.serve(app="eval_demo:app", reload=True)

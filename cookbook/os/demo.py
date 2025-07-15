@@ -1,4 +1,4 @@
-"""Simple example creating a session and using the AgentOS with a SessionManager to expose it"""
+"""Simple example creating a session and using the AgentOS with a SessionApp to expose it"""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
@@ -89,7 +89,6 @@ agent_2 = Agent(
 
 # Setup the Agno API App
 agent_os = AgentOS(
-    name="Demo App",
     description="Demo app for basic agent with session, knowledge, and memory capabilities",
     os_id="demo",
     agents=[agent_1, agent_2],

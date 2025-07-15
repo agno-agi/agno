@@ -6,13 +6,13 @@ from fastapi.routing import APIRouter
 
 from agno.db.schemas import MemoryRow
 from agno.memory import Memory
-from agno.os.managers.memory.schemas import (
+from agno.os.apps.memory.schemas import (
     DeleteMemoriesRequest,
     UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
 def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:

@@ -4,13 +4,13 @@ from typing import Optional
 from fastapi.routing import APIRouter
 
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.base import BaseManager
-from agno.os.managers.knowledge.router import attach_routes
+from agno.os.apps.base import BaseApp
+from agno.os.apps.knowledge.router import attach_routes
 
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeManager(BaseManager):
+class KnowledgeApp(BaseApp):
     type = "knowledge"
 
     router: APIRouter
@@ -21,7 +21,7 @@ class KnowledgeManager(BaseManager):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Knowledge Manager {index}"
+            self.name = f"Knowledge App {index}"
 
         self.router_prefix = f"/knowledge/{index}"
 

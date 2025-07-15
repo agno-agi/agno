@@ -4,13 +4,13 @@ from typing import Optional
 from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
-from agno.os.managers.base import BaseManager
-from agno.os.managers.session.router import attach_routes
+from agno.os.apps.base import BaseApp
+from agno.os.apps.session.router import attach_routes
 
 logger = logging.getLogger(__name__)
 
 
-class SessionManager(BaseManager):
+class SessionApp(BaseApp):
     type = "session"
 
     router: APIRouter
@@ -21,7 +21,7 @@ class SessionManager(BaseManager):
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
-            self.name = f"Session Manager {index}"
+            self.name = f"Session App {index}"
 
         self.router_prefix = f"/session/{index}"
 

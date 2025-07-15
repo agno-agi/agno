@@ -27,7 +27,6 @@ agent = Agent(
 
 # Setup the Agno API App
 agno_client = AgentOS(
-    name="Example App: Memory Agent",
     description="Example app for basic agent with memory capabilities",
     os_id="memory-demo",
     agents=[agent],
@@ -46,4 +45,4 @@ if __name__ == "__main__":
     - http://localhost:8001/memory/{id}/memories?agent_id=123
     - http://localhost:8001/memory/{id}/memories?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
-    agno_client.serve(app="memory_manager:app", reload=True)
+    agno_client.serve(app="memory_demo:app", reload=True)

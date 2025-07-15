@@ -1,4 +1,4 @@
-"""Simple example creating a session and using the AgentOS with a MetricsManager to expose it"""
+"""Simple example creating a session and using the AgentOS with a MetricsApp to expose it"""
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
@@ -29,8 +29,7 @@ basic_agent = Agent(
 
 # Setup the Agno API App
 agent_os = AgentOS(
-    name="Example App: Metrics",
-    description="Example app showcasing the MetricsManager",
+    description="Example app showcasing the MetricsApp",
     os_id="metrics-demo",
     agents=[basic_agent],
 )
@@ -45,4 +44,4 @@ if __name__ == "__main__":
     Now you can interact with your metrics using the API. Examples:
     - http://localhost:8001/metrics
     """
-    agent_os.serve(app="metrics_manager:app", reload=True)
+    agent_os.serve(app="metrics_demo:app", reload=True)

@@ -5,14 +5,14 @@ from fastapi.routing import APIRouter
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
-from agno.os.managers.base import BaseManager
-from agno.os.managers.eval.router import attach_routes
+from agno.os.apps.base import BaseApp
+from agno.os.apps.eval.router import attach_routes
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
 
 
-class EvalManager(BaseManager):
+class EvalApp(BaseApp):
     type = "eval"
 
     router: APIRouter
@@ -23,7 +23,7 @@ class EvalManager(BaseManager):
 
     def get_router(self, index: int, agents: List[Agent], teams: List[Team]) -> APIRouter:
         if not self.name:
-            self.name = f"Eval Manager {index}"
+            self.name = f"Eval App {index}"
 
         self.router_prefix = f"/eval/{index}"
 

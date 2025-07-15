@@ -5,7 +5,7 @@ from fastapi import HTTPException, Query
 from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
-from agno.os.managers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.apps.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
