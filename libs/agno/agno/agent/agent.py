@@ -4294,12 +4294,18 @@ class Agent:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = self.instructions(agent=self)
+                import inspect
+                signature = inspect.signature(self.instructions)
+                if "agent" in signature.parameters:
+                    _instructions = self.instructions(agent=self)
+                else:
+                    _instructions = self.instructions()
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
             elif isinstance(_instructions, list):
                 instructions.extend(_instructions)
+                
         # 3.1.1 Add instructions from the Model
         _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
         if _model_instructions is not None:
@@ -5415,7 +5421,7 @@ class Agent:
         session_metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 session_metrics += m.metrics
         return session_metrics
 
@@ -6644,53 +6650,6 @@ class Agent:
             )
 
         return run_data
-
-    def register_agent(self) -> None:
-        """Register this agent with Agno's platform."""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, create_agent
-
-        try:
-            # Ensure we have a valid session_id
-            if not self.session_id:
-                self.session_id = str(uuid4())
-
-            create_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_warning(f"Could not create Agent: {e}")
-
-    async def _aregister_agent(self) -> None:
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        from agno.api.agent import AgentCreate, acreate_agent
-
-        try:
-            await acreate_agent(
-                agent=AgentCreate(
-                    name=self.name,
-                    agent_id=self.agent_id,
-                    workflow_id=self.workflow_id,
-                    team_id=self.team_id,
-                    app_id=self.app_id,
-                    config=self.get_agent_config_dict(),
-                )
-            )
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
 
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_monitoring()
