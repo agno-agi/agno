@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Message
 from agno.run.base import RunStatus
 from agno.utils.log import log_error
 
@@ -407,7 +406,6 @@ class WorkflowRunResponse:
 
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
-    messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
 
     # Workflow-specific fields
@@ -448,7 +446,6 @@ class WorkflowRunResponse:
             if v is not None
             and k
             not in [
-                "messages",
                 "extra_data",
                 "images",
                 "videos",
@@ -462,9 +459,6 @@ class WorkflowRunResponse:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
-
-        if self.messages is not None:
-            _dict["messages"] = [m.to_dict() for m in self.messages]
 
         if self.extra_data is not None:
             _dict["extra_data"] = self.extra_data
@@ -514,9 +508,6 @@ class WorkflowRunResponse:
         # Import here to avoid circular import
         from agno.workflow.v2.step import StepOutput
 
-        messages = data.pop("messages", [])
-        messages = [Message.model_validate(message) for message in messages] if messages else None
-
         workflow_metrics_dict = data.pop("workflow_metrics", {})
         workflow_metrics = None
         if workflow_metrics_dict:
@@ -548,7 +539,6 @@ class WorkflowRunResponse:
         events = data.pop("events", [])
 
         return cls(
-            messages=messages,
             step_responses=parsed_step_responses,
             extra_data=extra_data,
             images=images,

@@ -4669,7 +4669,7 @@ class Agent:
                 files=files,
                 **kwargs,
             )
-        
+
         # Handle list messages by converting to string
         if isinstance(message, list):
             # Convert list to string (join with newlines if all elements are strings)
@@ -4677,7 +4677,7 @@ class Agent:
                 message_content = "\n".join(message)
             else:
                 message_content = str(message)
-            
+
             return Message(
                 role=self.user_message_role,
                 content=message_content,
