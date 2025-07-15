@@ -26,7 +26,7 @@ class SurrealDb(VectorDb):
         DEFINE TABLE IF NOT EXISTS {collection} SCHEMAFUL;
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
-        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object;
+        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} FLEXIBLE TYPE object;
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
@@ -198,7 +198,8 @@ class SurrealDb(VectorDb):
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
-            log_debug(f"Inserting document: {doc.name} ({doc.meta_data})")
+            log_info(f"===!!!!!!!!!!!! Inserting document filters: {filters}")  # TODO: remove
+            log_info(f"===!!!!!!!!!!!! Inserting document data: {data}")
             self.client.create(self.collection, data)
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -215,7 +216,6 @@ class SurrealDb(VectorDb):
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
-            log_debug(f"Upserting document: {doc.name} ({doc.meta_data})")
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
 

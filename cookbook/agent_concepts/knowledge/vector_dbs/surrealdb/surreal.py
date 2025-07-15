@@ -1,12 +1,11 @@
 # Run SurrealDB in a container before running this script
 # docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start --user root --pass root
 
-from surrealdb import Surreal
-
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.surrealdb import SurrealDb
+from surrealdb import Surreal
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"

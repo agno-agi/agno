@@ -25,7 +25,7 @@ class GCSKnowledgeBase(AgentKnowledge):
         if self.blob_name is not None:
             blobs_to_read.append(self.bucket.blob(self.blob_name))  # type: ignore
         elif self.prefix is not None:
-            blobs_to_read.extend(self.bucket.list_blobs(prefix=self.prefix))  # type: ignore 
+            blobs_to_read.extend(self.bucket.list_blobs(prefix=self.prefix))  # type: ignore
         else:
             blobs_to_read.extend(self.bucket.list_blobs())  # type: ignore
         return list(blobs_to_read)

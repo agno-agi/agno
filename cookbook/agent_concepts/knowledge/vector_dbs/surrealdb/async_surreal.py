@@ -3,12 +3,11 @@
 
 import asyncio
 
-from surrealdb import AsyncSurreal
-
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.surrealdb import SurrealDb
+from surrealdb import AsyncSurreal
 
 # SurrealDB connection parameters
 SURREALDB_URL = "ws://localhost:8000"
