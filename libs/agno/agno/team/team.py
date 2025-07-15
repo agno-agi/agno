@@ -479,7 +479,7 @@ class Team:
         self.full_team_session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict]] = None
+        self.run_input: Optional[Union[str, List, Dict, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[TeamRunResponse] = None
 

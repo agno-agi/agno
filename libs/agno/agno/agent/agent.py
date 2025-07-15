@@ -5,6 +5,7 @@ from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
+from tkinter import BaseWidget
 from typing import (
     Any,
     AsyncIterator,
@@ -546,7 +547,7 @@ class Agent:
         self.session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict, Message]] = None
+        self.run_input: Optional[Union[str, List, Dict, Message, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[RunResponse] = None
 
@@ -1041,7 +1042,7 @@ class Agent:
                     elif isinstance(message, Message):
                         self.run_input = message.to_dict()
                     else:
-                        self.run_input = message # type: ignore
+                        self.run_input = message 
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
@@ -1430,7 +1431,7 @@ class Agent:
                     elif isinstance(message, Message):
                         self.run_input = message.to_dict()
                     else:
-                        self.run_input = message # type: ignore
+                        self.run_input = message
                 elif messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
