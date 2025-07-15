@@ -46,7 +46,7 @@ class JsonStorage(Storage):
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(data)
                 elif self.mode == "workflow_v2":
-                    return WorkflowSessionV2.from_dict(data)  # type: ignore[return-value]
+                    return WorkflowSessionV2.from_dict(data) 
         except FileNotFoundError:
             return None
 
@@ -115,7 +115,7 @@ class JsonStorage(Storage):
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             _session = WorkflowSession.from_dict(data)
                         elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
-                            _session = WorkflowSessionV2.from_dict(data)  # type: ignore[assignment]
+                            _session = WorkflowSessionV2.from_dict(data) 
                     if _session:
                         sessions.append(_session)
                 else:
@@ -127,7 +127,7 @@ class JsonStorage(Storage):
                     elif self.mode == "workflow":
                         _session = WorkflowSession.from_dict(data)
                     elif self.mode == "workflow_v2":
-                        _session = WorkflowSessionV2.from_dict(data)  # type: ignore[assignment]
+                        _session = WorkflowSessionV2.from_dict(data) 
                     if _session:
                         sessions.append(_session)
         return sessions
@@ -193,7 +193,7 @@ class JsonStorage(Storage):
             elif self.mode == "workflow":
                 session = WorkflowSession.from_dict(data)
             elif self.mode == "workflow_v2":
-                session = WorkflowSessionV2.from_dict(data)  # type: ignore[assignment]
+                session = WorkflowSessionV2.from_dict(data) 
             if session is not None:
                 sessions.append(session)
 

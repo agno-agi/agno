@@ -106,7 +106,7 @@ class GCSJsonStorage(JsonStorage):
         elif self.mode == "workflow":
             return WorkflowSession.from_dict(data)
         elif self.mode == "workflow_v2":
-            return WorkflowSessionV2.from_dict(data)  # type: ignore
+            return WorkflowSessionV2.from_dict(data)
         return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
@@ -140,7 +140,7 @@ class GCSJsonStorage(JsonStorage):
                     elif self.mode == "workflow":
                         session = WorkflowSession.from_dict(data)
                     elif self.mode == "workflow_v2":
-                        session = WorkflowSessionV2.from_dict(data)  # type: ignore
+                        session = WorkflowSessionV2.from_dict(data)
                     if session is not None:
                         sessions.append(session)
                 except Exception as e:
@@ -205,7 +205,7 @@ class GCSJsonStorage(JsonStorage):
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(data)
                 elif self.mode == "workflow_v2":
-                    session = WorkflowSessionV2.from_dict(data)  # type: ignore
+                    session = WorkflowSessionV2.from_dict(data)
                 if session is not None:
                     sessions.append(session)
 
