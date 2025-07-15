@@ -8,8 +8,65 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 
-# TODO: some serialization/deserialization is here because the schema was wrong.
+# TODO:
+# Some serialization/deserialization is here because the schema was wrong.
 # Confirm what is needed and what not and clean everything
+
+
+def serialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize JSON fields in session data for DynamoDB storage."""
+    serialized = session_data.copy()
+
+    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
+
+    for field in json_fields:
+        if field in serialized and serialized[field] is not None:
+            if isinstance(serialized[field], (dict, list)):
+                serialized[field] = json.dumps(serialized[field])
+
+    return serialized
+
+
+def deserialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize JSON fields in session data from DynamoDB storage."""
+    deserialized = session_data.copy()
+
+    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
+
+    for field in json_fields:
+        if field in deserialized and deserialized[field] is not None:
+            if isinstance(deserialized[field], str):
+                try:
+                    deserialized[field] = json.loads(deserialized[field])
+                except json.JSONDecodeError:
+                    log_error(f"Failed to deserialize {field} field")
+                    deserialized[field] = None
+
+    return deserialized
+
+
+def deserialize_session(session_data: Dict[str, Any]) -> Optional[Session]:
+    """Deserialize session data from DynamoDB format to Session object."""
+    try:
+        # Deserialize JSON fields
+        session_data = deserialize_session_json_fields(session_data)
+
+        # Convert timestamp fields
+        for field in ["created_at", "updated_at"]:
+            if field in session_data and session_data[field] is not None:
+                if isinstance(session_data[field], (int, float)):
+                    session_data[field] = datetime.fromtimestamp(session_data[field], tz=timezone.utc)
+                elif isinstance(session_data[field], str):
+                    try:
+                        session_data[field] = datetime.fromisoformat(session_data[field])
+                    except ValueError:
+                        session_data[field] = datetime.fromtimestamp(float(session_data[field]), tz=timezone.utc)
+
+        return session_data
+
+    except Exception as e:
+        log_error(f"Failed to deserialize session: {e}")
+        return None
 
 
 def serialize_to_dynamodb_item(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -160,6 +217,9 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
     )
 
 
+# -- DB Utils --
+
+
 def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[str, Any]) -> bool:
     """Create DynamoDB table if it doesn't exist."""
     try:
@@ -215,72 +275,7 @@ def apply_sorting(
     return sorted(items, key=get_sort_key, reverse=reverse)
 
 
-def serialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize JSON fields in session data for DynamoDB storage."""
-    serialized = session_data.copy()
-
-    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-
-    for field in json_fields:
-        if field in serialized and serialized[field] is not None:
-            if isinstance(serialized[field], (dict, list)):
-                serialized[field] = json.dumps(serialized[field])
-
-    return serialized
-
-
-def deserialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize JSON fields in session data from DynamoDB storage."""
-    deserialized = session_data.copy()
-
-    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-
-    for field in json_fields:
-        if field in deserialized and deserialized[field] is not None:
-            if isinstance(deserialized[field], str):
-                try:
-                    deserialized[field] = json.loads(deserialized[field])
-                except json.JSONDecodeError:
-                    log_error(f"Failed to deserialize {field} field")
-                    deserialized[field] = None
-
-    return deserialized
-
-
-def deserialize_session(session_data: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        from agno.session import AgentSession, TeamSession, WorkflowSession
-
-        # Deserialize JSON fields
-        session_data = deserialize_session_json_fields(session_data)
-
-        # Convert timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in session_data and session_data[field] is not None:
-                if isinstance(session_data[field], (int, float)):
-                    session_data[field] = datetime.fromtimestamp(session_data[field], tz=timezone.utc)
-                elif isinstance(session_data[field], str):
-                    try:
-                        session_data[field] = datetime.fromisoformat(session_data[field])
-                    except ValueError:
-                        session_data[field] = datetime.fromtimestamp(float(session_data[field]), tz=timezone.utc)
-
-        session_type = session_data.get("session_type")
-
-        if session_type == "agent":
-            return AgentSession.model_validate(session_data)
-        elif session_type == "team":
-            return TeamSession.model_validate(session_data)
-        elif session_type == "workflow":
-            return WorkflowSession.model_validate(session_data)
-        else:
-            log_error(f"Unknown session type: {session_type}")
-            return None
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
-        return None
+# -- Metrics Utils --
 
 
 def fetch_all_sessions_data(

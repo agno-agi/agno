@@ -1,7 +1,7 @@
 import time
 from datetime import date
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.dynamo.schemas import get_table_schema_definition
@@ -23,13 +23,17 @@ from agno.db.dynamo.utils import (
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.session import Session
+from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error
 
 try:
     import boto3
 except ImportError:
     raise ImportError("`boto3` not installed. Please install it using `pip install boto3`")
+
+
+# DynamoDB batch_write_item has a hard limit of 25 items per request
+DYNAMO_BATCH_SIZE_LIMIT = 25
 
 
 class DynamoDb(BaseDb):
@@ -136,34 +140,50 @@ class DynamoDb(BaseDb):
 
         Args:
             session_ids: List of session IDs to delete
+
+        Raises:
+            Exception: If any error occurs while deleting the sessions.
         """
         if not session_ids or not self.session_table_name:
             return
 
         try:
-            # DynamoDB batch_write_item has a hard limit of 25 items per request
-            batch_size = 25
-
-            for i in range(0, len(session_ids), batch_size):
-                batch = session_ids[i : i + batch_size]
+            # Proccess the items to delete in batches of the max allowed size or less
+            for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
                 delete_requests = []
 
                 for session_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
 
-                # Execute batch delete
                 if delete_requests:
                     self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete sessions: {e}")
 
-    def get_session_raw(
-        self, session_id: str, session_type: Optional[SessionType] = None, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        if not self.session_table_name:
-            return None
+    def get_session(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Get a session from the database as a Session object.
 
+        Args:
+            session_id (str): The ID of the session to get.
+            session_type (Optional[SessionType]): The type of session to get.
+            user_id (Optional[str]): The ID of the user to get the session for.
+            deserialize (Optional[bool]): Whether to deserialize the session.
+
+        Returns:
+            Optional[Session]: The session data as a Session object.
+
+        Raises:
+            Exception: If any error occurs while getting the session.
+        """
         try:
             response = self.client.get_item(
                 TableName=self.session_table_name,
@@ -172,26 +192,33 @@ class DynamoDb(BaseDb):
 
             item = response.get("Item")
             if item:
-                session_data = deserialize_from_dynamodb_item(item)
-                # Filter by session_type if provided
-                if session_type and session_data.get("session_type") != session_type.value:
+                session_raw = deserialize_from_dynamodb_item(item)
+
+                if session_type and session_raw.get("session_type") != session_type.value:
                     return None
-                return session_data
+                if user_id and session_raw.get("user_id") != user_id:
+                    return None
+
+                if not session_raw:
+                    return None
+
+                if not deserialize:
+                    return deserialize_session(session_raw)
+
+                if session_type == SessionType.AGENT:
+                    return AgentSession.from_dict(session_raw)
+                elif session_type == SessionType.TEAM:
+                    return TeamSession.from_dict(session_raw)
+                elif session_type == SessionType.WORKFLOW:
+                    return WorkflowSession.from_dict(session_raw)
+
             return None
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
             return None
 
-    def get_session(
-        self, session_id: str, session_type: Optional[SessionType] = None, user_id: Optional[str] = None
-    ) -> Optional[Session]:
-        session_data = self.get_session_raw(session_id, session_type, user_id)
-        if session_data:
-            return deserialize_session(session_data)
-        return None
-
-    def get_sessions_raw(
+    def get_sessions(
         self,
         session_type: SessionType,
         user_id: Optional[str] = None,
@@ -201,12 +228,12 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        if not self.session_table_name:
-            return [], 0
-
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         try:
-            # Fetch all sessions data
+            if not self.session_table_name:
+                raise Exception("Sessions table not found")
+
             items = fetch_all_sessions_data(
                 self.client,
                 self.session_table_name,
@@ -232,40 +259,41 @@ class DynamoDb(BaseDb):
             # Apply pagination
             sessions_data = apply_pagination(sessions_data, limit, page)
 
-            return sessions_data, total_count
+            if not deserialize:
+                return sessions_data, total_count
+
+            sessions = []
+            for session_data in sessions_data:
+                session = deserialize_session(session_data)
+                if session:
+                    sessions.append(session)
+
+            return sessions
 
         except Exception as e:
             log_error(f"Failed to get sessions: {e}")
-            return [], 0
+            return []
 
-    def get_sessions(
-        self,
-        session_type: SessionType,
-        user_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> List[Session]:
-        sessions_data, _ = self.get_sessions_raw(
-            session_type, user_id, component_id, session_name, limit, page, sort_by, sort_order
-        )
+    def rename_session(
+        self, session_id: str, session_name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Rename a session in the database.
 
-        sessions = []
-        for session_data in sessions_data:
-            session = deserialize_session(session_data)
-            if session:
-                sessions.append(session)
+        Args:
+            session_id: The ID of the session to rename.
+            session_name: The new name for the session.
 
-        return sessions
+        Returns:
+            Optional[Session]: The renamed session if successful, None otherwise.
 
-    def rename_session(self, session_id: str, session_name: str) -> Optional[Session]:
-        if not self.session_table_name:
-            return None
-
+        Raises:
+            Exception: If any error occurs while renaming the session.
+        """
         try:
+            if not self.session_table_name:
+                raise Exception("Sessions table not found")
+
             response = self.client.update_item(
                 TableName=self.session_table_name,
                 Key={"session_id": {"S": session_id}},
@@ -277,14 +305,35 @@ class DynamoDb(BaseDb):
             item = response.get("Attributes")
             if item:
                 session_data = deserialize_from_dynamodb_item(item)
-                return deserialize_session(session_data)
+                if not deserialize:
+                    return session_data
+
+                session = deserialize_session(session_data)
+                return session
+
             return None
 
         except Exception as e:
             log_error(f"Failed to rename session {session_id}: {e}")
             return None
 
-    def upsert_session(self, session: Session) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, session_type: SessionType, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Upsert a session into the database.
+
+        Args:
+            session (Session): The session to upsert.
+            session_type (SessionType): The type of session to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the session.
+
+        Returns:
+            Optional[Session]: The upserted session if successful, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while upserting the session.
+        """
         if not self.session_table_name:
             return None
 
@@ -292,10 +341,17 @@ class DynamoDb(BaseDb):
             serialized_session = serialize_session_json_fields(session.model_dump())
             item = serialize_to_dynamodb_item(serialized_session)
 
-            # TODO: fix
             self.client.put_item(TableName=self.session_table_name, Item=item)
 
-            return session
+            if not deserialize:
+                return serialized_session
+
+            if session_type == SessionType.AGENT:
+                return AgentSession.from_dict(serialized_session)
+            elif session_type == SessionType.TEAM:
+                return TeamSession.from_dict(serialized_session)
+            elif session_type == SessionType.WORKFLOW:
+                return WorkflowSession.from_dict(serialized_session)
 
         except Exception as e:
             log_error(f"Failed to upsert session {session.session_id}: {e}")
@@ -304,9 +360,15 @@ class DynamoDb(BaseDb):
     # --- User Memory ---
 
     def delete_user_memory(self, memory_id: str) -> None:
-        if not self.user_memory_table_name:
-            return
+        """
+        Delete a user memory from the database.
 
+        Args:
+            memory_id: The ID of the memory to delete.
+
+        Raises:
+            Exception: If any error occurs while deleting the user memory.
+        """
         try:
             self.client.delete_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
             log_debug(f"Deleted user memory {memory_id}")
@@ -314,16 +376,20 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to delete user memory {memory_id}: {e}")
 
-    # TODO: batch
     def delete_user_memories(self, memory_ids: List[str]) -> None:
-        if not memory_ids or not self.user_memory_table_name:
-            return
+        """
+        Delete user memories from the database in batches.
+
+        Args:
+            memory_ids: List of memory IDs to delete
+
+        Raises:
+            Exception: If any error occurs while deleting the user memories.
+        """
 
         try:
-            batch_size = 25
-
-            for i in range(0, len(memory_ids), batch_size):
-                batch = memory_ids[i : i + batch_size]
+            for i in range(0, len(memory_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = memory_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
                 delete_requests = []
                 for memory_id in batch:
@@ -339,8 +405,18 @@ class DynamoDb(BaseDb):
         return []
 
     def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
-        if not self.user_memory_table_name:
-            return None
+        """
+        Get a user memory from the database as a raw dictionary.
+
+        Args:
+            memory_id: The ID of the memory to get.
+
+        Returns:
+            Optional[Dict[str, Any]]: The user memory data if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the user memory.
+        """
 
         try:
             response = self.client.get_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
@@ -354,23 +430,39 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get user memory {memory_id}: {e}")
             return None
 
-    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
-        if not self.user_memory_table_name:
-            return None
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """
+        Get a user memory from the database as a MemoryRow object.
 
+        Args:
+            memory_id: The ID of the memory to get.
+
+        Returns:
+            Optional[MemoryRow]: The user memory data if found, None otherwise.
+
+        Raises:
+            Exception: If any error occurs while getting the user memory.
+        """
         try:
             response = self.client.get_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_memory_row(item)
-            return None
+            if not item:
+                return None
+
+            if not deserialize:
+                return item
+
+            return deserialize_memory_row(item)
 
         except Exception as e:
             log_error(f"Failed to get user memory {memory_id}: {e}")
             return None
 
-    def get_user_memories_raw(
+    # TODO: test all filtering
+    def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -382,17 +474,62 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        if not self.user_memory_table_name:
-            return [], 0
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[MemoryRow], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
+        """
+        Get user memories from the database as a list of MemoryRow objects.
 
+        Args:
+            user_id: The ID of the user to get the memories for.
+            agent_id: The ID of the agent to get the memories for.
+            team_id: The ID of the team to get the memories for.
+            workflow_id: The ID of the workflow to get the memories for.
+            topics: The topics to filter the memories by.
+            search_content: The content to search for in the memories.
+            limit: The maximum number of memories to return.
+            page: The page number to return.
+            sort_by: The field to sort the memories by.
+            sort_order: The order to sort the memories by.
+            deserialize: Whether to deserialize the memories.
+
+        Returns:
+            Union[List[MemoryRow], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]: The user memories data.
+
+        Raises:
+            Exception: If any error occurs while getting the user memories.
+        """
         try:
-            # Build scan parameters
             scan_kwargs = {"TableName": self.user_memory_table_name}
 
             if user_id:
                 scan_kwargs["FilterExpression"] = "user_id = :user_id"
                 scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+
+            if agent_id:
+                scan_kwargs["FilterExpression"] = "agent_id = :agent_id"
+                scan_kwargs["ExpressionAttributeValues"] = {":agent_id": {"S": agent_id}}
+
+            if team_id:
+                scan_kwargs["FilterExpression"] = "team_id = :team_id"
+                scan_kwargs["ExpressionAttributeValues"] = {":team_id": {"S": team_id}}
+
+            if workflow_id:
+                scan_kwargs["FilterExpression"] = "workflow_id = :workflow_id"
+                scan_kwargs["ExpressionAttributeValues"] = {":workflow_id": {"S": workflow_id}}
+
+            if topics:
+                scan_kwargs["FilterExpression"] = "topics = :topics"
+                scan_kwargs["ExpressionAttributeValues"] = {":topics": {"S": topics}}
+
+            if search_content:
+                scan_kwargs["FilterExpression"] = "content = :content"
+                scan_kwargs["ExpressionAttributeValues"] = {":content": {"S": search_content}}
+
+            if limit:
+                scan_kwargs["Limit"] = str(limit)
+
+            if page:
+                scan_kwargs["ExclusiveStartKey"] = {"memory_id": {"S": f"memory_{page}"}}
 
             # Execute scan
             response = self.client.scan(**scan_kwargs)
@@ -414,44 +551,25 @@ class DynamoDb(BaseDb):
             # Apply sorting
             memories_data = apply_sorting(memories_data, sort_by, sort_order)
 
-            # Get total count before pagination
-            total_count = len(memories_data)
-
             # Apply pagination
             memories_data = apply_pagination(memories_data, limit, page)
 
-            return memories_data, total_count
+            if not deserialize:
+                return memories_data, len(memories_data)
+
+            memories = []
+            for memory_data in memories_data:
+                try:
+                    memory = MemoryRow.model_validate(memory_data)
+                    memories.append(memory)
+                except Exception as e:
+                    log_error(f"Failed to deserialize memory: {e}")
+
+            return memories
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
-            return [], 0
-
-    def get_user_memories(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        search_content: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> List[MemoryRow]:
-        memories_data, _ = self.get_user_memories_raw(
-            user_id, agent_id, team_id, workflow_id, topics, search_content, limit, page, sort_by, sort_order
-        )
-
-        memories = []
-        for memory_data in memories_data:
-            try:
-                memory = MemoryRow.model_validate(memory_data)
-                memories.append(memory)
-            except Exception as e:
-                log_error(f"Failed to deserialize memory: {e}")
-
-        return memories
+            return [] if deserialize else ([], 0)
 
     # TODO:
     def get_user_memory_stats(
