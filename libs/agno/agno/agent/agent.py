@@ -4043,7 +4043,7 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:
+        if hasattr(session, "memory") and session.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 try:
                     if "runs" in session.memory:
