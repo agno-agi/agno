@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date
 from os import getenv
@@ -14,8 +15,8 @@ from agno.db.dynamo.utils import (
     deserialize_from_dynamodb_item,
     deserialize_memory_row,
     deserialize_session,
-    fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
+    hydrate_session,
     serialize_memory_row,
     serialize_session_json_fields,
     serialize_to_dynamo_item,
@@ -260,15 +261,16 @@ class DynamoDb(BaseDb):
                 if not session_raw:
                     return None
 
+                session = hydrate_session(session_raw)
                 if not deserialize:
-                    return deserialize_session(session_raw)
+                    return session
 
                 if session_type == SessionType.AGENT:
-                    return AgentSession.from_dict(session_raw)
+                    return AgentSession.from_dict(session)
                 elif session_type == SessionType.TEAM:
-                    return TeamSession.from_dict(session_raw)
+                    return TeamSession.from_dict(session)
                 elif session_type == SessionType.WORKFLOW:
-                    return WorkflowSession.from_dict(session_raw)
+                    return WorkflowSession.from_dict(session)
 
             return None
 
@@ -291,14 +293,75 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("sessions")
 
-            items = fetch_all_sessions_data(
-                self.client,
-                table_name,
-                session_type.value,
-                user_id=user_id,
-                component_id=component_id,
-                session_name=session_name,
-            )
+            # Build filter expression for additional filters
+            filter_expression = None
+            expression_attribute_names = {}
+            expression_attribute_values = {":session_type": {"S": session_type.value}}
+
+            if user_id:
+                filter_expression = "#user_id = :user_id"
+                expression_attribute_names["#user_id"] = "user_id"
+                expression_attribute_values[":user_id"] = {"S": user_id}
+
+            if component_id:
+                # Map component_id to the appropriate field based on session type
+                if session_type == SessionType.AGENT:
+                    component_filter = "#agent_id = :component_id"
+                    expression_attribute_names["#agent_id"] = "agent_id"
+                elif session_type == SessionType.TEAM:
+                    component_filter = "#team_id = :component_id"
+                    expression_attribute_names["#team_id"] = "team_id"
+                elif session_type == SessionType.WORKFLOW:
+                    component_filter = "#workflow_id = :component_id"
+                    expression_attribute_names["#workflow_id"] = "workflow_id"
+                else:
+                    component_filter = None
+
+                if component_filter:
+                    expression_attribute_values[":component_id"] = {"S": component_id}
+                    if filter_expression:
+                        filter_expression += f" AND {component_filter}"
+                    else:
+                        filter_expression = component_filter
+
+            if session_name:
+                name_filter = "#session_name = :session_name"
+                expression_attribute_names["#session_name"] = "session_name"
+                expression_attribute_values[":session_name"] = {"S": session_name}
+                if filter_expression:
+                    filter_expression += f" AND {name_filter}"
+                else:
+                    filter_expression = name_filter
+
+            # Use GSI query for session_type
+            query_kwargs = {
+                "TableName": table_name,
+                "IndexName": "session_type-created_at-index",
+                "KeyConditionExpression": "session_type = :session_type",
+                "ExpressionAttributeValues": expression_attribute_values,
+            }
+            if filter_expression:
+                query_kwargs["FilterExpression"] = filter_expression
+            if expression_attribute_names:
+                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            # Apply sorting
+            if sort_by == "created_at":
+                query_kwargs["ScanIndexForward"] = sort_order != "desc"
+
+            # Apply limit at DynamoDB level
+            if limit and not page:
+                query_kwargs["Limit"] = limit
+
+            items = []
+            response = self.client.query(**query_kwargs)
+            items.extend(response.get("Items", []))
+
+            # Handle pagination
+            while "LastEvaluatedKey" in response:
+                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                response = self.client.query(**query_kwargs)
+                items.extend(response.get("Items", []))
 
             # Convert DynamoDB items to session data
             sessions_data = []
@@ -307,14 +370,16 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
-            # Apply sorting
-            sessions_data = apply_sorting(sessions_data, sort_by, sort_order)
+            # Apply in-memory sorting for fields not supported by DynamoDB
+            if sort_by and sort_by != "created_at":
+                sessions_data = apply_sorting(sessions_data, sort_by, sort_order)
 
             # Get total count before pagination
             total_count = len(sessions_data)
 
             # Apply pagination
-            sessions_data = apply_pagination(sessions_data, limit, page)
+            if page:
+                sessions_data = apply_pagination(sessions_data, limit, page)
 
             if not deserialize:
                 return sessions_data, total_count
@@ -332,13 +397,14 @@ class DynamoDb(BaseDb):
             return []
 
     def rename_session(
-        self, session_id: str, session_name: str, deserialize: Optional[bool] = True
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
 
         Args:
             session_id: The ID of the session to rename.
+            session_type: The type of session to rename.
             session_name: The new name for the session.
 
         Returns:
@@ -351,24 +417,45 @@ class DynamoDb(BaseDb):
             if not self.session_table_name:
                 raise Exception("Sessions table not found")
 
+            # Get current session_data
+            get_response = self.client.get_item(
+                TableName=self.session_table_name,
+                Key={"session_id": {"S": session_id}},
+            )
+            current_item = get_response.get("Item")
+            if not current_item:
+                return None
+
+            # Update session_data with the new session_name
+            session_data = deserialize_from_dynamodb_item(current_item).get("session_data", {})
+            session_data["session_name"] = session_name
             response = self.client.update_item(
                 TableName=self.session_table_name,
                 Key={"session_id": {"S": session_id}},
-                UpdateExpression="SET session_name = :name, updated_at = :updated_at",
-                ExpressionAttributeValues={":name": {"S": session_name}, ":updated_at": {"N": str(int(time.time()))}},
+                UpdateExpression="SET session_data = :session_data, updated_at = :updated_at",
+                ConditionExpression="session_type = :session_type",
+                ExpressionAttributeValues={
+                    ":session_data": {"S": json.dumps(session_data)},
+                    ":session_type": {"S": session_type.value},
+                    ":updated_at": {"N": str(int(time.time()))},
+                },
                 ReturnValues="ALL_NEW",
             )
-
             item = response.get("Attributes")
-            if item:
-                session_data = deserialize_from_dynamodb_item(item)
-                if not deserialize:
-                    return session_data
+            if not item:
+                return None
 
-                session = deserialize_session(session_data)
+            session_data = deserialize_from_dynamodb_item(item)
+            session = hydrate_session(session_data)
+            if not deserialize:
                 return session
 
-            return None
+            if session_type == SessionType.AGENT:
+                return AgentSession.from_dict(session)
+            elif session_type == SessionType.TEAM:
+                return TeamSession.from_dict(session)
+            elif session_type == SessionType.WORKFLOW:
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_error(f"Failed to rename session {session_id}: {e}")
@@ -382,7 +469,6 @@ class DynamoDb(BaseDb):
 
         Args:
             session (Session): The session to upsert.
-            session_type (SessionType): The type of session to upsert.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
         Returns:
@@ -394,6 +480,15 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("sessions")
             serialized_session = serialize_session_json_fields(session.to_dict())
+
+            # Add session_type field based on session instance type
+            if isinstance(session, AgentSession):
+                serialized_session["session_type"] = SessionType.AGENT.value
+            elif isinstance(session, TeamSession):
+                serialized_session["session_type"] = SessionType.TEAM.value
+            elif isinstance(session, WorkflowSession):
+                serialized_session["session_type"] = SessionType.WORKFLOW.value
+
             item = serialize_to_dynamo_item(serialized_session)
 
             self.client.put_item(TableName=table_name, Item=item)

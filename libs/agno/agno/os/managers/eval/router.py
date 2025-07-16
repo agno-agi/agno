@@ -55,17 +55,16 @@ def attach_routes(
             workflow_id=workflow_id,
             model_id=model_id,
             eval_type=eval_types,
-            filter_type=filter_type,
             deserialize=False,
         )
 
         return PaginatedResponse(
-            data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],
+            data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 

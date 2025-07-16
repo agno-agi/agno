@@ -2,10 +2,14 @@ import json
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from agno.db.base import SessionType
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
 from agno.session import Session
+from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info
 
 # TODO:
@@ -119,7 +123,7 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def serialize_memory_row(memory: MemoryRow) -> Dict[str, Any]:
-    return serialize_to_dynamodb_item(
+    return serialize_to_dynamo_item(
         {
             "memory_id": memory.id,
             "user_id": memory.user_id,
@@ -154,7 +158,7 @@ def deserialize_memory_row(item: Dict[str, Any]) -> MemoryRow:
 
 def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
     """Convert KnowledgeRow to DynamoDB item format."""
-    return serialize_to_dynamodb_item(
+    return serialize_to_dynamo_item(
         {
             "id": knowledge.id,
             "name": knowledge.name,
@@ -191,7 +195,7 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
 
 def serialize_eval_record(eval_record: EvalRunRecord) -> Dict[str, Any]:
     """Convert EvalRunRecord to DynamoDB item format."""
-    return serialize_to_dynamodb_item(
+    return serialize_to_dynamo_item(
         {
             "run_id": eval_record.run_id,
             "eval_type": eval_record.eval_type,
@@ -217,13 +221,27 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
         data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
     if "updated_at" in data and data["updated_at"]:
         data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
-    return EvalRunRecord(
-        run_id=data["run_id"],
-        eval_type=data["eval_type"],
-        eval_data=data["eval_data"],
-        created_at=data.get("created_at"),
-        updated_at=data.get("updated_at"),
-    )
+    return EvalRunRecord(run_id=data["run_id"], eval_type=data["eval_type"], eval_data=data["eval_data"])
+
+
+def hydrate_session(session: dict) -> dict:
+    """Convert nested dictionaries to their corresponding object types.
+
+    Args:
+        session (dict): The session dictionary to hydrate.
+
+    Returns:
+        dict: The hydrated session dictionary.
+    """
+    if session.get("summary") is not None:
+        session["summary"] = SessionSummary.from_dict(session["summary"])
+    if session.get("runs") is not None:
+        if session["session_type"] == SessionType.AGENT:
+            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
+        elif session["session_type"] == SessionType.TEAM:
+            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+
+    return session
 
 
 # -- DB Utils --

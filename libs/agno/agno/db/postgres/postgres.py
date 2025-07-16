@@ -511,6 +511,7 @@ class PostgresDb(BaseDb):
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
+                    .where(table.c.session_type == session_type.value)
                     .values(
                         session_data=func.cast(
                             func.jsonb_set(

@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.db.schemas import MemoryRow
-from agno.db.schemas.evals import EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
 
@@ -199,6 +199,7 @@ class BaseDb(ABC):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
