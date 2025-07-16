@@ -5,15 +5,15 @@ import nest_asyncio
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
 from agno.utils.log import logger
-from agno.utils.streamlit import (
+from streamlit_utils import (
     COMMON_CSS,
     add_message,
     display_tool_calls,
     export_chat_history,
+    knowledge_base_info_widget,
     restart_agent_session,
     session_selector_widget,
 )
-from utils import knowledge_base_info_widget
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -73,9 +73,8 @@ def main():
         or st.session_state["agent"] is None
         or st.session_state.get("current_model") != model_id
     ):
-        session_id = st.session_state.get("session_id")
         agentic_rag_agent = get_agentic_rag_agent(
-            model_id=model_id, session_id=session_id
+            model_id=model_id, session_id=st.session_state.get("session_id")
         )
 
         st.session_state["agent"] = agentic_rag_agent
@@ -89,7 +88,6 @@ def main():
     if agentic_rag_agent.session_id:
         st.session_state["session_id"] = agentic_rag_agent.session_id
 
-    # Initialize messages if needed (streamlit utilities will populate them)
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -216,75 +214,17 @@ def main():
     for message in st.session_state["messages"]:
         if message["role"] in ["user", "assistant"]:
             content = message["content"]
-            if content is not None:
-                with st.chat_message(message["role"]):
-                    if "tool_calls" in message and message["tool_calls"]:
-                        # Try to get tool executions with results from agent session
-                        tool_executions_with_results = []
-                        
-                        # Get tool executions from the agent's session runs
-                        if hasattr(agentic_rag_agent, 'agent_session') and agentic_rag_agent.agent_session and agentic_rag_agent.agent_session.runs:
-                            for run in agentic_rag_agent.agent_session.runs:
-                                if hasattr(run, 'tools') and run.tools:
-                                    for tool_exec in run.tools:
-                                        if hasattr(tool_exec, 'tool_name') and hasattr(tool_exec, 'tool_args') and hasattr(tool_exec, 'result'):
-                                            # Try to parse result as JSON if it's a string
-                                            result = tool_exec.result
-                                            if isinstance(result, str):
-                                                try:
-                                                    import json
-                                                    result = json.loads(result)
-                                                except (json.JSONDecodeError, TypeError):
-                                                    # Keep as string if not valid JSON
-                                                    pass
-                                            
-                                            tool_executions_with_results.append({
-                                                "tool_name": tool_exec.tool_name,
-                                                "tool_args": tool_exec.tool_args,
-                                                "result": result
-                                            })
-                        
-                        # If we found tool executions with results, use them
-                        if tool_executions_with_results:
-                            display_tool_calls(st.empty(), tool_executions_with_results)
-                        else:
-                            # Fallback: Convert tool calls to display format if needed
-                            formatted_tools = []
-                            for tool in message["tool_calls"]:
-                                if isinstance(tool, dict):
-                                    # Check if it's already in display format
-                                    if "tool_name" in tool:
-                                        formatted_tools.append(tool)
-                                    # Convert from OpenAI format
-                                    elif "function" in tool and "name" in tool.get("function", {}):
-                                        import json
-                                        function_data = tool["function"]
-                                        tool_name = function_data.get("name", "Unknown")
-                                        
-                                        tool_args = {}
-                                        try:
-                                            if "arguments" in function_data:
-                                                tool_args = json.loads(function_data["arguments"]) if isinstance(function_data["arguments"], str) else function_data["arguments"]
-                                        except json.JSONDecodeError:
-                                            tool_args = {"raw": function_data.get("arguments", "")}
-                                        
-                                        display_tool = {
-                                            "tool_name": tool_name,
-                                            "tool_args": tool_args,
-                                            "result": "Tool result not available in session history",
-                                        }
-                                        formatted_tools.append(display_tool)
-                                    else:
-                                        # Unknown format, try to display as-is
-                                        formatted_tools.append(tool)
-                                else:
-                                    formatted_tools.append(tool)
-                            
-                            display_tool_calls(st.empty(), formatted_tools)
-                    else:
-                        if message["role"] == "assistant":
-                            pass
+            with st.chat_message(message["role"]):
+                # Display tool calls first if they exist
+                if "tool_calls" in message and message["tool_calls"]:
+                    display_tool_calls(st.container(), message["tool_calls"])
 
+                # Display content if it exists and is not "None"
+                if (
+                    content is not None
+                    and str(content).strip()
+                    and str(content).strip().lower() != "none"
+                ):
                     st.markdown(content)
 
     ####################################################################
