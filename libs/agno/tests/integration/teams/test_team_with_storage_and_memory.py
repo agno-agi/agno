@@ -310,7 +310,7 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     # Define user and session IDs
     user_id = "user_1@example.com"
     session_id = "session_123"
-    
+
     route_team.mode = "coordinate"
     route_team.members = [
         Agent(
