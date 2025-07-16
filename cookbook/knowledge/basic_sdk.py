@@ -4,6 +4,7 @@ from agno.document.reader.arxiv_reader import ArxivReader
 from agno.document.reader.base import Reader
 from agno.document.reader.json_reader import JSONReader
 from agno.document.reader.web_search_reader import WebSearchReader
+from agno.document.reader.website_reader import WebsiteReader
 from agno.document.reader.wikipedia_reader import WikipediaReader
 from agno.knowledge.cloud_storage.cloud_storage import S3Config
 from agno.knowledge.knowledge import Knowledge

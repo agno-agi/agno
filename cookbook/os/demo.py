@@ -12,7 +12,7 @@ from agno.vectordb.pgvector.pgvector import PgVector
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Memory database
+# Create Postgres-backed memory store
 memory_db = PostgresDb(
     db_url=db_url,
     session_table="sessions",
@@ -21,15 +21,13 @@ memory_db = PostgresDb(
     metrics_table="metrics",
     knowledge_table="knowledge_contents",
 )
-# Setup Memory
 memory = Memory(db=memory_db)
 
-# Setup Vector database
+# Create Postgres-backed vector store
 vector_db = PgVector(
     db_url=db_url,
     table_name="agno_docs",
 )
-# Setup Knowledge base
 knowledge = Knowledge(
     name="Agno Docs",
     contents_db=memory_db,

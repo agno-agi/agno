@@ -360,3 +360,12 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error clearing collection: {e}")
             return False
+
+    def delete_by_id(self, id: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_name(self, name: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        return NotImplementedError
