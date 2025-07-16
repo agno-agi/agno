@@ -1,13 +1,10 @@
 import os
 import tempfile
-from typing import List
 
 import nest_asyncio
-import requests
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
 from agno.agent import Agent
-from agno.document import Document
 from agno.utils.log import logger
 from agno.utils.streamlit import (
     COMMON_CSS,
@@ -15,11 +12,7 @@ from agno.utils.streamlit import (
     display_tool_calls,
     export_chat_history,
     knowledge_base_info_widget,
-    rename_session_widget,
     restart_agent_session,
-)
-from utils import (
-    about_widget,
     session_selector_widget,
 )
 
@@ -38,9 +31,9 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 def restart_agent():
     """Reset the agent and clear chat history"""
     restart_agent_session(
-        agent_session_key="agentic_rag_agent",
-        session_id_key="agentic_rag_agent_session_id",
-        model_key="current_model",
+        agent="agent",
+        session_id="session_id",
+        current_model="current_model",
     )
 
 
@@ -75,60 +68,33 @@ def main():
     ####################################################################
     # Initialize Agent
     ####################################################################
-    agentic_rag_agent: Agent
+    agent: Agent
     if (
-        "agentic_rag_agent" not in st.session_state
-        or st.session_state["agentic_rag_agent"] is None
+        "agent" not in st.session_state
+        or st.session_state["agent"] is None
         or st.session_state.get("current_model") != model_id
     ):
         logger.info("---*--- Creating new Agentic RAG Agent ---*---")
 
-        # Simplified session handling - pass session_id regardless
-        session_id = st.session_state.get("agentic_rag_agent_session_id")
-        agentic_rag_agent = get_agentic_rag_agent(
-            model_id=model_id, session_id=session_id
-        )
+        session_id = st.session_state.get("session_id")
+        agent = get_agentic_rag_agent(model_id=model_id, session_id=session_id)
 
-        st.session_state["agentic_rag_agent"] = agentic_rag_agent
+        st.session_state["agent"] = agent
         st.session_state["current_model"] = model_id
     else:
-        agentic_rag_agent = st.session_state["agentic_rag_agent"]
+        agent = st.session_state["agent"]
 
     ####################################################################
-    # Load agent messages (simplified for v2)
+    # Initialize session tracking (let streamlit utilities handle loading)
     ####################################################################
     logger.info("---*--- Loading Agentic RAG session ---*---")
-    if agentic_rag_agent.session_id:
-        logger.info(
-            f"---*--- Agentic RAG session: {agentic_rag_agent.session_id} ---*---"
-        )
-
-        # Load session messages if we don't already have them
-        if not st.session_state.get("messages"):
-            logger.debug("Loading session messages")
-            try:
-                chat_history = agentic_rag_agent.get_messages_for_session(
-                    agentic_rag_agent.session_id
-                )
-
-                if chat_history:
-                    logger.debug(f"Loading {len(chat_history)} messages from session")
-                    for message in chat_history:
-                        if message.role == "user":
-                            add_message("user", str(message.content))
-                        elif message.role == "assistant":
-                            tool_calls = (
-                                getattr(message, "tool_calls", None)
-                                if hasattr(message, "tool_calls")
-                                else None
-                            )
-                            add_message("assistant", str(message.content), tool_calls)
-            except Exception as e:
-                logger.warning(f"Could not load chat history: {e}")
+    if agent.session_id:
+        logger.info(f"---*--- Agentic RAG session: {agent.session_id} ---*---")
+        st.session_state["session_id"] = agent.session_id
     else:
         logger.info("---*--- Agentic RAG session: None (New Chat) ---*---")
 
-    # Initialize messages if needed
+    # Initialize messages if needed (streamlit utilities will populate them)
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -136,17 +102,17 @@ def main():
         add_message("user", prompt)
 
     ####################################################################
-    # Document Management (simplified using new Knowledge system)
+    # Document Management
     ####################################################################
     st.sidebar.markdown("#### 📚 Document Management")
+    st.sidebar.metric("Documents Loaded", agent.knowledge.vector_store.get_count())
 
     # URL input
     input_url = st.sidebar.text_input("Add URL to Knowledge Base")
     if input_url and not prompt:
         alert = st.sidebar.info("Processing URL...", icon="ℹ️")
         try:
-            # Use the new Knowledge system's add_content method
-            agentic_rag_agent.knowledge.add_content(
+            agent.knowledge.add_content(
                 name=f"URL: {input_url}",
                 url=input_url,
                 description=f"Content from {input_url}",
@@ -171,8 +137,8 @@ def main():
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
 
-            # Use the new Knowledge system's add_content method
-            agentic_rag_agent.knowledge.add_content(
+            # Use the Knowledge system's add_content method
+            agent.knowledge.add_content(
                 name=uploaded_file.name,
                 path=tmp_path,
                 description=f"Uploaded file: {uploaded_file.name}",
@@ -188,8 +154,8 @@ def main():
 
     # Clear knowledge base
     if st.sidebar.button("Clear Knowledge Base"):
-        if agentic_rag_agent.knowledge.vector_store:
-            agentic_rag_agent.knowledge.vector_store.delete()
+        if agent.knowledge.vector_store:
+            agent.knowledge.vector_store.delete()
         st.sidebar.success("Knowledge base cleared")
 
     ###############################################################
@@ -203,7 +169,7 @@ def main():
         )
 
     ###############################################################
-    # Utility buttons
+    # Utility buttons (using streamlit utilities)
     ###############################################################
     st.sidebar.markdown("#### 🛠️ Utilities")
     col1, col2 = st.sidebar.columns([1, 1])
@@ -211,37 +177,22 @@ def main():
         if st.sidebar.button("🔄 New Chat", use_container_width=True):
             restart_agent()
     with col2:
-        # Export chat functionality
+        # Export chat functionality (using streamlit utils)
         has_messages = (
             st.session_state.get("messages") and len(st.session_state["messages"]) > 0
         )
 
-        actual_session_id = None
-        if (
-            agentic_rag_agent
-            and hasattr(agentic_rag_agent, "session_id")
-            and agentic_rag_agent.session_id
-        ):
-            actual_session_id = agentic_rag_agent.session_id
-        else:
-            actual_session_id = st.session_state.get("agentic_rag_agent_session_id")
-
         if has_messages:
-            # Generate filename with session ID
-            if actual_session_id and actual_session_id != "New Chat":
-                session_name = (
-                    getattr(agentic_rag_agent, "session_name", None)
-                    if agentic_rag_agent
-                    else None
-                )
-                if session_name:
-                    clean_name = "".join(
-                        c for c in session_name if c.isalnum() or c in (" ", "-", "_")
-                    ).strip()
-                    clean_name = clean_name.replace(" ", "_")[:50]
-                    filename = f"agentic_rag_chat_{clean_name}.md"
-                else:
-                    filename = f"agentic_rag_chat_{actual_session_id}.md"
+            # Generate filename
+            session_id = st.session_state.get("session_id")
+            if session_id and hasattr(agent, "session_name") and agent.session_name:
+                clean_name = "".join(
+                    c for c in agent.session_name if c.isalnum() or c in (" ", "-", "_")
+                ).strip()
+                clean_name = clean_name.replace(" ", "_")[:50]
+                filename = f"agentic_rag_chat_{clean_name}.md"
+            elif session_id:
+                filename = f"agentic_rag_chat_{session_id}.md"
             else:
                 filename = "agentic_rag_chat_new.md"
 
@@ -267,14 +218,63 @@ def main():
     ####################################################################
     for message in st.session_state["messages"]:
         if message["role"] in ["user", "assistant"]:
-            _content = message["content"]
-            if _content is not None:
+            content = message["content"]
+            if content is not None:
                 with st.chat_message(message["role"]):
+                    # Debug: Show what's in the session state message
+                    if message["role"] == "assistant":
+                        logger.debug(f"=== DISPLAYING MESSAGE ===")
+                        logger.debug(f"Message keys: {list(message.keys())}")
+                        logger.debug(f"Has tool_calls: {'tool_calls' in message}")
+                        if "tool_calls" in message:
+                            logger.debug(f"Tool_calls value: {message['tool_calls']}")
+                            logger.debug(f"Tool_calls type: {type(message['tool_calls'])}")
+                            if message["tool_calls"]:
+                                logger.debug(f"Tool_calls length: {len(message['tool_calls'])}")
+                    
                     # Display tool calls if they exist in the message
                     if "tool_calls" in message and message["tool_calls"]:
-                        display_tool_calls(st.empty(), message["tool_calls"])
+                        logger.debug(f"About to display {len(message['tool_calls'])} tool calls")
+                        
+                        # Convert OpenAI format to display format if needed
+                        formatted_tools = []
+                        for tool in message["tool_calls"]:
+                            if isinstance(tool, dict):
+                                if "function" in tool and "name" in tool.get("function", {}):
+                                    # OpenAI format: convert to display format
+                                    import json
+                                    function_data = tool["function"]
+                                    tool_name = function_data.get("name", "Unknown")
+                                    
+                                    # Parse arguments JSON string
+                                    tool_args = {}
+                                    try:
+                                        if "arguments" in function_data:
+                                            tool_args = json.loads(function_data["arguments"])
+                                    except json.JSONDecodeError:
+                                        tool_args = {"raw": function_data.get("arguments", "")}
+                                    
+                                    display_tool = {
+                                        "tool_name": tool_name,
+                                        "tool_args": tool_args,
+                                        "result": "Result not stored in session history",
+                                    }
+                                    formatted_tools.append(display_tool)
+                                elif "tool_name" in tool:
+                                    # Already in display format
+                                    formatted_tools.append(tool)
+                                else:
+                                    # Unknown format, try to display as-is
+                                    formatted_tools.append(tool)
+                            else:
+                                formatted_tools.append(tool)
+                        
+                        display_tool_calls(st.empty(), formatted_tools)
+                    else:
+                        if message["role"] == "assistant":
+                            logger.debug("Not displaying tool calls - either no key or empty value")
 
-                    st.markdown(_content)
+                    st.markdown(content)
 
     ####################################################################
     # Generate response for user message
@@ -292,36 +292,46 @@ def main():
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = agentic_rag_agent.run(question, stream=True)
-                    for _resp_chunk in run_response:
+                    run_response = agent.run(question, stream=True)
+                    for resp_chunk in run_response:
                         # Display tool calls if available
-                        if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
-                            display_tool_calls(tool_calls_container, [_resp_chunk.tool])
+                        if hasattr(resp_chunk, "tool") and resp_chunk.tool:
+                            display_tool_calls(tool_calls_container, [resp_chunk.tool])
 
-                        # Display response
-                        if _resp_chunk.content is not None:
-                            response += _resp_chunk.content
+                        # Display response content
+                        if resp_chunk.content is not None:
+                            response += resp_chunk.content
                             resp_container.markdown(response)
 
-                    add_message(
-                        "assistant", response, agentic_rag_agent.run_response.tools
-                    )
+                    add_message("assistant", response, agent.run_response.tools)
                 except Exception as e:
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
                     st.error(error_message)
 
     ####################################################################
-    # Session selector
+    # Session management widgets (using streamlit utilities)
     ####################################################################
-    session_selector_widget(agentic_rag_agent, model_id)
-    rename_session_widget(agentic_rag_agent)
-    knowledge_base_info_widget(agentic_rag_agent)
+    
+    # Session selector with built-in rename functionality
+    # Note: Rename option appears below when you have an active session
+    session_selector_widget(agent, model_id, get_agentic_rag_agent)
+    
+    # Knowledge base information
+    knowledge_base_info_widget(agent)
 
     ####################################################################
-    # About section
+    # About section (inline instead of separate file)
     ####################################################################
-    about_widget()
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ℹ️ About")
+    st.sidebar.markdown("""
+    This Agentic RAG Assistant helps you analyze documents and web content using natural language queries.
+
+    Built with:
+    - 🚀 Agno
+    - 💫 Streamlit
+    """)
 
 
 main()

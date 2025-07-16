@@ -1,8 +1,5 @@
 """
-Shared utilities for Streamlit applications using Agno.
-
-This module provides common functions used across multiple Streamlit apps
-to avoid code duplication and ensure consistency.
+Simple streamlit utilities for Agno applications.
 """
 
 from datetime import datetime
@@ -15,358 +12,319 @@ from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
-def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None, **kwargs) -> None:
-    """
-    Safely add a message to the session state.
-
-    Args:
-        role: The role of the message sender (user/assistant)
-        content: The text content of the message
-        tool_calls: Optional tool calls to include
-        **kwargs: Additional message attributes (image, audio, video paths)
-    """
-    if "messages" not in st.session_state or not isinstance(st.session_state["messages"], list):
+def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:
+    """Add a message to session state."""
+    if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    message = {"role": role, "content": content, "tool_calls": tool_calls}
-
-    # Add any additional attributes like image, audio, or video paths
-    for key, value in kwargs.items():
-        message[key] = value
+    message = {"role": role, "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
 
     st.session_state["messages"].append(message)
 
 
-def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
-    """Display tool calls in a streamlit container with expandable sections."""
+def display_tool_calls(container, tools: List[Any]):
+    """Display tool calls in expandable sections."""
     if not tools:
         return
 
-    with tool_calls_container.container():
-        for tool_call in tools:
-            # Get basic info from tool call
-            if hasattr(tool_call, "tool_name"):
-                # ToolExecution object
-                tool_name = tool_call.tool_name or "Unknown Tool"
-                tool_args = tool_call.tool_args or {}
-                content = tool_call.result or ""
-                metrics = tool_call.metrics or {}
+    with container.container():
+        for tool in tools:
+            # Handle both ToolExecution objects and dicts
+            if hasattr(tool, "tool_name"):
+                name = tool.tool_name or "Tool"
+                args = tool.tool_args or {}
+                result = tool.result or ""
             else:
-                # Dictionary format
-                tool_name = tool_call.get("tool_name") or tool_call.get("name") or "Unknown Tool"
-                tool_args = tool_call.get("tool_args") or tool_call.get("args") or {}
-                content = tool_call.get("result") or tool_call.get("content") or ""
-                metrics = tool_call.get("metrics") or {}
+                name = tool.get("tool_name") or tool.get("name") or "Tool"
+                args = tool.get("tool_args") or tool.get("args") or {}
+                result = tool.get("result") or tool.get("content") or ""
 
-            # Simple title
-            title = f"🛠️ {tool_name.replace('_', ' ')}"
-
-            with st.expander(title, expanded=False):
-                if tool_args:
+            with st.expander(f"🛠️ {name.replace('_', ' ')}", expanded=False):
+                if args:
                     st.markdown("**Arguments:**")
-                    st.json(tool_args)
-
-                if content:
-                    st.markdown("**Results:**")
-                    if isinstance(content, (dict, list)):
-                        st.json(content)
+                    st.json(args)
+                if result:
+                    st.markdown("**Result:**")
+                    if isinstance(result, (dict, list)):
+                        st.json(result)
                     else:
-                        st.markdown(content)
-
-                if metrics:
-                    st.markdown("**Metrics:**")
-                    st.json(metrics if isinstance(metrics, dict) else metrics.to_dict())
+                        st.markdown(result)
 
 
-def export_chat_history(app_name: str = "Chat", session_key: str = "messages") -> str:
-    """
-    Export chat history as markdown with professional formatting.
+def export_chat_history(app_name: str = "Chat") -> str:
+    """Export chat history as markdown."""
+    if "messages" not in st.session_state or not st.session_state["messages"]:
+        return "# Chat History\n\n*No messages to export*"
 
-    Args:
-        app_name: Name of the application for the footer
-        session_key: Session state key containing messages
+    # Get first user message as title
+    title = "Chat History"
+    for msg in st.session_state["messages"]:
+        if msg.get("role") == "user" and msg.get("content"):
+            title = msg["content"][:100]
+            if len(msg["content"]) > 100:
+                title += "..."
+            break
 
-    Returns:
-        Formatted markdown string of chat history
-    """
-    if session_key not in st.session_state or not st.session_state[session_key]:
-        return f"# Chat History\n\n*No messages to export*"
-
-    # Find the first user message to use as title
-    title = "Chat History"  # Default fallback
-    for msg in st.session_state[session_key]:
-        if msg.get("role") == "user":
-            user_content = msg.get("content", "").strip()
-            if user_content:
-                title = user_content[:100] + ("..." if len(user_content) > 100 else "")
-                break
-
-    # Create header with meaningful title
     chat_text = f"# {title}\n\n"
-
-    # Add metadata
-    export_time = datetime.now().strftime("%B %d, %Y at %I:%M %p")
-    chat_text += f"**Exported:** {export_time}\n"
-
-    # Count meaningful messages (exclude empty/None responses)
-    meaningful_messages = [
-        msg
-        for msg in st.session_state[session_key]
-        if msg.get("content") and str(msg.get("content")).strip() and str(msg.get("content")).strip().lower() != "none"
-    ]
-
-    chat_text += f"**Messages:** {len(meaningful_messages)}\n\n"
+    chat_text += f"**Exported:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
     chat_text += "---\n\n"
 
-    # Export messages with improved formatting
-    for i, msg in enumerate(meaningful_messages, 1):
-        role = msg.get("role", "unknown")
-        content = str(msg.get("content", "")).strip()
+    for msg in st.session_state["messages"]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
 
-        # Skip empty or "None" content
-        if not content or content.lower() == "none":
+        if not content or str(content).strip().lower() == "none":
             continue
 
-        # Format role with better styling
-        if role == "user":
-            role_display = "## 🙋 User Query"
-        elif role == "assistant":
-            role_display = "## 🤖 Assistant Response"
-        else:
-            role_display = f"## {role.capitalize()}"
-
-        chat_text += f"{role_display}\n\n"
-        chat_text += f"{content}\n\n"
-
-        # Add separator between exchanges (not after last message)
-        if i < len(meaningful_messages):
-            chat_text += "---\n\n"
-
-    # Footer
-    chat_text += f"\n*Generated by {app_name}*"
+        role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
+        chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
     return chat_text
 
 
-def restart_agent_session(
-    agent_session_key: str,
-    session_id_key: Optional[str] = None,
-    model_key: Optional[str] = None,
-    messages_key: str = "messages",
-) -> None:
-    """
-    Reset agent and clear chat history from session state.
-
-    Args:
-        agent_session_key: Session state key for the agent
-        session_id_key: Optional session state key for session ID
-        model_key: Optional session state key for current model
-        messages_key: Session state key for messages
-    """
-    logger.debug("---*--- Restarting agent ---*---")
-    st.session_state[agent_session_key] = None
-    if session_id_key:
-        st.session_state[session_id_key] = None
-    if model_key:
-        st.session_state[model_key] = None
-    st.session_state[messages_key] = []
+def restart_agent_session(**session_keys) -> None:
+    """Clear session state keys and restart."""
+    for key in session_keys.values():
+        if key in st.session_state:
+            st.session_state[key] = None
+    if "messages" in st.session_state:
+        st.session_state["messages"] = []
     st.rerun()
 
 
-def rename_session_widget(agent: Agent, container: Optional[st.container] = None) -> None:
-    """
-    Render a session rename widget in the sidebar.
-
-    Args:
-        agent: The agent whose session to rename
-        container: Optional container to render in (defaults to sidebar)
-    """
-    # Only show rename widget if there's an active session
-    if not agent.session_id:
+def knowledge_base_info_widget(agent: Agent) -> None:
+    """Display knowledge base info."""
+    if not agent.knowledge:
+        st.sidebar.info("No knowledge base configured")
         return
 
-    if container is None:
-        container = st.sidebar.container()
+    vector_store = getattr(agent.knowledge, "vector_store", None)
+    if not vector_store:
+        st.sidebar.info("No vector store configured")
+        return
 
-    # Initialize session_edit_mode if needed
-    if "session_edit_mode" not in st.session_state:
-        st.session_state.session_edit_mode = False
+    try:
+        doc_count = vector_store.get_count()
+        if doc_count == 0:
+            st.sidebar.info("💡 Upload documents to populate the knowledge base")
+        else:
+            st.sidebar.metric("Documents Loaded", doc_count)
+    except Exception as e:
+        logger.error(f"Error getting knowledge base info: {e}")
+        st.sidebar.warning("Could not retrieve knowledge base information")
 
-    # Get current session name, default to session_id if no name is set
-    current_name = agent.session_name or agent.session_id
 
-    with container:
+def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback: callable) -> None:
+    """Simple session selector widget with integrated rename functionality."""
+    if not agent.memory or not agent.memory.db:
+        st.sidebar.info("💡 Memory not configured. Sessions will not be saved.")
+        return
+
+    try:
+        sessions = agent.memory.db.get_sessions(
+            session_type="agent",
+            deserialize=True,
+            sort_by="created_at",
+            sort_order="desc",
+        )
+    except Exception as e:
+        logger.error(f"Error fetching sessions: {e}")
+        st.sidebar.error("Could not load sessions")
+        return
+
+    if not sessions:
+        st.sidebar.info("🆕 New Chat - Start your conversation!")
+        return
+
+    # Build session options
+    session_options = []
+    session_dict = {}
+    
+    for session in sessions:
+        if not hasattr(session, "session_id") or not session.session_id:
+            continue
+            
+        session_id = session.session_id
+        session_name = None
+        
+        if hasattr(session, "session_data") and session.session_data:
+            session_name = session.session_data.get("session_name")
+        
+        name = session_name or session_id
+        
+        # Handle timestamp - could be datetime object or integer timestamp
+        if hasattr(session, "created_at") and session.created_at:
+            try:
+                if hasattr(session.created_at, "strftime"):
+                    # It's already a datetime object
+                    time_str = session.created_at.strftime("%m/%d %H:%M")
+                else:
+                    # It's an integer timestamp - convert to datetime
+                    dt = datetime.fromtimestamp(session.created_at)
+                    time_str = dt.strftime("%m/%d %H:%M")
+                display_name = f"{name} ({time_str})"
+            except (ValueError, TypeError, OSError) as e:
+                logger.debug(f"Error formatting timestamp for session {session_id}: {e}")
+                display_name = name
+        else:
+            display_name = name
+            
+        session_options.append(display_name)
+        session_dict[display_name] = session_id
+
+    # Current session handling
+    current_session_id = st.session_state.get("session_id")
+    current_selection = None
+    
+    for display_name, session_id in session_dict.items():
+        if session_id == current_session_id:
+            current_selection = display_name
+            break
+
+    # Session selector
+    if current_session_id:
+        display_options = session_options
+        selected_index = session_options.index(current_selection) if current_selection in session_options else 0
+    else:
+        display_options = ["🆕 New Chat"] + session_options
+        selected_index = 0
+
+    selected = st.sidebar.selectbox(
+        label="Session Name",
+        options=display_options,
+        index=selected_index,
+        help="Select a session to continue or start new chat"
+    )
+
+    # Handle selection
+    if selected != "🆕 New Chat" and selected in session_dict:
+        selected_session_id = session_dict[selected]
+        if selected_session_id != current_session_id:
+            _load_session(selected_session_id, model_id, agent_creation_callback)
+
+    # Session rename functionality - only show if there's an active session
+    if agent.session_id:
+        if "session_edit_mode" not in st.session_state:
+            st.session_state.session_edit_mode = False
+
+        current_name = agent.session_name or agent.session_id
+
         if not st.session_state.session_edit_mode:
-            col1, col2 = st.columns([3, 1])
+            col1, col2 = st.sidebar.columns([3, 1])
             with col1:
-                st.write(f"**Session:** {current_name}")
+                st.write(f"**Session Name:** {current_name}")
             with col2:
-                if st.button("✎", help="Rename session", key="rename_button"):
+                if st.button("✎", help="Rename session", key="rename_session_button"):
                     st.session_state.session_edit_mode = True
                     st.rerun()
         else:
-            st.write("**Rename Session:**")
-
-            # Use current session name or session_id as default
-            new_session_name = st.text_input(
-                "Enter new name:",
-                value=current_name,
-                key="session_name_input",
-                placeholder="Enter session name...",
-            )
-
-            col1, col2 = st.columns([1, 1])
+            new_name = st.sidebar.text_input("Enter new name:", value=current_name, key="session_name_input")
+            
+            col1, col2 = st.sidebar.columns([1, 1])
             with col1:
-                if st.button("💾 Save", type="primary", use_container_width=True):
-                    if new_session_name and new_session_name.strip():
+                if st.button("💾 Save", type="primary", use_container_width=True, key="save_session_name"):
+                    if new_name and new_name.strip():
                         try:
-                            agent.rename_session(new_session_name.strip())
-                            logger.debug(f"Renamed session to: {new_session_name.strip()}")
+                            agent.rename_session(new_name.strip())
                             st.session_state.session_edit_mode = False
                             st.sidebar.success("Session renamed!")
                             st.rerun()
                         except Exception as e:
-                            logger.error(f"Error renaming session: {e}")
-                            st.sidebar.error(f"Failed to rename session: {str(e)}")
+                            st.sidebar.error(f"Error: {str(e)}")
                     else:
-                        st.sidebar.error("Please enter a valid session name")
+                        st.sidebar.error("Please enter a valid name")
 
             with col2:
-                if st.button("❌ Cancel", use_container_width=True):
+                if st.button("❌ Cancel", use_container_width=True, key="cancel_session_rename"):
                     st.session_state.session_edit_mode = False
                     st.rerun()
 
 
-def knowledge_base_info_widget(agent: Agent, container: Optional[st.container] = None) -> None:
-    """
-    Display knowledge base information in a widget.
+def _load_session(session_id: str, model_id: str, agent_creation_callback: callable):
+    """Load a specific session."""
+    try:
+        new_agent = agent_creation_callback(model_id=model_id, session_id=session_id)
+        st.session_state["agent"] = new_agent
+        st.session_state["session_id"] = session_id
+        st.session_state["messages"] = []
 
-    Args:
-        agent: The agent whose knowledge base to display
-        container: Optional container to render in (defaults to sidebar)
-    """
-    if container is None:
-        container = st.sidebar
-
-    # Support both v1 (vector_db) and v2 (vector_store) knowledge systems
-    vector_store = None
-    if agent.knowledge:
-        if hasattr(agent.knowledge, "vector_store") and agent.knowledge.vector_store:
-            vector_store = agent.knowledge.vector_store
-        elif hasattr(agent.knowledge, "vector_db") and agent.knowledge.vector_db:
-            vector_store = agent.knowledge.vector_db
-
-    if vector_store:
+        # Load chat history
         try:
-            # Try to get count from vector store
-            doc_count = vector_store.get_count()
-
-            container.markdown("### 📚 Knowledge Base")
-            container.metric(
-                label="Documents Loaded",
-                value=doc_count,
-                help="Number of documents in the knowledge base",
-            )
-
-            if doc_count == 0:
-                container.info("💡 Upload documents to populate the knowledge base")
-
+            chat_history = new_agent.get_messages_for_session(session_id)
+            if chat_history:
+                logger.debug(f"Loading {len(chat_history)} messages from session")
+                for message in chat_history:
+                    if message.role == "user":
+                        add_message("user", str(message.content))
+                    elif message.role == "assistant":
+                        # Check multiple possible sources for tool calls
+                        tool_calls = None
+                        
+                        # Try to get tool calls from various sources
+                        if hasattr(message, "tool_calls") and message.tool_calls:
+                            tool_calls = message.tool_calls
+                            logger.debug(f"Found tool_calls: {type(tool_calls)} with {len(tool_calls)} items")
+                        elif hasattr(message, "tools") and message.tools:
+                            tool_calls = message.tools
+                            logger.debug(f"Found tools: {type(tool_calls)} with {len(tool_calls)} items")
+                        
+                        # If we found tool calls, ensure they're in the right format
+                        if tool_calls:
+                            # Convert to list of dicts if they're not already
+                            formatted_tools = []
+                            for tool in tool_calls:
+                                if hasattr(tool, "to_dict"):
+                                    # ToolExecution object with to_dict method
+                                    formatted_tools.append(tool.to_dict())
+                                elif hasattr(tool, "tool_name"):
+                                    # ToolExecution-like object
+                                    tool_dict = {
+                                        "tool_name": getattr(tool, "tool_name", "Unknown"),
+                                        "tool_args": getattr(tool, "tool_args", {}),
+                                        "result": getattr(tool, "result", ""),
+                                    }
+                                    formatted_tools.append(tool_dict)
+                                elif isinstance(tool, dict):
+                                    # Already a dictionary
+                                    formatted_tools.append(tool)
+                                else:
+                                    logger.debug(f"Unknown tool format: {type(tool)} - {tool}")
+                            
+                            tool_calls = formatted_tools if formatted_tools else None
+                            logger.debug(f"Formatted {len(formatted_tools)} tool calls for display")
+                        
+                        add_message("assistant", str(message.content), tool_calls)
         except Exception as e:
-            logger.error(f"Error getting knowledge base info: {e}")
-            container.markdown("### 📚 Knowledge Base")
-            container.warning("Could not retrieve knowledge base information")
-    else:
-        container.markdown("### 📚 Knowledge Base")
-        container.info("No knowledge base configured")
+            logger.warning(f"Could not load chat history: {e}")
 
-
-def utilities_widget(
-    agent_restart_callback: callable,
-    export_filename: str = "chat_history.md",
-    messages_key: str = "messages",
-    container: Optional[st.container] = None,
-) -> None:
-    """
-    Display a utilities widget with common actions.
-
-    Args:
-        agent_restart_callback: Function to call when restarting the agent
-        export_filename: Default filename for chat export
-        messages_key: Session state key for messages
-        container: Optional container to render in (defaults to sidebar)
-    """
-    if container is None:
-        container = st.sidebar
-
-    container.markdown("#### 🛠️ Utilities")
-    col1, col2 = container.columns([1, 1])
-
-    with col1:
-        if st.button("🔄 New Chat", use_container_width=True):
-            agent_restart_callback()
-
-    with col2:
-        # Export chat functionality
-        has_messages = st.session_state.get(messages_key) and len(st.session_state[messages_key]) > 0
-
-        if has_messages:
-            if st.download_button(
-                "💾 Export Chat",
-                export_chat_history(),
-                file_name=export_filename,
-                mime="text/markdown",
-                use_container_width=True,
-                help=f"Export {len(st.session_state[messages_key])} messages",
-            ):
-                container.success("Chat history exported!")
-        else:
-            st.button(
-                "💾 Export Chat",
-                disabled=True,
-                use_container_width=True,
-                help="No messages to export",
-            )
+        st.rerun()
+    except Exception as e:
+        logger.error(f"Error loading session: {e}")
+        st.sidebar.error(f"Error loading session: {str(e)}")
 
 
 def get_model_from_id(model_id: str):
-    """Get the model instance based on the model ID.
-
-    Args:
-        model_id: Model ID in the format "provider:model_name"
-
-    Returns:
-        Model instance
-
-    Example:
-        >>> model = get_model_from_id("openai:gpt-4o")
-        >>> model = get_model_from_id("anthropic:claude-3-5-sonnet")
-        >>> model = get_model_from_id("google:gemini-2.0-flash")
-        >>> model = get_model_from_id("groq:llama-3.3-70b")
-    """
+    """Get model instance from ID."""
     if model_id.startswith("openai:"):
-        model_name = model_id.split("openai:")[1]
-        return OpenAIChat(id=model_name)
+        return OpenAIChat(id=model_id.split("openai:")[1])
     elif model_id.startswith("anthropic:"):
-        model_name = model_id.split("anthropic:")[1]
-        return Claude(id=model_name)
+        return Claude(id=model_id.split("anthropic:")[1])
     elif model_id.startswith("google:"):
-        model_name = model_id.split("google:")[1]
-        return Gemini(id=model_name)
+        return Gemini(id=model_id.split("google:")[1])
     elif model_id.startswith("groq:"):
-        model_name = model_id.split("groq:")[1]
-        return Groq(id=model_name)
+        return Groq(id=model_id.split("groq:")[1])
     else:
         return OpenAIChat(id="gpt-4o")
 
 
-# Common CSS styles for Streamlit apps
+# Common CSS for streamlit apps
 COMMON_CSS = """
     <style>
-    /* Main Styles */
-   .main-title {
+    .main-title {
         text-align: center;
         background: linear-gradient(45deg, #FF4B2B, #FF416C);
         -webkit-background-clip: text;
@@ -389,41 +347,6 @@ COMMON_CSS = """
     .stButton button:hover {
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    }
-    .chat-container {
-        border-radius: 15px;
-        padding: 1em;
-        margin: 1em 0;
-        background-color: #f5f5f5;
-    }
-    .tool-result {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1em;
-        margin: 1em 0;
-        border-left: 4px solid #3B82F6;
-    }
-    .status-message {
-        padding: 1em;
-        border-radius: 10px;
-        margin: 1em 0;
-    }
-    .success-message {
-        background-color: #d4edda;
-        color: #155724;
-    }
-    .error-message {
-        background-color: #f8d7da;
-        color: #721c24;
-    }
-    /* Dark mode adjustments */
-    @media (prefers-color-scheme: dark) {
-        .chat-container {
-            background-color: #2b2b2b;
-        }
-        .tool-result {
-            background-color: #1e1e1e;
-        }
     }
     </style>
 """
