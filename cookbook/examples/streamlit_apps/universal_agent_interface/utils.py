@@ -3,12 +3,12 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agno.document import Document
-from agno.document.reader import Reader
-from agno.document.reader.csv_reader import CSVReader
-from agno.document.reader.docx_reader import DocxReader
-from agno.document.reader.pdf_reader import PDFReader
-from agno.document.reader.text_reader import TextReader
-from agno.document.reader.website_reader import WebsiteReader
+from agno.knowledge.reader import Reader
+from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.docx_reader import DocxReader
+from agno.knowledge.reader.pdf_reader import PDFReader
+from agno.knowledge.reader.text_reader import TextReader
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.memory import Memory
 from agno.models.response import ToolExecution
 from agno.team import Team

@@ -142,7 +142,7 @@ def get_sync_router(
                     raise HTTPException(status_code=404, detail="KnowledgeBase not found")
 
                 if file.content_type == "application/pdf":
-                    from agno.document.reader.pdf_reader import PDFReader
+                    from agno.knowledge.reader.pdf_reader import PDFReader
 
                     contents = file.file.read()
                     pdf_file = BytesIO(contents)
@@ -151,7 +151,7 @@ def get_sync_router(
                     if agent.knowledge is not None:
                         agent.knowledge.load_documents(file_content)
                 elif file.content_type == "text/csv":
-                    from agno.document.reader.csv_reader import CSVReader
+                    from agno.knowledge.reader.csv_reader import CSVReader
 
                     contents = file.file.read()
                     csv_file = BytesIO(contents)
@@ -160,7 +160,7 @@ def get_sync_router(
                     if agent.knowledge is not None:
                         agent.knowledge.load_documents(file_content)
                 elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                    from agno.document.reader.docx_reader import DocxReader
+                    from agno.knowledge.reader.docx_reader import DocxReader
 
                     contents = file.file.read()
                     docx_file = BytesIO(contents)
@@ -169,7 +169,7 @@ def get_sync_router(
                     if agent.knowledge is not None:
                         agent.knowledge.load_documents(file_content)
                 elif file.content_type == "text/plain":
-                    from agno.document.reader.text_reader import TextReader
+                    from agno.knowledge.reader.text_reader import TextReader
 
                     contents = file.file.read()
                     text_file = BytesIO(contents)
@@ -179,7 +179,7 @@ def get_sync_router(
                         agent.knowledge.load_documents(file_content)
 
                 elif file.content_type == "application/json":
-                    from agno.document.reader.json_reader import JSONReader
+                    from agno.knowledge.reader.json_reader import JSONReader
 
                     contents = file.file.read()
                     json_file = BytesIO(contents)

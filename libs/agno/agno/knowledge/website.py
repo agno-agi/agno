@@ -4,8 +4,8 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 from pydantic import model_validator
 
 from agno.document import Document
-from agno.document.reader.website_reader import WebsiteReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.utils.log import log_debug, log_info, logger
 
 

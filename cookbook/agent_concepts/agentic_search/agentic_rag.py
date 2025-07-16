@@ -5,7 +5,7 @@
 """
 
 from agno.agent import Agent
-from agno.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.reranker.cohere import CohereReranker

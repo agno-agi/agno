@@ -1,5 +1,5 @@
-from agno.agent import AgentKnowledge
-from agno.embedder.azure_openai import AzureOpenAIEmbedder
+from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 embeddings = AzureOpenAIEmbedder(id="text-embedding-3-small").get_embedding(
@@ -11,11 +11,11 @@ print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
-knowledge_base = AgentKnowledge(
-    vector_db=PgVector(
+knowledge = Knowledge(
+    vector_store=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="azure_openai_embeddings",
         embedder=AzureOpenAIEmbedder(),
     ),
-    num_documents=2,
+    max_results=2,
 )

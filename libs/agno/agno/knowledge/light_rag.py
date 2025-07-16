@@ -7,10 +7,10 @@ import textract
 from pydantic import Field
 
 from agno.document import Document
-from agno.document.reader.markdown_reader import MarkdownReader
-from agno.document.reader.pdf_reader import PDFUrlReader
-from agno.document.reader.url_reader import URLReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.reader.markdown_reader import MarkdownReader
+from agno.knowledge.reader.pdf_reader import PDFUrlReader
+from agno.knowledge.reader.url_reader import URLReader
 from agno.utils.log import log_debug, log_info, logger
 
 

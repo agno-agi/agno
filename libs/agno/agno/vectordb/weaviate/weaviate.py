@@ -18,7 +18,7 @@ except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
@@ -62,7 +62,7 @@ class Weaviate(VectorDb):
 
         # Embedder setup
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")

@@ -6,10 +6,10 @@ from agno.eval.accuracy import AccuracyEval
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.managers.eval import EvalManager
-from agno.os.managers.memory import MemoryManager
-from agno.os.managers.metrics.metrics import MetricsManager
-from agno.os.managers.session import SessionManager
+from agno.os.apps.eval import EvalApp
+from agno.os.apps.memory import MemoryApp
+from agno.os.apps.metrics.metrics import MetricsApp
+from agno.os.apps.session import SessionApp
 from agno.team.team import Team
 
 # Setup the SQLite database
@@ -59,17 +59,10 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    name="Example App: Basic Agent",
-    description="Example app for basic agent with playground capabilities",
     os_id="basic-app",
+    description="Example app for basic agent with playground capabilities",
     agents=[basic_agent],
     teams=[team_agent],
-    managers=[
-        SessionManager(db=db),
-        EvalManager(db=db),
-        MetricsManager(db=db),
-        MemoryManager(memory=memory),
-    ],
 )
 app = agent_os.get_app()
 

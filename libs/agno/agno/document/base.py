@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 
 
 @dataclass
@@ -16,7 +16,7 @@ class Document:
     embedding: Optional[List[float]] = None
     usage: Optional[Dict[str, Any]] = None
     reranking_score: Optional[float] = None
-    source_id: Optional[str] = None
+    content_id: Optional[str] = None
     size: Optional[int] = None
     name: Optional[str] = None
 

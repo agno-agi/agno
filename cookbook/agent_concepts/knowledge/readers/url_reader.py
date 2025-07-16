@@ -1,5 +1,5 @@
-from agno.document.chunking.recursive import RecursiveChunking
-from agno.document.reader.url_reader import URLReader
+from agno.knowledge.chunking.recursive import RecursiveChunking
+from agno.knowledge.reader.url_reader import URLReader
 
 reader = URLReader(chunking_strategy=RecursiveChunking(chunk_size=1000))
 

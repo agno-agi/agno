@@ -14,7 +14,7 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 
 # from agno.vectordb.singlestore.index import Ivfflat, HNSWFlat
@@ -49,7 +49,7 @@ class SingleStore(VectorDb):
         self.metadata: MetaData = MetaData(schema=self.schema)
 
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")

@@ -1,0 +1,32 @@
+"""This cookbook shows how to add topics from Wikipedia and Arxiv to the knowledge base.
+1. Run: `pip install agno wikipedia arxiv` to install the dependencies
+2. Run: `python cookbook/agent_concepts/knowledge/05_from_topic.py` to run the cookbook
+"""
+
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.arxiv_reader import ArxivReader
+from agno.knowledge.reader.wikipedia_reader import WikipediaReader
+from agno.vectordb.pgvector import PgVector
+
+# Create Knowledge Instance
+knowledge = Knowledge(
+    name="Basic SDK Knowledge Base",
+    description="Agno 2.0 Knowledge Implementation",
+    vector_store=PgVector(
+        table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    ),
+)
+
+# Add topics from Wikipedia
+knowledge.add_content(
+    metadata={"user_tag": "Wikipedia content"},
+    topics=["Tesla"],
+    reader=WikipediaReader(),
+)
+
+# Add topics from Arxiv
+knowledge.add_content(
+    metadata={"user_tag": "Arxiv content"},
+    topics=["Carbon Dioxide"],
+    reader=ArxivReader(),
+)

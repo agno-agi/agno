@@ -23,7 +23,7 @@ except ImportError:
 
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
@@ -114,7 +114,7 @@ class PineconeDb(VectorDb):
         # Embedder for embedding the document contents
         _embedder = embedder
         if _embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")

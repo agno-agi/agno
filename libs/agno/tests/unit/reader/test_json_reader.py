@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agno.document.base import Document
-from agno.document.reader.json_reader import JSONReader
+from agno.knowledge.reader.json_reader import JSONReader
 
 
 @pytest.fixture

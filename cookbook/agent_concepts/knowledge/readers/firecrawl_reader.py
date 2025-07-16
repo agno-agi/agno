@@ -1,6 +1,6 @@
 import os
 
-from agno.document.reader.firecrawl_reader import FirecrawlReader
+from agno.knowledge.reader.firecrawl_reader import FirecrawlReader
 
 api_key = os.getenv("FIRECRAWL_API_KEY")
 

@@ -1,8 +1,8 @@
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 from agno.document import Document
-from agno.document.reader.csv_reader import CSVUrlReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.reader.csv_reader import CSVUrlReader
 from agno.utils.log import log_info, logger
 
 

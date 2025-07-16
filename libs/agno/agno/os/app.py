@@ -13,18 +13,18 @@ from agno.agent.agent import Agent
 from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.interfaces.base import BaseInterface
-from agno.os.managers import (
-    EvalManager,
-    KnowledgeManager,
-    MemoryManager,
-    MetricsManager,
-    SessionManager,
+from agno.os.apps import (
+    EvalApp,
+    KnowledgeApp,
+    MemoryApp,
+    MetricsApp,
+    SessionApp,
 )
-from agno.os.managers.base import BaseManager
+from agno.os.apps.base import BaseApp
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.log import log_debug, log_info
 from agno.workflow.workflow import Workflow
 
 
@@ -34,15 +34,14 @@ class AgentOS:
     def __init__(
         self,
         os_id: Optional[str] = None,
-        name: Optional[str] = None,
         description: Optional[str] = None,
         agents: Optional[List[Agent]] = None,
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
-        managers: Optional[List[BaseManager]] = None,
+        apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
-        api_app: Optional[FastAPI] = None,
+        fastapi_app: Optional[FastAPI] = None,
         monitoring: bool = True,
     ):
         if not agents and not workflows and not teams:
@@ -53,18 +52,17 @@ class AgentOS:
         self.teams: Optional[List[Team]] = teams
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
-        self.api_app: Optional[FastAPI] = api_app
+        self.fastapi_app: Optional[FastAPI] = fastapi_app
 
         self.interfaces = interfaces or []
-        self.managers = managers or []
+        self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
-        self.name: Optional[str] = name
         self.monitoring = monitoring
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
-        self.managers_loaded: List[Tuple[str, str]] = []
+        self.apps_loaded: List[Tuple[str, str]] = []
 
         self.set_os_id()
 
@@ -103,9 +101,9 @@ class AgentOS:
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
 
-    def _auto_discover_managers(self) -> List[BaseManager]:
-        """Auto-discover managers from agents, teams, and workflows."""
-        discovered_managers: List[BaseManager] = []
+    def _auto_discover_apps(self) -> List[BaseApp]:
+        """Auto-discover apps from agents, teams, and workflows."""
+        discovered_apps: List[BaseApp] = []
 
         seen_components: Dict[str, set] = {
             "session": set(),
@@ -129,30 +127,30 @@ class AgentOS:
                     memory_id = id(agent.memory)
                     db_id = id(agent.memory.db)
 
-                    # Memory manager
+                    # Memory app
                     if add_unique_component("memory", str(memory_id)):
-                        discovered_managers.append(MemoryManager(memory=agent.memory))
+                        discovered_apps.append(MemoryApp(memory=agent.memory))
 
-                    # Session manager
+                    # Session app
                     if agent.memory.db.session_table_name:
                         if add_unique_component("session", str(db_id)):
-                            discovered_managers.append(SessionManager(db=agent.memory.db))
+                            discovered_apps.append(SessionApp(db=agent.memory.db))
 
-                    # Metrics manager
+                    # Metrics app
                     if agent.memory.db.metrics_table_name:
                         if add_unique_component("metrics", str(db_id)):
-                            discovered_managers.append(MetricsManager(db=agent.memory.db))
+                            discovered_apps.append(MetricsApp(db=agent.memory.db))
 
-                    # Eval manager
+                    # Eval app
                     if agent.memory.db.eval_table_name:
                         if add_unique_component("eval", str(db_id)):
-                            discovered_managers.append(EvalManager(db=agent.memory.db))
+                            discovered_apps.append(EvalApp(db=agent.memory.db))
 
-                # Knowledge manager
+                # Knowledge app
                 if hasattr(agent, "knowledge") and agent.knowledge:
                     knowledge_id = id(agent.knowledge)
                     if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_managers.append(KnowledgeManager(knowledge=agent.knowledge))
+                        discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
 
         # Process teams
         if self.teams:
@@ -161,40 +159,40 @@ class AgentOS:
                     memory_id = id(team.memory)
                     db_id = id(team.memory.db)
 
-                    # Memory manager
+                    # Memory app
                     if add_unique_component("memory", str(memory_id)):
-                        discovered_managers.append(MemoryManager(memory=team.memory))
+                        discovered_apps.append(MemoryApp(memory=team.memory))
 
-                    # Session manager
+                    # Session app
                     if team.memory.db.session_table_name:
                         if add_unique_component("session", str(db_id)):
-                            discovered_managers.append(SessionManager(db=team.memory.db))
+                            discovered_apps.append(SessionApp(db=team.memory.db))
 
-                    # Metrics manager
+                    # Metrics app
                     if team.memory.db.metrics_table_name:
                         if add_unique_component("metrics", str(db_id)):
-                            discovered_managers.append(MetricsManager(db=team.memory.db))
+                            discovered_apps.append(MetricsApp(db=team.memory.db))
 
-                    # Eval manager
+                    # Eval app
                     if team.memory.db.eval_table_name:
                         if add_unique_component("eval", str(db_id)):
-                            discovered_managers.append(EvalManager(db=team.memory.db))
+                            discovered_apps.append(EvalApp(db=team.memory.db))
 
-                # Knowledge manager
+                # Knowledge app
                 if hasattr(team, "knowledge") and team.knowledge:
                     knowledge_id = id(team.knowledge)
                     if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_managers.append(KnowledgeManager(knowledge=team.knowledge))
+                        discovered_apps.append(KnowledgeApp(knowledge=team.knowledge))
 
         # Process workflows
-        # TODO: Implement workflow manager discovery
+        # TODO: Implement workflow app discovery
 
-        # Log discovered managers
-        if discovered_managers:
-            for manager in discovered_managers:
-                log_debug(f"{manager.type.title()} Manager added to AgentOS")
+        # Log discovered apps
+        if discovered_apps:
+            for app in discovered_apps:
+                log_debug(f"{app.type.title()} App added to AgentOS")
 
-        return discovered_managers
+        return discovered_apps
 
     def set_os_id(self) -> str:
         # If os_id is already set, keep it instead of overriding with UUID
@@ -212,18 +210,18 @@ class AgentOS:
             self.monitoring = monitor_env.lower() == "true"
 
     def get_app(self) -> FastAPI:
-        if not self.api_app:
-            self.api_app = FastAPI(
+        if not self.fastapi_app:
+            self.fastapi_app = FastAPI(
                 title=self.settings.title,
                 docs_url="/docs" if self.settings.docs_enabled else None,
                 redoc_url="/redoc" if self.settings.docs_enabled else None,
                 openapi_url="/openapi.json" if self.settings.docs_enabled else None,
             )
 
-        if not self.api_app:
+        if not self.fastapi_app:
             raise Exception("API App could not be created.")
 
-        @self.api_app.exception_handler(HTTPException)
+        @self.fastapi_app.exception_handler(HTTPException)
         async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
             return JSONResponse(
                 status_code=exc.status_code,
@@ -239,38 +237,38 @@ class AgentOS:
                     content={"detail": str(e)},
                 )
 
-        self.api_app.middleware("http")(general_exception_handler)
+        self.fastapi_app.middleware("http")(general_exception_handler)
 
         # Attach base router
-        self.api_app.include_router(get_base_router(self))
+        self.fastapi_app.include_router(get_base_router(self))
 
         for interface in self.interfaces:
-            self.api_app.include_router(interface.get_router())
+            self.fastapi_app.include_router(interface.get_router())
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
-        # Auto-discover managers if none are provided
-        if not self.managers:
-            self.managers = self._auto_discover_managers()
+        # Auto-discover apps if none are provided
+        if not self.apps:
+            self.apps = self._auto_discover_apps()
 
-        manager_index_map: Dict[str, int] = {}
-        for manager in self.managers:
-            manager_index_map[manager.type] = manager_index_map.get(manager.type, 0) + 1
+        app_index_map: Dict[str, int] = {}
+        for app in self.apps:
+            app_index_map[app.type] = app_index_map.get(app.type, 0) + 1
 
-            # Passing contextual agents and teams to the eval manager, so it can use them to run evals.
-            if manager.type == "eval":
-                self.api_app.include_router(
-                    manager.get_router(
-                        index=manager_index_map[manager.type],
+            # Passing contextual agents and teams to the eval app, so it can use them to run evals.
+            if app.type == "eval":
+                self.fastapi_app.include_router(
+                    app.get_router(
+                        index=app_index_map[app.type],
                         agents=self.agents,
                         teams=self.teams,
                     )
                 )
             else:
-                self.api_app.include_router(manager.get_router(index=manager_index_map[manager.type]))
+                self.fastapi_app.include_router(app.get_router(index=app_index_map[app.type]))
 
-            self.managers_loaded.append((manager.type, manager.router_prefix))
+            self.apps_loaded.append((app.type, app.router_prefix))
 
-        self.api_app.add_middleware(
+        self.fastapi_app.add_middleware(
             CORSMiddleware,
             allow_origins=self.settings.cors_origin_list,  # type: ignore
             allow_credentials=True,
@@ -279,7 +277,7 @@ class AgentOS:
             expose_headers=["*"],
         )
 
-        return self.api_app
+        return self.fastapi_app
 
     def serve(
         self,
@@ -336,35 +334,6 @@ class AgentOS:
                         padding=(2, 2),
                     )
                 )
-
-        managers_panel_text = ""
-        for manager_type, manager_prefix in self.managers_loaded:
-            encoded_endpoint = f"{full_host}:{port}{manager_prefix}"
-            if manager_type == "session":
-                managers_panel_text += f"[bold green]Sessions Manager:[/bold green] {encoded_endpoint}\n"
-            elif manager_type == "knowledge":
-                managers_panel_text += f"[bold green]Knowledge Manager:[/bold green] {encoded_endpoint}\n"
-            elif manager_type == "memory":
-                managers_panel_text += f"[bold green]Memory Manager:[/bold green] {encoded_endpoint}\n"
-            elif manager_type == "eval":
-                managers_panel_text += f"[bold green]Evals Manager:[/bold green] {encoded_endpoint}\n"
-            elif manager_type == "metrics":
-                managers_panel_text += f"[bold green]Metrics Manager:[/bold green] {encoded_endpoint}\n"
-            else:
-                log_warning(f"Unknown manager type: {manager_type}")
-
-        if managers_panel_text:
-            managers_panel_text = managers_panel_text.strip()
-            panels.append(
-                Panel(
-                    managers_panel_text,
-                    title="Configured Managers",
-                    expand=False,
-                    border_style="bright_cyan",
-                    box=box.HEAVY,
-                    padding=(2, 2),
-                )
-            )
 
         # Print the panel
         for panel in panels:

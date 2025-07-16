@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from bson import ObjectId
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -88,7 +88,7 @@ class MongoDb(VectorDb):
         self.hybrid_rank_constant = hybrid_rank_constant
 
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -1134,3 +1134,12 @@ class MongoDb(VectorDb):
             return tuple(self._convert_objectids_to_strings(item) for item in obj)
         else:
             return obj
+
+    def delete_by_id(self, id: str) -> bool:
+        pass
+
+    def delete_by_name(self, name: str) -> bool:
+        pass
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        pass

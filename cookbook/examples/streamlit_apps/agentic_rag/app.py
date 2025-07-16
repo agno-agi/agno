@@ -8,10 +8,10 @@ import streamlit as st
 from agentic_rag import get_agentic_rag_agent
 from agno.agent import Agent
 from agno.document import Document
-from agno.document.reader.csv_reader import CSVReader
-from agno.document.reader.pdf_reader import PDFReader
-from agno.document.reader.text_reader import TextReader
-from agno.document.reader.website_reader import WebsiteReader
+from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.pdf_reader import PDFReader
+from agno.knowledge.reader.text_reader import TextReader
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,

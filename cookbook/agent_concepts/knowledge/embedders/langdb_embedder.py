@@ -1,5 +1,5 @@
-from agno.agent import AgentKnowledge
-from agno.embedder.langdb import LangDBEmbedder
+from agno.knowledge.embedder.langdb import LangDBEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 embeddings = LangDBEmbedder().get_embedding("Embed me")
@@ -9,11 +9,11 @@ print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
-knowledge_base = AgentKnowledge(
-    vector_db=PgVector(
+knowledge = Knowledge(
+    vector_store=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="langdb_embeddings",
         embedder=LangDBEmbedder(),
     ),
-    num_documents=2,
+    max_results=2,
 )

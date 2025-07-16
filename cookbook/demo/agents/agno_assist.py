@@ -3,7 +3,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory

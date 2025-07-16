@@ -9,7 +9,7 @@ except ImportError:
     raise ImportError("`lancedb` not installed. Please install using `pip install lancedb`")
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
@@ -59,7 +59,7 @@ class LanceDb(VectorDb):
     ):
         # Embedder for embedding the document contents
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
