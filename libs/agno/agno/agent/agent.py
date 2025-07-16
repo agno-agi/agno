@@ -1361,6 +1361,9 @@ class Agent:
 
         log_debug(f"Session ID: {session_id}", center=True)
 
+        # Initialize the Agent
+        self.initialize_agent()
+
         effective_filters = knowledge_filters
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:

@@ -71,6 +71,7 @@ class AwsBedrock(Model):
 
     client: Optional[AwsClient] = None
     async_client: Optional[Any] = None
+    async_session: Optional[Any] = None
 
     def get_client(self) -> AwsClient:
         """
@@ -119,33 +120,43 @@ class AwsBedrock(Model):
                 "`aioboto3` not installed. Please install using `pip install aioboto3` for async support."
             )
 
-        # Use aioboto3.Session for async operations
-        session = aioboto3.Session()
+        if self.async_session is None:
+            self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
+            self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        # Prepare client parameters
+            self.async_session = aioboto3.Session()
+
         client_kwargs = {
             "service_name": "bedrock-runtime",
-            "region_name": self.aws_region or getenv("AWS_REGION"),
+            "region_name": self.aws_region,
         }
 
-        if not self.aws_sso_auth:
-            aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
-            aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+        if self.aws_sso_auth:
+            pass
+        else:
+            if not self.aws_access_key_id or not self.aws_secret_access_key:
+                import os
+                env_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+                env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                env_region = os.environ.get("AWS_REGION")
+                
+                if env_access_key and env_secret_key:
+                    self.aws_access_key_id = env_access_key
+                    self.aws_secret_access_key = env_secret_key
+                    if env_region:
+                        self.aws_region = env_region
+                        client_kwargs["region_name"] = self.aws_region
 
-            if not aws_access_key_id or not aws_secret_access_key:
-                raise AgnoError(
-                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                    status_code=400,
+            if self.aws_access_key_id and self.aws_secret_access_key:
+                client_kwargs.update(
+                    {
+                        "aws_access_key_id": self.aws_access_key_id,
+                        "aws_secret_access_key": self.aws_secret_access_key,
+                    }
                 )
-
-            client_kwargs.update(
-                {
-                    "aws_access_key_id": aws_access_key_id,
-                    "aws_secret_access_key": aws_secret_access_key,
-                }
-            )
-
-        return session.client(**client_kwargs)
+        
+        return self.async_session.client(**client_kwargs)
 
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         """
