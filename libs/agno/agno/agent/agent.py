@@ -4043,7 +4043,7 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if hasattr(session, "memory") and session.memory is not None:
+        if hasattr(session, "memory") and session.memory is not None:  # type: ignore
             if isinstance(self.memory, AgentMemory):
                 try:
                     if "runs" in session.memory:
@@ -4168,21 +4168,20 @@ class Agent:
     def add_introduction(self, introduction: str) -> None:
         """Add an introduction to the chat history"""
 
-        if hasattr(self, "memory") and self.memory is not None:
-            if isinstance(self.memory, AgentMemory):
-                if introduction is not None:
-                    # Add an introduction as the first response from the Agent
-                    if len(self.memory.runs) == 0:
-                        self.memory.add_run(
-                            AgentRun(
-                                response=RunResponse(
-                                    content=introduction,
-                                    messages=[
-                                        Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
-                                    ],
-                                )
+        if isinstance(self.memory, AgentMemory):
+            if introduction is not None:
+                # Add an introduction as the first response from the Agent
+                if len(self.memory.runs) == 0:
+                    self.memory.add_run(
+                        AgentRun(
+                            response=RunResponse(
+                                content=introduction,
+                                messages=[
+                                    Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
+                                ],
                             )
                         )
+                    )
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from the database and return the session_id.
