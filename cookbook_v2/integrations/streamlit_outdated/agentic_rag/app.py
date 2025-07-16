@@ -4,17 +4,16 @@ import tempfile
 import nest_asyncio
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
-from agno.agent import Agent
 from agno.utils.log import logger
 from agno.utils.streamlit import (
     COMMON_CSS,
     add_message,
     display_tool_calls,
     export_chat_history,
-    knowledge_base_info_widget,
     restart_agent_session,
     session_selector_widget,
 )
+from utils import knowledge_base_info_widget
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -68,31 +67,27 @@ def main():
     ####################################################################
     # Initialize Agent
     ####################################################################
-    agent: Agent
+    agentic_rag_agent: Agent
     if (
         "agent" not in st.session_state
         or st.session_state["agent"] is None
         or st.session_state.get("current_model") != model_id
     ):
-        logger.info("---*--- Creating new Agentic RAG Agent ---*---")
-
         session_id = st.session_state.get("session_id")
-        agent = get_agentic_rag_agent(model_id=model_id, session_id=session_id)
+        agentic_rag_agent = get_agentic_rag_agent(
+            model_id=model_id, session_id=session_id
+        )
 
-        st.session_state["agent"] = agent
+        st.session_state["agent"] = agentic_rag_agent
         st.session_state["current_model"] = model_id
     else:
-        agent = st.session_state["agent"]
+        agentic_rag_agent = st.session_state["agent"]
 
     ####################################################################
-    # Initialize session tracking (let streamlit utilities handle loading)
+    # Session management
     ####################################################################
-    logger.info("---*--- Loading Agentic RAG session ---*---")
-    if agent.session_id:
-        logger.info(f"---*--- Agentic RAG session: {agent.session_id} ---*---")
-        st.session_state["session_id"] = agent.session_id
-    else:
-        logger.info("---*--- Agentic RAG session: None (New Chat) ---*---")
+    if agentic_rag_agent.session_id:
+        st.session_state["session_id"] = agentic_rag_agent.session_id
 
     # Initialize messages if needed (streamlit utilities will populate them)
     if "messages" not in st.session_state:
@@ -105,14 +100,16 @@ def main():
     # Document Management
     ####################################################################
     st.sidebar.markdown("#### 📚 Document Management")
-    st.sidebar.metric("Documents Loaded", agent.knowledge.vector_store.get_count())
+    st.sidebar.metric(
+        "Documents Loaded", agentic_rag_agent.knowledge.vector_store.get_count()
+    )
 
     # URL input
     input_url = st.sidebar.text_input("Add URL to Knowledge Base")
     if input_url and not prompt:
         alert = st.sidebar.info("Processing URL...", icon="ℹ️")
         try:
-            agent.knowledge.add_content(
+            agentic_rag_agent.knowledge.add_content(
                 name=f"URL: {input_url}",
                 url=input_url,
                 description=f"Content from {input_url}",
@@ -138,7 +135,7 @@ def main():
                 tmp_path = tmp_file.name
 
             # Use the Knowledge system's add_content method
-            agent.knowledge.add_content(
+            agentic_rag_agent.knowledge.add_content(
                 name=uploaded_file.name,
                 path=tmp_path,
                 description=f"Uploaded file: {uploaded_file.name}",
@@ -154,8 +151,8 @@ def main():
 
     # Clear knowledge base
     if st.sidebar.button("Clear Knowledge Base"):
-        if agent.knowledge.vector_store:
-            agent.knowledge.vector_store.delete()
+        if agentic_rag_agent.knowledge.vector_store:
+            agentic_rag_agent.knowledge.vector_store.delete()
         st.sidebar.success("Knowledge base cleared")
 
     ###############################################################
@@ -177,7 +174,7 @@ def main():
         if st.sidebar.button("🔄 New Chat", use_container_width=True):
             restart_agent()
     with col2:
-        # Export chat functionality (using streamlit utils)
+        # Export chat
         has_messages = (
             st.session_state.get("messages") and len(st.session_state["messages"]) > 0
         )
@@ -185,12 +182,12 @@ def main():
         if has_messages:
             # Generate filename
             session_id = st.session_state.get("session_id")
-            if session_id and hasattr(agent, "session_name") and agent.session_name:
-                clean_name = "".join(
-                    c for c in agent.session_name if c.isalnum() or c in (" ", "-", "_")
-                ).strip()
-                clean_name = clean_name.replace(" ", "_")[:50]
-                filename = f"agentic_rag_chat_{clean_name}.md"
+            if (
+                session_id
+                and hasattr(agentic_rag_agent, "session_name")
+                and agentic_rag_agent.session_name
+            ):
+                filename = f"agentic_rag_chat_{agentic_rag_agent.session_name}.md"
             elif session_id:
                 filename = f"agentic_rag_chat_{session_id}.md"
             else:
@@ -221,58 +218,72 @@ def main():
             content = message["content"]
             if content is not None:
                 with st.chat_message(message["role"]):
-                    # Debug: Show what's in the session state message
-                    if message["role"] == "assistant":
-                        logger.debug(f"=== DISPLAYING MESSAGE ===")
-                        logger.debug(f"Message keys: {list(message.keys())}")
-                        logger.debug(f"Has tool_calls: {'tool_calls' in message}")
-                        if "tool_calls" in message:
-                            logger.debug(f"Tool_calls value: {message['tool_calls']}")
-                            logger.debug(f"Tool_calls type: {type(message['tool_calls'])}")
-                            if message["tool_calls"]:
-                                logger.debug(f"Tool_calls length: {len(message['tool_calls'])}")
-                    
-                    # Display tool calls if they exist in the message
                     if "tool_calls" in message and message["tool_calls"]:
-                        logger.debug(f"About to display {len(message['tool_calls'])} tool calls")
+                        # Try to get tool executions with results from agent session
+                        tool_executions_with_results = []
                         
-                        # Convert OpenAI format to display format if needed
-                        formatted_tools = []
-                        for tool in message["tool_calls"]:
-                            if isinstance(tool, dict):
-                                if "function" in tool and "name" in tool.get("function", {}):
-                                    # OpenAI format: convert to display format
-                                    import json
-                                    function_data = tool["function"]
-                                    tool_name = function_data.get("name", "Unknown")
-                                    
-                                    # Parse arguments JSON string
-                                    tool_args = {}
-                                    try:
-                                        if "arguments" in function_data:
-                                            tool_args = json.loads(function_data["arguments"])
-                                    except json.JSONDecodeError:
-                                        tool_args = {"raw": function_data.get("arguments", "")}
-                                    
-                                    display_tool = {
-                                        "tool_name": tool_name,
-                                        "tool_args": tool_args,
-                                        "result": "Result not stored in session history",
-                                    }
-                                    formatted_tools.append(display_tool)
-                                elif "tool_name" in tool:
-                                    # Already in display format
-                                    formatted_tools.append(tool)
+                        # Get tool executions from the agent's session runs
+                        if hasattr(agentic_rag_agent, 'agent_session') and agentic_rag_agent.agent_session and agentic_rag_agent.agent_session.runs:
+                            for run in agentic_rag_agent.agent_session.runs:
+                                if hasattr(run, 'tools') and run.tools:
+                                    for tool_exec in run.tools:
+                                        if hasattr(tool_exec, 'tool_name') and hasattr(tool_exec, 'tool_args') and hasattr(tool_exec, 'result'):
+                                            # Try to parse result as JSON if it's a string
+                                            result = tool_exec.result
+                                            if isinstance(result, str):
+                                                try:
+                                                    import json
+                                                    result = json.loads(result)
+                                                except (json.JSONDecodeError, TypeError):
+                                                    # Keep as string if not valid JSON
+                                                    pass
+                                            
+                                            tool_executions_with_results.append({
+                                                "tool_name": tool_exec.tool_name,
+                                                "tool_args": tool_exec.tool_args,
+                                                "result": result
+                                            })
+                        
+                        # If we found tool executions with results, use them
+                        if tool_executions_with_results:
+                            display_tool_calls(st.empty(), tool_executions_with_results)
+                        else:
+                            # Fallback: Convert tool calls to display format if needed
+                            formatted_tools = []
+                            for tool in message["tool_calls"]:
+                                if isinstance(tool, dict):
+                                    # Check if it's already in display format
+                                    if "tool_name" in tool:
+                                        formatted_tools.append(tool)
+                                    # Convert from OpenAI format
+                                    elif "function" in tool and "name" in tool.get("function", {}):
+                                        import json
+                                        function_data = tool["function"]
+                                        tool_name = function_data.get("name", "Unknown")
+                                        
+                                        tool_args = {}
+                                        try:
+                                            if "arguments" in function_data:
+                                                tool_args = json.loads(function_data["arguments"]) if isinstance(function_data["arguments"], str) else function_data["arguments"]
+                                        except json.JSONDecodeError:
+                                            tool_args = {"raw": function_data.get("arguments", "")}
+                                        
+                                        display_tool = {
+                                            "tool_name": tool_name,
+                                            "tool_args": tool_args,
+                                            "result": "Tool result not available in session history",
+                                        }
+                                        formatted_tools.append(display_tool)
+                                    else:
+                                        # Unknown format, try to display as-is
+                                        formatted_tools.append(tool)
                                 else:
-                                    # Unknown format, try to display as-is
                                     formatted_tools.append(tool)
-                            else:
-                                formatted_tools.append(tool)
-                        
-                        display_tool_calls(st.empty(), formatted_tools)
+                            
+                            display_tool_calls(st.empty(), formatted_tools)
                     else:
                         if message["role"] == "assistant":
-                            logger.debug("Not displaying tool calls - either no key or empty value")
+                            pass
 
                     st.markdown(content)
 
@@ -292,7 +303,7 @@ def main():
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = agent.run(question, stream=True)
+                    run_response = agentic_rag_agent.run(question, stream=True)
                     for resp_chunk in run_response:
                         # Display tool calls if available
                         if hasattr(resp_chunk, "tool") and resp_chunk.tool:
@@ -303,7 +314,9 @@ def main():
                             response += resp_chunk.content
                             resp_container.markdown(response)
 
-                    add_message("assistant", response, agent.run_response.tools)
+                    add_message(
+                        "assistant", response, agentic_rag_agent.run_response.tools
+                    )
                 except Exception as e:
                     error_message = f"Sorry, I encountered an error: {str(e)}"
                     add_message("assistant", error_message)
@@ -312,13 +325,13 @@ def main():
     ####################################################################
     # Session management widgets (using streamlit utilities)
     ####################################################################
-    
+
     # Session selector with built-in rename functionality
     # Note: Rename option appears below when you have an active session
-    session_selector_widget(agent, model_id, get_agentic_rag_agent)
-    
+    session_selector_widget(agentic_rag_agent, model_id, get_agentic_rag_agent)
+
     # Knowledge base information
-    knowledge_base_info_widget(agent)
+    knowledge_base_info_widget(agentic_rag_agent)
 
     ####################################################################
     # About section (inline instead of separate file)

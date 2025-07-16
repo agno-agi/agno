@@ -1,13 +1,28 @@
 """🤖 Agentic RAG Agent - Your AI Knowledge Assistant!
-
-This example shows how to build a RAG (Retrieval Augmented Generation) system that
-leverages vector search and LLMs to provide insights from any knowledge base.
+This advanced example shows how to build a sophisticated RAG (Retrieval Augmented Generation) system that leverages vector search and LLMs to provide deep insights from any knowledge base.
 
 The agent can:
 - Process and understand documents from multiple sources (PDFs, websites, text files)
 - Build a searchable knowledge base using vector embeddings
 - Maintain conversation context and memory across sessions
 - Provide relevant citations and sources for its responses
+- Generate summaries and extract key insights
+- Answer follow-up questions and clarifications
+
+Example queries to try:
+- "What are the key points from this document?"
+- "Can you summarize the main arguments and supporting evidence?"
+- "What are the important statistics and findings?"
+- "How does this relate to [topic X]?"
+- "What are the limitations or gaps in this analysis?"
+- "Can you explain [concept X] in more detail?"
+- "What other sources support or contradict these claims?"
+
+The agent uses:
+- Vector similarity search for relevant document retrieval
+- Conversation memory for contextual responses
+- Citation tracking for source attribution
+- Dynamic knowledge base updates
 
 View the README for instructions on how to run the application.
 """
@@ -68,10 +83,31 @@ def get_agentic_rag_agent(
         session_id=session_id,
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
         instructions=[
-            "Search your knowledge base before answering questions.",
-            "Include sources and citations in your responses.",
-            "If the knowledge base doesn't have sufficient information, use web search.",
-            "Structure responses clearly with relevant quotes and references.",
+            "1. Knowledge Base Search:",
+            "   - ALWAYS start by searching the knowledge base using search_knowledge_base tool",
+            "   - Analyze ALL returned documents thoroughly before responding",
+            "   - If multiple documents are returned, synthesize the information coherently",
+            "2. External Search:",
+            "   - If knowledge base search yields insufficient results, use duckduckgo_search",
+            "   - Focus on reputable sources and recent information",
+            "   - Cross-reference information from multiple sources when possible",
+            "3. Context Management:",
+            "   - Use get_chat_history tool to maintain conversation continuity",
+            "   - Reference previous interactions when relevant",
+            "   - Keep track of user preferences and prior clarifications",
+            "4. Response Quality:",
+            "   - Provide specific citations and sources for claims",
+            "   - Structure responses with clear sections and bullet points when appropriate",
+            "   - Include relevant quotes from source materials",
+            "   - Avoid hedging phrases like 'based on my knowledge' or 'depending on the information'",
+            "5. User Interaction:",
+            "   - Ask for clarification if the query is ambiguous",
+            "   - Break down complex questions into manageable parts",
+            "   - Proactively suggest related topics or follow-up questions",
+            "6. Error Handling:",
+            "   - If no relevant information is found, clearly state this",
+            "   - Suggest alternative approaches or questions",
+            "   - Be transparent about limitations in available information",
         ],
         show_tool_calls=True,
         markdown=True,

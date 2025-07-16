@@ -1,7 +1,3 @@
-"""
-Simple streamlit utilities for Agno applications.
-"""
-
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +12,6 @@ from agno.utils.log import logger
 
 
 def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:
-    """Add a message to session state."""
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -28,13 +23,12 @@ def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any
 
 
 def display_tool_calls(container, tools: List[Any]):
-    """Display tool calls in expandable sections."""
     if not tools:
+        logger.debug("No tools to display")
         return
 
     with container.container():
         for tool in tools:
-            # Handle both ToolExecution objects and dicts
             if hasattr(tool, "tool_name"):
                 name = tool.tool_name or "Tool"
                 args = tool.tool_args or {}
@@ -57,11 +51,9 @@ def display_tool_calls(container, tools: List[Any]):
 
 
 def export_chat_history(app_name: str = "Chat") -> str:
-    """Export chat history as markdown."""
     if "messages" not in st.session_state or not st.session_state["messages"]:
         return "# Chat History\n\n*No messages to export*"
 
-    # Get first user message as title
     title = "Chat History"
     for msg in st.session_state["messages"]:
         if msg.get("role") == "user" and msg.get("content"):
@@ -87,7 +79,6 @@ def export_chat_history(app_name: str = "Chat") -> str:
 
 
 def restart_agent_session(**session_keys) -> None:
-    """Clear session state keys and restart."""
     for key in session_keys.values():
         if key in st.session_state:
             st.session_state[key] = None
@@ -96,30 +87,7 @@ def restart_agent_session(**session_keys) -> None:
     st.rerun()
 
 
-def knowledge_base_info_widget(agent: Agent) -> None:
-    """Display knowledge base info."""
-    if not agent.knowledge:
-        st.sidebar.info("No knowledge base configured")
-        return
-
-    vector_store = getattr(agent.knowledge, "vector_store", None)
-    if not vector_store:
-        st.sidebar.info("No vector store configured")
-        return
-
-    try:
-        doc_count = vector_store.get_count()
-        if doc_count == 0:
-            st.sidebar.info("💡 Upload documents to populate the knowledge base")
-        else:
-            st.sidebar.metric("Documents Loaded", doc_count)
-    except Exception as e:
-        logger.error(f"Error getting knowledge base info: {e}")
-        st.sidebar.warning("Could not retrieve knowledge base information")
-
-
 def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback: callable) -> None:
-    """Simple session selector widget with integrated rename functionality."""
     if not agent.memory or not agent.memory.db:
         st.sidebar.info("💡 Memory not configured. Sessions will not be saved.")
         return
@@ -140,52 +108,42 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
         st.sidebar.info("🆕 New Chat - Start your conversation!")
         return
 
-    # Build session options
     session_options = []
     session_dict = {}
-    
+
     for session in sessions:
         if not hasattr(session, "session_id") or not session.session_id:
             continue
-            
+
         session_id = session.session_id
         session_name = None
-        
+
         if hasattr(session, "session_data") and session.session_data:
             session_name = session.session_data.get("session_name")
-        
+
         name = session_name or session_id
-        
-        # Handle timestamp - could be datetime object or integer timestamp
+
         if hasattr(session, "created_at") and session.created_at:
             try:
                 if hasattr(session.created_at, "strftime"):
-                    # It's already a datetime object
                     time_str = session.created_at.strftime("%m/%d %H:%M")
-                else:
-                    # It's an integer timestamp - convert to datetime
-                    dt = datetime.fromtimestamp(session.created_at)
-                    time_str = dt.strftime("%m/%d %H:%M")
                 display_name = f"{name} ({time_str})"
             except (ValueError, TypeError, OSError) as e:
-                logger.debug(f"Error formatting timestamp for session {session_id}: {e}")
                 display_name = name
         else:
             display_name = name
-            
+
         session_options.append(display_name)
         session_dict[display_name] = session_id
 
-    # Current session handling
     current_session_id = st.session_state.get("session_id")
     current_selection = None
-    
+
     for display_name, session_id in session_dict.items():
         if session_id == current_session_id:
             current_selection = display_name
             break
 
-    # Session selector
     if current_session_id:
         display_options = session_options
         selected_index = session_options.index(current_selection) if current_selection in session_options else 0
@@ -197,16 +155,14 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
         label="Session Name",
         options=display_options,
         index=selected_index,
-        help="Select a session to continue or start new chat"
+        help="Select a session to continue or start new chat",
     )
 
-    # Handle selection
     if selected != "🆕 New Chat" and selected in session_dict:
         selected_session_id = session_dict[selected]
         if selected_session_id != current_session_id:
             _load_session(selected_session_id, model_id, agent_creation_callback)
 
-    # Session rename functionality - only show if there's an active session
     if agent.session_id:
         if "session_edit_mode" not in st.session_state:
             st.session_state.session_edit_mode = False
@@ -223,7 +179,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                     st.rerun()
         else:
             new_name = st.sidebar.text_input("Enter new name:", value=current_name, key="session_name_input")
-            
+
             col1, col2 = st.sidebar.columns([1, 1])
             with col1:
                 if st.button("💾 Save", type="primary", use_container_width=True, key="save_session_name"):
@@ -245,43 +201,32 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
 
 
 def _load_session(session_id: str, model_id: str, agent_creation_callback: callable):
-    """Load a specific session."""
     try:
         new_agent = agent_creation_callback(model_id=model_id, session_id=session_id)
         st.session_state["agent"] = new_agent
         st.session_state["session_id"] = session_id
         st.session_state["messages"] = []
 
-        # Load chat history
         try:
             chat_history = new_agent.get_messages_for_session(session_id)
             if chat_history:
-                logger.debug(f"Loading {len(chat_history)} messages from session")
                 for message in chat_history:
                     if message.role == "user":
                         add_message("user", str(message.content))
                     elif message.role == "assistant":
-                        # Check multiple possible sources for tool calls
                         tool_calls = None
-                        
-                        # Try to get tool calls from various sources
+
                         if hasattr(message, "tool_calls") and message.tool_calls:
                             tool_calls = message.tool_calls
-                            logger.debug(f"Found tool_calls: {type(tool_calls)} with {len(tool_calls)} items")
                         elif hasattr(message, "tools") and message.tools:
                             tool_calls = message.tools
-                            logger.debug(f"Found tools: {type(tool_calls)} with {len(tool_calls)} items")
-                        
-                        # If we found tool calls, ensure they're in the right format
+
                         if tool_calls:
-                            # Convert to list of dicts if they're not already
                             formatted_tools = []
                             for tool in tool_calls:
                                 if hasattr(tool, "to_dict"):
-                                    # ToolExecution object with to_dict method
                                     formatted_tools.append(tool.to_dict())
                                 elif hasattr(tool, "tool_name"):
-                                    # ToolExecution-like object
                                     tool_dict = {
                                         "tool_name": getattr(tool, "tool_name", "Unknown"),
                                         "tool_args": getattr(tool, "tool_args", {}),
@@ -289,14 +234,12 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                                     }
                                     formatted_tools.append(tool_dict)
                                 elif isinstance(tool, dict):
-                                    # Already a dictionary
                                     formatted_tools.append(tool)
                                 else:
-                                    logger.debug(f"Unknown tool format: {type(tool)} - {tool}")
-                            
+                                    pass
+
                             tool_calls = formatted_tools if formatted_tools else None
-                            logger.debug(f"Formatted {len(formatted_tools)} tool calls for display")
-                        
+
                         add_message("assistant", str(message.content), tool_calls)
         except Exception as e:
             logger.warning(f"Could not load chat history: {e}")
@@ -308,7 +251,6 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
 
 
 def get_model_from_id(model_id: str):
-    """Get model instance from ID."""
     if model_id.startswith("openai:"):
         return OpenAIChat(id=model_id.split("openai:")[1])
     elif model_id.startswith("anthropic:"):
@@ -320,8 +262,6 @@ def get_model_from_id(model_id: str):
     else:
         return OpenAIChat(id="gpt-4o")
 
-
-# Common CSS for streamlit apps
 COMMON_CSS = """
     <style>
     .main-title {
