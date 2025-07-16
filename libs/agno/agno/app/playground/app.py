@@ -83,7 +83,7 @@ class Playground:
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.app_id:
+                if hasattr(workflow, "app_id") and not workflow.app_id:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
@@ -197,6 +197,7 @@ class Playground:
         # Print the panel
         console.print(panel)
         self.set_app_id()
+
         self.register_app_on_platform()
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
