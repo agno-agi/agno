@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from agno.document.reader.json_reader import JSONReader
+from agno.knowledge.reader.json_reader import JSONReader
 
 reader = JSONReader()
 

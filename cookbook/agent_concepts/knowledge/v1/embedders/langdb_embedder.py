@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.langdb import LangDBEmbedder
+from agno.knowledge.embedder.langdb import LangDBEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = LangDBEmbedder().get_embedding("Embed me")

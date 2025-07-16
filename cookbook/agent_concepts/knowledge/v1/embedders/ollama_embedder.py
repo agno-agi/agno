@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.ollama import OllamaEmbedder
+from agno.knowledge.embedder.ollama import OllamaEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = OllamaEmbedder().get_embedding(

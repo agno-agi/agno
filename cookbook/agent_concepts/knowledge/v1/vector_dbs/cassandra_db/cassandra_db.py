@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.embedder.mistral import MistralEmbedder
+from agno.knowledge.embedder.mistral import MistralEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.mistral import MistralChat
 from agno.vectordb.cassandra import Cassandra

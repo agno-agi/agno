@@ -8,7 +8,7 @@ Run: `pip install openai agno groq cohere` to install the dependencies
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools

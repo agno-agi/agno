@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.document.base import Document
-from agno.document.reader.text_reader import TextReader
+from agno.knowledge.reader.text_reader import TextReader
 
 
 @pytest.fixture

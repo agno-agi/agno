@@ -1,6 +1,6 @@
-from agno.document.reader.pdf_reader import PDFUrlReader
-from agno.embedder.aws_bedrock import AwsBedrockEmbedder
+from agno.knowledge.embedder.aws_bedrock import AwsBedrockEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.reader.pdf_reader import PDFUrlReader
 from agno.vectordb.pgvector import PgVector
 
 embeddings = AwsBedrockEmbedder().get_embedding(

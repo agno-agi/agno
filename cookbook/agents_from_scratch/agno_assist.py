@@ -8,7 +8,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools

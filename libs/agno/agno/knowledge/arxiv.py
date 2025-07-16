@@ -1,8 +1,8 @@
 from typing import AsyncIterator, Iterator, List
 
 from agno.document import Document
-from agno.document.reader.arxiv_reader import ArxivReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.reader.arxiv_reader import ArxivReader
 
 
 class ArxivKnowledgeBase(AgentKnowledge):

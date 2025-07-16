@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.document.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
 

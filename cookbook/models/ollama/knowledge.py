@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai ollama` to install dependencies."""
 
 from agno.agent import Agent
-from agno.embedder.ollama import OllamaEmbedder
+from agno.knowledge.embedder.ollama import OllamaEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.ollama import Ollama
 from agno.vectordb.pgvector import PgVector

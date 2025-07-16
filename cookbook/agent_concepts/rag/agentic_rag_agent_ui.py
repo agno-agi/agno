@@ -6,7 +6,7 @@
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground

@@ -8,9 +8,9 @@ from uuid import uuid4
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
-from agno.document.reader import Reader, ReaderFactory
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.content import Content, FileData
+from agno.knowledge.reader import Reader, ReaderFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
@@ -531,13 +531,13 @@ class Knowledge:
             return
         return self.vector_store.delete_by_id(id)
 
-    def remove_vector_by_name(self, name: str) -> bool:
+    def remove_vectors_by_name(self, name: str) -> bool:
         if self.vector_store is None:
             log_warning("No vector DB provided")
             return
         return self.vector_store.delete_by_name(name)
 
-    def remove_vector_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+    def remove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         if self.vector_store is None:
             log_warning("No vector DB provided")
             return

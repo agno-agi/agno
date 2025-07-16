@@ -3,10 +3,10 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.document.reader.pdf_reader import PDFImageReader
-from agno.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.reader.pdf_reader import PDFImageReader
 from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools
 from agno.vectordb.pgvector import PgVector

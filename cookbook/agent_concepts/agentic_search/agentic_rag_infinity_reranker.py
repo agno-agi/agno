@@ -46,7 +46,7 @@ python cookbook/agent_concepts/agentic_search/agentic_rag_infinity_reranker.py
 """
 
 from agno.agent import Agent
-from agno.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.reranker.infinity import InfinityReranker

@@ -3,8 +3,8 @@ from unittest.mock import patch
 import pytest
 
 from agno.document.base import Document
-from agno.document.chunking.fixed import FixedSizeChunking
-from agno.document.reader.firecrawl_reader import FirecrawlReader
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.reader.firecrawl_reader import FirecrawlReader
 
 
 @pytest.fixture

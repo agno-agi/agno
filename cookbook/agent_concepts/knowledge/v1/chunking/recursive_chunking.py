@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.document.chunking.recursive import RecursiveChunking
+from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
 

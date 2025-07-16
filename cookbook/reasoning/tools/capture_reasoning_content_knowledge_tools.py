@@ -8,7 +8,7 @@ when using KnowledgeTools with URL knowledge, in both streaming and non-streamin
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.knowledge import KnowledgeTools

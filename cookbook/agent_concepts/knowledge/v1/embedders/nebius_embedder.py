@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.nebius import NebiusEmbedder
+from agno.knowledge.embedder.nebius import NebiusEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = NebiusEmbedder().get_embedding(

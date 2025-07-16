@@ -9,7 +9,7 @@ except ImportError:
     )
 
 from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_info, logger
 from agno.vectordb.base import VectorDb

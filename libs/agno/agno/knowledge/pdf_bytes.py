@@ -4,8 +4,8 @@ from typing import IO, AsyncIterator, Iterator, List, Union
 from pydantic import Field
 
 from agno.document import Document
-from agno.document.reader.pdf_reader import PDFImageReader, PDFReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.reader.pdf_reader import PDFImageReader, PDFReader
 
 
 class PDFBytesKnowledgeBase(AgentKnowledge):

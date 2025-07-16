@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.voyageai import VoyageAIEmbedder
+from agno.knowledge.embedder.voyageai import VoyageAIEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = VoyageAIEmbedder().get_embedding(

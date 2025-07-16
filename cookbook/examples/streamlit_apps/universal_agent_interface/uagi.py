@@ -6,8 +6,8 @@ from typing import List, Optional
 from agents import get_agent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
-from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.memory import Memory
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.anthropic import Claude

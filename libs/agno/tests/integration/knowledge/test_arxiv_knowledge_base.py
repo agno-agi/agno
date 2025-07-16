@@ -3,8 +3,8 @@ import uuid
 import pytest
 
 from agno.agent import Agent
-from agno.document.reader.arxiv_reader import ArxivReader
 from agno.knowledge.arxiv import ArxivKnowledgeBase
+from agno.knowledge.reader.arxiv_reader import ArxivReader
 from agno.vectordb.lancedb import LanceDb
 
 

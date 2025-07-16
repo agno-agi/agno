@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.document.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
 

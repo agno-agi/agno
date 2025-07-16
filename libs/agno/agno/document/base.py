@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from agno.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 
 
 @dataclass

@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.cohere import CohereEmbedder
+from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = CohereEmbedder().get_embedding(

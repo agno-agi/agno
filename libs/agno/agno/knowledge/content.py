@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from agno.document.reader import Reader
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
+from agno.knowledge.reader import Reader
 
 
 @dataclass

@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = OpenAIEmbedder().get_embedding(

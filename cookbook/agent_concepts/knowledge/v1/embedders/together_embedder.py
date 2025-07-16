@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.together import TogetherEmbedder
+from agno.knowledge.embedder.together import TogetherEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = TogetherEmbedder().get_embedding(

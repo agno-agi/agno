@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
-from agno.embedder.ollama import OllamaEmbedder
+from agno.knowledge.embedder.ollama import OllamaEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.ollama import Ollama
 from agno.vectordb.lancedb import LanceDb

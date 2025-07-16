@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.fireworks import FireworksEmbedder
+from agno.knowledge.embedder.fireworks import FireworksEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = FireworksEmbedder().get_embedding(

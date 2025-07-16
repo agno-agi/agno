@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.google import GeminiEmbedder
+from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = GeminiEmbedder().get_embedding(

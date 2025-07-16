@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = SentenceTransformerEmbedder().get_embedding(

@@ -4,8 +4,8 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional, Union
 
 from agno.document import Document
-from agno.embedder import Embedder
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.utils.log import log_debug, logger
 from agno.vectordb.base import VectorDb
 

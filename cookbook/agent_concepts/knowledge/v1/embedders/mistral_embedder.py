@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.mistral import MistralEmbedder
+from agno.knowledge.embedder.mistral import MistralEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = MistralEmbedder().get_embedding(

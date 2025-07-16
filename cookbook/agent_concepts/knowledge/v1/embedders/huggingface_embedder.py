@@ -1,5 +1,5 @@
 from agno.agent import AgentKnowledge
-from agno.embedder.huggingface import HuggingfaceCustomEmbedder
+from agno.knowledge.embedder.huggingface import HuggingfaceCustomEmbedder
 from agno.vectordb.pgvector import PgVector
 
 embeddings = HuggingfaceCustomEmbedder().get_embedding(

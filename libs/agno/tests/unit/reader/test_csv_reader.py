@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agno.document.base import Document
-from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
+from agno.knowledge.reader.csv_reader import CSVReader, CSVUrlReader
 
 # Sample CSV data
 SAMPLE_CSV = """name,age,city

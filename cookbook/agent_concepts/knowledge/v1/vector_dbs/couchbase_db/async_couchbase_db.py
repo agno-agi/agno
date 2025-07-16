@@ -46,7 +46,7 @@ import os
 import time
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.couchbase import CouchbaseSearch
 from couchbase.auth import PasswordAuthenticator

@@ -5,7 +5,7 @@ import pytest
 import pytest_asyncio
 
 from agno.agent.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.openai.chat import OpenAIChat
 from agno.vectordb.lancedb.lance_db import LanceDb

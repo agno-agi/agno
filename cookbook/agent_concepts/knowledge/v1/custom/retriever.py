@@ -1,7 +1,7 @@
 from typing import Optional
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.qdrant import Qdrant
 from qdrant_client import QdrantClient
