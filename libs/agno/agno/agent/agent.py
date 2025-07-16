@@ -4043,34 +4043,34 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None: # type: ignore
+        if session.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 try:
-                    if "runs" in session.memory: # type: ignore
+                    if "runs" in session.memory:
                         try:
                             self.memory.runs = []
-                            for run in session.memory["runs"]: # type: ignore
+                            for run in session.memory["runs"]:
                                 self.memory.runs.append(AgentRun.model_validate(run))
                         except Exception as e:
                             log_warning(f"Failed to load runs from memory: {e}")
-                    if "messages" in session.memory: # type: ignore
+                    if "messages" in session.memory:
                         try:
-                            self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]] # type: ignore
+                            self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
                         except Exception as e:
                             log_warning(f"Failed to load messages from memory: {e}")
-                    if "summary" in session.memory: # type: ignore
+                    if "summary" in session.memory:
                         from agno.memory.summary import SessionSummary
 
                         try:
-                            self.memory.summary = SessionSummary.model_validate(session.memory["summary"]) # type: ignore
+                            self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
                         except Exception as e:
                             log_warning(f"Failed to load session summary from memory: {e}")
-                    if "memories" in session.memory: # type: ignore
+                    if "memories" in session.memory:
                         from agno.memory.memory import Memory as AgentUserMemory
 
                         try:
                             self.memory.memories = [
-                                AgentUserMemory.model_validate(m) for m in session.memory["memories"] # type: ignore
+                                AgentUserMemory.model_validate(m) for m in session.memory["memories"]
                             ]
                         except Exception as e:
                             log_warning(f"Failed to load user memories: {e}")
@@ -4086,12 +4086,12 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Failed to load AgentMemory: {e}")
             elif isinstance(self.memory, Memory):
-                if "runs" in session.memory: # type: ignore
+                if "runs" in session.memory:
                     try:
                         if self.memory.runs is None:
                             self.memory.runs = {}
                         self.memory.runs[session.session_id] = []
-                        for run in session.memory["runs"]: # type: ignore
+                        for run in session.memory["runs"]:
                             run_session_id = run["session_id"]
                             if "team_id" in run:
                                 self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
@@ -4099,7 +4099,7 @@ class Agent:
                                 self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
-                if "memories" in session.memory: # type: ignore
+                if "memories" in session.memory:
                     from agno.memory.v2.memory import UserMemory as UserMemoryV2
 
                     try:
@@ -4113,11 +4113,11 @@ class Agent:
                                     memory_id: UserMemoryV2.from_dict(memory)
                                     for memory_id, memory in user_memories.items()
                                 }
-                                for user_id, user_memories in session.memory["memories"].items() # type: ignore
+                                for user_id, user_memories in session.memory["memories"].items()
                             }
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
-                if "summaries" in session.memory: # type: ignore
+                if "summaries" in session.memory:
                     from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
 
                     try:
@@ -4126,7 +4126,7 @@ class Agent:
                                 session_id: SessionSummaryV2.from_dict(summary)
                                 for session_id, summary in user_session_summaries.items()
                             }
-                            for user_id, user_session_summaries in session.memory["summaries"].items() # type: ignore
+                            for user_id, user_session_summaries in session.memory["summaries"].items()
                         }
                     except Exception as e:
                         log_warning(f"Failed to load session summaries: {e}")
@@ -4171,8 +4171,8 @@ class Agent:
         if isinstance(self.memory, AgentMemory):
             if introduction is not None:
                 # Add an introduction as the first response from the Agent
-                if len(self.memory.runs) == 0:
-                    self.memory.add_run(
+                if len(self.memory.runs) == 0:  # type: ignore
+                    self.memory.add_run(  # type: ignore
                         AgentRun(
                             response=RunResponse(
                                 content=introduction,
