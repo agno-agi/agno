@@ -3919,6 +3919,12 @@ class Agent:
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
 
+        if not isinstance(session, AgentSession):
+            log_warning(
+                f"Attempted to load a session of type {type(session).__name__} into an Agent, which is not supported. Skipping."
+            )
+            return
+
         from agno.utils.merge_dict import merge_dictionaries
 
         # Get the agent_id, user_id and session_id from the database
@@ -4043,7 +4049,7 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None: # type: ignore
+        if session.memory is not None:  # type: ignore
             if isinstance(self.memory, AgentMemory):
                 try:
                     if "runs" in session.memory:
