@@ -9,14 +9,17 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+
 from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.google import Gemini
+from agno.models.groq import Groq
+from agno.models.openai import OpenAIChat
 from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
-def add_message(
-    role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None, **kwargs
-) -> None:
+def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None, **kwargs) -> None:
     """
     Safely add a message to the session state.
 
@@ -26,9 +29,7 @@ def add_message(
         tool_calls: Optional tool calls to include
         **kwargs: Additional message attributes (image, audio, video paths)
     """
-    if "messages" not in st.session_state or not isinstance(
-        st.session_state["messages"], list
-    ):
+    if "messages" not in st.session_state or not isinstance(st.session_state["messages"], list):
         st.session_state["messages"] = []
 
     message = {"role": role, "content": content, "tool_calls": tool_calls}
@@ -56,11 +57,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                 metrics = tool_call.metrics or {}
             else:
                 # Dictionary format
-                tool_name = (
-                    tool_call.get("tool_name")
-                    or tool_call.get("name")
-                    or "Unknown Tool"
-                )
+                tool_name = tool_call.get("tool_name") or tool_call.get("name") or "Unknown Tool"
                 tool_args = tool_call.get("tool_args") or tool_call.get("args") or {}
                 content = tool_call.get("result") or tool_call.get("content") or ""
                 metrics = tool_call.get("metrics") or {}
@@ -88,11 +85,11 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
 def export_chat_history(app_name: str = "Chat", session_key: str = "messages") -> str:
     """
     Export chat history as markdown with professional formatting.
-    
+
     Args:
         app_name: Name of the application for the footer
         session_key: Session state key containing messages
-        
+
     Returns:
         Formatted markdown string of chat history
     """
@@ -119,9 +116,7 @@ def export_chat_history(app_name: str = "Chat", session_key: str = "messages") -
     meaningful_messages = [
         msg
         for msg in st.session_state[session_key]
-        if msg.get("content")
-        and str(msg.get("content")).strip()
-        and str(msg.get("content")).strip().lower() != "none"
+        if msg.get("content") and str(msg.get("content")).strip() and str(msg.get("content")).strip().lower() != "none"
     ]
 
     chat_text += f"**Messages:** {len(meaningful_messages)}\n\n"
@@ -156,11 +151,15 @@ def export_chat_history(app_name: str = "Chat", session_key: str = "messages") -
     return chat_text
 
 
-def restart_agent_session(agent_session_key: str, session_id_key: Optional[str] = None, 
-                         model_key: Optional[str] = None, messages_key: str = "messages") -> None:
+def restart_agent_session(
+    agent_session_key: str,
+    session_id_key: Optional[str] = None,
+    model_key: Optional[str] = None,
+    messages_key: str = "messages",
+) -> None:
     """
     Reset agent and clear chat history from session state.
-    
+
     Args:
         agent_session_key: Session state key for the agent
         session_id_key: Optional session state key for session ID
@@ -180,7 +179,7 @@ def restart_agent_session(agent_session_key: str, session_id_key: Optional[str] 
 def rename_session_widget(agent: Agent, container: Optional[st.container] = None) -> None:
     """
     Render a session rename widget in the sidebar.
-    
+
     Args:
         agent: The agent whose session to rename
         container: Optional container to render in (defaults to sidebar)
@@ -244,7 +243,7 @@ def rename_session_widget(agent: Agent, container: Optional[st.container] = None
 def knowledge_base_info_widget(agent: Agent, container: Optional[st.container] = None) -> None:
     """
     Display knowledge base information in a widget.
-    
+
     Args:
         agent: The agent whose knowledge base to display
         container: Optional container to render in (defaults to sidebar)
@@ -273,9 +272,7 @@ def knowledge_base_info_widget(agent: Agent, container: Optional[st.container] =
             )
 
             if doc_count == 0:
-                container.info(
-                    "💡 Upload documents to populate the knowledge base"
-                )
+                container.info("💡 Upload documents to populate the knowledge base")
 
         except Exception as e:
             logger.error(f"Error getting knowledge base info: {e}")
@@ -290,11 +287,11 @@ def utilities_widget(
     agent_restart_callback: callable,
     export_filename: str = "chat_history.md",
     messages_key: str = "messages",
-    container: Optional[st.container] = None
+    container: Optional[st.container] = None,
 ) -> None:
     """
     Display a utilities widget with common actions.
-    
+
     Args:
         agent_restart_callback: Function to call when restarting the agent
         export_filename: Default filename for chat export
@@ -306,16 +303,14 @@ def utilities_widget(
 
     container.markdown("#### 🛠️ Utilities")
     col1, col2 = container.columns([1, 1])
-    
+
     with col1:
         if st.button("🔄 New Chat", use_container_width=True):
             agent_restart_callback()
-    
+
     with col2:
         # Export chat functionality
-        has_messages = (
-            st.session_state.get(messages_key) and len(st.session_state[messages_key]) > 0
-        )
+        has_messages = st.session_state.get(messages_key) and len(st.session_state[messages_key]) > 0
 
         if has_messages:
             if st.download_button(
@@ -336,9 +331,35 @@ def utilities_widget(
             )
 
 
-def _is_uuid_like(text: str) -> bool:
-    """Check if text looks like a UUID (contains hyphens and is long)"""
-    return len(text) > 20 and "-" in text
+def get_model_from_id(model_id: str):
+    """Get the model instance based on the model ID.
+
+    Args:
+        model_id: Model ID in the format "provider:model_name"
+
+    Returns:
+        Model instance
+
+    Example:
+        >>> model = get_model_from_id("openai:gpt-4o")
+        >>> model = get_model_from_id("anthropic:claude-3-5-sonnet")
+        >>> model = get_model_from_id("google:gemini-2.0-flash")
+        >>> model = get_model_from_id("groq:llama-3.3-70b")
+    """
+    if model_id.startswith("openai:"):
+        model_name = model_id.split("openai:")[1]
+        return OpenAIChat(id=model_name)
+    elif model_id.startswith("anthropic:"):
+        model_name = model_id.split("anthropic:")[1]
+        return Claude(id=model_name)
+    elif model_id.startswith("google:"):
+        model_name = model_id.split("google:")[1]
+        return Gemini(id=model_name)
+    elif model_id.startswith("groq:"):
+        model_name = model_id.split("groq:")[1]
+        return Groq(id=model_name)
+    else:
+        return OpenAIChat(id="gpt-4o")
 
 
 # Common CSS styles for Streamlit apps
@@ -405,4 +426,4 @@ COMMON_CSS = """
         }
     }
     </style>
-""" 
+"""

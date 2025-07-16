@@ -14,15 +14,18 @@ The agent can:
 Example queries to try:
 - "What are the key points from this document?"
 - "Can you summarize the main arguments and supporting evidence?"
-- "Compare and contrast different viewpoints on [topic]"
+- "What are the important statistics and findings?"
+- "How does this relate to [topic X]?"
+- "What are the limitations or gaps in this analysis?"
+- "Can you explain [concept X] in more detail?"
+- "What other sources support or contradict these claims?"
 
-Features:
-- 🔍 Advanced vector search with semantic understanding
-- 💾 Persistent memory across conversations
-- 📚 Support for multiple document formats
-- 🧠 Intelligent context retrieval
-- 💬 Natural conversation flow
-- 🔗 Source attribution and citations
+The agent uses:
+- Vector similarity search for relevant document retrieval
+- Conversation memory for contextual responses
+- Citation tracking for source attribution
+- Dynamic knowledge base updates
+View the README for instructions on how to run the application.
 """
 
 from typing import Optional
@@ -32,10 +35,7 @@ from agno.db.postgres import PostgresDb
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
+from agno.utils.streamlit import get_model_from_id
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -48,7 +48,7 @@ def get_agentic_rag_agent(
     debug_mode: bool = True,
 ) -> Agent:
     """Get an Agentic RAG Agent with knowledge base and persistent memory."""
-    
+
     # Create the new Knowledge system with vector store
     knowledge_base = Knowledge(
         name="Agentic RAG Knowledge Base",
@@ -72,16 +72,20 @@ def get_agentic_rag_agent(
 
     agent = Agent(
         name="Agentic RAG Agent",
-        model=_get_model(model_id),
+        model=get_model_from_id(model_id),
         agent_id="agentic-rag-agent",
         user_id=user_id,
         memory=memory,
         knowledge=knowledge_base,
         search_knowledge=True,
+        read_tool_call_history=True,
         add_history_to_messages=True,
         num_history_runs=10,
+        enable_session_summaries=True,
+        add_session_summary_references=True,
         session_id=session_id,
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
+        expected_output="Comprehensive, well-structured responses with proper citations, sources, and evidence-based conclusions. Include relevant quotes and reference specific documents when available.",
         instructions=[
             "1. Knowledge Base Search:",
             "   - ALWAYS start by searching the knowledge base using search_knowledge_base tool",
@@ -116,28 +120,3 @@ def get_agentic_rag_agent(
     )
 
     return agent
-
-
-def _get_model(model_id: str):
-    """Get the model based on the model ID.
-
-    Args:
-        model_id: Model ID in the format "provider:model_name"
-
-    Returns:
-        Model instance
-    """
-    if model_id.startswith("openai:"):
-        model_name = model_id.split("openai:")[1]
-        return OpenAIChat(id=model_name)
-    elif model_id.startswith("anthropic:"):
-        model_name = model_id.split("anthropic:")[1]
-        return Claude(id=model_name)
-    elif model_id.startswith("google:"):
-        model_name = model_id.split("google:")[1]
-        return Gemini(id=model_name)
-    elif model_id.startswith("groq:"):
-        model_name = model_id.split("groq:")[1]
-        return Groq(id=model_name)
-    else:
-        return OpenAIChat(id="gpt-4o")

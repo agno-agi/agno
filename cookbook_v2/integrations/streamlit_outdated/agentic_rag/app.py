@@ -40,7 +40,7 @@ def restart_agent():
     restart_agent_session(
         agent_session_key="agentic_rag_agent",
         session_id_key="agentic_rag_agent_session_id",
-        model_key="current_model"
+        model_key="current_model",
     )
 
 
@@ -62,7 +62,7 @@ def main():
         "kimi-k2-instruct": "groq:moonshotai/kimi-k2-instruct",
         "gpt-4o": "openai:gpt-4o",
         "gemini-2.5-pro": "google:gemini-2.5-pro",
-        "claude-4-sonnet": "anthropic:claude-sonnet-4-0"
+        "claude-4-sonnet": "anthropic:claude-sonnet-4-0",
     }
     selected_model = st.sidebar.selectbox(
         "Select a model",
@@ -139,7 +139,7 @@ def main():
     # Document Management (simplified using new Knowledge system)
     ####################################################################
     st.sidebar.markdown("#### 📚 Document Management")
-    
+
     # URL input
     input_url = st.sidebar.text_input("Add URL to Knowledge Base")
     if input_url and not prompt:
@@ -149,7 +149,7 @@ def main():
             agentic_rag_agent.knowledge.add_content(
                 name=f"URL: {input_url}",
                 url=input_url,
-                description=f"Content from {input_url}"
+                description=f"Content from {input_url}",
             )
             st.sidebar.success("URL added to knowledge base")
         except Exception as e:
@@ -166,8 +166,7 @@ def main():
         try:
             # Save uploaded file temporarily
             with tempfile.NamedTemporaryFile(
-                suffix=f".{uploaded_file.name.split('.')[-1]}",
-                delete=False
+                suffix=f".{uploaded_file.name.split('.')[-1]}", delete=False
             ) as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
@@ -176,9 +175,9 @@ def main():
             agentic_rag_agent.knowledge.add_content(
                 name=uploaded_file.name,
                 path=tmp_path,
-                description=f"Uploaded file: {uploaded_file.name}"
+                description=f"Uploaded file: {uploaded_file.name}",
             )
-            
+
             # Clean up temporary file
             os.unlink(tmp_path)
             st.sidebar.success(f"{uploaded_file.name} added to knowledge base")
