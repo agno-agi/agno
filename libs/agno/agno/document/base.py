@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from agno.knowledge.embedder import Embedder
+if TYPE_CHECKING:
+    from agno.knowledge.embedder import Embedder
 
 
 @dataclass
@@ -12,7 +13,7 @@ class Document:
     id: Optional[str] = None
     name: Optional[str] = None
     meta_data: Dict[str, Any] = field(default_factory=dict)
-    embedder: Optional[Embedder] = None
+    embedder: Optional["Embedder"] = None
     embedding: Optional[List[float]] = None
     usage: Optional[Dict[str, Any]] = None
     reranking_score: Optional[float] = None
@@ -20,7 +21,7 @@ class Document:
     size: Optional[int] = None
     name: Optional[str] = None
 
-    def embed(self, embedder: Optional[Embedder] = None) -> None:
+    def embed(self, embedder: Optional["Embedder"] = None) -> None:
         """Embed the document using the provided embedder"""
 
         _embedder = embedder or self.embedder
