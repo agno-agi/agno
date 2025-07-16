@@ -3916,7 +3916,7 @@ class Agent:
             created_at=int(time()),
         )
 
-    def load_agent_session(self, session: AgentSession):
+    def load_agent_session(self, session: AgentSession): # type: ignore
         """Load the existing Agent from an AgentSession (from the database)"""
 
         from agno.utils.merge_dict import merge_dictionaries
@@ -4171,8 +4171,8 @@ class Agent:
         if isinstance(self.memory, AgentMemory):
             if introduction is not None:
                 # Add an introduction as the first response from the Agent
-                if len(self.memory.runs) == 0:  # type: ignore
-                    self.memory.add_run(  # type: ignore
+                if len(self.memory.runs) == 0:
+                    self.memory.add_run(
                         AgentRun(
                             response=RunResponse(
                                 content=introduction,
