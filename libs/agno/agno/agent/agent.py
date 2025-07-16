@@ -4043,34 +4043,34 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if hasattr(session, "memory") and session.memory is not None:
+        if session.memory is not None: # type: ignore
             if isinstance(self.memory, AgentMemory):
                 try:
-                    if "runs" in session.memory:
+                    if "runs" in session.memory: # type: ignore
                         try:
                             self.memory.runs = []
-                            for run in session.memory["runs"]:
+                            for run in session.memory["runs"]: # type: ignore
                                 self.memory.runs.append(AgentRun.model_validate(run))
                         except Exception as e:
                             log_warning(f"Failed to load runs from memory: {e}")
-                    if "messages" in session.memory:
+                    if "messages" in session.memory: # type: ignore
                         try:
-                            self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]]
+                            self.memory.messages = [Message.model_validate(m) for m in session.memory["messages"]] # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to load messages from memory: {e}")
-                    if "summary" in session.memory:
+                    if "summary" in session.memory: # type: ignore
                         from agno.memory.summary import SessionSummary
 
                         try:
-                            self.memory.summary = SessionSummary.model_validate(session.memory["summary"])
+                            self.memory.summary = SessionSummary.model_validate(session.memory["summary"]) # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to load session summary from memory: {e}")
-                    if "memories" in session.memory:
+                    if "memories" in session.memory: # type: ignore
                         from agno.memory.memory import Memory as AgentUserMemory
 
                         try:
                             self.memory.memories = [
-                                AgentUserMemory.model_validate(m) for m in session.memory["memories"]
+                                AgentUserMemory.model_validate(m) for m in session.memory["memories"] # type: ignore
                             ]
                         except Exception as e:
                             log_warning(f"Failed to load user memories: {e}")
@@ -4086,12 +4086,12 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Failed to load AgentMemory: {e}")
             elif isinstance(self.memory, Memory):
-                if "runs" in session.memory:
+                if "runs" in session.memory: # type: ignore
                     try:
                         if self.memory.runs is None:
                             self.memory.runs = {}
                         self.memory.runs[session.session_id] = []
-                        for run in session.memory["runs"]:
+                        for run in session.memory["runs"]: # type: ignore
                             run_session_id = run["session_id"]
                             if "team_id" in run:
                                 self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
@@ -4099,7 +4099,7 @@ class Agent:
                                 self.memory.runs[run_session_id].append(RunResponse.from_dict(run))
                     except Exception as e:
                         log_warning(f"Failed to load runs from memory: {e}")
-                if "memories" in session.memory:
+                if "memories" in session.memory: # type: ignore
                     from agno.memory.v2.memory import UserMemory as UserMemoryV2
 
                     try:
@@ -4113,11 +4113,11 @@ class Agent:
                                     memory_id: UserMemoryV2.from_dict(memory)
                                     for memory_id, memory in user_memories.items()
                                 }
-                                for user_id, user_memories in session.memory["memories"].items()
+                                for user_id, user_memories in session.memory["memories"].items() # type: ignore
                             }
                     except Exception as e:
                         log_warning(f"Failed to load user memories: {e}")
-                if "summaries" in session.memory:
+                if "summaries" in session.memory: # type: ignore
                     from agno.memory.v2.memory import SessionSummary as SessionSummaryV2
 
                     try:
@@ -4126,7 +4126,7 @@ class Agent:
                                 session_id: SessionSummaryV2.from_dict(summary)
                                 for session_id, summary in user_session_summaries.items()
                             }
-                            for user_id, user_session_summaries in session.memory["summaries"].items()
+                            for user_id, user_session_summaries in session.memory["summaries"].items() # type: ignore
                         }
                     except Exception as e:
                         log_warning(f"Failed to load session summaries: {e}")
@@ -4168,21 +4168,20 @@ class Agent:
     def add_introduction(self, introduction: str) -> None:
         """Add an introduction to the chat history"""
 
-        if hasattr(self, "memory") and self.memory is not None:
-            if isinstance(self.memory, AgentMemory):
-                if introduction is not None:
-                    # Add an introduction as the first response from the Agent
-                    if len(self.memory.runs) == 0:
-                        self.memory.add_run(
-                            AgentRun(
-                                response=RunResponse(
-                                    content=introduction,
-                                    messages=[
-                                        Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
-                                    ],
-                                )
+        if isinstance(self.memory, AgentMemory):
+            if introduction is not None:
+                # Add an introduction as the first response from the Agent
+                if len(self.memory.runs) == 0:
+                    self.memory.add_run(
+                        AgentRun(
+                            response=RunResponse(
+                                content=introduction,
+                                messages=[
+                                    Message(role=self.model.assistant_message_role, content=introduction)  # type: ignore
+                                ],
                             )
                         )
+                    )
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from the database and return the session_id.
