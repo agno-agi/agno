@@ -6,6 +6,7 @@ from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -29,11 +30,11 @@ def get_session_name(session: Dict[str, Any]) -> str:
         return session_data["session_name"]
     else:
         runs = session.get("runs", [])
-        run = RunResponse.from_dict(runs[0]) if isinstance(runs[0], dict) else runs[0]
-        if run and run.messages:
-            for message in run.messages:
-                if message.role == "user":
-                    return message.content  # type: ignore
+        run = runs[0].to_dict() if isinstance(runs[0], RunResponse) or isinstance(runs[0], TeamRunResponse) else runs[0]
+        if run and run["messages"]:
+            for message in run["messages"]:
+                if message["role"] == "user":
+                    return message["content"]
     return ""
 
 

@@ -114,7 +114,7 @@ class PostgresMemoryDb(MemoryDb):
                     if row is not None:
                         memories.append(MemoryRow.model_validate(row))
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             log_debug(f"Table does not exist: {self.table.name}")
             log_debug("Creating table for future transactions")
             self.create()
@@ -144,7 +144,7 @@ class PostgresMemoryDb(MemoryDb):
 
                 sess.execute(stmt)
         except Exception as e:
-            log_debug(f"Exception upserting into table: {e}")
+            log_debug(f"Exception upserting into memory table: {e}")
             log_debug(f"Table does not exist: {self.table.name}")
             log_debug("Creating table for future transactions")
             self.create()

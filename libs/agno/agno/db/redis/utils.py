@@ -41,8 +41,8 @@ def deserialize_data(data: str) -> dict:
     return json.loads(data)
 
 
-def deserialize_session(session: dict) -> dict:
-    """Deserialize all relevant fields in the given Session dictionary.
+def hydrate_session(session: dict) -> dict:
+    """Convert nested dictionaries to their corresponding object types.
 
     Args:
         session (dict): The session dictionary to deserialize.
@@ -96,6 +96,9 @@ def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) ->
         relevant_keys.append(key)
 
     return relevant_keys
+
+
+# -- DB util methods --
 
 
 def apply_sorting(

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.run.response import RunResponse, RunStatus
+from agno.run.response import RunStatus
 from agno.run.team import TeamRunResponse
 from agno.session.summarizer import SessionSummary, SessionSummaryResponse
 from agno.utils.log import log_debug, log_warning
@@ -49,7 +49,13 @@ class TeamSession:
     updated_at: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        session_dict = asdict(self)
+
+        session_dict["chat_history"] = [msg.to_dict() for msg in self.chat_history] if self.chat_history else None
+        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        session_dict["summary"] = self.summary.to_dict() if isinstance(self.summary, SessionSummary) else self.summary
+
+        return session_dict
 
     def telemetry_data(self) -> Dict[str, Any]:
         return {

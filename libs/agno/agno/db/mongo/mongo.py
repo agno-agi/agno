@@ -14,9 +14,9 @@ from agno.db.mongo.utils import (
     get_dates_to_calculate_metrics_for,
 )
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
-from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -169,156 +169,31 @@ class MongoDb(BaseDb):
 
     # -- Session methods --
 
-    def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
-        """Insert or update an agent session in the database.
-
-        Args:
-            session (AgentSession): The agent session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session as a dictionary.
-
-        Raises:
-            Exception: If there is an error upserting the session.
-        """
-        try:
-            collection = self._get_collection(table_type="sessions")
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
-
-            record = {
-                "session_id": serialized_session_dict.get("session_id"),
-                "session_type": SessionType.AGENT.value,
-                "agent_id": serialized_session_dict.get("agent_id"),
-                "team_session_id": serialized_session_dict.get("team_session_id"),
-                "user_id": serialized_session_dict.get("user_id"),
-                "runs": serialized_session_dict.get("runs"),
-                "agent_data": serialized_session_dict.get("agent_data"),
-                "session_data": serialized_session_dict.get("session_data"),
-                "chat_history": serialized_session_dict.get("chat_history"),
-                "summary": serialized_session_dict.get("summary"),
-                "extra_data": serialized_session_dict.get("extra_data"),
-                "created_at": serialized_session_dict.get("created_at"),
-                "updated_at": int(time.time()),
-            }
-
-            result = collection.find_one_and_replace(
-                filter={"session_id": serialized_session_dict.get("session_id")},
-                replacement=record,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-
-            return deserialize_session_json_fields(result)
-
-        except Exception as e:
-            log_error(f"Exception upserting agent session: {e}")
-            return None
-
-    def _upsert_team_session_raw(self, session: TeamSession) -> Optional[dict]:
-        """Insert or update a team session in the database.
-
-        Args:
-            session (TeamSession): The team session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session as a dictionary.
-
-        Raises:
-            Exception: If there is an error upserting the session.
-        """
-        try:
-            collection = self._get_collection(table_type="sessions")
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
-
-            record = {
-                "session_id": serialized_session_dict.get("session_id"),
-                "session_type": SessionType.TEAM.value,
-                "team_id": serialized_session_dict.get("team_id"),
-                "team_session_id": serialized_session_dict.get("team_session_id"),
-                "user_id": serialized_session_dict.get("user_id"),
-                "runs": serialized_session_dict.get("runs"),
-                "team_data": serialized_session_dict.get("team_data"),
-                "session_data": serialized_session_dict.get("session_data"),
-                "summary": serialized_session_dict.get("summary"),
-                "extra_data": serialized_session_dict.get("extra_data"),
-                "chat_history": serialized_session_dict.get("chat_history"),
-                "created_at": serialized_session_dict.get("created_at"),
-                "updated_at": int(time.time()),
-            }
-
-            result = collection.find_one_and_replace(
-                filter={"session_id": serialized_session_dict.get("session_id")},
-                replacement=record,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-
-            return deserialize_session_json_fields(result)
-
-        except Exception as e:
-            log_error(f"Exception upserting team session: {e}")
-            return None
-
-    def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[dict]:
-        """Insert or update a workflow session in the database.
-
-        Args:
-            session (WorkflowSession): The workflow session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session as a dictionary.
-
-        Raises:
-            Exception: If there is an error upserting the session.
-        """
-        try:
-            collection = self._get_collection(table_type="sessions")
-            serialized_session_dict = serialize_session_json_fields(session.to_dict())
-
-            record = {
-                "session_id": serialized_session_dict.get("session_id"),
-                "session_type": SessionType.WORKFLOW.value,
-                "workflow_id": serialized_session_dict.get("workflow_id"),
-                "user_id": serialized_session_dict.get("user_id"),
-                "runs": serialized_session_dict.get("runs"),
-                "workflow_data": serialized_session_dict.get("workflow_data"),
-                "session_data": serialized_session_dict.get("session_data"),
-                "summary": serialized_session_dict.get("summary"),
-                "extra_data": serialized_session_dict.get("extra_data"),
-                "chat_history": serialized_session_dict.get("chat_history"),
-                "created_at": serialized_session_dict.get("created_at"),
-                "updated_at": int(time.time()),
-            }
-
-            result = collection.find_one_and_replace(
-                filter={"session_id": serialized_session_dict.get("session_id")},
-                replacement=record,
-                upsert=True,
-                return_document=ReturnDocument.AFTER,
-            )
-
-            return deserialize_session_json_fields(result)
-
-        except Exception as e:
-            log_error(f"Exception upserting workflow session: {e}")
-            return None
-
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """Delete a session from the database.
 
         Args:
             session_id (str): The ID of the session to delete.
+
+        Returns:
+            bool: True if the session was deleted, False otherwise.
+
+        Raises:
+            Exception: If there is an error deleting the session.
         """
         try:
             collection = self._get_collection(table_type="sessions")
             result = collection.delete_one({"session_id": session_id})
             if result.deleted_count == 0:
-                log_debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found to delete with session_id: {session_id}")
+                return False
             else:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
+                return True
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
+            return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from the database.
@@ -334,24 +209,28 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
 
-    def get_session_raw(
+    def get_session(
         self,
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """Get a session as a raw dictionary.
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+        """Read a session from the database.
 
         Args:
             session_id (str): The ID of the session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             session_type (Optional[SessionType]): The type of session to get.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
-            Optional[dict]: The session as a raw dictionary.
+            Union[Session, Dict[str, Any], None]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
-            Exception: If there is an error getting the session.
+            Exception: If there is an error reading the session.
         """
         try:
             collection = self._get_collection(table_type="sessions")
@@ -360,82 +239,61 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type.value
+                query["session_type"] = session_type
 
             result = collection.find_one(query)
             if result is None:
                 return None
 
-            return deserialize_session_json_fields(result)
+            session = deserialize_session_json_fields(result)
 
-        except Exception as e:
-            log_debug(f"Exception reading session: {e}")
-            return None
-
-    def get_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-        """Read a session from the database.
-
-        Args:
-            session_id (str): The ID of the session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
-            session_type (Optional[SessionType]): The type of session to get.
-
-        Returns:
-            Optional[Union[AgentSession, TeamSession, WorkflowSession]]: The session.
-
-        Raises:
-            Exception: If there is an error reading the session.
-        """
-        try:
-            session_raw = self.get_session_raw(session_id=session_id, user_id=user_id, session_type=session_type)
-            if session_raw is None:
-                return None
+            if not deserialize:
+                return session
 
             if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(session_raw)
+                return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(session_raw)
+                return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW.value:
-                return WorkflowSession.from_dict(session_raw)
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_debug(f"Exception reading session: {e}")
             return None
 
-    def get_sessions_raw(
+    def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
-        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all sessions as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+        """Get all sessions.
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to get the session for.
             component_id (Optional[str]): The ID of the component to get the session for.
+            session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter sessions by.
             end_timestamp (Optional[int]): The end timestamp to filter sessions by.
-            session_name (Optional[str]): The name of the session to filter by.
             limit (Optional[int]): The limit of the sessions to get.
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
+            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
 
         Returns:
-            Tuple[List[Dict[str, Any]], int]: A tuple containing the sessions and the total count.
+            Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of Session objects
+                - When deserialize=False: List of session dictionaries and the total count
 
         Raises:
             Exception: If there is an error reading the sessions.
@@ -448,7 +306,7 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type.value
+                query["session_type"] = session_type
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     query["agent_id"] = component_id
@@ -484,53 +342,13 @@ class MongoDb(BaseDb):
                 cursor = cursor.limit(query_args["limit"])
 
             records = list(cursor)
+            if records is None:
+                return [] if deserialize else ([], 0)
 
-            return [deserialize_session_json_fields(record) for record in records], total_count
+            sessions_raw = [deserialize_session_json_fields(record) for record in records]
 
-        except Exception as e:
-            log_debug(f"Exception reading sessions: {e}")
-            return [], 0
-
-    def get_sessions(
-        self,
-        session_type: Optional[SessionType] = None,
-        user_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> List[Union[AgentSession, TeamSession, WorkflowSession]]:
-        """Get all sessions.
-
-        Args:
-            session_type (Optional[SessionType]): The type of session to get.
-            user_id (Optional[str]): The ID of the user to get the session for.
-            component_id (Optional[str]): The ID of the component to get the session for.
-            session_name (Optional[str]): The name of the session to filter by.
-            limit (Optional[int]): The limit of the sessions to get.
-            page (Optional[int]): The page number to get.
-            sort_by (Optional[str]): The field to sort the sessions by.
-            sort_order (Optional[str]): The order to sort the sessions by.
-
-        Returns:
-            List[Union[AgentSession, TeamSession, WorkflowSession]]: The sessions.
-
-        Raises:
-            Exception: If there is an error reading the sessions.
-        """
-        try:
-            sessions_raw, total_count = self.get_sessions_raw(
-                session_type=session_type,
-                user_id=user_id,
-                component_id=component_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
+            if not deserialize:
+                return sessions_raw, total_count
 
             sessions = []
             for record in sessions_raw:
@@ -545,20 +363,23 @@ class MongoDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception reading sessions: {e}")
-            return []
+            return [] if deserialize else ([], 0)
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Collection] = None
-    ) -> Optional[Session]:
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the database.
 
         Args:
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name of the session.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
-            Optional[Session]: The renamed session.
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
             Exception: If there is an error renaming the session.
@@ -586,6 +407,9 @@ class MongoDb(BaseDb):
 
             deserialized_session = deserialize_session_json_fields(result)
 
+            if not deserialize:
+                return deserialized_session
+
             if session_type == SessionType.AGENT.value:
                 return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM.value:
@@ -597,7 +421,9 @@ class MongoDb(BaseDb):
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in the database.
 
         Args:
@@ -610,15 +436,106 @@ class MongoDb(BaseDb):
             Exception: If there is an error upserting the session.
         """
         try:
+            collection = self._get_collection(table_type="sessions")
+            serialized_session_dict = serialize_session_json_fields(session.to_dict())
+
             if isinstance(session, AgentSession):
-                session_raw = self._upsert_agent_session_raw(session=session)
-                return AgentSession.from_dict(session_raw) if session_raw else None
+                record = {
+                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_type": SessionType.AGENT.value,
+                    "agent_id": serialized_session_dict.get("agent_id"),
+                    "team_session_id": serialized_session_dict.get("team_session_id"),
+                    "user_id": serialized_session_dict.get("user_id"),
+                    "runs": serialized_session_dict.get("runs"),
+                    "agent_data": serialized_session_dict.get("agent_data"),
+                    "session_data": serialized_session_dict.get("session_data"),
+                    "chat_history": serialized_session_dict.get("chat_history"),
+                    "summary": serialized_session_dict.get("summary"),
+                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "created_at": serialized_session_dict.get("created_at"),
+                    "updated_at": int(time.time()),
+                }
+
+                result = collection.find_one_and_replace(
+                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    replacement=record,
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+                if not result:
+                    return None
+
+                session = deserialize_session_json_fields(result)
+
+                if not deserialize:
+                    return session
+
+                return AgentSession.from_dict(session)
+
             elif isinstance(session, TeamSession):
-                session_raw = self._upsert_team_session_raw(session=session)
-                return TeamSession.from_dict(session_raw) if session_raw else None
+                record = {
+                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_type": SessionType.TEAM.value,
+                    "team_id": serialized_session_dict.get("team_id"),
+                    "team_session_id": serialized_session_dict.get("team_session_id"),
+                    "user_id": serialized_session_dict.get("user_id"),
+                    "runs": serialized_session_dict.get("runs"),
+                    "team_data": serialized_session_dict.get("team_data"),
+                    "session_data": serialized_session_dict.get("session_data"),
+                    "summary": serialized_session_dict.get("summary"),
+                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "chat_history": serialized_session_dict.get("chat_history"),
+                    "created_at": serialized_session_dict.get("created_at"),
+                    "updated_at": int(time.time()),
+                }
+
+                result = collection.find_one_and_replace(
+                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    replacement=record,
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+                if not result:
+                    return None
+
+                session = deserialize_session_json_fields(result)
+
+                if not deserialize:
+                    return session
+
+                return TeamSession.from_dict(session)
+
             elif isinstance(session, WorkflowSession):
-                session_raw = self._upsert_workflow_session_raw(session=session)
-                return WorkflowSession.from_dict(session_raw) if session_raw else None
+                record = {
+                    "session_id": serialized_session_dict.get("session_id"),
+                    "session_type": SessionType.WORKFLOW.value,
+                    "workflow_id": serialized_session_dict.get("workflow_id"),
+                    "user_id": serialized_session_dict.get("user_id"),
+                    "runs": serialized_session_dict.get("runs"),
+                    "workflow_data": serialized_session_dict.get("workflow_data"),
+                    "session_data": serialized_session_dict.get("session_data"),
+                    "summary": serialized_session_dict.get("summary"),
+                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "chat_history": serialized_session_dict.get("chat_history"),
+                    "created_at": serialized_session_dict.get("created_at"),
+                    "updated_at": int(time.time()),
+                }
+
+                result = collection.find_one_and_replace(
+                    filter={"session_id": serialized_session_dict.get("session_id")},
+                    replacement=record,
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+                if not result:
+                    return None
+
+                session = deserialize_session_json_fields(result)
+
+                if not deserialize:
+                    return session
+
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_warning(f"Exception upserting session: {e}")
@@ -691,14 +608,17 @@ class MongoDb(BaseDb):
             log_debug(f"Exception reading from collection: {e}")
             return []
 
-    def get_user_memory_raw(self, memory_id: str, table: Optional[Collection] = None) -> Optional[Dict[str, Any]]:
-        """Get a memory from the database as a raw dictionary.
+    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[MemoryRow]:
+        """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The memory as a raw dictionary.
+            Optional[MemoryRow]:
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
 
         Raises:
             Exception: If there is an error getting the memory.
@@ -706,41 +626,21 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="user_memories")
             result = collection.find_one({"memory_id": memory_id})
-            return result
-
-        except Exception as e:
-            log_debug(f"Exception reading from collection: {e}")
-            return None
-
-    def get_user_memory(self, memory_id: str, table: Optional[Collection] = None) -> Optional[MemoryRow]:
-        """Get a memory from the database.
-
-        Args:
-            memory_id (str): The ID of the memory to get.
-
-        Returns:
-            Optional[MemoryRow]: The memory.
-
-        Raises:
-            Exception: If there is an error getting the memory.
-        """
-        try:
-            memory_raw = self.get_user_memory_raw(memory_id=memory_id, table=table)
-            if memory_raw is None:
-                return None
+            if result is None or not deserialize:
+                return result
 
             return MemoryRow(
-                id=memory_raw["memory_id"],
-                user_id=memory_raw["user_id"],
-                memory=memory_raw["memory"],
-                last_updated=memory_raw["last_updated"],
+                id=result["memory_id"],
+                user_id=result["user_id"],
+                memory=result["memory"],
+                last_updated=result["last_updated"],
             )
 
         except Exception as e:
             log_debug(f"Exception reading from collection: {e}")
             return None
 
-    def get_user_memories_raw(
+    def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -752,8 +652,9 @@ class MongoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all memories from the database as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+        """Get all memories from the database as MemoryRow objects.
 
         Args:
             user_id (Optional[str]): The ID of the user to get the memories for.
@@ -766,6 +667,7 @@ class MongoDb(BaseDb):
             page (Optional[int]): The page number to get.
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
+            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -808,60 +710,8 @@ class MongoDb(BaseDb):
                 cursor = cursor.limit(query_args["limit"])
 
             records = list(cursor)
-            return records, total_count
-
-        except Exception as e:
-            log_debug(f"Exception reading from collection: {e}")
-            return [], 0
-
-    def get_user_memories(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        search_content: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> List[MemoryRow]:
-        """Get all memories from the database as MemoryRow objects.
-
-        Args:
-            user_id (Optional[str]): The ID of the user to get the memories for.
-            agent_id (Optional[str]): The ID of the agent to get the memories for.
-            team_id (Optional[str]): The ID of the team to get the memories for.
-            workflow_id (Optional[str]): The ID of the workflow to get the memories for.
-            topics (Optional[List[str]]): The topics to filter the memories by.
-            search_content (Optional[str]): The content to filter the memories by.
-            limit (Optional[int]): The limit of the memories to get.
-            page (Optional[int]): The page number to get.
-            sort_by (Optional[str]): The field to sort the memories by.
-            sort_order (Optional[str]): The order to sort the memories by.
-
-        Returns:
-            List[MemoryRow]: The memories.
-
-        Raises:
-            Exception: If there is an error getting the memories.
-        """
-        try:
-            user_memories_raw, total_count = self.get_user_memories_raw(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                topics=topics,
-                search_content=search_content,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-            if not user_memories_raw:
-                return []
+            if not deserialize:
+                return records, total_count
 
             return [
                 MemoryRow(
@@ -870,7 +720,7 @@ class MongoDb(BaseDb):
                     memory=record["memory"],
                     last_updated=record["last_updated"],
                 )
-                for record in user_memories_raw
+                for record in records
             ]
 
         except Exception as e:
@@ -937,8 +787,23 @@ class MongoDb(BaseDb):
             log_debug(f"Exception getting user memory stats: {e}")
             return [], 0
 
-    def upsert_user_memory_raw(self, memory: MemoryRow, table: Optional[Collection] = None) -> Optional[Dict[str, Any]]:
-        """Upsert a user memory in the database, and return the upserted memory as a raw dictionary."""
+    def upsert_user_memory(
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            memory (MemoryRow): The memory to upsert.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+
+        Returns:
+            Optional[Union[MemoryRow, Dict[str, Any]]]:
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
+
+        Raises:
+            Exception: If there is an error upserting the memory.
+        """
         try:
             collection = self._get_collection(table_type="user_memories")
 
@@ -961,26 +826,17 @@ class MongoDb(BaseDb):
 
             if result.upserted_id:
                 update_doc["_id"] = result.upserted_id
-            return update_doc
 
-        except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
-            return None
-
-    def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        """Upsert a user memory in the database."""
-        try:
-            user_memory_raw = self.upsert_user_memory_raw(memory=memory)
-            if user_memory_raw is None:
-                return None
+            if not deserialize:
+                return update_doc
 
             return MemoryRow(
-                id=user_memory_raw["memory_id"],
-                user_id=user_memory_raw["user_id"],
-                agent_id=user_memory_raw["agent_id"],
-                team_id=user_memory_raw["team_id"],
-                memory=user_memory_raw["memory"],
-                last_updated=user_memory_raw["last_updated"],
+                id=update_doc["memory_id"],
+                user_id=update_doc["user_id"],
+                agent_id=update_doc["agent_id"],
+                team_id=update_doc["team_id"],
+                memory=update_doc["memory"],
+                last_updated=update_doc["last_updated"],
             )
 
         except Exception as e:
@@ -1033,8 +889,8 @@ class MongoDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
-            first_session_date = first_session_result[0][0]["created_at"] if first_session_result[0] else None
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+            first_session_date = first_session_result[0].created_at if first_session_result[0] else None
 
             if first_session_date is None:
                 return None
@@ -1098,7 +954,7 @@ class MongoDb(BaseDb):
             log_error(f"Exception calculating metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
@@ -1261,7 +1117,7 @@ class MongoDb(BaseDb):
             log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
-    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Collection] = None) -> Optional[Dict[str, Any]]:
+    def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
         """Get an eval run from the database as a raw dictionary."""
         try:
             collection = self._get_collection(table_type="evals")
@@ -1272,12 +1128,30 @@ class MongoDb(BaseDb):
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_run(self, eval_run_id: str, table: Optional[Collection] = None) -> Optional[EvalRunRecord]:
-        """Get an eval run from the database."""
+    def get_eval_run(self, eval_run_id: str, deserialize: Optional[bool] = True) -> Optional[EvalRunRecord]:
+        """Get an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+
+        Returns:
+            Optional[EvalRunRecord]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
+
+        Raises:
+            Exception: If there is an error getting the eval run.
+        """
         try:
-            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id, table=table)
-            if eval_run_raw is None:
+            collection = self._get_collection(table_type="evals")
+            eval_run_raw = collection.find_one({"run_id": eval_run_id})
+
+            if not eval_run_raw:
                 return None
+
+            if not deserialize:
+                return eval_run_raw
 
             return EvalRunRecord.model_validate(eval_run_raw)
 
@@ -1285,21 +1159,43 @@ class MongoDb(BaseDb):
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs_raw(
+    def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Collection] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all eval runs from the database as raw dictionaries."""
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type of eval to filter by.
+            filter_type (Optional[EvalFilterType]): The type of filter to apply.
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of eval run dictionaries and the total count
+
+        Raises:
+            Exception: If there is an error getting the eval runs.
+        """
         try:
             collection = self._get_collection(table_type="evals")
 
@@ -1343,59 +1239,32 @@ class MongoDb(BaseDb):
                 cursor = cursor.limit(query_args["limit"])
 
             records = list(cursor)
-            return records, total_count
+            if not records:
+                return [] if deserialize else ([], 0)
+
+            if not deserialize:
+                return records, total_count
+
+            return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
-            return [], 0
+            return [] if deserialize else ([], 0)
 
-    def get_eval_runs(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Collection] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
-        filter_type: Optional[EvalFilterType] = None,
-    ) -> List[EvalRunRecord]:
-        """Get all eval runs from the database."""
-        try:
-            eval_runs_raw, total_count = self.get_eval_runs_raw(
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                table=table,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                model_id=model_id,
-                eval_type=eval_type,
-                filter_type=filter_type,
-            )
-            if not eval_runs_raw:
-                return []
-
-            return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
-
-        except Exception as e:
-            log_debug(f"Exception getting eval runs: {e}")
-            return []
-
-    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The updated eval run.
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
 
         Raises:
             Exception: If there is an error updating the eval run.
@@ -1403,15 +1272,14 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="evals")
 
-            result = collection.update_one(
+            result = collection.find_one_and_update(
                 {"run_id": eval_run_id}, {"$set": {"name": name, "updated_at": int(time.time())}}
             )
 
-            # TODO: optimize
-            if result.matched_count > 0:
-                return self.get_eval_run_raw(eval_run_id=eval_run_id)
+            if not result or not deserialize:
+                return result
 
-            return None
+            return EvalRunRecord.model_validate(result)
 
         except Exception as e:
             log_debug(f"Error updating eval run name {eval_run_id}: {e}")

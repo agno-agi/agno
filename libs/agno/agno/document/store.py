@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from agno.document.base import Document
-from agno.knowledge.source import Source
+from agno.knowledge.content import Content
 
 
 class Store(ABC):
@@ -16,36 +16,36 @@ class Store(ABC):
     copy_to_store: Optional[bool] = False
 
     @abstractmethod
-    def add_source(self, id: str, source: Source) -> str:
-        """Add a document to the store. Returns the document ID."""
+    def add_content(self, id: str, content: Content) -> str:
+        """Add content to the store. Returns the content ID."""
         pass
 
     @abstractmethod
-    def delete_source(self, source_id: str) -> bool:
-        """Delete a document by ID. Returns True if successful."""
+    def delete_content(self, content_id: str) -> bool:
+        """Delete content by ID. Returns True if successful."""
         pass
 
     @abstractmethod
-    def delete_all_sources(self) -> bool:
-        """Delete all documents from the store. Returns True if successful."""
+    def delete_all_content(self) -> bool:
+        """Delete all contents from the store. Returns True if successful."""
         pass
 
     @abstractmethod
-    def get_all_sources(self) -> List[Source]:
-        """Get all documents from the store."""
+    def get_all_content(self) -> List[Content]:
+        """Get all content entries from the store."""
         pass
 
     @abstractmethod
-    def get_source_by_id(self, source_id: str) -> Optional[Source]:
-        """Get a document by its ID."""
+    def get_content_by_id(self, content_id: str) -> Optional[Content]:
+        """Get a content by ID."""
         pass
 
     @abstractmethod
-    def get_source_by_name(self, name: str) -> Optional[Source]:
-        """Get a document by its name."""
+    def get_content_by_name(self, name: str) -> Optional[Content]:
+        """Get a content entry by its name."""
         pass
 
     @abstractmethod
-    def enhance_source(self, source_id: str, **kwargs) -> bool:
-        """Enhance a document with additional metadata or processing. Returns True if successful."""
+    def enhance_content(self, content_id: str, **kwargs) -> bool:
+        """Enhance content with additional metadata or processing. Returns True if successful."""
         pass

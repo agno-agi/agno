@@ -21,15 +21,16 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
-        user_memory = memory.db.upsert_user_memory_raw(
+        user_memory = memory.db.upsert_user_memory(
             memory=MemoryRow(
                 id=None, memory={"memory": payload.memory, "topics": payload.topics}, user_id=payload.user_id
-            )
+            ),
+            deserialize=False,
         )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to create memory")
 
-        return UserMemorySchema.from_dict(user_memory)
+        return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.delete("/memories", status_code=204)
     async def delete_memories(request: DeleteMemoriesRequest) -> None:
@@ -54,7 +55,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
-        user_memories, total_count = memory.db.get_user_memories_raw(
+        user_memories, total_count = memory.db.get_user_memories(
             limit=limit,
             page=page,
             user_id=user_id,
@@ -65,15 +66,16 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             search_content=search_content,
             sort_by=sort_by,
             sort_order=sort_order,
+            deserialize=False,
         )
 
         return PaginatedResponse(
-            data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],
+            data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 
@@ -82,11 +84,11 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
-        user_memory = memory.db.get_user_memory_raw(memory_id=memory_id)
+        user_memory = memory.db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
-        return UserMemorySchema.from_dict(user_memory)
+        return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.get("/topics", response_model=List[str], status_code=200)
     async def get_topics() -> List[str]:
@@ -100,15 +102,16 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         if memory.db is None:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
-        user_memory = memory.db.upsert_user_memory_raw(
+        user_memory = memory.db.upsert_user_memory(
             memory=MemoryRow(
                 id=memory_id, memory={"memory": payload.memory, "topics": payload.topics or []}, user_id=payload.user_id
-            )
+            ),
+            deserialize=False,
         )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to update memory")
 
-        return UserMemorySchema.from_dict(user_memory)
+        return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.get("/users", response_model=PaginatedResponse[UserStatsSchema], status_code=200)
     async def get_user_memory_stats(
@@ -130,7 +133,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
                     page=page,
                     limit=limit,
                     total_count=total_count,
-                    total_pages=math.ceil(total_count / limit) if limit is not None and limit > 0 else 0,
+                    total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
                 ),
             )
 

@@ -27,7 +27,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[SessionSchema]:
-        sessions, total_count = db.get_sessions_raw(
+        sessions, total_count = db.get_sessions(
             session_type=session_type,
             component_id=component_id,
             user_id=user_id,
@@ -36,15 +36,16 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
+            deserialize=False,
         )
 
         return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],
+            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 
@@ -75,10 +76,11 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
     ) -> Union[List[RunSchema], List[TeamRunSchema]]:
-        session = db.get_session_raw(session_id=session_id, session_type=session_type)
+        session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
-        runs = session.get("runs")
+
+        runs = session.get("runs")  # type: ignore
         if not runs:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
 

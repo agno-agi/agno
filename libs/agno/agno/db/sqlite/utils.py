@@ -18,6 +18,9 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+# -- DB util methods --
+
+
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
     Args:
@@ -28,9 +31,12 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
     Returns:
         The modified statement with sorting applied
     """
-    if sort_by is None or not hasattr(table.c, sort_by):
+    if sort_by is None:
+        return stmt
+    if not hasattr(table.c, sort_by):
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
+
     # Apply the given sorting
     sort_column = getattr(table.c, sort_by)
     if sort_order and sort_order == "asc":

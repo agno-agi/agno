@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
 
 from agno.db.postgres.postgres import PostgresDb
@@ -23,9 +23,11 @@ from agno.document.reader.website_reader import WebsiteReader
 from agno.document.reader.youtube_reader import YouTubeReader
 from agno.document.store import Store
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
-from agno.knowledge.source import Source, SourceContent
+from agno.knowledge.content import Content, ContentData
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
+
+ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
 
 @dataclass
@@ -36,10 +38,7 @@ class Knowledge:
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
     store: Optional[Union[Store, List[Store]]] = None
-    sources_db: Optional[PostgresDb] = None
-    sources: Optional[Union[Source, List[Source]]] = None
-    paths: Optional[List[str]] = None
-    urls: Optional[List[str]] = None
+    contents_db: Optional[PostgresDb] = None
     valid_metadata_filters: Optional[List[str]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
@@ -90,14 +89,14 @@ class Knowledge:
             return []
 
     def load(self):
-        log_info("Loading sources into KnowledgeBase")
+        log_info("Loading contents into KnowledgeBase")
 
-        if self.sources:
-            if isinstance(self.sources, list):
-                for source in self.sources:
-                    self.add_source(source=source)
+        if self.contents:
+            if isinstance(self.contents, list):
+                for content in self.contents:
+                    self.add_content(content=content)
             else:
-                self.add_source(source=self.sources)
+                self.add_content(content=self.contents)
 
         if self.store is not None:
             if isinstance(self.store, list):
@@ -129,70 +128,96 @@ class Knowledge:
 
     def _load_from_path(
         self,
-        source: Source,
+        content: Content,
     ):
-        log_info("Adding source from path")
-        path = Path(source.path)
+        log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
+        path = Path(content.path)
         if path.is_file():
-            if source.reader:
-                read_documents = source.reader.read(path, name=source.name or path.name)
+            content.id = str(uuid4())
+            self._add_to_contents_db(content)
+
+            if content.reader:
+                read_documents = content.reader.read(path, name=content.name or path.name)
             else:
                 reader = self._select_reader(path.suffix)
                 print(f"Using Reader: {reader.__class__.__name__}")
                 if reader:
-                    read_documents = reader.read(path, name=source.name or path.name)
+                    read_documents = reader.read(path, name=content.name or path.name)
 
-            if not source.size and source.content:
-                source.size = len(source.content.content)
-            if not source.size:
+            if not content.file_type:
+                content.file_type = path.suffix
+
+            if not content.size and content.content_data:
+                content.size = len(content.content_data.content)
+            if not content.size:
                 try:
-                    source.size = path.stat().st_size
+                    content.size = path.stat().st_size
                 except (OSError, IOError) as e:
                     log_warning(f"Could not get file size for {path}: {e}")
-                    source.size = 0
+                    content.size = 0
 
+            completed = True
             for read_document in read_documents:
-                read_document.source_id = source.id
+                read_document.content_id = content.id
                 if self.vector_store.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
-                        self._update_source_status(source.id, "Failed - Could not upsert embedding")
+                        content.status = "Failed"
+                        content.status_message = "Could not upsert embedding"
+                        completed = False
+                        self._update_content(content)
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
-                        self._update_source_status(source.id, "Failed - Could not insert embedding")
+                        content.status = "Failed"
+                        content.status_message = "Could not insert embedding"
+                        completed = False
+                        self._update_content(content)
+
+            if completed:
+                content.status = "Completed"
+                self._update_content(content)
 
         elif path.is_dir():
             for file in path.iterdir():
                 id = str(uuid4())
                 # Create a new Source object for each file in the directory
-                file_source = Source(
-                    id=id, name=source.name, path=str(file), metadata=source.metadata, reader=source.reader
+                file_content = Content(
+                    id=id,
+                    name=content.name,
+                    path=str(file),
+                    metadata=content.metadata,
+                    description=content.description,
+                    reader=content.reader,
                 )
-                self._load_from_path(file_source)
+                self._load_from_path(file_content)
         else:
-            self._update_source_status(source.id, "Failed")
             log_warning(f"Invalid path: {path}")
 
-        self._update_source_status(source.id, "Completed")
-
-    def _load_from_url(self, source: Source):
-        log_info("Adding source from URL")
+    def _load_from_url(self, content: Content):
+        log_info("Adding content from URL")
         from urllib.parse import urlparse
+
+        content.file_type = "url"
+        self._add_to_contents_db(content)
 
         # Validate URL
         try:
-            parsed_url = urlparse(source.url)
+            parsed_url = urlparse(content.url)
             if not all([parsed_url.scheme, parsed_url.netloc]):
-                self._update_source_status(source.id, "Failed - Invalid URL format")
-                log_warning(f"Invalid URL format: {source.url}")
+                content.status = "Failed"
+                content.status_message = f"Invalid URL format: {content.url}"
+                self._update_content(content)
+                log_warning(f"Invalid URL format: {content.url}")
         except Exception as e:
-            self._update_source_status(source.id, "Failed - Invalid URL")
-            log_warning(f"Invalid URL: {source.url} - {str(e)}")
+            content.status = "Failed"
+            content.status_message = f"Invalid URL: {content.url} - {str(e)}"
+            self._update_content(content)
+            log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
         # Determine file type from URL
         url_path = Path(parsed_url.path)
@@ -200,179 +225,273 @@ class Knowledge:
 
         # Check if it's a file with known extension
         if file_extension and file_extension is not None:
-            log_info(f"Detected file type: {file_extension} from URL: {source.url}")
+            log_info(f"Detected file type: {file_extension} from URL: {content.url}")
             reader = self._select_url_file_reader(file_extension)
             if reader is not None:
                 log_info(f"Selected reader: {reader.__class__.__name__}")
-                read_documents = reader.read(source.url, source.name)
+                read_documents = reader.read(content.url, content.name)
             else:
                 log_info(f"No reader found for file extension: {file_extension}")
         else:
-            log_info(f"No file extension found for URL: {source.url}, determining website type")
-            reader = self._select_url_reader(source.url)
+            log_info(f"No file extension found for URL: {content.url}, determining website type")
+            reader = self._select_url_reader(content.url)
             if reader is not None:
                 log_info(f"Selected reader: {reader.__class__.__name__}")
-                read_documents = reader.read(source.url, source.name)
+                read_documents = reader.read(content.url, content.name)
             else:
-                log_info(f"No reader found for URL: {source.url}")
+                log_info(f"No reader found for URL: {content.url}")
 
         file_size = 0
         if read_documents:
             for read_document in read_documents:
                 if read_document.size:
                     file_size += read_document.size
-                read_document.source_id = source.id
+                read_document.content_id = content.id
                 if self.vector_store.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
-                        self._update_source_status(source.id, "Failed - Could not upsert embedding")
+                        content.status = "Failed"
+                        content.status_message = "Could not upsert embedding"
+                        self._update_content(content)
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
-                        self._update_source_status(source.id, "Failed - Could not insert embedding")
+                        content.status = "Failed"
+                        content.status_message = "Could not insert embedding"
+                        self._update_content(content)
 
-        source.size = file_size
-        self._update_source_status(source.id, "Completed")
+        content.size = file_size
+        content.status = "Completed"
+        self._update_content(content)
 
-    def _load_from_content(self, source: Source):
-        log_info(f"Adding source from content: {source.size}")
+    def _load_from_content(self, content: Content):
+        log_info(f"Adding content from content: {content.size}")
 
+        completed = True
         read_documents = []
-        if isinstance(source.content, str):
-            if source.name is None:
-                source.name = source.content[:10] if len(source.content) >= 10 else source.content
-            content_io = io.BytesIO(source.content.encode("utf-8"))
-            name = source.name if source.name else source.content[:10] if len(source.content) >= 10 else source.content
-            if source.reader:
-                read_documents = source.reader.read(content_io, name=name)
+        if isinstance(content.content_data, str):
+            if content.name is None:
+                content.name = content.content_data[:10] if len(content.content_data) >= 10 else content.content_data
+            content_io = io.BytesIO(content.content_data.encode("utf-8"))
+            name = (
+                content.name
+                if content.name
+                else content.content_data[:10]
+                if len(content.content_data) >= 10
+                else content.content_data
+            )
+            if content.reader:
+                log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
+                read_documents = content.reader.read(content_io, name=name)
             else:
                 read_documents = self.text_reader.read(content_io, name=name)
 
-        elif isinstance(source.content, SourceContent):
-            if source.content.type:
-                log_info(f"Source content type: {source.content.type}")
-                if isinstance(source.content.content, bytes):
-                    content_io = io.BytesIO(source.content.content)
-                elif isinstance(source.content.content, str):
-                    content_io = io.BytesIO(source.content.content.encode("utf-8"))
+        elif isinstance(content.content_data, ContentData):
+            if content.content_data.type:
+                log_info(f"Content content type: {content.content_data.type}")
+                if isinstance(content.content_data.content, bytes):
+                    content_io = io.BytesIO(content.content_data.content)
+                elif isinstance(content.content_data.content, str):
+                    content_io = io.BytesIO(content.content_data.content.encode("utf-8"))
                 else:
-                    content_io = source.content.content
+                    content_io = content.content_data.content
 
-                reader = self._select_reader(source.content.type)
-                name = source.name if source.name else f"content_{source.content.type}"
+                reader = self._select_reader(content.content_data.type)
+                name = content.name if content.name else f"content_{content.content_data.type}"
                 read_documents = reader.read(content_io, name=name)
 
                 # Process each document in the list
                 for read_document in read_documents:
                     # Add the original metadata to each document
-                    if source.metadata:
-                        read_document.meta_data.update(source.metadata)
-                    read_document.source_id = source.id
+                    if content.metadata:
+                        read_document.meta_data.update(content.metadata)
+                    read_document.content_id = content.id
 
                     # Add to vector store - pass as a list
                     if self.vector_store and self.vector_store.upsert_available():
                         try:
-                            self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                            self.vector_store.upsert(documents=[read_document], filters=content.metadata)
                         except Exception as e:
                             log_error(f"Error upserting document: {e}")
-                            self._update_source_status(source.id, "Failed - Could not upsert embedding")
+                            content.status = "Failed"
+                            content.status_message = "Could not upsert embedding"
+                            completed = False
+                            self._update_content(content)
                     else:
                         try:
-                            self.vector_store.insert(documents=[read_document], filters=source.metadata)
+                            self.vector_store.insert(documents=[read_document], filters=content.metadata)
                         except Exception as e:
                             log_error(f"Error inserting document: {e}")
-                            self._update_source_status(source.id, "Failed - Could not insert embedding")
+                            content.status = "Failed"
+                            content.status_message = "Could not insert embedding"
+                            completed = False
+                            self._update_content(content)
+
+                if len(read_documents) == 0:
+                    content.status = "Failed"
+                    content.status_message = "Content could not be read"
+                    completed = False
+                    self._update_content(content)
 
             # Add to document store if available
             if self.store:
-                self.store.add_source(id, source)
+                self.store.add_content(id, content)
 
         else:
-            self._update_source_status(source.id, "Failed")
-            raise ValueError("No content provided")
+            content.status = "Failed"
+            content.status_message = "No content provided"
+            self._update_content(content)
+            return
 
-        self._update_source_status(source.id, "Completed")
+        if completed:
+            content.status = "Completed"
+            self._update_content(content)
 
-    def _load_from_topics(self, source: Source):
-        log_info(f"Adding source from topics: {source.topics}")
+    def _load_from_topics(self, content: Content):
+        log_info(f"Adding content from topics: {content.topics}")
 
-        for topic in source.topics:
+        for topic in content.topics:
             id = str(uuid4())
-            self._add_to_sources_db(
-                Source(
+            self._add_to_contents_db(
+                Content(
                     id=id,
                     name=topic,
-                    metadata=source.metadata,
-                    reader=source.reader,
-                    status="Processing" if source.reader else "Failed: No reader provided",
-                    content=SourceContent(
+                    metadata=content.metadata,
+                    reader=content.reader,
+                    status="Processing" if content.reader else "Failed: No reader provided",
+                    content_data=ContentData(
                         type="Topic",
                     ),
                 )
             )
 
-            read_documents = source.reader.read(topic)
+            read_documents = content.reader.read(topic)
             if len(read_documents) > 0:
                 for read_document in read_documents:
                     if read_document.content:
                         read_document.size = len(read_document.content.encode("utf-8"))
                     if self.vector_store.upsert_available():
-                        self.vector_store.upsert(documents=[read_document], filters=source.metadata)
+                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
                     else:
-                        self.vector_store.insert(documents=[read_document], filters=source.metadata)
-                self._update_source_status(id, "Completed")
+                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
+                content.status = "Completed"
+                self._update_content(content)
             else:
-                self._update_source_status(id, "Failed - No content found for topic")
+                content.status = "Failed"
+                content.status_message = "No content found for topic"
+                self._update_content(content)
 
     def _load_from_cloud_storage(self): ...
 
-    def _load_source(self, source: Source) -> None:
-        log_info(f"Loading source: {source.id}")
-        # Don't add for topics, they need to create their own documents.
-        if source.path or source.url or source.content:
-            log_info(f"Adding source to sources db: {source.id}")
-            self._add_to_sources_db(source)
+    def _load_content(self, content: Content) -> None:
+        log_info(f"Loading content: {content.id}")
 
-        if source.path:
-            self._load_from_path(source)
+        if content.path:
+            self._load_from_path(content)
 
-        if source.url:
-            self._load_from_url(source)
+        if content.url:
+            self._load_from_url(content)
 
-        if source.content:
-            self._load_from_content(source)
+        if content.content_data:
+            self._add_to_contents_db(content)
+            self._load_from_content(content)
 
-        if source.topics:
-            self._load_from_topics(source)
+        if content.topics:
+            self._load_from_topics(content)
 
-        # if document.config:
-        #     self._load_from_cloud_storage(id, document)
+        # if content.config:
+        #     self._load_from_cloud_storage(content)
 
-    def patch_source(self, source: Source):
-        if self.sources_db is not None:
-            source_row = self.sources_db.get_knowledge_source(source.id)
-            if source_row is None:
-                log_warning(f"Source not found: {source.id}")
+    def patch_content(self, content: Content):
+        if self.contents_db is not None:
+            content_row = self.contents_db.get_knowledge_content(content.id)
+            if content_row is None:
+                log_warning(f"Content not found: {content.id}")
                 return
             # Only update fields that are not None
-            if source.name is not None:
-                source_row.name = source.name
-            if source.description is not None:
-                source_row.description = source.description
-            if source.metadata is not None:
-                source_row.metadata = source.metadata
-            source_row.updated_at = int(time.time())
-            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
+            if content.name is not None:
+                content_row.name = content.name
+            if content.description is not None:
+                content_row.description = content.description
+            if content.metadata is not None:
+                content_row.metadata = content.metadata
+            content_row.updated_at = int(time.time())
+            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
         else:
-            log_warning("No sources db provided")
+            log_warning("No contents db provided")
 
-    def add_source(
+    @overload
+    def add_contents(self, contents: List[ContentDict]) -> None: ...
+
+    @overload
+    def add_contents(
+        self,
+        *,
+        paths: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> None: ...
+
+    def add_contents(self, *args, **kwargs) -> None:
+        if args and isinstance(args[0], list):
+            contents = args[0]
+            print("Case 1: List of content dicts")
+            for content in contents:
+                print(f"Adding content: {content}")
+                self.add_content(
+                    name=content.get("name"),
+                    description=content.get("description"),
+                    path=content.get("path"),
+                    url=content.get("url"),
+                    metadata=content.get("metadata"),
+                    topics=content.get("topics"),
+                    reader=content.get("reader"),
+                )
+
+        elif kwargs:
+            name = kwargs.get("name", [])
+            metadata = kwargs.get("metadata", {})
+            description = kwargs.get("description", [])
+            topics = kwargs.get("topics", [])
+            paths = kwargs.get("paths", [])
+            urls = kwargs.get("urls", [])
+
+            print("Case 2: Structured inputs with kwargs")
+            for path in paths:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    path=path,
+                    metadata=metadata,
+                )
+                print(f"Adding path content: {path} with metadata: {metadata}")
+            for url in urls:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    url=url,
+                    metadata=metadata,
+                )
+                print(f"Adding url content: {url} with metadata: {metadata}")
+            if topics:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    topics=topics,
+                    metadata=metadata,
+                )
+
+        else:
+            raise ValueError("Invalid usage of add_contents.")
+
+    def add_content(
         self,
         name: Optional[str] = None,
+        description: Optional[str] = None,
         path: Optional[str] = None,
         url: Optional[str] = None,
         text_content: Optional[str] = None,
@@ -389,146 +508,149 @@ class Knowledge:
         # Create Source from individual parameters
         content = None
         if text_content:
-            content = SourceContent(content=text_content, type="Text")
+            content = ContentData(content=text_content, type="Text")
 
-        source = Source(
+        content = Content(
             id=str(uuid4()),
             name=name,
+            description=description,
             path=path,
             url=url,
-            content=content if content else None,
+            content_data=content if content else None,
             metadata=metadata,
             topics=topics,
             config=config,
             reader=reader,
         )
-        self._load_source(source)
+        self._load_content(content)
 
-    def _add_source_from_api(
+    def _add_content_from_api(
         self,
-        source: Source,
+        content: Content,
     ) -> None:
         # Validation:At least one of the parameters must be provided
-        if not source.id:
-            source.id = str(uuid4())
+        if not content.id:
+            content.id = str(uuid4())
 
-        self._load_source(source)
+        self._load_content(content)
 
-    def get_source(self, source_id: str):
-        if self.sources_db is None:
-            raise ValueError("No sources db provided")
-        source_row = self.sources_db.get_knowledge_source(source_id)
-        if source_row is None:
+    def get_content_by_id(self, content_id: str):
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+        content_row = self.contents_db.get_knowledge_content(content_id)
+        if content_row is None:
             return None
-        source = Source(
-            id=source_row.id,
-            name=source_row.name,
-            description=source_row.description,
-            metadata=source_row.metadata,
-            size=source_row.size,
-            status=source_row.status,
-            created_at=source_row.created_at,
-            updated_at=source_row.updated_at if source_row.updated_at else source_row.created_at,
+        content = Content(
+            id=content_row.id,
+            name=content_row.name,
+            description=content_row.description,
+            metadata=content_row.metadata,
+            size=content_row.size,
+            status=content_row.status,
+            status_message=content_row.status_message,
+            created_at=content_row.created_at,
+            updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
         )
-        return source
+        return content
 
-    def get_sources(
+    def get_content(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Source], int]:
-        if self.sources_db is None:
-            raise ValueError("No sources db provided")
-        sources, count = self.sources_db.get_knowledge_sources(
+    ) -> Tuple[List[Content], int]:
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+        contents, count = self.contents_db.get_knowledge_contents(
             limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
         )
-        # Convert database rows to DocumentV2 objects
+
         result = []
-        for source_row in sources:
-            # Create Source from database row
-            source = Source(
-                id=source_row.id,
-                name=source_row.name,
-                description=source_row.description,
-                metadata=source_row.metadata,
-                size=source_row.size,
-                status=source_row.status,
-                created_at=source_row.created_at,
-                updated_at=source_row.updated_at if source_row.updated_at else source_row.created_at,
+        for content_row in contents:
+            # Create Content from database row
+            content = Content(
+                id=content_row.id,
+                name=content_row.name,
+                description=content_row.description,
+                metadata=content_row.metadata,
+                size=content_row.size,
+                status=content_row.status,
+                status_message=content_row.status_message,
+                created_at=content_row.created_at,
+                updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
             )
-            result.append(source)
+            result.append(content)
         return result, count
 
-    def get_source_status(self, source_id: str) -> Optional[str]:
-        if self.sources_db is None:
-            raise ValueError("No sources db provided")
-        return self.sources_db.get_source_status(source_id)
+    def get_content_status(self, content_id: str) -> Tuple[Optional[str], Optional[str]]:
+        if self.contents_db is None:
+            raise ValueError("No contents db provided")
+        content_row = self.contents_db.get_knowledge_content(content_id)
+        if content_row is None:
+            return None
+        return content_row.status, content_row.status_message
 
-    def remove_source(self, source_id: str):
-        if self.sources_db is not None:
-            self.sources_db.delete_knowledge_source(source_id)
+    def remove_content_by_id(self, content_id: str):
+        if self.contents_db is not None:
+            self.contents_db.delete_knowledge_content(content_id)
 
         if self.store is not None:
-            self.store.delete_source(source_id)
+            self.store.delete_content(content_id)
 
         if self.vector_store is not None:
-            self.vector_store.delete_by_source_id(source_id)
+            self.vector_store.delete_by_content_id(content_id)
 
-    def remove_all_sources(self):
+    def remove_all_content(self):
         if self.store is not None:
-            self.store.delete_all_sources()
-        sources, _ = self.get_sources()
-        for source in sources:
-            self.remove_source(source.id)
+            self.store.delete_all_content()
+        contents, _ = self.get_content()
+        for content in contents:
+            self.remove_content_by_id(content.id)
 
-    def _add_to_sources_db(self, source: Source):
-        if self.sources_db:
-            created_at = source.created_at if source.created_at else int(time.time())
-            updated_at = source.updated_at if source.updated_at else int(time.time())
+    def _add_to_contents_db(self, content: Content):
+        if self.contents_db:
+            created_at = content.created_at if content.created_at else int(time.time())
+            updated_at = content.updated_at if content.updated_at else int(time.time())
 
-            file_type = source.content.type if source.content and source.content.type else None
+            file_type = (
+                content.file_type
+                if content.file_type
+                else content.content_data.type
+                if content.content_data and content.content_data.type
+                else None
+            )
 
-            source_row = KnowledgeRow(
-                id=source.id,
-                name=source.name if source.name else "",
-                description=source.description if source.description else "",
-                metadata=source.metadata,
+            content_row = KnowledgeRow(
+                id=content.id,
+                name=content.name if content.name else "",
+                description=content.description if content.description else "",
+                metadata=content.metadata,
                 type=file_type,
-                size=source.size
-                if source.size
-                else len(source.content.content)
-                if source.content and source.content.content
+                size=content.size
+                if content.size
+                else len(content.content_data.content)
+                if content.content_data and content.content_data.content
                 else None,
                 linked_to=self.name,
                 access_count=0,
-                status=source.status if source.status else "Processing",
+                status=content.status if content.status else "Processing",
+                status_message="",
                 created_at=created_at,
                 updated_at=updated_at,
             )
-            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
+            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-    def _update_source_status(self, source_id: str, status: str):
-        if self.sources_db:
-            source_row = self.sources_db.get_knowledge_source(source_id)
-            source_row.status = status
-            source_row.updated_at = int(time.time())
-            self.sources_db.upsert_knowledge_source(knowledge_row=source_row)
-
-    def _add_from_file(self, file_path: str):
-        path = Path(file_path)
-        if path.is_file():
-            if path.suffix == ".pdf":
-                document = self.pdf_reader.read(
-                    path, name=path
-                )  # TODO: Need to make naming consistent with files and their extensions.
-                self.store.add_source(document)
-                self.vector_store.insert(document)
-        elif path.is_dir():
-            pass
-        else:
-            raise ValueError(f"Invalid path: {path}")
+    def _update_content(self, content: Content):
+        if self.contents_db:
+            content_row = self.contents_db.get_knowledge_content(content.id)
+            if content_row is None:
+                log_warning(f"Content row not found for id: {content.id}, cannot update status")
+                return
+            content_row.status = content.status
+            content_row.status_message = content.status_message if content.status_message else ""
+            content_row.updated_at = int(time.time())
+            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
         if not filters:
@@ -688,37 +810,3 @@ class Knowledge:
     def csv_url_reader(self) -> CSVUrlReader:
         """CSV URL reader - lazy loaded and cached."""
         return CSVUrlReader(name="CSV URL Reader", description="Reads CSV URLs")
-
-
-# -- Unused for now. Will revisit when we do async and optimizations ---
-
-
-#  @property
-# def list_documents(self) -> Iterator[List[Document]]:
-#     """Iterate over the documents and yield them"""
-#     if self.paths:
-#         for path in self.paths:
-#             self._add_document_by_path(path)
-#     if self.urls:
-#         for url in self.urls:
-#             self.add_document_by_url(url)
-#     for document in self.documents:
-#         if isinstance(document, Document): # The easy one where we just yield and store this. Figure out vectors later
-#             print("document is a Document")
-#             yield document
-
-#         elif isinstance(document, dict): # The more complex one where we 1. Determine if path or url. 2. Determine file type and reader. 3. Read it. 4. Yield it.
-#             if "source" in document:
-#                 result = urlparse(document["source"])
-#                 if all([result.scheme, result.netloc]):
-#                     print("URL detected")
-#                     yield self.url_reader.read(document["source"])
-#                 else:
-#                     print("File detected")
-#                     # TODO: Refactor this to use the add_from_path method instead so we dont duplicate logic
-#                     yield self.pdf_reader.read(document["source"], name=document["name"])
-#             else:
-#                 raise ValueError(f"Invalid document: {document}")
-
-#         else:
-#             raise ValueError(f"Invalid document: {document}")

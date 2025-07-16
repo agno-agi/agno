@@ -297,12 +297,13 @@ class TeamSessionDetailSchema(BaseModel):
 
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
-        session_name = get_session_name(session.to_dict())
+        session_dict = session.to_dict()
+        session_name = get_session_name(session_dict)
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,
             session_name=session_name,
-            session_summary=session.summary if session.summary else None,
+            session_summary=session_dict.get("summary") if session_dict.get("summary") else None,
             user_id=session.user_id,
             team_data=session.team_data,
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")

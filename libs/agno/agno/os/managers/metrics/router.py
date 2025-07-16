@@ -15,7 +15,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         ending_date: Optional[date] = Query(default=None, description="Ending date to filter metrics (YYYY-MM-DD)"),
     ) -> MetricsResponse:
         try:
-            metrics, latest_updated_at = db.get_metrics_raw(starting_date=starting_date, ending_date=ending_date)
+            metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],

@@ -2,7 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.document.local_store import LocalStore
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -18,68 +17,53 @@ db = PostgresDb(
     user_memory_table="user_memory",
     eval_table="eval_runs",
     metrics_table="metrics",
+    knowledge_table="knowledge_contents",
 )
 
 # Setup the memory
 memory = Memory(db=db)
 
-store = LocalStore(
-    name="local_document_store",
-    description="Local document store",
-    storage_path="tmp/documents",
-)
 
-vector_store_1 = PgVector(
+vector_db_1 = PgVector(
     table_name="pdf_documents",
     # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
     db_url=db_url,
 )
 
-vector_store_2 = PgVector(
+vector_db_2 = PgVector(
     table_name="pdf_documents_2",
     # Can inspect database via psql e.g. "psql -h localhost -p 5532 -U ai -d ai"
     db_url=db_url,
-)
-
-document_db = PostgresDb(
-    db_url=db_url,
-    knowledge_table="knowledge_documents",
 )
 
 # Create knowledge base
 knowledge1 = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
-    store=store,
-    sources_db=document_db,
-    vector_store=vector_store_1,
+    contents_db=db,
+    vector_store=vector_db_1,
 )
 
 knowledge2 = Knowledge(
     name="My Knowledge Base 2",
     description="A simple knowledge base 2",
-    # document_store=document_store,
-    sources_db=document_db,
-    vector_store=vector_store_2,
+    contents_db=db,
+    vector_store=vector_db_2,
 )
 
 
-# Add a document
-# knowledge1.add_documents(
-#     DocumentV2(
-#         name="CV1",
-#         paths=["tmp/cv_1.pdf"],
-#         metadata={"user_tag": "Engineering candidates"},
-#     )
-# )
+# Add content
+knowledge1.add_content(
+    name="CV",
+    path="tmp/",
+    metadata={"user_tag": "Engineering candidates"},
+)
 
-# knowledge2.add_documents(
-#     DocumentV2(
-#         name="CV1",
-#         paths=["tmp/cv_2.pdf"],
-#         metadata={"user_tag": "Engineering candidates"},
-#     )
-# )
+knowledge2.add_content(
+    name="Docs",
+    url="https://docs.agno.com/introduction",
+    metadata={"user_tag": "Documentation from website"},
+)
 
 # Setup the agent
 agent_1 = Agent(

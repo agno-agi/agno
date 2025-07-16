@@ -15,6 +15,9 @@ except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
 
+# -- DB util methods --
+
+
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
     """Create all required indexes for a collection"""
     try:
@@ -52,6 +55,9 @@ def apply_pagination(
         if page is not None:
             query_args["skip"] = (page - 1) * limit
     return query_args
+
+
+# -- Metrics util methods --
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:

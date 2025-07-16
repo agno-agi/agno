@@ -11,19 +11,18 @@ from agno.db.redis.utils import (
     calculate_date_metrics,
     create_index_entries,
     deserialize_data,
-    deserialize_session,
     fetch_all_sessions_data,
     generate_redis_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
+    hydrate_session,
     remove_index_entries,
     serialize_data,
 )
-from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.memory import MemoryRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -244,159 +243,7 @@ class RedisDb(BaseDb):
 
     # -- Session methods --
 
-    def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
-        """Insert or update an agent session in Redis.
-
-        Args:
-            session (AgentSession): The agent session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session data if successful, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while upserting the session.
-        """
-        try:
-            # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary.to_dict() if session.summary else None
-
-            data = {
-                "session_id": session.session_id,
-                "session_type": SessionType.AGENT.value,
-                "agent_id": session.agent_id,
-                "team_id": session.team_id,
-                "workflow_id": session.workflow_id,
-                "team_session_id": session.team_session_id,
-                "user_id": session.user_id,
-                "runs": runs,
-                "agent_data": session.agent_data,
-                "team_data": None,
-                "workflow_data": None,
-                "session_data": session.session_data,
-                "chat_history": chat_history,
-                "summary": summary,
-                "extra_data": session.extra_data,
-                "created_at": session.created_at or int(time.time()),
-                "updated_at": int(time.time()),
-            }
-
-            success = self._store_record(
-                table_type="sessions",
-                record_id=session.session_id,
-                data=data,
-                index_fields=["user_id", "agent_id", "session_type"],
-            )
-            return data if success else None
-
-        except Exception as e:
-            log_error(f"Exception upserting agent session: {e}")
-            return None
-
-    def _upsert_team_session_raw(self, session: TeamSession) -> Optional[dict]:
-        """Insert or update a team session in Redis.
-
-        Args:
-            session (TeamSession): The team session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session data if successful, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while upserting the session.
-        """
-        try:
-            # Calculated fields
-            chat_history = (
-                [chat_message.to_dict() for chat_message in session.chat_history] if session.chat_history else None
-            )
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-            summary = session.summary if session.summary else None
-            summary = summary.to_dict() if isinstance(summary, SessionSummary) else summary
-
-            data = {
-                "session_id": session.session_id,
-                "session_type": SessionType.TEAM.value,
-                "agent_id": None,
-                "team_id": session.team_id,
-                "workflow_id": None,
-                "team_session_id": session.team_session_id,
-                "user_id": session.user_id,
-                "runs": runs,
-                "team_data": session.team_data,
-                "agent_data": None,
-                "workflow_data": None,
-                "session_data": session.session_data,
-                "summary": summary,
-                "extra_data": session.extra_data,
-                "chat_history": chat_history,
-                "created_at": session.created_at or int(time.time()),
-                "updated_at": int(time.time()),
-            }
-
-            success = self._store_record(
-                table_type="sessions",
-                record_id=session.session_id,
-                data=data,
-                index_fields=["user_id", "team_id", "session_type"],
-            )
-            return data if success else None
-
-        except Exception as e:
-            log_error(f"Exception upserting team session: {e}")
-            return None
-
-    def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[dict]:
-        """Insert or update a workflow session in Redis.
-
-        Args:
-            session (WorkflowSession): The workflow session to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session data if successful, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while upserting the session.
-        """
-        try:
-            # Calculated fields
-            runs = [run.to_dict() for run in session.runs] if session.runs else None
-
-            data = {
-                "session_id": session.session_id,
-                "session_type": SessionType.WORKFLOW.value,
-                "workflow_id": session.workflow_id,
-                "user_id": session.user_id,
-                "runs": runs,
-                "workflow_data": session.workflow_data,
-                "session_data": session.session_data,
-                "extra_data": session.extra_data,
-                "created_at": session.created_at or int(time.time()),
-                "updated_at": int(time.time()),
-                "agent_id": None,
-                "team_id": None,
-                "agent_data": None,
-                "team_data": None,
-                "summary": None,
-                "chat_history": None,
-            }
-
-            success = self._store_record(
-                table_type="sessions",
-                record_id=session.session_id,
-                data=data,
-                index_fields=["user_id", "workflow_id", "session_type"],
-            )
-            return data if success else None
-
-        except Exception as e:
-            log_error(f"Exception upserting workflow session: {e}")
-            return None
-
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """Delete a session from Redis.
 
         Args:
@@ -412,11 +259,14 @@ class RedisDb(BaseDb):
                 index_fields=["user_id", "agent_id", "team_id", "workflow_id", "session_type"],
             ):
                 log_debug(f"Successfully deleted session: {session_id}")
+                return True
             else:
-                log_debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found to delete with session_id: {session_id}")
+                return False
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
+            return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete multiple sessions from Redis.
@@ -462,17 +312,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the session.
         """
         try:
-            data = self._get_record("sessions", session_id)
-            if data is None:
-                return None
 
-            # Apply filters
-            if user_id is not None and data.get("user_id") != user_id:
-                return None
-            if session_type is not None and data.get("session_type") != session_type.value:
-                return None
-
-            return deserialize_session(data)
 
         except Exception as e:
             log_debug(f"Exception reading session: {e}")
@@ -483,7 +323,8 @@ class RedisDb(BaseDb):
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from Redis.
 
         Args:
@@ -498,103 +339,47 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the session.
         """
         try:
-            session_raw = self.get_session_raw(session_id=session_id, user_id=user_id, session_type=session_type)
-            if session_raw is None:
+            data = self._get_record("sessions", session_id)
+            if data is None:
                 return None
 
+            # Apply filters
+            if user_id is not None and data.get("user_id") != user_id:
+                return None
+            if session_type is not None and data.get("session_type") != session_type:
+                return None
+
+            session = hydrate_session(data)
+
+            if not deserialize:
+                return session
+
             if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(session_raw)
+                return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(session_raw)
+                return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW.value:
-                return WorkflowSession.from_dict(session_raw)
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_debug(f"Exception reading session: {e}")
             return None
 
-    def get_sessions_raw(
-        self,
-        session_type: Optional[SessionType] = None,
-        user_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        start_timestamp: Optional[int] = None,
-        end_timestamp: Optional[int] = None,
-        session_name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all sessions as raw dictionaries.
-
-        Args:
-            session_type (Optional[SessionType]): The type of session to filter by.
-            user_id (Optional[str]): The ID of the user to filter by.
-            component_id (Optional[str]): The ID of the component to filter by.
-
-        Returns:
-            Tuple[List[Dict[str, Any]], int]: A tuple containing the list of sessions and the total number of sessions.
-
-        Raises:
-            Exception: If any error occurs while getting the sessions.
-        """
-        try:
-            # Get all sessions
-            all_sessions = self._get_all_records("sessions")
-
-            # Apply filters
-            conditions = {}
-            if session_type is not None:
-                conditions["session_type"] = session_type.value
-            if user_id is not None:
-                conditions["user_id"] = user_id
-
-            filtered_sessions = apply_filters(records=all_sessions, conditions=conditions)
-
-            # Apply additional filters
-            if component_id is not None:
-                if session_type == SessionType.AGENT:
-                    filtered_sessions = [s for s in filtered_sessions if s.get("agent_id") == component_id]
-                elif session_type == SessionType.TEAM:
-                    filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
-                elif session_type == SessionType.WORKFLOW:
-                    filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
-
-            if start_timestamp is not None:
-                filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
-            if end_timestamp is not None:
-                filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) <= end_timestamp]
-
-            if session_name is not None:
-                filtered_sessions = [
-                    s
-                    for s in filtered_sessions
-                    if session_name.lower() in s.get("session_data", {}).get("session_name", "").lower()
-                ]
-
-            total_count = len(filtered_sessions)
-
-            sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
-            paginated_sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
-
-            return paginated_sessions, total_count
-
-        except Exception as e:
-            log_debug(f"Exception reading sessions: {e}")
-            return [], 0
-
+    # TODO: optimizable
     def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession]]:
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions matching the given filters.
 
         Args:
@@ -611,31 +396,58 @@ class RedisDb(BaseDb):
             List[AgentSession] | List[TeamSession] | List[WorkflowSession]: The list of sessions.
         """
         try:
-            sessions_raw, _ = self.get_sessions_raw(
-                session_type=session_type,
-                user_id=user_id,
-                component_id=component_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
+            all_sessions = self._get_all_records("sessions")
+
+            conditions = {}
+            if session_type is not None:
+                conditions["session_type"] = session_type
+            if user_id is not None:
+                conditions["user_id"] = user_id
+
+            filtered_sessions = apply_filters(records=all_sessions, conditions=conditions)
+
+            if component_id is not None:
+                if session_type == SessionType.AGENT:
+                    filtered_sessions = [s for s in filtered_sessions if s.get("agent_id") == component_id]
+                elif session_type == SessionType.TEAM:
+                    filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
+                elif session_type == SessionType.WORKFLOW:
+                    filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
+            if start_timestamp is not None:
+                filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
+            if end_timestamp is not None:
+                filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) <= end_timestamp]
+
+            if session_name is not None:
+                filtered_sessions = [
+                    s
+                    for s in filtered_sessions
+                    if session_name.lower() in s.get("session_data", {}).get("session_name", "").lower()
+                ]
+
+            sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
+            sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
+            sessions = [hydrate_session(record) for record in sessions]
+
+            if not deserialize:
+                return sessions, len(filtered_sessions)
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
+                return [AgentSession.from_dict(record) for record in sessions]  # type: ignore
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
+                return [TeamSession.from_dict(record) for record in sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
+                return [WorkflowSession.from_dict(record) for record in sessions]  # type: ignore
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_debug(f"Exception reading sessions: {e}")
-            return []
+            return [], 0
 
-    def rename_session(self, session_id: str, session_type: SessionType, session_name: str) -> Optional[Session]:
+    def rename_session(
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in Redis.
 
         Args:
@@ -665,8 +477,11 @@ class RedisDb(BaseDb):
             if not success:
                 return None
 
-            # Return appropriate session object depending on session_type
-            session = deserialize_session(session_data)
+            session = hydrate_session(session_data)
+
+            if not deserialize:
+                return session
+
             if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
@@ -678,7 +493,9 @@ class RedisDb(BaseDb):
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in Redis.
 
         Args:
@@ -691,15 +508,113 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while upserting the session.
         """
         try:
+            session_dict = session.to_dict()
+
             if isinstance(session, AgentSession):
-                session_raw = self._upsert_agent_session_raw(session=session)
-                return AgentSession.from_dict(session_raw) if session_raw else None
+                data = {
+                    "session_id": session_dict.get("session_id"),
+                    "session_type": SessionType.AGENT.value,
+                    "agent_id": session_dict.get("agent_id"),
+                    "team_id": session_dict.get("team_id"),
+                    "workflow_id": session_dict.get("workflow_id"),
+                    "team_session_id": session_dict.get("team_session_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "agent_data": session_dict.get("agent_data"),
+                    "team_data": session_dict.get("team_data"),
+                    "workflow_data": session_dict.get("workflow_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "chat_history": session_dict.get("chat_history"),
+                    "summary": session_dict.get("summary"),
+                    "extra_data": session_dict.get("extra_data"),
+                    "created_at": session_dict.get("created_at") or int(time.time()),
+                    "updated_at": int(time.time()),
+                }
+
+                success = self._store_record(
+                    table_type="sessions",
+                    record_id=session.session_id,
+                    data=data,
+                    index_fields=["user_id", "agent_id", "session_type"],
+                )
+                if not success:
+                    return None
+
+                if not deserialize:
+                    return data
+
+                return AgentSession.from_dict(data)
+
             elif isinstance(session, TeamSession):
-                session_raw = self._upsert_team_session_raw(session=session)
-                return TeamSession.from_dict(session_raw) if session_raw else None
+                data = {
+                    "session_id": session_dict.get("session_id"),
+                    "session_type": SessionType.TEAM.value,
+                    "agent_id": None,
+                    "team_id": session_dict.get("team_id"),
+                    "workflow_id": None,
+                    "team_session_id": session_dict.get("team_session_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "team_data": session_dict.get("team_data"),
+                    "agent_data": None,
+                    "workflow_data": None,
+                    "session_data": session_dict.get("session_data"),
+                    "summary": session_dict.get("summary"),
+                    "extra_data": session_dict.get("extra_data"),
+                    "chat_history": session_dict.get("chat_history"),
+                    "created_at": session_dict.get("created_at") or int(time.time()),
+                    "updated_at": int(time.time()),
+                }
+
+                success = self._store_record(
+                    table_type="sessions",
+                    record_id=session.session_id,
+                    data=data,
+                    index_fields=["user_id", "team_id", "session_type"],
+                )
+                if not success:
+                    return None
+
+                if not deserialize:
+                    return data
+
+                return TeamSession.from_dict(data)
+
             elif isinstance(session, WorkflowSession):
-                session_raw = self._upsert_workflow_session_raw(session=session)
-                return WorkflowSession.from_dict(session_raw) if session_raw else None
+                data = {
+                    "session_id": session_dict.get("session_id"),
+                    "session_type": SessionType.WORKFLOW.value,
+                    "workflow_id": session_dict.get("workflow_id"),
+                    "user_id": session_dict.get("user_id"),
+                    "runs": session_dict.get("runs"),
+                    "workflow_data": session_dict.get("workflow_data"),
+                    "session_data": session_dict.get("session_data"),
+                    "extra_data": session_dict.get("extra_data"),
+                    "created_at": session_dict.get("created_at") or int(time.time()),
+                    "updated_at": int(time.time()),
+                    "agent_id": None,
+                    "team_id": None,
+                    "agent_data": None,
+                    "team_data": None,
+                    "summary": None,
+                    "chat_history": None,
+                }
+
+                success = self._store_record(
+                    table_type="sessions",
+                    record_id=session.session_id,
+                    data=data,
+                    index_fields=["user_id", "workflow_id", "session_type"],
+                )
+                if not success:
+                    return None
+
+                session = hydrate_session(data)
+
+                if not deserialize:
+                    return session
+
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_warning(f"Exception upserting session: {e}")
@@ -772,23 +687,9 @@ class RedisDb(BaseDb):
             log_debug(f"Exception reading memory topics: {e}")
             return []
 
-    def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
-        """Get a memory from Redis as a raw dictionary.
-
-        Args:
-            memory_id (str): The ID of the memory to get.
-
-        Returns:
-            Optional[Dict[str, Any]]: The memory data if found, None otherwise.
-        """
-        try:
-            return self._get_record("user_memories", memory_id)
-
-        except Exception as e:
-            log_debug(f"Exception reading memory: {e}")
-            return None
-
-    def get_user_memory(self, memory_id: str) -> Optional[MemoryRow]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
         """Get a memory from Redis.
 
         Args:
@@ -798,9 +699,12 @@ class RedisDb(BaseDb):
             Optional[MemoryRow]: The memory data if found, None otherwise.
         """
         try:
-            memory_raw = self.get_user_memory_raw(memory_id=memory_id)
+            memory_raw = self._get_record("user_memories", memory_id)
             if memory_raw is None:
                 return None
+
+            if not deserialize:
+                return memory_raw
 
             return MemoryRow(
                 id=memory_raw["memory_id"],
@@ -813,7 +717,7 @@ class RedisDb(BaseDb):
             log_debug(f"Exception reading memory: {e}")
             return None
 
-    def get_user_memories_raw(
+    def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -825,13 +729,30 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all memories from Redis as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+        """Get all memories from Redis as MemoryRow objects.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the memories.
+
+        Returns:
+            Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of MemoryRow objects
+                - When deserialize=False: Tuple of (memory dictionaries, total count)
+
+        Raises:
+            Exception: If any error occurs while reading the memories.
         """
         try:
             all_memories = self._get_all_records("user_memories")
@@ -861,66 +782,11 @@ class RedisDb(BaseDb):
                     m for m in filtered_memories if search_content.lower() in str(m.get("memory", "")).lower()
                 ]
 
-            total_count = len(filtered_memories)
-
             sorted_memories = apply_sorting(records=filtered_memories, sort_by=sort_by, sort_order=sort_order)
             paginated_memories = apply_pagination(records=sorted_memories, limit=limit, page=page)
 
-            return paginated_memories, total_count
-
-        except Exception as e:
-            log_debug(f"Exception reading memories: {e}")
-            return [], 0
-
-    def get_user_memories(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        search_content: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> List[MemoryRow]:
-        """Get all memories from Redis as MemoryRow objects.
-
-        Args:
-            user_id (Optional[str]): The ID of the user to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
-            topics (Optional[List[str]]): The topics to filter by.
-            search_content (Optional[str]): The content to search for.
-            limit (Optional[int]): The maximum number of memories to return.
-            page (Optional[int]): The page number to return.
-            sort_by (Optional[str]): The field to sort by.
-            sort_order (Optional[str]): The order to sort by.
-
-        Returns:
-            List[MemoryRow]: The list of memories.
-
-        Raises:
-            Exception: If any error occurs while reading the memories.
-        """
-        try:
-            user_memories_raw, _ = self.get_user_memories_raw(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                topics=topics,
-                search_content=search_content,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-
-            if not user_memories_raw:
-                return []
+            if not deserialize:
+                return paginated_memories, len(filtered_memories)
 
             return [
                 MemoryRow(
@@ -929,12 +795,12 @@ class RedisDb(BaseDb):
                     memory=record["memory"],
                     last_updated=record["last_updated"],
                 )
-                for record in user_memories_raw
+                for record in paginated_memories
             ]
 
         except Exception as e:
             log_debug(f"Exception reading memories: {e}")
-            return []
+            return [] if deserialize else ([], 0)
 
     def get_user_memory_stats(
         self,
@@ -990,14 +856,16 @@ class RedisDb(BaseDb):
             log_debug(f"Exception getting user memory stats: {e}")
             return [], 0
 
-    def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
-        """Upsert a user memory in Redis and return raw dictionary.
+    def upsert_user_memory(
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """Upsert a user memory in Redis.
 
         Args:
             memory (MemoryRow): The memory to upsert.
 
         Returns:
-            Optional[Dict[str, Any]]: The upserted memory data if successful, None otherwise.
+            Optional[MemoryRow]: The upserted memory data if successful, None otherwise.
         """
         try:
             if memory.id is None:
@@ -1019,33 +887,19 @@ class RedisDb(BaseDb):
                 "user_memories", memory.id, data, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             )
 
-            return data if success else None
-
-        except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
-            return None
-
-    def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        """Upsert a user memory in Redis.
-
-        Args:
-            memory (MemoryRow): The memory to upsert.
-
-        Returns:
-            Optional[MemoryRow]: The upserted memory data if successful, None otherwise.
-        """
-        try:
-            user_memory_raw = self.upsert_user_memory_raw(memory=memory)
-            if user_memory_raw is None:
+            if not success:
                 return None
 
+            if not deserialize:
+                return data
+
             return MemoryRow(
-                id=user_memory_raw["memory_id"],
-                user_id=user_memory_raw["user_id"],
-                agent_id=user_memory_raw["agent_id"],
-                team_id=user_memory_raw["team_id"],
-                memory=user_memory_raw["memory"],
-                last_updated=user_memory_raw["last_updated"],
+                id=data["memory_id"],
+                user_id=data["user_id"],
+                agent_id=data["agent_id"],
+                team_id=data["team_id"],
+                memory=data["memory"],
+                last_updated=data["last_updated"],
             )
 
         except Exception as e:
@@ -1183,7 +1037,7 @@ class RedisDb(BaseDb):
             log_error(f"Exception calculating metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
@@ -1432,26 +1286,9 @@ class RedisDb(BaseDb):
             log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
-    def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
-        """Get an eval run from Redis as a raw dictionary.
-
-        Args:
-            eval_run_id (str): The ID of the eval run to get.
-
-        Returns:
-            Optional[Dict[str, Any]]: The eval run data if found, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while getting the eval run.
-        """
-        try:
-            return self._get_record("evals", eval_run_id)
-
-        except Exception as e:
-            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
-
-    def get_eval_run(self, eval_run_id: str) -> Optional[EvalRunRecord]:
+    def get_eval_run(
+        self, eval_run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from Redis.
 
         Args:
@@ -1464,9 +1301,12 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the eval run.
         """
         try:
-            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id)
+            eval_run_raw = self._get_record("evals", eval_run_id)
             if eval_run_raw is None:
                 return None
+
+            if not deserialize:
+                return eval_run_raw
 
             return EvalRunRecord.model_validate(eval_run_raw)
 
@@ -1474,7 +1314,7 @@ class RedisDb(BaseDb):
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs_raw(
+    def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
@@ -1486,8 +1326,9 @@ class RedisDb(BaseDb):
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all eval runs from Redis as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from Redis.
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
@@ -1496,7 +1337,7 @@ class RedisDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
 
         Returns:
-            Tuple[List[Dict[str, Any]], int]: A tuple containing the list of eval runs and the total number of eval runs.
+            List[EvalRunRecord]: The list of eval runs.
 
         Raises:
             Exception: If any error occurs while getting the eval runs.
@@ -1533,9 +1374,6 @@ class RedisDb(BaseDb):
 
                 filtered_runs.append(run)
 
-            total_count = len(filtered_runs)
-
-            # Apply sorting (default to created_at desc)
             if sort_by is None:
                 sort_by = "created_at"
                 sort_order = "desc"
@@ -1543,57 +1381,11 @@ class RedisDb(BaseDb):
             sorted_runs = apply_sorting(records=filtered_runs, sort_by=sort_by, sort_order=sort_order)
             paginated_runs = apply_pagination(records=sorted_runs, limit=limit, page=page)
 
-            return paginated_runs, total_count
+            if not deserialize:
+                return paginated_runs, len(filtered_runs)
 
-        except Exception as e:
-            log_debug(f"Exception getting eval runs: {e}")
-            return [], 0
+            return [EvalRunRecord.model_validate(row) for row in paginated_runs]
 
-    def get_eval_runs(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
-        filter_type: Optional[EvalFilterType] = None,
-    ) -> List[EvalRunRecord]:
-        """Get all eval runs from Redis.
-
-        Args:
-            limit (Optional[int]): The maximum number of eval runs to return.
-            page (Optional[int]): The page number to return.
-            sort_by (Optional[str]): The field to sort by.
-            sort_order (Optional[str]): The order to sort by.
-
-        Returns:
-            List[EvalRunRecord]: The list of eval runs.
-
-        Raises:
-            Exception: If any error occurs while getting the eval runs.
-        """
-        try:
-            eval_runs_raw, _ = self.get_eval_runs_raw(
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                model_id=model_id,
-                eval_type=eval_type,
-                filter_type=filter_type,
-            )
-
-            if not eval_runs_raw:
-                return []
-
-            return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
             return []

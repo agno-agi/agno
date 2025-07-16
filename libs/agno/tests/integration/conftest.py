@@ -4,8 +4,8 @@ import uuid
 
 import pytest
 
-from agno.db.sqlite import SqliteStorage
-from agno.memory.db import SqliteMemoryDb
+from agno.db.sqlite import SqliteDb
+from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 
 
@@ -40,7 +40,7 @@ def agent_storage(temp_storage_db_file):
     """Create a SQLite storage for agent sessions."""
     # Use a unique table name for each test run
     table_name = f"agent_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteStorage(table_name=table_name, db_file=temp_storage_db_file)
+    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file)
     storage.create()
     return storage
 
@@ -50,7 +50,7 @@ def team_storage(temp_storage_db_file):
     """Create a SQLite storage for team sessions."""
     # Use a unique table name for each test run
     table_name = f"team_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteStorage(table_name=table_name, db_file=temp_storage_db_file, mode="team")
+    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file, mode="team")
     storage.create()
     return storage
 
@@ -60,7 +60,7 @@ def workflow_storage(temp_storage_db_file):
     """Create a SQLite storage for workflow sessions."""
     # Use a unique table name for each test run
     table_name = f"workflow_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteStorage(table_name=table_name, db_file=temp_storage_db_file, mode="workflow")
+    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file, mode="workflow")
     storage.create()
     return storage
 

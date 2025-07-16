@@ -416,10 +416,10 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-        if agent.memory is None:
+        if agent.memory is None or agent.memory.db is None:
             raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
 
-        sessions, total_count = agent.memory.db.get_sessions_raw(  # type: ignore
+        sessions, total_count = agent.memory.db.get_sessions(
             session_type=SessionType.AGENT,
             component_id=agent_id,
             user_id=user_id,
@@ -427,15 +427,16 @@ def get_base_router(
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
+            deserialize=False,
         )
 
         return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],
+            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 
@@ -651,7 +652,7 @@ def get_base_router(
         if team.memory is None or team.memory.db is None:
             raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
 
-        sessions, total_count = team.memory.db.get_sessions_raw(
+        sessions, total_count = team.memory.db.get_sessions(
             session_type=SessionType.TEAM,
             component_id=team_id,
             user_id=user_id,
@@ -660,15 +661,16 @@ def get_base_router(
             page=page,
             sort_by=sort_by,
             sort_order=sort_order,
+            deserialize=False,
         )
 
         return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],
+            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 

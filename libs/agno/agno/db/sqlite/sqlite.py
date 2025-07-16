@@ -4,10 +4,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
-
 from agno.db.base import BaseDb, SessionType
 from agno.db.schemas import MemoryRow
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
@@ -20,7 +19,6 @@ from agno.db.sqlite.utils import (
     is_valid_table,
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
-from agno.eval.schemas import EvalFilterType, EvalRunRecord, EvalType
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -260,178 +258,7 @@ class SqliteDb(BaseDb):
 
     # -- Session methods --
 
-    def _upsert_agent_session_raw(self, session: AgentSession) -> Optional[dict]:
-        """
-        Insert or update an agent session in the database.
-
-        Args:
-            session (AgentSession): The session data to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session, or None if operation failed.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-            serialized_session = serialize_session_json_fields(session.to_dict())
-
-            with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    session_type=SessionType.AGENT.value,
-                    agent_id=serialized_session.get("agent_id"),
-                    team_session_id=serialized_session.get("team_session_id"),
-                    user_id=serialized_session.get("user_id"),
-                    agent_data=serialized_session.get("agent_data"),
-                    session_data=serialized_session.get("session_data"),
-                    extra_data=serialized_session.get("extra_data"),
-                    runs=serialized_session.get("runs"),
-                    chat_history=serialized_session.get("chat_history"),
-                    summary=serialized_session.get("summary"),
-                    created_at=serialized_session.get("created_at"),
-                    updated_at=serialized_session.get("created_at"),
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["session_id"],
-                    set_=dict(
-                        agent_id=serialized_session.get("agent_id"),
-                        team_session_id=serialized_session.get("team_session_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
-                        summary=serialized_session.get("summary"),
-                        agent_data=serialized_session.get("agent_data"),
-                        session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
-                        updated_at=int(time.time()),
-                    ),
-                )
-                stmt = stmt.returning(*table.columns)
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-            return deserialize_session_json_fields(dict(row._mapping)) if row else None
-
-        except Exception as e:
-            log_error(f"Exception upserting an agent session into sessions table: {e}")
-            return None
-
-    def _upsert_team_session_raw(self, session: TeamSession) -> Optional[Dict[str, Any]]:
-        """
-        Insert or update a team session in the database.
-
-        Args:
-            session (TeamSession): The session data to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session, or None if operation failed.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-            serialized_session = serialize_session_json_fields(session.to_dict())
-
-            with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    session_type=SessionType.TEAM.value,
-                    team_id=serialized_session.get("team_id"),
-                    user_id=serialized_session.get("user_id"),
-                    runs=serialized_session.get("runs"),
-                    chat_history=serialized_session.get("chat_history"),
-                    summary=serialized_session.get("summary"),
-                    created_at=serialized_session.get("created_at"),
-                    updated_at=serialized_session.get("created_at"),
-                    team_data=serialized_session.get("team_data"),
-                    session_data=serialized_session.get("session_data"),
-                    extra_data=serialized_session.get("extra_data"),
-                )
-
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["session_id"],
-                    set_=dict(
-                        team_id=serialized_session.get("team_id"),
-                        user_id=serialized_session.get("user_id"),
-                        chat_history=serialized_session.get("chat_history"),
-                        summary=serialized_session.get("summary"),
-                        runs=serialized_session.get("runs"),
-                        team_data=serialized_session.get("team_data"),
-                        session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
-                        updated_at=int(time.time()),
-                    ),
-                )
-                stmt = stmt.returning(*table.columns)
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                return deserialize_session_json_fields(dict(row._mapping)) if row else None
-
-        except Exception as e:
-            log_error(f"Exception upserting a team session into sessions table: {e}")
-            return None
-
-    def _upsert_workflow_session_raw(self, session: WorkflowSession) -> Optional[Dict[str, Any]]:
-        """
-        Insert or update a workflow session in the database.
-
-        Args:
-            session (WorkflowSession): The session data to upsert.
-
-        Returns:
-            Optional[dict]: The upserted session, or None if operation failed.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-            serialized_session = serialize_session_json_fields(session.to_dict())
-
-            with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    session_type=SessionType.WORKFLOW.value,
-                    workflow_id=serialized_session.get("workflow_id"),
-                    user_id=serialized_session.get("user_id"),
-                    runs=serialized_session.get("runs"),
-                    chat_history=serialized_session.get("chat_history"),
-                    summary=serialized_session.get("summary"),
-                    created_at=serialized_session.get("created_at"),
-                    updated_at=serialized_session.get("created_at"),
-                    workflow_data=serialized_session.get("workflow_data"),
-                    session_data=serialized_session.get("session_data"),
-                    extra_data=serialized_session.get("extra_data"),
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["session_id"],
-                    set_=dict(
-                        workflow_id=serialized_session.get("workflow_id"),
-                        user_id=serialized_session.get("user_id"),
-                        chat_history=serialized_session.get("chat_history"),
-                        summary=serialized_session.get("summary"),
-                        runs=serialized_session.get("runs"),
-                        workflow_data=serialized_session.get("workflow_data"),
-                        session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
-                        updated_at=int(time.time()),
-                    ),
-                )
-                stmt = stmt.returning(*table.columns)
-                result = sess.execute(stmt)
-                row = result.fetchone()
-
-                return deserialize_session_json_fields(dict(row._mapping)) if row else None
-
-        except Exception as e:
-            log_error(f"Exception upserting a workflow session into sessions table: {e}")
-            return None
-
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
 
@@ -448,12 +275,15 @@ class SqliteDb(BaseDb):
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found with session_id: {session_id} in table {table.name}")
+                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    return False
                 else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                    log_debug(f"Successfully deleted session with session_id: {session_id}")
+                    return True
 
         except Exception as e:
-            log_error(f"Exception deleting session: {e}")
+            log_error(f"Error deleting session: {e}")
+            return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
         """Delete all given sessions from the database.
@@ -477,26 +307,28 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting sessions: {e}")
 
-    def get_session_raw(
+    def get_session(
         self,
         session_id: str,
         user_id: Optional[str] = None,
         session_type: Optional[SessionType] = None,
-        table: Optional[Table] = None,
-    ) -> Optional[Dict[str, Any]]:
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
-        Get a session as a raw dictionary.
+        Read a session from the database.
 
         Args:
-            session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
-            table (Table): Table to read from. If not provided, the session type must be provided.
+            session_id (str): ID of the session to read.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The session as a raw dictionary, or None if not found.
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
-            ValueError: If no table and no session type are provided, or if the table is not found.
             Exception: If an error occurs during retrieval.
         """
         try:
@@ -509,45 +341,15 @@ class SqliteDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 if session_type is not None:
-                    stmt = stmt.where(table.c.session_type == session_type.value)
+                    stmt = stmt.where(table.c.session_type == session_type)
 
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
-                return deserialize_session_json_fields(dict(result._mapping))
-
-        except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
-            return None
-
-    def get_session(
-        self,
-        session_id: str,
-        user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
-        table: Optional[Table] = None,
-    ) -> Optional[Session]:
-        """
-        Read a session from the database.
-
-        Args:
-            table (Table): Table to read from.
-            session_id (str): ID of the session to read.
-            user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
-
-        Returns:
-            Optional[Session]: Session object if found, None otherwise.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-
-            session_raw = self.get_session_raw(
-                session_id=session_id, user_id=user_id, session_type=session_type, table=table
-            )
-            if session_raw is None:
-                return None
+                session_raw = deserialize_session_json_fields(dict(result._mapping))
+                if not session_raw or not deserialize:
+                    return session_raw
 
             if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session_raw)
@@ -557,38 +359,45 @@ class SqliteDb(BaseDb):
                 return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             return None
 
-    def get_sessions_raw(
+    def get_sessions(
         self,
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
+        session_name: Optional[str] = None,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
-        session_name: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
         """
-        Get all sessions in the given table, or of the given session_type, as raw dictionaries.
+        Get all sessions in the given table. Can filter by user_id and entity_id.
         Args:
-            table (Optional[Table]): Table to read from.
-            session_type (Optional[SessionType]): The type of session to get. Used if no table is provided.
+            session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
+            session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
-            component_id (Optional[str]): The ID of the agent, team or workflow to filter by.
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+
         Returns:
-            Tuple[List[Dict[str, Any]], int]: List of sessions matching the criteria and the total number of sessions.
+            List[Session]:
+                - When deserialize=True: List of Session objects matching the criteria.
+                - When deserialize=False: List of Session dictionaries matching the criteria.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
             table = self._get_table(table_type="sessions")
@@ -634,50 +443,9 @@ class SqliteDb(BaseDb):
                 if records is None:
                     return [], 0
 
-                return [deserialize_session_json_fields(dict(record._mapping)) for record in records], total_count
-
-        except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
-            return [], 0
-
-    def get_sessions(
-        self,
-        session_type: Optional[SessionType] = None,
-        user_id: Optional[str] = None,
-        component_id: Optional[str] = None,
-        session_name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession]]:
-        """
-        Get all sessions in the given table. Can filter by user_id and entity_id.
-        Args:
-            table (Table): Table to read from.
-            user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
-            limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
-        Returns:
-            List[Session]: List of Session objects matching the criteria.
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = self._get_table(table_type="sessions")
-
-            sessions_raw, _ = self.get_sessions_raw(  # Note: Added unpacking here
-                session_type=session_type,
-                user_id=user_id,
-                component_id=component_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                table=table,
-            )
+                sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
+                if not sessions_raw or not deserialize:
+                    return sessions_raw, total_count
 
             if session_type == SessionType.AGENT:
                 return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
@@ -689,12 +457,12 @@ class SqliteDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from sessions table: {e}")
             return []
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, table: Optional[Table] = None
-    ) -> Optional[Session]:
+        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
 
@@ -702,10 +470,12 @@ class SqliteDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
-            table (Table): Table to read from.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
-            Optional[Session]: The renamed session, or None if operation failed.
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
 
         Raises:
             Exception: If an error occurs during renaming.
@@ -732,40 +502,163 @@ class SqliteDb(BaseDb):
                 if not row:
                     return None
 
-            deserialized_session = deserialize_session_json_fields(dict(row._mapping))
+            session_raw = deserialize_session_json_fields(dict(row._mapping))
+            if not session_raw or not deserialize:
+                return session_raw
 
             # Return the appropriate session type
             if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(deserialized_session)
+                return AgentSession.from_dict(session_raw)
             elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(deserialized_session)
+                return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(deserialized_session)
+                return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Insert or update a session in the database.
 
         Args:
             session (Session): The session data to upsert.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
-            Optional[Session]: The upserted session, or None if operation failed.
+            Optional[Session]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during upserting.
         """
         try:
+            table = self._get_table(table_type="sessions")
+            serialized_session = serialize_session_json_fields(session.to_dict())
+
             if isinstance(session, AgentSession):
-                session_raw = self._upsert_agent_session_raw(session=session)
-                return AgentSession.from_dict(session_raw) if session_raw else None
+                with self.Session() as sess, sess.begin():
+                    stmt = sqlite.insert(table).values(
+                        session_id=serialized_session.get("session_id"),
+                        session_type=SessionType.AGENT.value,
+                        agent_id=serialized_session.get("agent_id"),
+                        team_session_id=serialized_session.get("team_session_id"),
+                        user_id=serialized_session.get("user_id"),
+                        agent_data=serialized_session.get("agent_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
+                        runs=serialized_session.get("runs"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            agent_id=serialized_session.get("agent_id"),
+                            team_session_id=serialized_session.get("team_session_id"),
+                            user_id=serialized_session.get("user_id"),
+                            runs=serialized_session.get("runs"),
+                            chat_history=serialized_session.get("chat_history"),
+                            summary=serialized_session.get("summary"),
+                            agent_data=serialized_session.get("agent_data"),
+                            session_data=serialized_session.get("session_data"),
+                            extra_data=serialized_session.get("extra_data"),
+                            updated_at=int(time.time()),
+                        ),
+                    )
+                    stmt = stmt.returning(*table.columns)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
+                    return AgentSession.from_dict(session_raw)
+
             elif isinstance(session, TeamSession):
-                session_raw = self._upsert_team_session_raw(session=session)
-                return TeamSession.from_dict(session_raw) if session_raw else None
+                with self.Session() as sess, sess.begin():
+                    stmt = sqlite.insert(table).values(
+                        session_id=serialized_session.get("session_id"),
+                        session_type=SessionType.TEAM.value,
+                        team_id=serialized_session.get("team_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
+                        team_data=serialized_session.get("team_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
+                    )
+
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            team_id=serialized_session.get("team_id"),
+                            user_id=serialized_session.get("user_id"),
+                            chat_history=serialized_session.get("chat_history"),
+                            summary=serialized_session.get("summary"),
+                            runs=serialized_session.get("runs"),
+                            team_data=serialized_session.get("team_data"),
+                            session_data=serialized_session.get("session_data"),
+                            extra_data=serialized_session.get("extra_data"),
+                            updated_at=int(time.time()),
+                        ),
+                    )
+                    stmt = stmt.returning(*table.columns)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
+                    return TeamSession.from_dict(session_raw)
+
             elif isinstance(session, WorkflowSession):
-                session_raw = self._upsert_workflow_session_raw(session=session)
-                return WorkflowSession.from_dict(session_raw) if session_raw else None
+                with self.Session() as sess, sess.begin():
+                    stmt = sqlite.insert(table).values(
+                        session_id=serialized_session.get("session_id"),
+                        session_type=SessionType.WORKFLOW.value,
+                        workflow_id=serialized_session.get("workflow_id"),
+                        user_id=serialized_session.get("user_id"),
+                        runs=serialized_session.get("runs"),
+                        chat_history=serialized_session.get("chat_history"),
+                        summary=serialized_session.get("summary"),
+                        created_at=serialized_session.get("created_at"),
+                        updated_at=serialized_session.get("created_at"),
+                        workflow_data=serialized_session.get("workflow_data"),
+                        session_data=serialized_session.get("session_data"),
+                        extra_data=serialized_session.get("extra_data"),
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            workflow_id=serialized_session.get("workflow_id"),
+                            user_id=serialized_session.get("user_id"),
+                            chat_history=serialized_session.get("chat_history"),
+                            summary=serialized_session.get("summary"),
+                            runs=serialized_session.get("runs"),
+                            workflow_data=serialized_session.get("workflow_data"),
+                            session_data=serialized_session.get("session_data"),
+                            extra_data=serialized_session.get("extra_data"),
+                            updated_at=int(time.time()),
+                        ),
+                    )
+                    stmt = stmt.returning(*table.columns)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+
+                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
+                    if session_raw is None or not deserialize:
+                        return session_raw
+                    return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {e}")
@@ -837,22 +730,28 @@ class SqliteDb(BaseDb):
                 return [record[0] for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
-    def get_user_memory_raw(self, memory_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
-        """Get a memory from the database as a raw dictionary.
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """Get a memory from the database.
 
         Args:
             memory_id (str): The ID of the memory to get.
-            table (Table): Table to read from.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The memory as a raw dictionary, or None if not found.
+            Optional[Union[MemoryRow, Dict[str, Any]]]:
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="user_memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -860,29 +759,9 @@ class SqliteDb(BaseDb):
                 if result is None:
                     return None
 
-            return result._mapping
-
-        except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
-            return None
-
-    def get_user_memory(self, memory_id: str, table: Optional[Table] = None) -> Optional[MemoryRow]:
-        """Get a memory from the database.
-
-        Args:
-            memory_id (str): The ID of the memory to get.
-            table (Table): Table to read from.
-
-        Returns:
-            Optional[MemoryRow]: The memory as a MemoryRow object, or None if not found.
-        """
-        try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
-
-            memory_raw = self.get_user_memory_raw(memory_id=memory_id, table=table)
-            if memory_raw is None:
-                return None
+                memory_raw = dict(result._mapping)
+                if not memory_raw or not deserialize:
+                    return memory_raw
 
             return MemoryRow(
                 id=memory_raw["memory_id"],
@@ -892,10 +771,10 @@ class SqliteDb(BaseDb):
             )
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memorytable: {e}")
             return None
 
-    def get_user_memories_raw(
+    def get_user_memories(
         self,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
@@ -907,9 +786,9 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all memories from the database as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+        """Get all memories from the database as MemoryRow objects.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -920,17 +799,20 @@ class SqliteDb(BaseDb):
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
             page (Optional[int]): The page number.
-            table (Optional[Table]): The table to read from.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
         Returns:
-            Tuple[List[Dict[str, Any]], int]: The memories as raw dictionaries and the total number of memories.
+            Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of MemoryRow objects
+                - When deserialize=False: List of Memory dictionaries and total count
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="user_memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -964,68 +846,12 @@ class SqliteDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [], 0
+                    return [] if serialize else ([], 0)
 
-                return [record._mapping for record in result], total_count
+                user_memories_raw = [record._mapping for record in result]
 
-        except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
-            return [], 0
-
-    def get_user_memories(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        topics: Optional[List[str]] = None,
-        search_content: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
-    ) -> List[MemoryRow]:
-        """Get all memories from the database as MemoryRow objects.
-
-        Args:
-            user_id (Optional[str]): The ID of the user to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
-            topics (Optional[List[str]]): The topics to filter by.
-            search_content (Optional[str]): The content to search for.
-            limit (Optional[int]): The maximum number of memories to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            table (Optional[Table]): The table to read from.
-
-        Returns:
-            List[MemoryRow]: The memories as MemoryRow objects.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
-
-            user_memories_raw, total_count = self.get_user_memories_raw(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                topics=topics,
-                search_content=search_content,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                table=table,
-            )
-            if not user_memories_raw:
-                return []
+                if not deserialize:
+                    return user_memories_raw, total_count
 
             return [
                 MemoryRow(
@@ -1038,21 +864,19 @@ class SqliteDb(BaseDb):
             ]
 
         except Exception as e:
-            log_debug(f"Exception reading from table: {e}")
+            log_debug(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory_stats(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
-        table: Optional[Table] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memories stats.
 
         Args:
             limit (Optional[int]): The maximum number of user stats to return.
             page (Optional[int]): The page number.
-            table (Optional[Table]): The table to read from.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
@@ -1070,8 +894,7 @@ class SqliteDb(BaseDb):
         )
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="user_memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -1111,24 +934,29 @@ class SqliteDb(BaseDb):
             log_debug(f"Exception getting user memory stats: {e}")
             return [], 0
 
-    def upsert_user_memory_raw(self, memory: MemoryRow, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
-        """Upsert a user memory in the database, and return the upserted memory as a raw dictionary.
+    def upsert_user_memory(
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
 
         Args:
             memory (MemoryRow): The user memory to upsert.
-            table (Optional[Table]): The table to upsert into.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The upserted user memory, or None if the operation fails.
+            Optional[Union[MemoryRow, Dict[str, Any]]]:
+                - When deserialize=True: MemoryRow object
+                - When deserialize=False: Memory dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="user_memories")
+            if memory.id is None:
+                memory.id = str(uuid4())
 
             with self.Session() as sess, sess.begin():
-                if memory.id is None:
-                    memory.id = str(uuid4())
-
                 stmt = sqlite.insert(table).values(
                     user_id=memory.user_id,
                     agent_id=memory.agent_id,
@@ -1148,34 +976,13 @@ class SqliteDb(BaseDb):
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)
+
                 result = sess.execute(stmt)
                 row = result.fetchone()
-                sess.commit()
 
-            return row._mapping
-
-        except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
-            return None
-
-    def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        """Upsert a user memory in the database.
-
-        Args:
-            memory (MemoryRow): The user memory to upsert.
-
-        Returns:
-            Optional[UserMemory]: The upserted user memory, or None if the operation fails.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = self._get_table(table_type="user_memories")
-
-            user_memory_raw = self.upsert_user_memory_raw(memory=memory, table=table)
-            if user_memory_raw is None:
-                return None
+            user_memory_raw = row._mapping
+            if not user_memory_raw or not deserialize:
+                return user_memory_raw
 
             return MemoryRow(
                 id=user_memory_raw["memory_id"],
@@ -1257,8 +1064,8 @@ class SqliteDb(BaseDb):
                     return result._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        first_session, _ = self.get_sessions_raw(sort_by="created_at", sort_order="asc", limit=1)
-        first_session_date = first_session[0]["created_at"] if first_session else None
+        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore
 
         # 3. No metrics records and no sessions records. Return None.
         if not first_session_date:
@@ -1327,7 +1134,7 @@ class SqliteDb(BaseDb):
             log_error(f"Exception refreshing metrics: {e}")
             raise e
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
@@ -1587,18 +1394,25 @@ class SqliteDb(BaseDb):
             log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
             raise
 
-    def get_eval_run_raw(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[Dict[str, Any]]:
-        """Get an eval run from the database as a raw dictionary.
+    def get_eval_run(
+        self, eval_run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The eval run as a raw dictionary, or None if not found.
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="evals")
+            table = self._get_table(table_type="evals")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1606,29 +1420,9 @@ class SqliteDb(BaseDb):
                 if result is None:
                     return None
 
-                return result._mapping
-
-        except Exception as e:
-            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
-            return None
-
-    def get_eval_run(self, eval_run_id: str, table: Optional[Table] = None) -> Optional[EvalRunRecord]:
-        """Get an eval run from the database.
-
-        Args:
-            eval_run_id (str): The ID of the eval run to get.
-            table (Optional[Table]): The table to read from.
-
-        Returns:
-            Optional[EvalRunRecord]: The eval run, or None if not found.
-        """
-        try:
-            if table is None:
-                table = self._get_table(table_type="evals")
-
-            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id, table=table)
-            if eval_run_raw is None:
-                return None
+                eval_run_raw = result._mapping
+                if not eval_run_raw or not deserialize:
+                    return eval_run_raw
 
             return EvalRunRecord.model_validate(eval_run_raw)
 
@@ -1636,47 +1430,49 @@ class SqliteDb(BaseDb):
             log_debug(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs_raw(
+    def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get all eval runs from the database as raw dictionaries.
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from the database.
 
         Args:
             limit (Optional[int]): The maximum number of eval runs to return.
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            table (Optional[Table]): The table to read from.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
-            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow, all).
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
 
         Returns:
-            List[Dict[str, Any]]: The eval runs as raw dictionaries.
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of EvalRun dictionaries and total count
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
         try:
-            if table is None:
-                table = self._get_table(table_type="evals")
+            table = self._get_table(table_type="evals")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
                 # Filtering
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
@@ -1712,70 +1508,12 @@ class SqliteDb(BaseDb):
                         stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
-
                 if not result:
-                    return [], 0
+                    return [] if serialize else ([], 0)
 
-                return [row._mapping for row in result], total_count
-
-        except Exception as e:
-            log_debug(f"Exception getting eval runs: {e}")
-            return [], 0
-
-    def get_eval_runs(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Table] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
-        filter_type: Optional[EvalFilterType] = None,
-    ) -> List[EvalRunRecord]:
-        """Get all eval runs from the database.
-
-        Args:
-            limit (Optional[int]): The maximum number of eval runs to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            table (Optional[Table]): The table to read from.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
-            model_id (Optional[str]): The ID of the model to filter by.
-            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
-            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
-
-        Returns:
-            List[EvalRunRecord]: The eval runs.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            if table is None:
-                table = self._get_table(table_type="evals")
-
-            eval_runs_raw, total_count = self.get_eval_runs_raw(
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                table=table,
-                agent_id=agent_id,
-                team_id=team_id,
-                workflow_id=workflow_id,
-                model_id=model_id,
-                eval_type=eval_type,
-                filter_type=filter_type,
-            )
-            if not eval_runs_raw:
-                return []
+                eval_runs_raw = [row._mapping for row in result]
+                if not deserialize:
+                    return eval_runs_raw, total_count
 
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
@@ -1783,15 +1521,20 @@ class SqliteDb(BaseDb):
             log_debug(f"Exception getting eval runs: {e}")
             return []
 
-    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, serialize: bool = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            serialize (bool): Whether to serialize the eval run. Defaults to True.
 
         Returns:
-            Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
 
         Raises:
             Exception: If an error occurs during update.
@@ -1803,9 +1546,12 @@ class SqliteDb(BaseDb):
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
                 sess.execute(stmt)
-                sess.commit()
 
-            return self.get_eval_run_raw(eval_run_id=eval_run_id)
+            eval_run_raw = self.get_eval_run_raw(eval_run_id=eval_run_id)
+            if not eval_run_raw or not deserialize:
+                return eval_run_raw
+
+            return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
             log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
