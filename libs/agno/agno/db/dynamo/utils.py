@@ -13,9 +13,9 @@ from agno.utils.log import log_debug, log_error, log_info
 # Confirm what is needed and what not and clean everything
 
 
-def serialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Serialize JSON fields in session data for DynamoDB storage."""
-    serialized = session_data.copy()
+def serialize_session_json_fields(session: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse dict fields in the given session to JSON strings"""
+    serialized = session.copy()
 
     json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
 
@@ -27,9 +27,9 @@ def serialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any
     return serialized
 
 
-def deserialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, Any]:
+def deserialize_session_json_fields(session: Dict[str, Any]) -> Dict[str, Any]:
     """Deserialize JSON fields in session data from DynamoDB storage."""
-    deserialized = session_data.copy()
+    deserialized = session.copy()
 
     json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
 
@@ -45,31 +45,40 @@ def deserialize_session_json_fields(session_data: Dict[str, Any]) -> Dict[str, A
     return deserialized
 
 
-def deserialize_session(session_data: Dict[str, Any]) -> Optional[Session]:
+def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
     """Deserialize session data from DynamoDB format to Session object."""
     try:
         # Deserialize JSON fields
-        session_data = deserialize_session_json_fields(session_data)
+        session = deserialize_session_json_fields(session)
 
         # Convert timestamp fields
         for field in ["created_at", "updated_at"]:
-            if field in session_data and session_data[field] is not None:
-                if isinstance(session_data[field], (int, float)):
-                    session_data[field] = datetime.fromtimestamp(session_data[field], tz=timezone.utc)
-                elif isinstance(session_data[field], str):
+            if field in session and session[field] is not None:
+                if isinstance(session[field], (int, float)):
+                    session[field] = datetime.fromtimestamp(session[field], tz=timezone.utc)
+                elif isinstance(session[field], str):
                     try:
-                        session_data[field] = datetime.fromisoformat(session_data[field])
+                        session[field] = datetime.fromisoformat(session[field])
                     except ValueError:
-                        session_data[field] = datetime.fromtimestamp(float(session_data[field]), tz=timezone.utc)
+                        session[field] = datetime.fromtimestamp(float(session[field]), tz=timezone.utc)
 
-        return session_data
+        return Session.from_dict(session)
 
     except Exception as e:
         log_error(f"Failed to deserialize session: {e}")
         return None
 
 
-def serialize_to_dynamodb_item(data: Dict[str, Any]) -> Dict[str, Any]:
+def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize the given dict to a valid DynamoDB item
+
+    Args:
+        data: The dict to serialize
+
+    Returns:
+        A DynamoDB-ready dict with the serialized data
+
+    """
     item = {}
     for key, value in data.items():
         if value is not None:

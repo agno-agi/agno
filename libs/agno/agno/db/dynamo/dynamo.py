@@ -18,7 +18,7 @@ from agno.db.dynamo.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_memory_row,
     serialize_session_json_fields,
-    serialize_to_dynamodb_item,
+    serialize_to_dynamo_item,
 )
 from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -109,6 +109,63 @@ class DynamoDb(BaseDb):
                 except Exception as e:
                     log_error(f"Failed to create table {table_name}: {e}")
 
+    def _table_exists(self, table_name: str) -> bool:
+        """Check if a DynamoDB table exists."""
+        try:
+            self.client.describe_table(TableName=table_name)
+            return True
+        except self.client.exceptions.ResourceNotFoundException:
+            return False
+        except Exception as e:
+            log_error(f"Error checking if table {table_name} exists: {e}")
+            return False
+
+    def _get_table(self, table_type: str) -> str:
+        """
+        Get table name and ensure the table exists, creating it if needed.
+
+        Args:
+            table_type: Type of table ("sessions", "user_memories", "metrics", "evals", "knowledge_sources")
+
+        Returns:
+            str: The table name
+
+        Raises:
+            ValueError: If table name is not configured or table type is unknown
+        """
+        table_name = None
+
+        if table_type == "sessions":
+            if self.session_table_name is None:
+                raise ValueError("Session table was not provided on initialization")
+            table_name = self.session_table_name
+        elif table_type == "user_memories":
+            if self.user_memory_table_name is None:
+                raise ValueError("User memory table was not provided on initialization")
+            table_name = self.user_memory_table_name
+        elif table_type == "metrics":
+            if self.metrics_table_name is None:
+                raise ValueError("Metrics table was not provided on initialization")
+            table_name = self.metrics_table_name
+        elif table_type == "evals":
+            if self.eval_table_name is None:
+                raise ValueError("Eval table was not provided on initialization")
+            table_name = self.eval_table_name
+        elif table_type == "knowledge_sources":
+            if self.knowledge_table_name is None:
+                raise ValueError("Knowledge table was not provided on initialization")
+            table_name = self.knowledge_table_name
+        else:
+            raise ValueError(f"Unknown table type: {table_type}")
+
+        # Check if table exists, create if it doesn't
+        if not self._table_exists(table_name):
+            schema = get_table_schema_definition(table_type)
+            schema["TableName"] = table_name
+            create_table_if_not_exists(self.client, table_name, schema)
+
+        return table_name
+
     # --- Sessions ---
 
     def delete_session(self, session_id: Optional[str] = None):
@@ -185,8 +242,9 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the session.
         """
         try:
+            table_name = self._get_table("sessions")
             response = self.client.get_item(
-                TableName=self.session_table_name,
+                TableName=table_name,
                 Key={"session_id": {"S": session_id}},
             )
 
@@ -231,12 +289,11 @@ class DynamoDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         try:
-            if not self.session_table_name:
-                raise Exception("Sessions table not found")
+            table_name = self._get_table("sessions")
 
             items = fetch_all_sessions_data(
                 self.client,
-                self.session_table_name,
+                table_name,
                 session_type.value,
                 user_id=user_id,
                 component_id=component_id,
@@ -318,7 +375,7 @@ class DynamoDb(BaseDb):
             return None
 
     def upsert_session(
-        self, session: Session, session_type: SessionType, deserialize: Optional[bool] = True
+        self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Upsert a session into the database.
@@ -334,23 +391,21 @@ class DynamoDb(BaseDb):
         Raises:
             Exception: If any error occurs while upserting the session.
         """
-        if not self.session_table_name:
-            return None
-
         try:
-            serialized_session = serialize_session_json_fields(session.model_dump())
-            item = serialize_to_dynamodb_item(serialized_session)
+            table_name = self._get_table("sessions")
+            serialized_session = serialize_session_json_fields(session.to_dict())
+            item = serialize_to_dynamo_item(serialized_session)
 
-            self.client.put_item(TableName=self.session_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
             if not deserialize:
                 return serialized_session
 
-            if session_type == SessionType.AGENT:
+            if isinstance(session, AgentSession):
                 return AgentSession.from_dict(serialized_session)
-            elif session_type == SessionType.TEAM:
+            elif isinstance(session, TeamSession):
                 return TeamSession.from_dict(serialized_session)
-            elif session_type == SessionType.WORKFLOW:
+            elif isinstance(session, WorkflowSession):
                 return WorkflowSession.from_dict(serialized_session)
 
         except Exception as e:
@@ -446,7 +501,8 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memory.
         """
         try:
-            response = self.client.get_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
+            table_name = self._get_table("user_memories")
+            response = self.client.get_item(TableName=table_name, Key={"memory_id": {"S": memory_id}})
 
             item = response.get("Item")
             if not item:
@@ -580,13 +636,11 @@ class DynamoDb(BaseDb):
         return [], 0
 
     def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
-        if not self.user_memory_table_name:
-            return None
-
         try:
+            table_name = self._get_table("user_memories")
             item = serialize_memory_row(memory)
 
-            self.client.put_item(TableName=self.user_memory_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
             return memory.model_dump()
 
@@ -619,7 +673,7 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to calculate metrics: {e}")
             return None
 
-    def get_metrics_raw(
+    def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
     ) -> Tuple[List[Any], Optional[int]]:
         if not self.metrics_table_name:
@@ -670,6 +724,8 @@ class DynamoDb(BaseDb):
 
     # --- Knowledge ---
 
+    # TODO: not all methods are implemented yet
+
     def get_source_status(self, id: str) -> Optional[str]:
         if not self.knowledge_table_name:
             return None
@@ -687,6 +743,18 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to get source status {id}: {e}")
             return None
+
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        pass
+
+    def get_knowledge_contents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ):
+        pass
 
     def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
         if not self.knowledge_table_name:
@@ -756,6 +824,9 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get knowledge sources: {e}")
             return [], 0
 
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        pass
+
     def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
         if not self.knowledge_table_name:
             return
@@ -767,6 +838,9 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to upsert knowledge source {knowledge_row.knowledge_id}: {e}")
+
+    def delete_knowledge_content(self, id: str):
+        pass
 
     def delete_knowledge_source(self, id: str):
         if not self.knowledge_table_name:
