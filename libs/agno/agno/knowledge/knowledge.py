@@ -40,57 +40,106 @@ class Knowledge:
 
         self.construct_readers()
 
-    def search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
-        """Returns relevant documents matching a query"""
-        try:
-            if self.vector_store is None:
-                log_warning("No vector db provided")
-                return []
+    # --- SDK Specific Methods ---
 
-            _max_results = max_results or self.max_results
-            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
-        except Exception as e:
-            log_error(f"Error searching for documents: {e}")
-            return []
+    @overload
+    def add_contents(self, contents: List[ContentDict]) -> None: ...
 
-    async def async_search(
-        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
-        """Returns relevant documents matching a query"""
-        try:
-            if self.vector_store is None:
-                log_warning("No vector db provided")
-                return []
+    @overload
+    def add_contents(
+        self,
+        *,
+        paths: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> None: ...
 
-            _max_results = max_results or self.max_results
-            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            try:
-                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
-            except NotImplementedError:
-                log_info("Vector db does not support async search")
-                return self.search(query=query, max_results=_max_results, filters=filters)
-        except Exception as e:
-            log_error(f"Error searching for documents: {e}")
-            return []
+    def add_contents(self, *args, **kwargs) -> None:
+        if args and isinstance(args[0], list):
+            contents = args[0]
+            print("Case 1: List of content dicts")
+            for content in contents:
+                print(f"Adding content: {content}")
+                self.add_content(
+                    name=content.get("name"),
+                    description=content.get("description"),
+                    path=content.get("path"),
+                    url=content.get("url"),
+                    metadata=content.get("metadata"),
+                    topics=content.get("topics"),
+                    reader=content.get("reader"),
+                )
 
-    def load_from_document_store(self, store: Store):
-        if store.read_from_store:
-            for file_content, metadata in store.get_all_documents():
-                if metadata["file_type"] == ".pdf":
-                    _pdf = io.BytesIO(file_content) if isinstance(file_content, bytes) else file_content
-                    document = self.pdf_reader.read(pdf=_pdf, name=metadata["name"])
+        elif kwargs:
+            name = kwargs.get("name", [])
+            metadata = kwargs.get("metadata", {})
+            description = kwargs.get("description", [])
+            topics = kwargs.get("topics", [])
+            paths = kwargs.get("paths", [])
+            urls = kwargs.get("urls", [])
 
-                    if self.vector_store.upsert_available():
-                        self.vector_store.upsert(documents=document, filters=metadata)
-                    else:
-                        self.vector_store.insert(document)
+            print("Case 2: Structured inputs with kwargs")
+            for path in paths:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    path=path,
+                    metadata=metadata,
+                )
+                print(f"Adding path content: {path} with metadata: {metadata}")
+            for url in urls:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    url=url,
+                    metadata=metadata,
+                )
+                print(f"Adding url content: {url} with metadata: {metadata}")
+            if topics:
+                self.add_content(
+                    name=name,
+                    description=description,
+                    topics=topics,
+                    metadata=metadata,
+                )
 
-        if store.copy_to_store:
-            # TODO: Need to implement this part. Copy only when the file does not already exist in that store.
-            pass
+        else:
+            raise ValueError("Invalid usage of add_contents.")
+
+    def add_content(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        path: Optional[str] = None,
+        url: Optional[str] = None,
+        text_content: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        topics: Optional[List[str]] = None,
+        config: Optional[CloudStorageConfig] = None,
+        reader: Optional[Reader] = None,
+    ) -> None:
+        # Validation: At least one of the parameters must be provided
+        if all(argument is None for argument in [name, path, url, text_content, topics]):
+            log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
+            return
+
+        content = None
+        if text_content:
+            content = ContentData(content=text_content, type="Text")
+
+        content = Content(
+            id=str(uuid4()),
+            name=name,
+            description=description,
+            path=path,
+            url=url,
+            content_data=content if content else None,
+            metadata=metadata,
+            topics=topics,
+            config=config,
+            reader=reader,
+        )
+        self._load_content(content)
 
     def _load_from_path(
         self,
@@ -371,124 +420,123 @@ class Knowledge:
         # if content.config:
         #     self._load_from_cloud_storage(content)
 
-    def patch_content(self, content: Content):
-        if self.contents_db is not None:
+    def _add_to_contents_db(self, content: Content):
+        if self.contents_db:
+            created_at = content.created_at if content.created_at else int(time.time())
+            updated_at = content.updated_at if content.updated_at else int(time.time())
+
+            file_type = (
+                content.file_type
+                if content.file_type
+                else content.content_data.type
+                if content.content_data and content.content_data.type
+                else None
+            )
+
+            content_row = KnowledgeRow(
+                id=content.id,
+                name=content.name if content.name else "",
+                description=content.description if content.description else "",
+                metadata=content.metadata,
+                type=file_type,
+                size=content.size
+                if content.size
+                else len(content.content_data.content)
+                if content.content_data and content.content_data.content
+                else None,
+                linked_to=self.name,
+                access_count=0,
+                status=content.status if content.status else "Processing",
+                status_message="",
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+
+    def _update_content(self, content: Content):
+        if self.contents_db:
             content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
-                log_warning(f"Content not found: {content.id}")
+                log_warning(f"Content row not found for id: {content.id}, cannot update status")
                 return
-            # Only update fields that are not None
             if content.name is not None:
                 content_row.name = content.name
             if content.description is not None:
                 content_row.description = content.description
             if content.metadata is not None:
                 content_row.metadata = content.metadata
+            if content.status is not None:
+                content_row.status = content.status
+            if content.status_message is not None:
+                content_row.status_message = content.status_message if content.status_message else ""
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
         else:
-            log_warning("No contents db provided")
+            log_warning(f"Contents DB not found for knowledge base: {self.name}")
 
-    @overload
-    def add_contents(self, contents: List[ContentDict]) -> None: ...
+    def search(
+        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """Returns relevant documents matching a query"""
+        try:
+            if self.vector_store is None:
+                log_warning("No vector db provided")
+                return []
 
-    @overload
-    def add_contents(
-        self,
-        *,
-        paths: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, str]] = None,
-    ) -> None: ...
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
+        except Exception as e:
+            log_error(f"Error searching for documents: {e}")
+            return []
 
-    def add_contents(self, *args, **kwargs) -> None:
-        if args and isinstance(args[0], list):
-            contents = args[0]
-            print("Case 1: List of content dicts")
-            for content in contents:
-                print(f"Adding content: {content}")
-                self.add_content(
-                    name=content.get("name"),
-                    description=content.get("description"),
-                    path=content.get("path"),
-                    url=content.get("url"),
-                    metadata=content.get("metadata"),
-                    topics=content.get("topics"),
-                    reader=content.get("reader"),
-                )
+    async def async_search(
+        self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """Returns relevant documents matching a query"""
+        try:
+            if self.vector_store is None:
+                log_warning("No vector db provided")
+                return []
 
-        elif kwargs:
-            name = kwargs.get("name", [])
-            metadata = kwargs.get("metadata", {})
-            description = kwargs.get("description", [])
-            topics = kwargs.get("topics", [])
-            paths = kwargs.get("paths", [])
-            urls = kwargs.get("urls", [])
+            _max_results = max_results or self.max_results
+            log_debug(f"Getting {_max_results} relevant documents for query: {query}")
+            try:
+                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
+            except NotImplementedError:
+                log_info("Vector db does not support async search")
+                return self.search(query=query, max_results=_max_results, filters=filters)
+        except Exception as e:
+            log_error(f"Error searching for documents: {e}")
+            return []
 
-            print("Case 2: Structured inputs with kwargs")
-            for path in paths:
-                self.add_content(
-                    name=name,
-                    description=description,
-                    path=path,
-                    metadata=metadata,
-                )
-                print(f"Adding path content: {path} with metadata: {metadata}")
-            for url in urls:
-                self.add_content(
-                    name=name,
-                    description=description,
-                    url=url,
-                    metadata=metadata,
-                )
-                print(f"Adding url content: {url} with metadata: {metadata}")
-            if topics:
-                self.add_content(
-                    name=name,
-                    description=description,
-                    topics=topics,
-                    metadata=metadata,
-                )
+    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if not filters:
+            return {}, []
 
-        else:
-            raise ValueError("Invalid usage of add_contents.")
+        valid_filters = {}
+        invalid_keys = []
 
-    def add_content(
-        self,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        path: Optional[str] = None,
-        url: Optional[str] = None,
-        text_content: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        topics: Optional[List[str]] = None,
-        config: Optional[CloudStorageConfig] = None,
-        reader: Optional[Reader] = None,
-    ) -> None:
-        # Validation: At least one of the parameters must be provided
-        if all(argument is None for argument in [name, path, url, text_content, topics]):
-            log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
-            return
+        # If no metadata filters tracked yet, all keys are considered invalid
+        if self.valid_metadata_filters is None:
+            invalid_keys = list(filters.keys())
+            log_debug(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
+            return {}, invalid_keys
 
-        content = None
-        if text_content:
-            content = ContentData(content=text_content, type="Text")
+        for key, value in filters.items():
+            # Handle both normal keys and prefixed keys like meta_data.key
+            base_key = key.split(".")[-1] if "." in key else key
+            if base_key in self.valid_metadata_filters or key in self.valid_metadata_filters:
+                valid_filters[key] = value
+            else:
+                invalid_keys.append(key)
+                log_debug(f"Invalid filter key: {key} - not present in knowledge base")
 
-        content = Content(
-            id=str(uuid4()),
-            name=name,
-            description=description,
-            path=path,
-            url=url,
-            content_data=content if content else None,
-            metadata=metadata,
-            topics=topics,
-            config=config,
-            reader=reader,
-        )
-        self._load_content(content)
+        return valid_filters, invalid_keys
 
-    def _add_content_from_api(
+    # --- API Only Methods ---
+
+    def process_content(
         self,
         content: Content,
     ) -> None:
@@ -497,6 +545,9 @@ class Knowledge:
             content.id = str(uuid4())
 
         self._load_content(content)
+
+    def patch_content(self, content: Content):
+        self._update_content(content)
 
     def get_content_by_id(self, content_id: str):
         if self.contents_db is None:
@@ -571,74 +622,6 @@ class Knowledge:
         contents, _ = self.get_content()
         for content in contents:
             self.remove_content_by_id(content.id)
-
-    def _add_to_contents_db(self, content: Content):
-        if self.contents_db:
-            created_at = content.created_at if content.created_at else int(time.time())
-            updated_at = content.updated_at if content.updated_at else int(time.time())
-
-            file_type = (
-                content.file_type
-                if content.file_type
-                else content.content_data.type
-                if content.content_data and content.content_data.type
-                else None
-            )
-
-            content_row = KnowledgeRow(
-                id=content.id,
-                name=content.name if content.name else "",
-                description=content.description if content.description else "",
-                metadata=content.metadata,
-                type=file_type,
-                size=content.size
-                if content.size
-                else len(content.content_data.content)
-                if content.content_data and content.content_data.content
-                else None,
-                linked_to=self.name,
-                access_count=0,
-                status=content.status if content.status else "Processing",
-                status_message="",
-                created_at=created_at,
-                updated_at=updated_at,
-            )
-            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
-
-    def _update_content(self, content: Content):
-        if self.contents_db:
-            content_row = self.contents_db.get_knowledge_content(content.id)
-            if content_row is None:
-                log_warning(f"Content row not found for id: {content.id}, cannot update status")
-                return
-            content_row.status = content.status
-            content_row.status_message = content.status_message if content.status_message else ""
-            content_row.updated_at = int(time.time())
-            self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
-
-    def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
-        if not filters:
-            return {}, []
-
-        valid_filters = {}
-        invalid_keys = []
-
-        # If no metadata filters tracked yet, all keys are considered invalid
-        if self.valid_metadata_filters is None:
-            invalid_keys = list(filters.keys())
-            log_debug(f"No valid metadata filters tracked yet. All filter keys considered invalid: {invalid_keys}")
-            return {}, invalid_keys
-
-        for key, value in filters.items():
-            # Handle both normal keys and prefixed keys like meta_data.key
-            base_key = key.split(".")[-1] if "." in key else key
-            if base_key in self.valid_metadata_filters or key in self.valid_metadata_filters:
-                valid_filters[key] = value
-            else:
-                invalid_keys.append(key)
-                log_debug(f"Invalid filter key: {key} - not present in knowledge base")
-
-        return valid_filters, invalid_keys
 
     # --- Reader Factory Integration ---
 

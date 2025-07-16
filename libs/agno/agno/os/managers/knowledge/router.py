@@ -217,7 +217,7 @@ def process_content(knowledge: Knowledge, content_id: str, content: Content, rea
         content.id = content_id
         if reader_id:
             content.reader = knowledge.readers[reader_id]
-        knowledge._add_content_from_api(content)
+        knowledge.process_content(content)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")
