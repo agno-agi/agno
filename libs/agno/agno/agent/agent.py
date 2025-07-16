@@ -4168,7 +4168,7 @@ class Agent:
     def add_introduction(self, introduction: str) -> None:
         """Add an introduction to the chat history"""
 
-        if isinstance(self.memory, AgentMemory):
+        if isinstance(self.memory, AgentMemory): # type: ignore
             if introduction is not None:
                 # Add an introduction as the first response from the Agent
                 if len(self.memory.runs) == 0:
