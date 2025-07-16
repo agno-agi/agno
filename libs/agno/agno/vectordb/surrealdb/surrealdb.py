@@ -198,8 +198,6 @@ class SurrealDb(VectorDb):
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
-            log_info(f"===!!!!!!!!!!!! Inserting document filters: {filters}")  # TODO: remove
-            log_info(f"===!!!!!!!!!!!! Inserting document data: {data}")
             self.client.create(self.collection, data)
 
     def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
