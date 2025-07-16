@@ -186,7 +186,7 @@ class PDFReader(BasePDFReader):
         )
 
         if self.chunk:
-            return self._build_chunked_documents_async(documents)
+            return self._build_chunked_documents(documents)
         return documents
 
 
