@@ -123,6 +123,35 @@ class SurrealDb(VectorDb):
         self.m = m
         self.search_ef = search_ef
 
+    @property
+    def async_client(self) -> Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection]:
+        """Check if the async client is initialized.
+
+        Raises:
+            RuntimeError: If the async client is not initialized.
+
+        Returns:
+            The async client.
+
+        """
+        if self._async_client is None:
+            msg = "Async client is not initialized"
+            raise RuntimeError(msg)
+        return self._async_client
+
+    @property
+    def client(self) -> Union[BlockingHttpSurrealConnection, BlockingWsSurrealConnection]:
+        """Check if the client is initialized.
+
+        Returns:
+            The client.
+
+        """
+        if self._client is None:
+            msg = "Client is not initialized"
+            raise RuntimeError(msg)
+        return self._client
+
     @staticmethod
     def _build_filter_condition(filters: Optional[Dict[str, Any]] = None) -> str:
         """Build filter condition for queries.
@@ -462,32 +491,3 @@ class SurrealDb(VectorDb):
 
         """
         return True
-
-    @property
-    def async_client(self) -> Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection]:
-        """Check if the async client is initialized.
-
-        Raises:
-            RuntimeError: If the async client is not initialized.
-
-        Returns:
-            The async client.
-
-        """
-        if self._async_client is None:
-            msg = "Async client is not initialized"
-            raise RuntimeError(msg)
-        return self._async_client
-
-    @property
-    def client(self) -> Union[BlockingHttpSurrealConnection, BlockingWsSurrealConnection]:
-        """Check if the client is initialized.
-
-        Returns:
-            The client.
-
-        """
-        if self._client is None:
-            msg = "Client is not initialized"
-            raise RuntimeError(msg)
-        return self._client
