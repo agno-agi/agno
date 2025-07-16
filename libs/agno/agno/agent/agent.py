@@ -4152,7 +4152,7 @@ class Agent:
         """
         if self.storage is not None:
             # Get a single session from storage
-            self.agent_session = cast(AgentSession, self.storage.read(session_id=session_id))
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=session_id))  # type: ignore
             if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
