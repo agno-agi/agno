@@ -24,10 +24,8 @@ from agno.db.dynamo.utils import (
     hydrate_session,
     merge_with_existing_session,
     prepare_session_data,
-    process_query_results,
     serialize_eval_record,
     serialize_knowledge_row,
-    serialize_memory_row,
     serialize_to_dynamo_item,
 )
 from agno.db.schemas import MemoryRow
@@ -653,12 +651,6 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("user_memories")
 
-            # Build basic query parameters
-            index_name = "user_id-created_at-index"
-            key_condition_expression = "#user_id = :user_id"
-            expression_attribute_names = {"#user_id": "user_id"}
-            expression_attribute_values = {":user_id": {"S": user_id}}
-
             # Build filter expressions for component filters
             filters = {
                 "agent_id": agent_id,
@@ -666,8 +658,12 @@ class DynamoDb(BaseDb):
                 "workflow_id": workflow_id,
             }
             filter_expression, attr_names, attr_values = build_query_filter_expression(filters)
+            expression_attribute_names = {}
+            expression_attribute_values = {}
             expression_attribute_names.update(attr_names)
             expression_attribute_values.update(attr_values)
+
+            # Note: user_id is handled separately in GSI key condition, not in filter expression
 
             # Build topic filter expression if topics provided
             if topics:
@@ -681,36 +677,78 @@ class DynamoDb(BaseDb):
                 expression_attribute_values[":search_content"] = {"S": search_content}
                 filter_expression = f"{filter_expression} AND {search_filter}" if filter_expression else search_filter
 
-            # Execute query with pagination
-            items = execute_query_with_pagination(
-                self.client,
-                table_name,
-                index_name,
-                key_condition_expression,
-                expression_attribute_names,
-                expression_attribute_values,
-                filter_expression,
-                sort_by,
-                sort_order,
-                limit,
-                page,
-            )
+            # Determine whether to use GSI query or table scan
+            if user_id:
+                # Use GSI query when user_id is provided
+                index_name = "user_id-created_at-index"
+                key_condition_expression = "#user_id = :user_id"
 
-            # Process results with deserialization
-            def memory_deserializer(data: Dict[str, Any]) -> MemoryRow:
-                return MemoryRow.model_validate(data)
+                # Set up expression attributes for GSI key condition
+                expression_attribute_names["#user_id"] = "user_id"
+                expression_attribute_values[":user_id"] = {"S": user_id}
 
-            result = process_query_results(
-                items,
-                sort_by,
-                sort_order,
-                limit,
-                page,
-                memory_deserializer,
-                deserialize or False,
-            )
+                # Execute query with pagination
+                items = execute_query_with_pagination(
+                    self.client,
+                    table_name,
+                    index_name,
+                    key_condition_expression,
+                    expression_attribute_names,
+                    expression_attribute_values,
+                    filter_expression,
+                    sort_by,
+                    sort_order,
+                    limit,
+                    page,
+                )
+            else:
+                # Use table scan when user_id is None
+                scan_kwargs = {"TableName": table_name}
 
-            return result
+                if filter_expression:
+                    scan_kwargs["FilterExpression"] = filter_expression
+                if expression_attribute_names:
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                if expression_attribute_values:
+                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+
+                # Execute scan
+                response = self.client.scan(**scan_kwargs)
+                items = response.get("Items", [])
+
+                # Handle pagination for scan
+                while "LastEvaluatedKey" in response:
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
+
+                scan_items = []
+                for item in items:
+                    item_data = deserialize_from_dynamodb_item(item)
+                    if item_data:
+                        scan_items.append(item_data)
+                items = scan_items
+
+            if sort_by and sort_by != "created_at":
+                items = apply_sorting(items, sort_by, sort_order)
+
+            if page:
+                paginated_items = apply_pagination(items, limit, page)
+
+            if not deserialize:
+                return paginated_items, len(items)
+
+            return [
+                MemoryRow(
+                    id=item["memory_id"],
+                    memory=item["memory"],
+                    last_updated=item["last_updated"],
+                    user_id=item.get("user_id"),
+                    agent_id=item.get("agent_id"),
+                    team_id=item.get("team_id"),
+                )
+                for item in items
+            ]
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
@@ -724,24 +762,34 @@ class DynamoDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], int]:
         return [], 0
 
-    def upsert_user_memory_raw(self, memory: MemoryRow) -> Optional[Dict[str, Any]]:
+    def upsert_user_memory(
+        self, memory: MemoryRow, deserialize: Optional[bool] = True
+    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        """
+        Upsert a user memory into the database.
+
+        Args:
+            memory: The memory to upsert.
+
+        Returns:
+            Optional[Dict[str, Any]]: The upserted memory data if successful, None otherwise.
+        """
         try:
             table_name = self._get_table("user_memories")
-            item = serialize_memory_row(memory)
+            memory_dict = memory.to_dict()
+            memory_dict["memory_id"] = memory.id
+            item = serialize_to_dynamo_item(memory_dict)
 
             self.client.put_item(TableName=table_name, Item=item)
 
-            return memory.model_dump()
+            if not deserialize:
+                return memory_dict
+
+            return memory
 
         except Exception as e:
-            log_error(f"Failed to upsert user memory {memory.memory_id}: {e}")
+            log_error(f"Failed to upsert user memory: {e}")
             return None
-
-    def upsert_user_memory(self, memory: MemoryRow) -> Optional[MemoryRow]:
-        memory_data = self.upsert_user_memory_raw(memory)
-        if memory_data:
-            return memory
-        return None
 
     # --- Metrics ---
 

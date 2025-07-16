@@ -25,11 +25,11 @@ class UserMemorySchema(BaseModel):
         return cls(
             memory_id=memory_dict["memory_id"],
             user_id=memory_dict["user_id"],
-            agent_id=memory_dict["agent_id"],
-            team_id=memory_dict["team_id"],
-            workflow_id=memory_dict["workflow_id"],
+            agent_id=memory_dict.get("agent_id"),
+            team_id=memory_dict.get("team_id"),
+            workflow_id=memory_dict.get("workflow_id"),
             memory=memory_dict["memory"]["memory"],
-            topics=memory_dict["topics"],
+            topics=memory_dict.get("topics", []),
             last_updated=memory_dict["last_updated"],
         )
 

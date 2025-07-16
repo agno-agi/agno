@@ -124,36 +124,15 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def serialize_memory_row(memory: MemoryRow) -> Dict[str, Any]:
-    return serialize_to_dynamo_item(
-        {
-            "memory_id": memory.id,
-            "user_id": memory.user_id,
-            "memory": memory.memory,
-            "agent_id": getattr(memory, "agent_id", None),
-            "team_id": getattr(memory, "team_id", None),
-            "workflow_id": getattr(memory, "workflow_id", None),
-            "topics": getattr(memory, "topics", None),
-            "feedback": getattr(memory, "feedback", None),
-            "created_at": int(memory.created_at.timestamp()) if memory.created_at else None,  # type: ignore
-            "updated_at": int(memory.updated_at.timestamp()) if memory.updated_at else None,  # type: ignore
-        }
-    )
+    """Serialize a MemoryRow to a DynamoDB item."""
+    return serialize_to_dynamo_item(memory.to_dict())
 
 
 def deserialize_memory_row(item: Dict[str, Any]) -> MemoryRow:
     """Convert DynamoDB item to MemoryRow."""
     data = deserialize_from_dynamodb_item(item)
-    # Convert timestamp fields back to datetime
-    if "created_at" in data and data["created_at"]:
-        data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
-    if "updated_at" in data and data["updated_at"]:
-        data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
     return MemoryRow(
-        id=data["memory_id"],
-        user_id=data["user_id"],
-        memory=data["memory"],
-        created_at=data.get("created_at"),
-        updated_at=data.get("updated_at"),
+        id=data["memory_id"], user_id=data["user_id"], memory=data["memory"], last_updated=data.get("last_updated")
     )
 
 
@@ -548,44 +527,44 @@ def get_dates_to_calculate_metrics_for(
 
 def build_query_filter_expression(filters: Dict[str, Any]) -> tuple[Optional[str], Dict[str, str], Dict[str, Any]]:
     """Build DynamoDB query filter expression from filters dictionary.
-    
+
     Args:
         filters: Dictionary of filter key-value pairs
-        
+
     Returns:
         Tuple of (filter_expression, expression_attribute_names, expression_attribute_values)
     """
     filter_expressions = []
     expression_attribute_names = {}
     expression_attribute_values = {}
-    
+
     for field, value in filters.items():
         if value is not None:
             filter_expressions.append(f"#{field} = :{field}")
             expression_attribute_names[f"#{field}"] = field
             expression_attribute_values[f":{field}"] = {"S": value}
-    
+
     filter_expression = " AND ".join(filter_expressions) if filter_expressions else None
     return filter_expression, expression_attribute_names, expression_attribute_values
 
 
 def build_topic_filter_expression(topics: List[str]) -> tuple[str, Dict[str, Any]]:
     """Build DynamoDB filter expression for topics.
-    
+
     Args:
         topics: List of topics to filter by
-        
+
     Returns:
         Tuple of (filter_expression, expression_attribute_values)
     """
     topic_filters = []
     expression_attribute_values = {}
-    
+
     for i, topic in enumerate(topics):
         topic_key = f":topic_{i}"
         topic_filters.append(f"contains(topics, {topic_key})")
         expression_attribute_values[topic_key] = {"S": topic}
-    
+
     filter_expression = f"({' OR '.join(topic_filters)})"
     return filter_expression, expression_attribute_values
 
@@ -604,7 +583,7 @@ def execute_query_with_pagination(
     page: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Execute DynamoDB query with pagination support.
-    
+
     Args:
         dynamodb_client: DynamoDB client
         table_name: Table name
@@ -617,7 +596,7 @@ def execute_query_with_pagination(
         sort_order: Sort order (asc/desc)
         limit: Limit for pagination
         page: Page number
-        
+
     Returns:
         List of DynamoDB items
     """
@@ -627,31 +606,31 @@ def execute_query_with_pagination(
         "KeyConditionExpression": key_condition_expression,
         "ExpressionAttributeValues": expression_attribute_values,
     }
-    
+
     if expression_attribute_names:
         query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
-    
+
     if filter_expression:
         query_kwargs["FilterExpression"] = filter_expression
-    
+
     # Apply sorting at query level if sorting by created_at
     if sort_by == "created_at":
         query_kwargs["ScanIndexForward"] = sort_order != "desc"
-    
+
     # Apply limit at DynamoDB level if no pagination
     if limit and not page:
         query_kwargs["Limit"] = limit
-    
+
     items = []
     response = dynamodb_client.query(**query_kwargs)
     items.extend(response.get("Items", []))
-    
+
     # Handle pagination
     while "LastEvaluatedKey" in response:
         query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
         response = dynamodb_client.query(**query_kwargs)
         items.extend(response.get("Items", []))
-    
+
     return items
 
 
@@ -665,7 +644,7 @@ def process_query_results(
     deserialize: bool = True,
 ) -> Union[List[Any], tuple[List[Any], int]]:
     """Process query results with sorting, pagination, and deserialization.
-    
+
     Args:
         items: List of DynamoDB items
         sort_by: Field to sort by
@@ -674,7 +653,7 @@ def process_query_results(
         page: Page number
         deserialize_func: Function to deserialize items
         deserialize: Whether to deserialize items
-        
+
     Returns:
         List of processed items or tuple of (items, total_count)
     """
@@ -684,21 +663,21 @@ def process_query_results(
         data = deserialize_from_dynamodb_item(item)
         if data:
             processed_data.append(data)
-    
+
     # Apply in-memory sorting for fields not handled by DynamoDB
     if sort_by and sort_by != "created_at":
         processed_data = apply_sorting(processed_data, sort_by, sort_order)
-    
+
     # Get total count before pagination
     total_count = len(processed_data)
-    
+
     # Apply pagination
     if page:
         processed_data = apply_pagination(processed_data, limit, page)
-    
+
     if not deserialize or not deserialize_func:
         return processed_data, total_count
-    
+
     # Deserialize items
     deserialized_items = []
     for data in processed_data:
@@ -708,5 +687,5 @@ def process_query_results(
                 deserialized_items.append(item)
         except Exception as e:
             log_error(f"Failed to deserialize item: {e}")
-    
+
     return deserialized_items
