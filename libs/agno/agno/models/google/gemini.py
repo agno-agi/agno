@@ -765,9 +765,14 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
+
+            output_tokens = usage.candidates_token_count or 0
+            if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                output_tokens += usage.thoughts_token_count or 0
+
             model_response.response_usage = {
                 "input_tokens": usage.prompt_token_count or 0,
-                "output_tokens": usage.candidates_token_count or 0,
+                "output_tokens": output_tokens,
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
@@ -844,9 +849,14 @@ class Gemini(Model):
             # Extract usage metadata if present
             if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
                 usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
+
+                output_tokens = usage.candidates_token_count or 0
+                if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                    output_tokens += usage.thoughts_token_count or 0
+
                 model_response.response_usage = {
                     "input_tokens": usage.prompt_token_count or 0,
-                    "output_tokens": usage.candidates_token_count or 0,
+                    "output_tokens": output_tokens,
                     "total_tokens": usage.total_token_count or 0,
                     "cached_tokens": usage.cached_content_token_count or 0,
                 }

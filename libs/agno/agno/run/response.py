@@ -34,6 +34,9 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
+    parser_model_response_started = "ParserModelResponseStarted"
+    parser_model_response_completed = "ParserModelResponseCompleted"
+
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
@@ -164,6 +167,16 @@ class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
+@dataclass
+class ParserModelResponseStartedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.parser_model_response_started.value
+
+
+@dataclass
+class ParserModelResponseCompletedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.parser_model_response_completed.value
+
+
 RunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
@@ -179,6 +192,8 @@ RunResponseEvent = Union[
     MemoryUpdateCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ParserModelResponseStartedEvent,
+    ParserModelResponseCompletedEvent,
 ]
 
 
@@ -198,6 +213,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
     RunEvent.tool_call_started.value: ToolCallStartedEvent,
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
+    RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
 }
 
 
@@ -362,16 +379,16 @@ class RunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        tools = data.pop("tools", None)
+        tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        images = data.pop("images", None)
+        images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
-        videos = data.pop("videos", None)
+        videos = data.pop("videos", [])
         videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
 
-        audio = data.pop("audio", None)
+        audio = data.pop("audio", [])
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
