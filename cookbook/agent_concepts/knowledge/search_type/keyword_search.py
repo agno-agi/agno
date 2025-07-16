@@ -1,4 +1,4 @@
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -7,13 +7,14 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 keyword_db = PgVector(
     table_name="recipes", db_url=db_url, search_type=SearchType.keyword
 )
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=keyword_db,
+knowledge = Knowledge(
+    name="Keyword Search Knowledge Base",
+    vector_store=keyword_db,
 )
 
-# Load data (only required for first time)
-knowledge_base.load(recreate=True, upsert=True)
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 # Run a keyword-based query
 results = keyword_db.search("chicken coconut soup", limit=5)

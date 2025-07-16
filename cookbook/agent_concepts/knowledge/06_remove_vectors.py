@@ -32,4 +32,3 @@ knowledge.add_content(
 )
 
 knowledge.remove_vectors_by_name("CV")
-

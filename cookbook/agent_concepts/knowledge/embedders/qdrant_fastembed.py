@@ -1,8 +1,8 @@
-from agno.agent import AgentKnowledge
-from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.fastembed import FastEmbedEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-embeddings = OpenAIEmbedder().get_embedding(
+embeddings = FastEmbedEmbedder().get_embedding(
     "The quick brown fox jumps over the lazy dog."
 )
 
@@ -11,11 +11,11 @@ print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
-knowledge_base = AgentKnowledge(
-    vector_db=PgVector(
+knowledge = Knowledge(
+    vector_store=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-        table_name="openai_embeddings",
-        embedder=OpenAIEmbedder(),
+        table_name="qdrant_embeddings",
+        embedder=FastEmbedEmbedder(),
     ),
-    num_documents=2,
+    max_results=2,
 )

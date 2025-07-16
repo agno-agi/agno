@@ -21,7 +21,7 @@ ContentDict = Dict[str, Union[str, Dict[str, str]]]
 class Knowledge:
     """Knowledge class"""
 
-    name: str
+    name: Optional[str] = None
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
     contents_db: Optional[PostgresDb] = None

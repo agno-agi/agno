@@ -35,4 +35,3 @@ for content in contents:
 
 # Remove all content
 knowledge.remove_all_content()
-

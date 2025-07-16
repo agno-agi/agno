@@ -1,5 +1,5 @@
-from agno.agent import AgentKnowledge
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 embeddings = SentenceTransformerEmbedder().get_embedding(
@@ -11,11 +11,11 @@ print(f"Embeddings: {embeddings[:5]}")
 print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
-knowledge_base = AgentKnowledge(
-    vector_db=PgVector(
+knowledge = Knowledge(
+    vector_store=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="sentence_transformer_embeddings",
         embedder=SentenceTransformerEmbedder(),
     ),
-    num_documents=2,
+    max_results=2,
 )

@@ -2,7 +2,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from qdrant_client import QdrantClient
 
@@ -15,14 +15,14 @@ vector_db = Qdrant(
     collection="thai-recipes", url="http://localhost:6333", embedder=embedder
 )
 # Load the knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=vector_db,
+knowledge = Knowledge(
+    vector_store=vector_db,
 )
 
-# Load the knowledge base
-knowledge_base.load(recreate=True)  # Comment out after first run
-# Knowledge base is now loaded
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
+
 # ---------------------------------------------------------
 
 
