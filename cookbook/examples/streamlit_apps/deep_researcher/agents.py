@@ -3,9 +3,7 @@ from typing import Iterator
 
 from agno.agent import Agent
 from agno.models.nebius import Nebius
-
-# from agno.tools.scrapegraph import ScrapeGraphTools
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.scrapegraph import ScrapeGraphTools
 from agno.utils.log import logger
 from agno.workflow import RunResponse, Workflow
 
@@ -19,10 +17,8 @@ class DeepResearcherAgent(Workflow):
     """
 
     searcher: Agent = Agent(
-        tools=[DuckDuckGoTools()],
-        model=Nebius(
-            id="deepseek-ai/DeepSeek-V3-0324", api_key=os.getenv("NEBIUS_API_KEY")
-        ),
+        tools=[ScrapeGraphTools()],
+        model=Nebius(id="deepseek-ai/DeepSeek-V3-0324"),
         show_tool_calls=True,
         markdown=True,
         description=(
@@ -44,9 +40,7 @@ class DeepResearcherAgent(Workflow):
 
     # Analyst: Synthesizes and interprets the research findings
     analyst: Agent = Agent(
-        model=Nebius(
-            id="deepseek-ai/DeepSeek-V3-0324", api_key=os.getenv("NEBIUS_API_KEY")
-        ),
+        model=Nebius(id="deepseek-ai/DeepSeek-V3-0324"),
         markdown=True,
         description=(
             "You are AnalystBot-X, a critical thinker who synthesizes research findings "
@@ -68,9 +62,7 @@ class DeepResearcherAgent(Workflow):
 
     # Writer: Produces a final, polished report
     writer: Agent = Agent(
-        model=Nebius(
-            id="deepseek-ai/DeepSeek-V3-0324", api_key=os.getenv("NEBIUS_API_KEY")
-        ),
+        model=Nebius(id="deepseek-ai/DeepSeek-V3-0324"),
         markdown=True,
         description=(
             "You are WriterBot-X, a professional technical writer. Your job is to craft "

@@ -72,7 +72,7 @@ with st.sidebar:
 
     st.divider()
 
-# Chat management buttons
+    # Chat management buttons
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🆕 New Chat", use_container_width=True):
@@ -82,7 +82,7 @@ with st.sidebar:
         with col2:
             if st.session_state.chat_history:
                 markdown_content = "# 🔎 Deep Research Agent - Chat History\n\n"
-                
+
                 for i, conversation in enumerate(st.session_state.chat_history, 1):
                     markdown_content += f"## {conversation['question']}\n\n"
                     markdown_content += f"{conversation['response']}\n\n"
