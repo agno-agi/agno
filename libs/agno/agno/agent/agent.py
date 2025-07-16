@@ -3716,6 +3716,8 @@ class Agent:
         """
         from time import time
 
+        from agno.db.base import SessionType
+
         # Return existing session if we have one
         if self.agent_session is not None and self.agent_session.session_id == session_id:
             return self.agent_session
@@ -3724,7 +3726,7 @@ class Agent:
         if self.memory is not None and self.memory.db is not None:
             log_debug(f"Reading AgentSession: {session_id}")
             self.agent_session = cast(
-                AgentSession, self.memory.read_session(session_id=session_id, session_type="agent")
+                AgentSession, self.memory.read_session(session_id=session_id, session_type=SessionType.AGENT)
             )
 
             if self.agent_session is not None:

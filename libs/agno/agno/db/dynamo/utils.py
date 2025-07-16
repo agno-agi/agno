@@ -1,6 +1,7 @@
 import json
+import time
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.db.base import SessionType
 from agno.db.schemas import MemoryRow
@@ -244,6 +245,87 @@ def hydrate_session(session: dict) -> dict:
     return session
 
 
+# -- Session Upsert Helpers --
+
+
+def prepare_session_data(session: "Session") -> Dict[str, Any]:
+    """Prepare session data for storage by serializing JSON fields and setting session type."""
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    serialized_session = serialize_session_json_fields(session.to_dict())
+
+    # Set the session type
+    if isinstance(session, AgentSession):
+        serialized_session["session_type"] = SessionType.AGENT.value
+    elif isinstance(session, TeamSession):
+        serialized_session["session_type"] = SessionType.TEAM.value
+    elif isinstance(session, WorkflowSession):
+        serialized_session["session_type"] = SessionType.WORKFLOW.value
+
+    return serialized_session
+
+
+def merge_with_existing_session(new_session: Dict[str, Any], existing_item: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge new session data with existing session, preserving important fields."""
+    existing_session = deserialize_from_dynamodb_item(existing_item)
+
+    # Start with existing session as base
+    merged_session = existing_session.copy()
+
+    if "session_data" in new_session:
+        merged_session_data = merge_session_data(
+            existing_session.get("session_data", {}), new_session.get("session_data", {})
+        )
+        merged_session["session_data"] = json.dumps(merged_session_data)
+
+    for key, value in new_session.items():
+        if key != "created_at" and key != "session_data" and value is not None:
+            merged_session[key] = value
+
+    # Always preserve created_at and set updated_at
+    merged_session["created_at"] = existing_session.get("created_at")
+    merged_session["updated_at"] = int(time.time())
+
+    return merged_session
+
+
+# TODO: typing
+def merge_session_data(existing_data: Any, new_data: Any) -> Dict[str, Any]:
+    """Merge session_data fields, handling JSON string conversion."""
+
+    # Parse existing session_data
+    if isinstance(existing_data, str):
+        existing_data = json.loads(existing_data)
+    existing_data = existing_data or {}
+
+    # Parse new session_data
+    if isinstance(new_data, str):
+        new_data = json.loads(new_data)
+    new_data = new_data or {}
+
+    # Merge letting new data take precedence
+    return {**existing_data, **new_data}
+
+
+def deserialize_session_result(
+    serialized_session: Dict[str, Any], original_session: "Session", deserialize: Optional[bool]
+) -> Optional[Union["Session", Dict[str, Any]]]:
+    """Deserialize the session result based on the deserialize flag and session type."""
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    if not deserialize:
+        return serialized_session
+
+    if isinstance(original_session, AgentSession):
+        return AgentSession.from_dict(serialized_session)
+    elif isinstance(original_session, TeamSession):
+        return TeamSession.from_dict(serialized_session)
+    elif isinstance(original_session, WorkflowSession):
+        return WorkflowSession.from_dict(serialized_session)
+
+    return None
+
+
 # -- DB Utils --
 
 
@@ -459,3 +541,172 @@ def get_dates_to_calculate_metrics_for(
         log_error(f"Failed to get dates for metrics calculation: {e}")
 
     return dates
+
+
+# -- Query Building Utils --
+
+
+def build_query_filter_expression(filters: Dict[str, Any]) -> tuple[Optional[str], Dict[str, str], Dict[str, Any]]:
+    """Build DynamoDB query filter expression from filters dictionary.
+    
+    Args:
+        filters: Dictionary of filter key-value pairs
+        
+    Returns:
+        Tuple of (filter_expression, expression_attribute_names, expression_attribute_values)
+    """
+    filter_expressions = []
+    expression_attribute_names = {}
+    expression_attribute_values = {}
+    
+    for field, value in filters.items():
+        if value is not None:
+            filter_expressions.append(f"#{field} = :{field}")
+            expression_attribute_names[f"#{field}"] = field
+            expression_attribute_values[f":{field}"] = {"S": value}
+    
+    filter_expression = " AND ".join(filter_expressions) if filter_expressions else None
+    return filter_expression, expression_attribute_names, expression_attribute_values
+
+
+def build_topic_filter_expression(topics: List[str]) -> tuple[str, Dict[str, Any]]:
+    """Build DynamoDB filter expression for topics.
+    
+    Args:
+        topics: List of topics to filter by
+        
+    Returns:
+        Tuple of (filter_expression, expression_attribute_values)
+    """
+    topic_filters = []
+    expression_attribute_values = {}
+    
+    for i, topic in enumerate(topics):
+        topic_key = f":topic_{i}"
+        topic_filters.append(f"contains(topics, {topic_key})")
+        expression_attribute_values[topic_key] = {"S": topic}
+    
+    filter_expression = f"({' OR '.join(topic_filters)})"
+    return filter_expression, expression_attribute_values
+
+
+def execute_query_with_pagination(
+    dynamodb_client,
+    table_name: str,
+    index_name: str,
+    key_condition_expression: str,
+    expression_attribute_names: Dict[str, str],
+    expression_attribute_values: Dict[str, Any],
+    filter_expression: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    limit: Optional[int] = None,
+    page: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Execute DynamoDB query with pagination support.
+    
+    Args:
+        dynamodb_client: DynamoDB client
+        table_name: Table name
+        index_name: Index name for query
+        key_condition_expression: Key condition expression
+        expression_attribute_names: Expression attribute names
+        expression_attribute_values: Expression attribute values
+        filter_expression: Optional filter expression
+        sort_by: Field to sort by
+        sort_order: Sort order (asc/desc)
+        limit: Limit for pagination
+        page: Page number
+        
+    Returns:
+        List of DynamoDB items
+    """
+    query_kwargs = {
+        "TableName": table_name,
+        "IndexName": index_name,
+        "KeyConditionExpression": key_condition_expression,
+        "ExpressionAttributeValues": expression_attribute_values,
+    }
+    
+    if expression_attribute_names:
+        query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+    
+    if filter_expression:
+        query_kwargs["FilterExpression"] = filter_expression
+    
+    # Apply sorting at query level if sorting by created_at
+    if sort_by == "created_at":
+        query_kwargs["ScanIndexForward"] = sort_order != "desc"
+    
+    # Apply limit at DynamoDB level if no pagination
+    if limit and not page:
+        query_kwargs["Limit"] = limit
+    
+    items = []
+    response = dynamodb_client.query(**query_kwargs)
+    items.extend(response.get("Items", []))
+    
+    # Handle pagination
+    while "LastEvaluatedKey" in response:
+        query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = dynamodb_client.query(**query_kwargs)
+        items.extend(response.get("Items", []))
+    
+    return items
+
+
+def process_query_results(
+    items: List[Dict[str, Any]],
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    limit: Optional[int] = None,
+    page: Optional[int] = None,
+    deserialize_func: Optional[callable] = None,
+    deserialize: bool = True,
+) -> Union[List[Any], tuple[List[Any], int]]:
+    """Process query results with sorting, pagination, and deserialization.
+    
+    Args:
+        items: List of DynamoDB items
+        sort_by: Field to sort by
+        sort_order: Sort order (asc/desc)
+        limit: Limit for pagination
+        page: Page number
+        deserialize_func: Function to deserialize items
+        deserialize: Whether to deserialize items
+        
+    Returns:
+        List of processed items or tuple of (items, total_count)
+    """
+    # Convert DynamoDB items to data
+    processed_data = []
+    for item in items:
+        data = deserialize_from_dynamodb_item(item)
+        if data:
+            processed_data.append(data)
+    
+    # Apply in-memory sorting for fields not handled by DynamoDB
+    if sort_by and sort_by != "created_at":
+        processed_data = apply_sorting(processed_data, sort_by, sort_order)
+    
+    # Get total count before pagination
+    total_count = len(processed_data)
+    
+    # Apply pagination
+    if page:
+        processed_data = apply_pagination(processed_data, limit, page)
+    
+    if not deserialize or not deserialize_func:
+        return processed_data, total_count
+    
+    # Deserialize items
+    deserialized_items = []
+    for data in processed_data:
+        try:
+            item = deserialize_func(data)
+            if item:
+                deserialized_items.append(item)
+        except Exception as e:
+            log_error(f"Failed to deserialize item: {e}")
+    
+    return deserialized_items

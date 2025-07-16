@@ -9,16 +9,25 @@ from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
     apply_pagination,
     apply_sorting,
+    build_query_filter_expression,
+    build_topic_filter_expression,
     calculate_date_metrics,
     create_table_if_not_exists,
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
+    deserialize_knowledge_row,
     deserialize_memory_row,
     deserialize_session,
+    deserialize_session_result,
+    execute_query_with_pagination,
     get_dates_to_calculate_metrics_for,
     hydrate_session,
+    merge_with_existing_session,
+    prepare_session_data,
+    process_query_results,
+    serialize_eval_record,
+    serialize_knowledge_row,
     serialize_memory_row,
-    serialize_session_json_fields,
     serialize_to_dynamo_item,
 )
 from agno.db.schemas import MemoryRow
@@ -467,41 +476,34 @@ class DynamoDb(BaseDb):
         """
         Upsert a session into the database.
 
+        This method provides true upsert behavior: creates a new session if it doesn't exist,
+        or updates an existing session while preserving important fields.
+
         Args:
             session (Session): The session to upsert.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
         Returns:
             Optional[Session]: The upserted session if successful, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while upserting the session.
         """
         try:
             table_name = self._get_table("sessions")
-            serialized_session = serialize_session_json_fields(session.to_dict())
 
-            # Add session_type field based on session instance type
-            if isinstance(session, AgentSession):
-                serialized_session["session_type"] = SessionType.AGENT.value
-            elif isinstance(session, TeamSession):
-                serialized_session["session_type"] = SessionType.TEAM.value
-            elif isinstance(session, WorkflowSession):
-                serialized_session["session_type"] = SessionType.WORKFLOW.value
+            # Get session if it already exists in the db.
+            # We need to do this to handle updating nested fields.
+            response = self.client.get_item(TableName=table_name, Key={"session_id": {"S": session.session_id}})
+            existing_item = response.get("Item")
 
+            # Prepare the session to upsert, merging with existing session if it exists.
+            serialized_session = prepare_session_data(session)
+            if existing_item:
+                serialized_session = merge_with_existing_session(serialized_session, existing_item)
+
+            # Upsert
             item = serialize_to_dynamo_item(serialized_session)
-
             self.client.put_item(TableName=table_name, Item=item)
 
-            if not deserialize:
-                return serialized_session
-
-            if isinstance(session, AgentSession):
-                return AgentSession.from_dict(serialized_session)
-            elif isinstance(session, TeamSession):
-                return TeamSession.from_dict(serialized_session)
-            elif isinstance(session, WorkflowSession):
-                return WorkflowSession.from_dict(serialized_session)
+            return deserialize_session_result(serialized_session, session, deserialize)
 
         except Exception as e:
             log_error(f"Failed to upsert session {session.session_id}: {e}")
@@ -612,7 +614,6 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get user memory {memory_id}: {e}")
             return None
 
-    # TODO: test all filtering
     def get_user_memories(
         self,
         user_id: Optional[str] = None,
@@ -650,73 +651,66 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memories.
         """
         try:
-            scan_kwargs = {"TableName": self.user_memory_table_name}
+            table_name = self._get_table("user_memories")
 
-            if user_id:
-                scan_kwargs["FilterExpression"] = "user_id = :user_id"
-                scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            # Build basic query parameters
+            index_name = "user_id-created_at-index"
+            key_condition_expression = "#user_id = :user_id"
+            expression_attribute_names = {"#user_id": "user_id"}
+            expression_attribute_values = {":user_id": {"S": user_id}}
 
-            if agent_id:
-                scan_kwargs["FilterExpression"] = "agent_id = :agent_id"
-                scan_kwargs["ExpressionAttributeValues"] = {":agent_id": {"S": agent_id}}
+            # Build filter expressions for component filters
+            filters = {
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "workflow_id": workflow_id,
+            }
+            filter_expression, attr_names, attr_values = build_query_filter_expression(filters)
+            expression_attribute_names.update(attr_names)
+            expression_attribute_values.update(attr_values)
 
-            if team_id:
-                scan_kwargs["FilterExpression"] = "team_id = :team_id"
-                scan_kwargs["ExpressionAttributeValues"] = {":team_id": {"S": team_id}}
-
-            if workflow_id:
-                scan_kwargs["FilterExpression"] = "workflow_id = :workflow_id"
-                scan_kwargs["ExpressionAttributeValues"] = {":workflow_id": {"S": workflow_id}}
-
+            # Build topic filter expression if topics provided
             if topics:
-                scan_kwargs["FilterExpression"] = "topics = :topics"
-                scan_kwargs["ExpressionAttributeValues"] = {":topics": {"S": topics}}
+                topic_filter, topic_values = build_topic_filter_expression(topics)
+                expression_attribute_values.update(topic_values)
+                filter_expression = f"{filter_expression} AND {topic_filter}" if filter_expression else topic_filter
 
+            # Add search content filter if provided
             if search_content:
-                scan_kwargs["FilterExpression"] = "content = :content"
-                scan_kwargs["ExpressionAttributeValues"] = {":content": {"S": search_content}}
+                search_filter = "contains(memory, :search_content)"
+                expression_attribute_values[":search_content"] = {"S": search_content}
+                filter_expression = f"{filter_expression} AND {search_filter}" if filter_expression else search_filter
 
-            if limit:
-                scan_kwargs["Limit"] = str(limit)
+            # Execute query with pagination
+            items = execute_query_with_pagination(
+                self.client,
+                table_name,
+                index_name,
+                key_condition_expression,
+                expression_attribute_names,
+                expression_attribute_values,
+                filter_expression,
+                sort_by,
+                sort_order,
+                limit,
+                page,
+            )
 
-            if page:
-                scan_kwargs["ExclusiveStartKey"] = {"memory_id": {"S": f"memory_{page}"}}
+            # Process results with deserialization
+            def memory_deserializer(data: Dict[str, Any]) -> MemoryRow:
+                return MemoryRow.model_validate(data)
 
-            # Execute scan
-            response = self.client.scan(**scan_kwargs)
-            items = response.get("Items", [])
+            result = process_query_results(
+                items,
+                sort_by,
+                sort_order,
+                limit,
+                page,
+                memory_deserializer,
+                deserialize or False,
+            )
 
-            # Handle pagination for large datasets
-            while "LastEvaluatedKey" in response:
-                scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-                response = self.client.scan(**scan_kwargs)
-                items.extend(response.get("Items", []))
-
-            # Convert to session data format
-            memories_data = []
-            for item in items:
-                memory_data = deserialize_from_dynamodb_item(item)
-                if memory_data:
-                    memories_data.append(memory_data)
-
-            # Apply sorting
-            memories_data = apply_sorting(memories_data, sort_by, sort_order)
-
-            # Apply pagination
-            memories_data = apply_pagination(memories_data, limit, page)
-
-            if not deserialize:
-                return memories_data, len(memories_data)
-
-            memories = []
-            for memory_data in memories_data:
-                try:
-                    memory = MemoryRow.model_validate(memory_data)
-                    memories.append(memory)
-                except Exception as e:
-                    log_error(f"Failed to deserialize memory: {e}")
-
-            return memories
+            return result
 
         except Exception as e:
             log_error(f"Failed to get user memories: {e}")
@@ -807,7 +801,7 @@ class DynamoDb(BaseDb):
             # Convert to metrics data
             metrics_data = []
             for item in items:
-                metric_data = self._deserialize_from_dynamodb_item(item)
+                metric_data = deserialize_from_dynamodb_item(item)
                 if metric_data:
                     metrics_data.append(metric_data)
 
@@ -932,7 +926,7 @@ class DynamoDb(BaseDb):
             self.client.put_item(TableName=self.knowledge_table_name, Item=item)
 
         except Exception as e:
-            log_error(f"Failed to upsert knowledge source {knowledge_row.knowledge_id}: {e}")
+            log_error(f"Failed to upsert knowledge source {knowledge_row.id}: {e}")
 
     def delete_knowledge_content(self, id: str):
         pass
@@ -961,7 +955,7 @@ class DynamoDb(BaseDb):
             return eval_run.model_dump()
 
         except Exception as e:
-            log_error(f"Failed to create eval run {eval_run.eval_run_id}: {e}")
+            log_error(f"Failed to create eval run {eval_run.run_id}: {e}")
             return None
 
     # TODO: batch
