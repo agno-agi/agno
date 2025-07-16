@@ -4146,7 +4146,7 @@ class Agent:
         """
         if self.storage is not None:
             # Get a single session from storage
-            session = self.storage.read(session_id=session_id)
+            session = self.storage.read(session_id=session_id)  # type: ignore
 
             # We must ensure the session is an AgentSession before proceeding.
             if isinstance(session, AgentSession):
@@ -4183,11 +4183,11 @@ class Agent:
     def add_introduction(self, introduction: str) -> None:
         """Add an introduction to the chat history"""
 
-        if isinstance(self.memory, AgentMemory):
+        if isinstance(self.memory, AgentMemory): # type: ignore
             if introduction is not None:
                 # Add an introduction as the first response from the Agent
-                if len(self.memory.runs) == 0:
-                    self.memory.add_run(
+                if len(self.memory.runs) == 0: # type: ignore
+                    self.memory.add_run( 
                         AgentRun(
                             response=RunResponse(
                                 content=introduction,
@@ -4196,7 +4196,7 @@ class Agent:
                                 ],
                             )
                         )
-                    )
+                    ) # type: ignore
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from the database and return the session_id.
