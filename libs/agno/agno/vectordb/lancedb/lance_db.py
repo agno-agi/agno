@@ -237,6 +237,7 @@ class LanceDb(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_id": document.content_id,
             }
             data.append(
                 {
@@ -296,6 +297,7 @@ class LanceDb(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_id": document.content_id,
             }
             data.append(
                 {
@@ -518,6 +520,29 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
+    def debug_list_all_documents(self) -> None:
+        """Debug method to list all documents in the database"""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return
+
+        try:
+            result = self.table.search().select(["id", "payload"]).to_pandas()
+
+            print(f"\n=== DEBUG: Found {len(result)} documents in database ===")
+            for i, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                print(f"Document {i + 1}:")
+                print(f"  ID: {row['id']}")
+                print(f"  Name: {payload.get('name', 'N/A')}")
+                print(f"  Metadata: {payload.get('meta_data', {})}")
+                print(f"  Content ID: {payload.get('content_id', 'N/A')}")
+                print(f"  Content preview: {payload.get('content', '')[:100]}...")
+                print()
+
+        except Exception as e:
+            logger.error(f"Error listing documents: {e}")
+
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
         try:
@@ -531,6 +556,7 @@ class LanceDb(VectorDb):
                         embedder=self.embedder,
                         embedding=item["vector"],
                         usage=payload["usage"],
+                        content_id=payload["content_id"],
                     )
                 )
 
@@ -580,6 +606,18 @@ class LanceDb(VectorDb):
     def delete(self) -> bool:
         return False
 
+    def id_exists(self, id: str) -> bool:
+        """Check if a document with the given ID exists in the database"""
+        if self.table is None:
+            return False
+
+        try:
+            result = self.table.search().where(f"{self._id}='{id}'").to_arrow()
+            return len(result) > 0
+        except Exception as e:
+            logger.error(f"Error checking ID existence: {e}")
+            return False
+
     def name_exists(self, name: str) -> bool:
         """Check if a document with the given name exists in the database"""
         if self.table is None:
@@ -598,3 +636,124 @@ class LanceDb(VectorDb):
 
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def delete_by_id(self, id: str) -> bool:
+        """Delete content by ID."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            # Delete rows where the id matches
+            self.table.delete(f"{self._id} = '{id}'")
+            log_info(f"Deleted records with id '{id}' from table '{self.table_name}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting rows by id '{id}': {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete content by name."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            # Get all records first
+            result = self.table.search().select(["id", "payload"]).to_pandas()
+
+            # Find matching IDs
+            ids_to_delete = []
+            for _, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                if payload.get("name") == name:
+                    ids_to_delete.append(row["id"])
+
+            # Delete matching records
+            if ids_to_delete:
+                for doc_id in ids_to_delete:
+                    self.table.delete(f"{self._id} = '{doc_id}'")
+                log_info(f"Deleted {len(ids_to_delete)} records with name '{name}' from table '{self.table_name}'.")
+                return True
+            else:
+                log_info(f"No records found with name '{name}' to delete.")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting rows by name '{name}': {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete content by metadata."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            # Get all records first
+            result = self.table.search().select(["id", "payload"]).to_pandas()
+
+            # Find matching IDs
+            ids_to_delete = []
+            for _, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                doc_metadata = payload.get("meta_data", {})
+
+                # Check if all metadata key-value pairs match
+                match = True
+                for key, value in metadata.items():
+                    if key not in doc_metadata or doc_metadata[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    ids_to_delete.append(row["id"])
+
+            # Delete matching records
+            if ids_to_delete:
+                for doc_id in ids_to_delete:
+                    self.table.delete(f"{self._id} = '{doc_id}'")
+                log_info(
+                    f"Deleted {len(ids_to_delete)} records with metadata '{metadata}' from table '{self.table_name}'."
+                )
+                return True
+            else:
+                log_info(f"No records found with metadata '{metadata}' to delete.")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting rows by metadata '{metadata}': {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete content by content ID."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            # Get all records first
+            result = self.table.search().select(["id", "payload"]).to_pandas()
+
+            # Find matching IDs
+            ids_to_delete = []
+            for _, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                if payload.get("content_id") == content_id:
+                    ids_to_delete.append(row["id"])
+
+            # Delete matching records
+            if ids_to_delete:
+                for doc_id in ids_to_delete:
+                    self.table.delete(f"{self._id} = '{doc_id}'")
+                log_info(
+                    f"Deleted {len(ids_to_delete)} records with content_id '{content_id}' from table '{self.table_name}'."
+                )
+                return True
+            else:
+                log_info(f"No records found with content_id '{content_id}' to delete.")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting rows by content_id '{content_id}': {e}")
+            return False
