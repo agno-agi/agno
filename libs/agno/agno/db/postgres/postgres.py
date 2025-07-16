@@ -864,7 +864,7 @@ class PostgresDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else ([], 0)
+                    return [] if deserialize else ([], 0)
 
                 user_memories_raw = [record._mapping for record in result]
                 if not deserialize:

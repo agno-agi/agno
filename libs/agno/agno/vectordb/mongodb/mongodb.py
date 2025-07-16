@@ -1134,3 +1134,12 @@ class MongoDb(VectorDb):
             return tuple(self._convert_objectids_to_strings(item) for item in obj)
         else:
             return obj
+
+    def delete_by_id(self, id: str) -> bool:
+        pass
+
+    def delete_by_name(self, name: str) -> bool:
+        pass
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        pass

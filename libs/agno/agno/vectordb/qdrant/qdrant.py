@@ -704,3 +704,15 @@ class Qdrant(VectorDb):
 
     def delete(self) -> bool:
         return self.client.delete_collection(collection_name=self.collection)
+
+    def delete_by_id(self, id: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_name(self, name: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        return NotImplementedError
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        return NotImplementedError

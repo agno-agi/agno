@@ -155,7 +155,7 @@ class PgVector(VectorDb):
             Column("created_at", DateTime(timezone=True), server_default=func.now()),
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
-            Column("source_document_id", String),
+            Column("content_id", String),
             extend_existing=True,
         )
 
@@ -163,7 +163,7 @@ class PgVector(VectorDb):
         Index(f"idx_{self.table_name}_id", table.c.id)
         Index(f"idx_{self.table_name}_name", table.c.name)
         Index(f"idx_{self.table_name}_content_hash", table.c.content_hash)
-        Index(f"idx_{self.table_name}_source_document_id", table.c.source_document_id)
+        Index(f"idx_{self.table_name}_content_id", table.c.content_id)
 
         return table
 
@@ -307,7 +307,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for insertion
                         batch_records = []
@@ -331,7 +331,7 @@ class PgVector(VectorDb):
                                     "embedding": doc.embedding,
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
-                                    "source_document_id": doc.id,
+                                    "content_id": doc.content_id,
                                 }
                                 batch_records.append(record)
                             except Exception as e:
@@ -341,7 +341,7 @@ class PgVector(VectorDb):
                         insert_stmt = postgresql.insert(self.table)
                         sess.execute(insert_stmt, batch_records)
                         sess.commit()  # Commit batch independently
-                        log_info(f"Inserted batch of {len(batch_records)} documents.")
+                        log_debug(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         logger.error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
@@ -404,7 +404,7 @@ class PgVector(VectorDb):
                                     "embedding": doc.embedding,
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
-                                    "source_document_id": doc.source_id,
+                                    "content_id": doc.content_id,
                                 }
                                 batch_records.append(record)
                             except Exception as e:
@@ -422,7 +422,7 @@ class PgVector(VectorDb):
                                 "embedding": insert_stmt.excluded.embedding,
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
-                                "source_document_id": insert_stmt.excluded.source_document_id,
+                                "content_id": insert_stmt.excluded.content_id,
                             },
                         )
                         sess.execute(upsert_stmt)
@@ -1044,7 +1044,7 @@ class PgVector(VectorDb):
             sess.rollback()
             return False
 
-    def delete_by_content_id(self, id: str) -> bool:
+    def delete_by_id(self, id: str) -> bool:
         """
         Delete content by ID.
         """
@@ -1054,6 +1054,54 @@ class PgVector(VectorDb):
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete content by name.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.name == name)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete content by metadata.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.meta_data.contains(metadata))
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete content by content ID.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.content_id == content_id)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")

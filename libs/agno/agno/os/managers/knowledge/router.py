@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
-from agno.knowledge.content import Content, ContentData
+from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.os.managers.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
 from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
@@ -57,8 +57,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata}
 
-        content_data = (
-            ContentData(
+        file_data = (
+            FileData(
                 content=content_bytes,
                 type=file.content_type if file.content_type else None,
             )
@@ -71,7 +71,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             description=description,
             url=parsed_urls,
             metadata=parsed_metadata,
-            content_data=content_data,
+            file_data=file_data,
             size=file.size if file else None,
         )
 
@@ -123,7 +123,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     id=content.id,
                     name=content.name,
                     description=content.description,
-                    type=content.content_data.type if content.content_data else None,
+                    type=content.file_data.type if content.file_data else None,
                     size=str(content.size) if content.size else "0",
                     metadata=content.metadata,
                     linked_to=knowledge.name,
@@ -153,8 +153,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             id=content_id,
             name=content.name,
             description=content.description,
-            type=content.content_data.type if content.content_data else None,
-            size=str(len(content.content_data.content)) if content.content_data else "0",
+            type=content.file_data.type if content.file_data else None,
+            size=str(len(content.file_data.content)) if content.file_data else "0",
             linked_to=knowledge.name,
             metadata=content.metadata,
             access_count=0,
@@ -217,7 +217,7 @@ def process_content(knowledge: Knowledge, content_id: str, content: Content, rea
         content.id = content_id
         if reader_id:
             content.reader = knowledge.readers[reader_id]
-        knowledge._add_content_from_api(content)
+        knowledge.process_content(content)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")

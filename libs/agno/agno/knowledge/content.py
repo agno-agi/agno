@@ -6,7 +6,7 @@ from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 
 
 @dataclass
-class ContentData:
+class FileData:
     content: Optional[Union[str, bytes]] = None
     type: Optional[str] = None
 
@@ -18,7 +18,7 @@ class Content:
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
-    content_data: Optional[Union[str, ContentData]] = None
+    file_data: Optional[Union[str, FileData]] = None
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
     file_type: Optional[str] = None
