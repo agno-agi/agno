@@ -2,7 +2,7 @@
 1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
 """
 
-from agno.agent import Agent
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
@@ -10,27 +10,29 @@ from agno.vectordb.pgvector import PgVector
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
+    ),
     vector_store=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
 )
 
-# Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
     path="cookbook/agent_concepts/knowledge/testing_resources/",
     metadata={"user_tag": "Engineering Candidates"},
 )
 
-agent = Agent(
-    name="My Agent",
-    description="Agno 2.0 Agent Implementation",
-    knowledge=knowledge,
-    search_knowledge=True,
-    debug_mode=True,
-)
 
-agent.print_response(
-    "Which candidates can you recommend for the role of a software engineer?",
-    markdown=True,
-)
+# Remove content and vectors by id
+contents, _ = knowledge.get_content()
+for content in contents:
+    print(content.id)
+    print(" ")
+    knowledge.remove_content_by_id(content.id)
+
+# Remove all content
+knowledge.remove_all_content()
+
