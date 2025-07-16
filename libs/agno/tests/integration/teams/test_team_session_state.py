@@ -102,14 +102,14 @@ def test_team_session_state_on_run(route_team):
     response = route_team.run("What can you do?", session_id=session_id_1, session_state={"test_key": "test_value"})
     assert response.run_id is not None
     assert route_team.session_id == session_id_1
-    assert route_team.session_name is None
+    assert route_team.session_name == "my_test_session"  # Correctly set from the first run
     assert route_team.session_state == {"test_key": "test_value"}
 
     # Second run with different session ID
     response = route_team.run("What can you do?", session_id=session_id_2)
     assert response.run_id is not None
     assert route_team.session_id == session_id_2
-    assert route_team.session_name is None
+    assert route_team.session_name is None  # Should be unset, new session ID
     assert route_team.session_state == {}
 
     # Third run with the original session ID
@@ -118,7 +118,7 @@ def test_team_session_state_on_run(route_team):
     )
     assert response.run_id is not None
     assert route_team.session_id == session_id_1
-    assert route_team.session_name is None
+    assert route_team.session_name == "my_test_session"  # Should load what was set on the first run
     assert route_team.session_state == {"test_key": "test_value", "something_else": "other_value"}, (
         "Merging session state should work"
     )

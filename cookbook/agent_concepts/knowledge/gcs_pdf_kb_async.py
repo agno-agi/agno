@@ -5,7 +5,7 @@ Setup Steps:
 1. Install required libraries: agno, google-cloud-storage, psycopg2-binary (for PostgreSQL vector DB).
 2. Set up your GCS bucket and upload your PDF file.
 3. For public GCS buckets: No authentication needed, just set the bucket and PDF path.
-4. For private GCS buckets: 
+4. For private GCS buckets:
    - Grant the service account Storage Object Viewer access to the bucket via Google Cloud Console
    - Export GOOGLE_APPLICATION_CREDENTIALS with the path to your service account JSON before running the script
 5. Update 'bucket_name' and 'blob_name' in the script to your PDF's location.
@@ -13,6 +13,7 @@ Setup Steps:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.gcs.pdf import GCSPDFKnowledgeBase
 from agno.vectordb.pgvector import PgVector
