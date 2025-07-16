@@ -3919,6 +3919,9 @@ class Agent:
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
 
+        if not hasattr(session, "memory"):
+            return
+
         from agno.utils.merge_dict import merge_dictionaries
 
         # Get the agent_id, user_id and session_id from the database
@@ -4043,7 +4046,7 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:  # type: ignore
+        if session.memory is not None:
             if isinstance(self.memory, AgentMemory):
                 try:
                     if "runs" in session.memory:
@@ -4146,25 +4149,10 @@ class Agent:
         """
         if self.storage is not None:
             # Get a single session from storage
-            session = self.storage.read(session_id=session_id)  # type: ignore
-
-            # We must ensure the session is an AgentSession before proceeding.
-            if isinstance(session, AgentSession):
-                self.agent_session = session
+            self.agent_session = cast(AgentSession, self.storage.read(session_id=session_id))
+            if self.agent_session is not None:
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
-            elif session is not None:
-                # If we get a session from storage, but it's not an AgentSession,
-                # we should log it and not proceed with loading it into an Agent.
-                # An Agent should not operate on a TeamSession or WorkflowSession.
-                log_warning(
-                    f"Retrieved a session of type {type(session).__name__} from storage, but an AgentSession was expected. "
-                    f"The agent state will not be loaded from this session."
-                )
-                self.agent_session = None
-            else:
-                self.agent_session = None
-
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
@@ -4183,11 +4171,11 @@ class Agent:
     def add_introduction(self, introduction: str) -> None:
         """Add an introduction to the chat history"""
 
-        if isinstance(self.memory, AgentMemory): # type: ignore
+        if isinstance(self.memory, AgentMemory):
             if introduction is not None:
                 # Add an introduction as the first response from the Agent
-                if len(self.memory.runs) == 0: # type: ignore
-                    self.memory.add_run( 
+                if len(self.memory.runs) == 0:
+                    self.memory.add_run(
                         AgentRun(
                             response=RunResponse(
                                 content=introduction,
@@ -4196,7 +4184,7 @@ class Agent:
                                 ],
                             )
                         )
-                    ) # type: ignore
+                    )
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from the database and return the session_id.
