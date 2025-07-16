@@ -96,5 +96,13 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_by_content_id(self, id: str) -> bool:
+    def delete_by_id(self, id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_name(self, name: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         raise NotImplementedError

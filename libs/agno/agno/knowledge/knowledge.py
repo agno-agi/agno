@@ -9,9 +9,8 @@ from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.document import Document
 from agno.document.reader import Reader, ReaderFactory
-from agno.document.store import Store
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
-from agno.knowledge.content import Content, ContentData
+from agno.knowledge.content import Content, FileData
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
@@ -25,7 +24,6 @@ class Knowledge:
     name: str
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
-    store: Optional[Union[Store, List[Store]]] = None
     contents_db: Optional[PostgresDb] = None
     valid_metadata_filters: Optional[List[str]] = None
     max_results: int = 10
@@ -34,9 +32,6 @@ class Knowledge:
     def __post_init__(self):
         if self.vector_store and not self.vector_store.exists():
             self.vector_store.create()
-
-        if self.store is not None:
-            self.store.read_from_store = True
 
         self.construct_readers()
 
@@ -125,7 +120,7 @@ class Knowledge:
 
         content = None
         if text_content:
-            content = ContentData(content=text_content, type="Text")
+            content = FileData(content=text_content, type="Text")
 
         content = Content(
             id=str(uuid4()),
@@ -133,7 +128,7 @@ class Knowledge:
             description=description,
             path=path,
             url=url,
-            content_data=content if content else None,
+            file_data=content if content else None,
             metadata=metadata,
             topics=topics,
             config=config,
@@ -162,8 +157,8 @@ class Knowledge:
             if not content.file_type:
                 content.file_type = path.suffix
 
-            if not content.size and content.content_data:
-                content.size = len(content.content_data.content)
+            if not content.size and content.file_data:
+                content.size = len(content.file_data.content)
             if not content.size:
                 try:
                     content.size = path.stat().st_size
@@ -287,16 +282,16 @@ class Knowledge:
 
         completed = True
         read_documents = []
-        if isinstance(content.content_data, str):
+        if isinstance(content.file_data, str):
             if content.name is None:
-                content.name = content.content_data[:10] if len(content.content_data) >= 10 else content.content_data
-            content_io = io.BytesIO(content.content_data.encode("utf-8"))
+                content.name = content.file_data[:10] if len(content.file_data) >= 10 else content.file_data
+            content_io = io.BytesIO(content.file_data.encode("utf-8"))
             name = (
                 content.name
                 if content.name
-                else content.content_data[:10]
-                if len(content.content_data) >= 10
-                else content.content_data
+                else content.file_data[:10]
+                if len(content.file_data) >= 10
+                else content.file_data
             )
             if content.reader:
                 log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
@@ -304,18 +299,18 @@ class Knowledge:
             else:
                 read_documents = self.text_reader.read(content_io, name=name)
 
-        elif isinstance(content.content_data, ContentData):
-            if content.content_data.type:
-                log_info(f"Content content type: {content.content_data.type}")
-                if isinstance(content.content_data.content, bytes):
-                    content_io = io.BytesIO(content.content_data.content)
-                elif isinstance(content.content_data.content, str):
-                    content_io = io.BytesIO(content.content_data.content.encode("utf-8"))
+        elif isinstance(content.file_data, FileData):
+            if content.file_data.type:
+                log_info(f"Content content type: {content.file_data.type}")
+                if isinstance(content.file_data.content, bytes):
+                    content_io = io.BytesIO(content.file_data.content)
+                elif isinstance(content.file_data.content, str):
+                    content_io = io.BytesIO(content.file_data.content.encode("utf-8"))
                 else:
-                    content_io = content.content_data.content
+                    content_io = content.file_data.content
 
-                reader = self._select_reader(content.content_data.type)
-                name = content.name if content.name else f"content_{content.content_data.type}"
+                reader = self._select_reader(content.file_data.type)
+                name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
 
                 # Process each document in the list
@@ -377,7 +372,7 @@ class Knowledge:
                     metadata=content.metadata,
                     reader=content.reader,
                     status="Processing" if content.reader else "Failed: No reader provided",
-                    content_data=ContentData(
+                    file_data=FileData(
                         type="Topic",
                     ),
                 )
@@ -410,7 +405,7 @@ class Knowledge:
         if content.url:
             self._load_from_url(content)
 
-        if content.content_data:
+        if content.file_data:
             self._add_to_contents_db(content)
             self._load_from_content(content)
 
@@ -428,8 +423,8 @@ class Knowledge:
             file_type = (
                 content.file_type
                 if content.file_type
-                else content.content_data.type
-                if content.content_data and content.content_data.type
+                else content.file_data.type
+                if content.file_data and content.file_data.type
                 else None
             )
 
@@ -441,8 +436,8 @@ class Knowledge:
                 type=file_type,
                 size=content.size
                 if content.size
-                else len(content.content_data.content)
-                if content.content_data and content.content_data.content
+                else len(content.file_data.content)
+                if content.file_data and content.file_data.content
                 else None,
                 linked_to=self.name,
                 access_count=0,
@@ -533,6 +528,24 @@ class Knowledge:
                 log_debug(f"Invalid filter key: {key} - not present in knowledge base")
 
         return valid_filters, invalid_keys
+
+    def remove_vector_by_id(self, id: str) -> bool:
+        if self.vector_store is None:
+            log_warning("No vector DB provided")
+            return
+        return self.vector_store.delete_by_id(id)
+
+    def remove_vector_by_name(self, name: str) -> bool:
+        if self.vector_store is None:
+            log_warning("No vector DB provided")
+            return
+        return self.vector_store.delete_by_name(name)
+
+    def remove_vector_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        if self.vector_store is None:
+            log_warning("No vector DB provided")
+            return
+        return self.vector_store.delete_by_metadata(metadata)
 
     # --- API Only Methods ---
 

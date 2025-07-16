@@ -18,6 +18,12 @@ knowledge.add_content(
     metadata={"user_tag": "Recipes from website"},
 )
 
+# Add from local file to the knowledge base
+knowledge.add_content(
+    name="CV",
+    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    metadata={"user_tag": "Engineering Candidates"},
+)
 
 agent = Agent(
     name="My Agent",
@@ -31,3 +37,12 @@ agent.print_response(
     "What can you tell me about Thai recipes?",
     markdown=True,
 )
+
+agent.print_response(
+    "Which candidates can you recommend for the role of a software engineer?",
+    markdown=True,
+)
+
+knowledge.remove_vector_by_name("CV")
+
+knowledge.remove_vector_by_metadata({"user_tag": "Engineering Candidates"})

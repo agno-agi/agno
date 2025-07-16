@@ -1044,7 +1044,7 @@ class PgVector(VectorDb):
             sess.rollback()
             return False
 
-    def delete_by_content_id(self, id: str) -> bool:
+    def delete_by_id(self, id: str) -> bool:
         """
         Delete content by ID.
         """
@@ -1054,6 +1054,38 @@ class PgVector(VectorDb):
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete content by name.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.name == name)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            sess.rollback()
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete content by metadata.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.meta_data.contains(metadata))
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
             logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
