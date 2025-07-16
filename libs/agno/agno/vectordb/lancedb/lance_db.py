@@ -520,29 +520,6 @@ class LanceDb(VectorDb):
 
         return results.to_pandas()
 
-    def debug_list_all_documents(self) -> None:
-        """Debug method to list all documents in the database"""
-        if self.table is None:
-            logger.error("Table not initialized")
-            return
-
-        try:
-            result = self.table.search().select(["id", "payload"]).to_pandas()
-
-            print(f"\n=== DEBUG: Found {len(result)} documents in database ===")
-            for i, row in result.iterrows():
-                payload = json.loads(row["payload"])
-                print(f"Document {i + 1}:")
-                print(f"  ID: {row['id']}")
-                print(f"  Name: {payload.get('name', 'N/A')}")
-                print(f"  Metadata: {payload.get('meta_data', {})}")
-                print(f"  Content ID: {payload.get('content_id', 'N/A')}")
-                print(f"  Content preview: {payload.get('content', '')[:100]}...")
-                print()
-
-        except Exception as e:
-            logger.error(f"Error listing documents: {e}")
-
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
         try:
@@ -659,8 +636,8 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            # Get all records first
-            result = self.table.search().select(["id", "payload"]).to_pandas()
+            total_count = self.table.count_rows()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
 
             # Find matching IDs
             ids_to_delete = []
@@ -690,8 +667,8 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            # Get all records first
-            result = self.table.search().select(["id", "payload"]).to_pandas()
+            total_count = self.table.count_rows()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
 
             # Find matching IDs
             ids_to_delete = []
@@ -732,8 +709,8 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            # Get all records first
-            result = self.table.search().select(["id", "payload"]).to_pandas()
+            total_count = self.table.count_rows()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
 
             # Find matching IDs
             ids_to_delete = []
