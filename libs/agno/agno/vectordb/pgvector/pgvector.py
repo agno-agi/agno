@@ -307,7 +307,7 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for insertion
                         batch_records = []
@@ -341,7 +341,7 @@ class PgVector(VectorDb):
                         insert_stmt = postgresql.insert(self.table)
                         sess.execute(insert_stmt, batch_records)
                         sess.commit()  # Commit batch independently
-                        log_info(f"Inserted batch of {len(batch_records)} documents.")
+                        log_debug(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
                         logger.error(f"Error with batch starting at index {i}: {e}")
                         sess.rollback()  # Rollback the current batch if there's an error
