@@ -195,6 +195,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
 
     agent_runs = stored_memory_data["runs"]
 
+    assert len(agent_runs) == 1
+
     assert len(agent_runs[-1]["messages"]) == 7, (
         "Only system message, user message, two tool calls (and results), and response"
     )
@@ -214,6 +216,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
 
     agent_runs = stored_memory_data["runs"]
 
+    assert len(agent_runs) == 2
+
     assert len(agent_runs[-1]["messages"]) == 13, "Full history of messages"
 
     # Third request (to the member directly)
@@ -229,6 +233,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     assert stored_memory_data is not None, "Memory data not found in stored session."
 
     agent_runs = stored_memory_data["runs"]
+
+    assert len(agent_runs) == 3
 
     assert len(agent_runs[-1]["messages"]) == 15, "Full history of messages"
 
@@ -304,7 +310,7 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     # Define user and session IDs
     user_id = "user_1@example.com"
     session_id = "session_123"
-
+    
     route_team.mode = "coordinate"
     route_team.members = [
         Agent(
@@ -321,7 +327,9 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
 
     # Should create a new team session and agent session
     await route_team.arun(
-        "Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id
+        "Ask both a big and a small question to your member agents. Make sure to call both agents.",
+        user_id=user_id,
+        session_id=session_id,
     )
 
     team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
@@ -331,8 +339,10 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
 
     agent_sessions = agent_storage.get_all_sessions()
+
     # Single shared session for both agents
     assert len(agent_sessions) == 1
+    print(agent_sessions[0].memory)
     assert agent_sessions[0].session_id == session_id
     assert agent_sessions[0].user_id == user_id
     assert len(agent_sessions[0].memory["runs"]) == 2
