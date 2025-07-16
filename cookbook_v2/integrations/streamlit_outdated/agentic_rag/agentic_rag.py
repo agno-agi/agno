@@ -14,32 +14,28 @@ The agent can:
 Example queries to try:
 - "What are the key points from this document?"
 - "Can you summarize the main arguments and supporting evidence?"
-- "What are the important statistics and findings?"
-- "How does this relate to [topic X]?"
-- "What are the limitations or gaps in this analysis?"
-- "Can you explain [concept X] in more detail?"
-- "What other sources support or contradict these claims?"
+- "Compare and contrast different viewpoints on [topic]"
 
-The agent uses:
-- Vector similarity search for relevant document retrieval
-- Conversation memory for contextual responses
-- Citation tracking for source attribution
-- Dynamic knowledge base updates
-
-View the README for instructions on how to run the application.
+Features:
+- 🔍 Advanced vector search with semantic understanding
+- 💾 Persistent memory across conversations
+- 📚 Support for multiple document formats
+- 🧠 Intelligent context retrieval
+- 💬 Natural conversation flow
+- 🔗 Source attribution and citations
 """
 
 from typing import Optional
 
 from agno.agent import Agent
-from agno.db.agent.postgres import PostgresAgentStorage
-from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.db.postgres import PostgresDb
+from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.memory import Memory
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -51,45 +47,40 @@ def get_agentic_rag_agent(
     session_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Agent:
-    """Get an Agentic RAG Agent with Memory."""
-    # Parse model provider and name
-    provider, model_name = model_id.split(":")
-
-    # Select appropriate model class based on provider
-    if provider == "openai":
-        model = OpenAIChat(id=model_name)
-    elif provider == "google":
-        model = Gemini(id=model_name)
-    elif provider == "anthropic":
-        model = Claude(id=model_name)
-    elif provider == "groq":
-        model = Groq(id=model_name)
-    else:
-        raise ValueError(f"Unsupported model provider: {provider}")
-    # Define persistent memory for chat history
-
-    # Define the knowledge base
+    """Get an Agentic RAG Agent with knowledge base and persistent memory."""
+    
+    # Create the new Knowledge system with vector store
     knowledge_base = Knowledge(
-        vector_db=PgVector(
+        name="Agentic RAG Knowledge Base",
+        description="Knowledge base for agentic RAG application",
+        vector_store=PgVector(
             db_url=db_url,
             table_name="agentic_rag_documents",
             schema="ai",
-            # Use OpenAI embeddings
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
-        max_results=3,  # Retrieve 3 most relevant documents
+        max_results=10,
     )
 
-    # Create the Agent
-    return Agent(
-        name="agentic_rag_agent",
-        session_id=session_id,  # Track session ID for persistent conversations
+    memory = Memory(
+        db=PostgresDb(
+            db_url=db_url,
+            session_table="sessions",
+            db_schema="ai",
+        )
+    )
+
+    agent = Agent(
+        name="Agentic RAG Agent",
+        model=_get_model(model_id),
+        agent_id="agentic-rag-agent",
         user_id=user_id,
-        model=model,
-        storage=PostgresAgentStorage(
-            table_name="agentic_rag_agent_sessions", db_url=db_url
-        ),  # Persist session data
-        knowledge=knowledge_base,  # Add knowledge base
+        memory=memory,
+        knowledge=knowledge_base,
+        search_knowledge=True,
+        add_history_to_messages=True,
+        num_history_runs=10,
+        session_id=session_id,
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
         instructions=[
             "1. Knowledge Base Search:",
@@ -118,13 +109,35 @@ def get_agentic_rag_agent(
             "   - Suggest alternative approaches or questions",
             "   - Be transparent about limitations in available information",
         ],
-        search_knowledge=True,  # This setting gives the model a tool to search the knowledge base for information
-        read_chat_history=True,  # This setting gives the model a tool to get chat history
-        tools=[DuckDuckGoTools()],
-        markdown=True,  # This setting tells the model to format messages in markdown
-        add_history_to_context=True,  # Adds chat history to context
-        add_datetime_to_context=True,
+        show_tool_calls=True,
+        markdown=True,
+        add_datetime_to_instructions=True,
         debug_mode=debug_mode,
-        read_tool_call_history=True,
-        num_history_responses=3,
     )
+
+    return agent
+
+
+def _get_model(model_id: str):
+    """Get the model based on the model ID.
+
+    Args:
+        model_id: Model ID in the format "provider:model_name"
+
+    Returns:
+        Model instance
+    """
+    if model_id.startswith("openai:"):
+        model_name = model_id.split("openai:")[1]
+        return OpenAIChat(id=model_name)
+    elif model_id.startswith("anthropic:"):
+        model_name = model_id.split("anthropic:")[1]
+        return Claude(id=model_name)
+    elif model_id.startswith("google:"):
+        model_name = model_id.split("google:")[1]
+        return Gemini(id=model_name)
+    elif model_id.startswith("groq:"):
+        model_name = model_id.split("groq:")[1]
+        return Groq(id=model_name)
+    else:
+        return OpenAIChat(id="gpt-4o")
