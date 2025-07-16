@@ -3919,12 +3919,6 @@ class Agent:
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
 
-        if not isinstance(session, AgentSession):
-            log_warning(
-                f"Attempted to load a session of type {type(session).__name__} into an Agent, which is not supported. Skipping."
-            )
-            return
-
         from agno.utils.merge_dict import merge_dictionaries
 
         # Get the agent_id, user_id and session_id from the database
@@ -4152,10 +4146,25 @@ class Agent:
         """
         if self.storage is not None:
             # Get a single session from storage
-            self.agent_session = cast(AgentSession, self.storage.read(session_id=session_id))  # type: ignore
-            if self.agent_session is not None:
+            session = self.storage.read(session_id=session_id)
+
+            # We must ensure the session is an AgentSession before proceeding.
+            if isinstance(session, AgentSession):
+                self.agent_session = session
                 # Load the agent session
                 self.load_agent_session(session=self.agent_session)
+            elif session is not None:
+                # If we get a session from storage, but it's not an AgentSession,
+                # we should log it and not proceed with loading it into an Agent.
+                # An Agent should not operate on a TeamSession or WorkflowSession.
+                log_warning(
+                    f"Retrieved a session of type {type(session).__name__} from storage, but an AgentSession was expected. "
+                    f"The agent state will not be loaded from this session."
+                )
+                self.agent_session = None
+            else:
+                self.agent_session = None
+
         return self.agent_session
 
     def write_to_storage(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
