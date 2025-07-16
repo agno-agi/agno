@@ -4,16 +4,6 @@
 
 A multi-stage AI-powered research workflow agent that automates comprehensive web research, analysis, and report generation using Agno, Scrapegraph, and Nebius AI.
 
-
-## Features
-
-- **Multi-Stage Research Workflow**: Automated pipeline for searching, analyzing, and reporting
-- **Web Scraping**: Advanced data extraction with Scrapegraph
-- **AI-Powered Analysis**: Uses Nebius AI for intelligent synthesis
-- **Streamlit Web UI**: Modern, interactive interface
-- **MCP Server**: Model Context Protocol server for integration
-- **Command-Line Support**: Run research tasks directly from the terminal
-
 ## How It Works
 
 ![Workflow](./assets/workflow.gif)
@@ -22,56 +12,31 @@ A multi-stage AI-powered research workflow agent that automates comprehensive we
 2. **Analyst**: Synthesizes, interprets, and organizes the research findings, highlighting key insights and trends.
 3. **Writer**: Crafts a clear, structured, and actionable report, including references and recommendations.
 
-> **Workflow:**
->
-> - Input a research topic or question
-> - The agent orchestrates web search, analysis, and report writing in sequence
-> - Results are presented in a user-friendly format (web or CLI)
-
-
-## Prerequisites
-
-- Python 3.10+
-- [uv](https://github.com/astral-sh/uv) for dependency management
-- API keys for [Nebius AI](https://dub.sh/nebius) and [Scrapegraph](https://dub.sh/scrapegraphai)
-
-
 
 ## Installation
 
-Follow these steps to set up the **Deep Researcher Agent** on your machine:
+> Note: Fork and clone this repository if needed
 
-1. **Install `uv`** (if you don’t have it):
+### 1. Create a virtual environment
 
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
+```shell
+python3 -m venv .venv
+source .venv/bin/activate
+```
 
-2. **Clone the repository:**
+### 2. Install dependencies
 
-   ```bash
-   git clone https://github.com/Arindam200/awesome-ai-apps.git
-   ```
+```shell
+pip install -r cookbook/examples/streamlit_apps/agentic_rag/requirements.txt
+```
 
-3. **Navigate to the Deep Researcher Agent directory:**
+### 3. Configure API Keys
 
-   ```bash
-   cd awesome-ai-apps/advance_ai_agents/deep_researcher_agent
-   ```
-
-4. **Install all dependencies:**
-
-   ```bash
-   uv sync
-   ```
-
-## Environment Setup
-
-Create a `.env` file in the project root with your API keys:
-
-```env
-NEBIUS_API_KEY=your_nebius_api_key_here
-SGAI_API_KEY=your_scrapegraph_api_key_here
+Required:
+```bash
+export OPENAI_API_KEY=your_openai_key_here
+export NEBIUS_API_KEY=your_nebius_api_key_here
+export SGAI_API_KEY=your_scrapegraph_api_key_here
 ```
 
 
@@ -95,18 +60,6 @@ What it looks like:
 
 ![demo](./assets/demo.png)
 
-### Command Line
-
-Run research directly from the command line:
-
-```bash
-uv run python agents.py
-```
-
-What it looks like:
-
-![Terminal Demo](./assets/terminal-demo.png)
-
 ### MCP Server
 
 Add the following configuration to your .cursor/mcp.json or Claude/claude_desktop_config.json file (adjust paths and API keys as needed):
@@ -118,7 +71,7 @@ Add the following configuration to your .cursor/mcp.json or Claude/claude_deskto
       "command": "python",
       "args": [
         "--directory",
-        "/Your/Path/to/directory/awesome-ai-apps/advance_ai_agents/deep_researcher_agent",
+        "/Your/Path/to/directory/cookbook/examples/streamlit_apps/deep_researcher/server.py",
         "run",
         "server.py"
       ],
@@ -135,59 +88,16 @@ This allows tools like Claude Desktop to manage and launch the MCP server automa
 
 ![Claude Desktop Demo](./assets/mcp-demo.png)
 
-
-
-## Project Structure
-
-```
-deep_researcher_agent/
-├── app.py              # Streamlit web interface
-├── agents.py           # Core agent workflow
-├── server.py           # MCP server
-├── assets/             # Static assets (images)
-├── pyproject.toml      # Project configuration
-└── README.md           # This file
-```
-
----
-
-## Development
-
-### Code Formatting
-
-```bash
-uv run black .
-uv run isort .
-```
-
-### Type Checking
-
-```bash
-uv run mypy .
-```
-
-### Testing
-
-```bash
-uv run pytest
-```
-
----
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request or open an issue.
 
----
+## 📚 Documentation
 
-## Acknowledgments
+For more detailed information:
+- [Agno Documentation](https://docs.agno.com)
+- [Streamlit Documentation](https://docs.streamlit.io)
 
-- [Agno](https://www.agno.com/) for agent orchestration
-- [Scrapegraph](https://dub.sh/scrapegraphai) for web scraping
-- [Nebius AI Studio](https://studio.nebius.com/) for AI model access
-- [Streamlit](https://streamlit.io/) for the web interface
+## 🤝 Support
 
-
-## Author
-
-Developed with ❤️ by [Arindam Majumder](https://www.youtube.com/c/Arindam_1729)
+Need help? Join our [Discord community](https://agno.link/discord)

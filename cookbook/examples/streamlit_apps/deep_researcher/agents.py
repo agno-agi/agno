@@ -1,4 +1,3 @@
-import os
 from typing import Iterator
 
 from agno.agent import Agent
