@@ -1,10 +1,11 @@
 from agno.agent import Agent
-from agno.db.agent.sqlite import SqliteAgentStorage
+
+# from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.clickhouse import Clickhouse
 
 agent = Agent(
-    storage=SqliteAgentStorage(table_name="recipe_agent"),
+    # storage=SqliteAgentStorage(table_name="recipe_agent"),
     knowledge=PDFUrlKnowledgeBase(
         urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
         vector_db=Clickhouse(

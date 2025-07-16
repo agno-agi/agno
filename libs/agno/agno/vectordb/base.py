@@ -106,3 +106,7 @@ class VectorDb(ABC):
     @abstractmethod
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_content_id(self, content_id: str) -> bool:
+        raise NotImplementedError

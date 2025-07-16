@@ -1135,7 +1135,6 @@ class MongoDb(VectorDb):
         else:
             return obj
 
-
     def delete_by_id(self, id: str) -> bool:
         pass
 

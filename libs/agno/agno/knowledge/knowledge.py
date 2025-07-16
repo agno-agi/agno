@@ -346,10 +346,6 @@ class Knowledge:
                     completed = False
                     self._update_content(content)
 
-            # Add to document store if available
-            if self.store:
-                self.store.add_content(id, content)
-
         else:
             content.status = "Failed"
             content.status_message = "No content provided"
@@ -623,15 +619,10 @@ class Knowledge:
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id)
 
-        if self.store is not None:
-            self.store.delete_content(content_id)
-
         if self.vector_store is not None:
             self.vector_store.delete_by_content_id(content_id)
 
     def remove_all_content(self):
-        if self.store is not None:
-            self.store.delete_all_content()
         contents, _ = self.get_content()
         for content in contents:
             self.remove_content_by_id(content.id)
