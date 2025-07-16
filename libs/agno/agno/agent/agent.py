@@ -4179,10 +4179,10 @@ class Agent:
         if not self.storage:
             return
 
-        agent_session_from_db = self.storage.read(session_id=session_id) # type: ignore
+        agent_session_from_db = self.storage.read(session_id=session_id)  # type: ignore
         if (
             agent_session_from_db is not None
-            and agent_session_from_db.memory is not None # type: ignore
+            and agent_session_from_db.memory is not None  # type: ignore
             and "runs" in agent_session_from_db.memory  # type: ignore
         ):
             if isinstance(self.memory, AgentMemory):
