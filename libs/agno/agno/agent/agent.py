@@ -3921,8 +3921,6 @@ class Agent:
 
         from agno.utils.merge_dict import merge_dictionaries
 
-        session = cast(AgentSession, session)  # type: ignore
-
         # Get the agent_id, user_id and session_id from the database
         if self.agent_id is None and session.agent_id is not None:
             self.agent_id = session.agent_id
@@ -4045,7 +4043,7 @@ class Agent:
             else:
                 raise TypeError(f"Expected memory to be a dict or AgentMemory, but got {type(self.memory)}")
 
-        if session.memory is not None:  # type: ignore
+        if session.memory is not None: # type: ignore
             if isinstance(self.memory, AgentMemory):
                 try:
                     if "runs" in session.memory:
