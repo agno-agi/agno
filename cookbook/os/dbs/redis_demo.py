@@ -55,7 +55,6 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    name="Example App: Basic Agent",
     description="Example app for basic agent with playground capabilities",
     os_id="basic-app",
     agents=[agent],

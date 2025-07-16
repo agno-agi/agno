@@ -7,7 +7,7 @@ from agno.db.base import BaseDb
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
-from agno.os.managers.eval.schemas import EvalRunInput, EvalSchema
+from agno.os.apps.eval.schemas import EvalRunInput, EvalSchema
 from agno.team.team import Team
 
 

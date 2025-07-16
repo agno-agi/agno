@@ -36,7 +36,6 @@ basic_agent = Agent(
 )
 
 agent_os = AgentOS(
-    name="Example App: Knowledge Agent",
     description="Example app for basic agent with knowledge capabilities",
     os_id="knowledge-demo",
     agents=[
@@ -53,4 +52,4 @@ if __name__ == "__main__":
     - http://localhost:8001/knowledge/{id}/documents?agent_id=123
     - http://localhost:8001/knowledge/{id}/documents?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
-    agent_os.serve(app="knowledge_manager:app", reload=True)
+    agent_os.serve(app="knowledge_demo:app", reload=True)

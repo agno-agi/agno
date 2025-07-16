@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
-from agno.os.managers.eval.schemas import (
+from agno.os.apps.eval.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
     UpdateEvalRunRequest,
 )
-from agno.os.managers.eval.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.apps.eval.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
+from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.utils import get_agent_by_id, get_team_by_id
 from agno.team.team import Team
 

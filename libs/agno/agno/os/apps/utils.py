@@ -1,4 +1,4 @@
-"""Logic and classes shared across managers"""
+"""Logic and classes shared across apps"""
 
 from enum import Enum
 from typing import Generic, List, Optional, TypeVar

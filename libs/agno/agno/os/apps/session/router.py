@@ -3,7 +3,7 @@ from typing import List, Optional, Union
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.schema import (
     AgentSessionDetailSchema,
     DeleteSessionRequest,

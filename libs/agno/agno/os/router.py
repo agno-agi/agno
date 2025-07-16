@@ -9,7 +9,7 @@ from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,

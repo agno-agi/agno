@@ -7,8 +7,8 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path,
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
-from agno.os.managers.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.apps.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
+from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.utils.log import log_info
 
 

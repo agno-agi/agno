@@ -46,7 +46,6 @@ agno_agent = Agent(
 
 # Create the AgentOS
 agent_os = AgentOS(
-    name="Demo AgentOS",
     os_id="agentos-demo",
     agents=[agno_agent],
     interfaces=[Whatsapp(agent=agno_agent)],

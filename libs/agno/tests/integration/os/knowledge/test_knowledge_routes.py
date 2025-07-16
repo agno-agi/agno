@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.knowledge.router import attach_routes
+from agno.os.apps.knowledge.router import attach_routes
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ class TestKnowledgeContentEndpoints:
     def test_upload_content_success(self, test_app, mock_knowledge, mock_content):
         """Test successful content upload."""
         # Mock the background task processing
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:  # Fixed import path
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:  # Fixed import path
             # Create test file
             test_file_content = b"test file content"
             test_file = BytesIO(test_file_content)
@@ -80,7 +80,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_with_url(self, test_app, mock_knowledge):
         """Test content upload with URL."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={
@@ -98,7 +98,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_invalid_json(self, test_app, mock_knowledge):
         """Test content upload with invalid JSON metadata."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={
@@ -254,7 +254,7 @@ class TestBackgroundTaskProcessing:
 
     def test_process_content_success(self, mock_knowledge, mock_content):
         """Test successful content processing."""
-        from agno.os.managers.knowledge.router import process_content
+        from agno.os.apps.knowledge.router import process_content
 
         content_id = str(uuid4())
         reader_id = "text_reader"
@@ -278,7 +278,7 @@ class TestBackgroundTaskProcessing:
 
     def test_process_content_with_exception(self, mock_knowledge, mock_content):
         """Test content processing with exception."""
-        from agno.os.managers.knowledge.router import process_content
+        from agno.os.apps.knowledge.router import process_content
 
         content_id = str(uuid4())
         reader_id = "test_reader"
@@ -294,7 +294,7 @@ class TestFileUploadScenarios:
 
     def test_upload_large_file(self, test_app, mock_knowledge):
         """Test uploading a large file."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             # Create a large file content
             large_content = b"x" * (10 * 1024 * 1024)  # 10MB
             test_file = BytesIO(large_content)
@@ -309,7 +309,7 @@ class TestFileUploadScenarios:
 
     def test_upload_without_file(self, test_app, mock_knowledge):
         """Test uploading content without a file."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
@@ -321,7 +321,7 @@ class TestFileUploadScenarios:
 
     def test_upload_with_special_characters(self, test_app, mock_knowledge):
         """Test uploading content with special characters in metadata."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             special_metadata = {"special_chars": "!@#$%^&*()", "unicode": "测试内容", "quotes": '{"nested": "value"}'}
 
             response = test_app.post(
