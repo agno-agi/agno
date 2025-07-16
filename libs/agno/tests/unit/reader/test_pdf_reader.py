@@ -13,16 +13,16 @@ Key Features:
 Usage:
     # Run all tests with timing output
     pytest libs/agno/tests/unit/reader/test_pdf_reader.py -v -s
-    
+
     # Run only performance comparison tests
     pytest libs/agno/tests/unit/reader/test_pdf_reader.py -k "performance" -v -s
-    
+
     # Run only text-based tests (skip image reader tests)
     pytest libs/agno/tests/unit/reader/test_pdf_reader.py -k "not image" -v -s
 
 Performance Results (typical):
 - Local file reading: Async is ~1.02-1.09x faster than sync
-- URL-based reading: Async is ~1.03-1.06x faster than sync  
+- URL-based reading: Async is ~1.03-1.06x faster than sync
 - Concurrent operations: ~1.03x faster than sequential operations
 - The performance improvement is more noticeable with network operations
   due to async I/O benefits.
@@ -76,16 +76,14 @@ def sample_pdf_path(tmp_path_factory) -> Path:
         Path(__file__).parent.parent.parent.parent.parent / "storage" / "stringart.pdf",  # Relative to test file
         Path("storage") / "stringart.pdf",  # Relative to current directory
     ]
-    
+
     for pdf_path in possible_paths:
         if pdf_path.exists():
             print(f"Using PDF file: {pdf_path}")
             return pdf_path
-    
+
     # If no file found, raise an error with helpful information
-    raise FileNotFoundError(
-        f"PDF file 'stringart.pdf' not found. Tried paths: {[str(p) for p in possible_paths]}"
-    )
+    raise FileNotFoundError(f"PDF file 'stringart.pdf' not found. Tried paths: {[str(p) for p in possible_paths]}")
 
 
 @pytest.fixture(scope="session")
@@ -204,16 +202,16 @@ def test_pdf_url_reader_invalid_url():
 @pytest.mark.asyncio
 async def test_async_pdf_processing(sample_pdf_path):
     reader = PDFReader()
-    
+
     # Time concurrent async operations
     start_time = time.perf_counter()
     tasks = [reader.async_read(sample_pdf_path) for _ in range(3)]
     results = await asyncio.gather(*tasks)
     end_time = time.perf_counter()
     concurrent_time = end_time - start_time
-    
+
     print(f"Concurrent async operations took {concurrent_time:.4f} seconds")
-    
+
     # Time sequential sync operations for comparison
     start_time = time.perf_counter()
     sync_results = []
@@ -222,9 +220,9 @@ async def test_async_pdf_processing(sample_pdf_path):
         sync_results.append(sync_docs)
     end_time = time.perf_counter()
     sequential_time = end_time - start_time
-    
+
     print(f"Sequential sync operations took {sequential_time:.4f} seconds")
-    print(f"Performance improvement: {sequential_time/concurrent_time:.2f}x faster with async")
+    print(f"Performance improvement: {sequential_time / concurrent_time:.2f}x faster with async")
 
     assert len(results) == 3
     assert all(len(docs) > 0 for docs in results)
@@ -236,17 +234,17 @@ async def test_async_pdf_processing(sample_pdf_path):
 def test_pdf_reader_performance_comparison(sample_pdf_path):
     """Test to compare sync vs async performance for PDF reading."""
     reader = PDFReader()
-    
+
     # Time sync operation
     print("\n=== PDF Reader Performance Comparison ===")
     documents_sync, sync_time = time_sync_operation(reader.read, sample_pdf_path)
-    
+
     # Time async operation
     async def run_async():
         return await reader.async_read(sample_pdf_path)
-    
+
     documents_async, async_time = asyncio.run(time_async_operation(run_async))
-    
+
     # Calculate performance difference
     if sync_time > async_time:
         improvement = sync_time / async_time
@@ -254,10 +252,10 @@ def test_pdf_reader_performance_comparison(sample_pdf_path):
     else:
         improvement = async_time / sync_time
         print(f"Sync is {improvement:.2f}x faster than async")
-    
+
     print(f"Sync time: {sync_time:.4f}s, Async time: {async_time:.4f}s")
     print("=" * 50)
-    
+
     # Verify both operations produce the same results
     assert len(documents_sync) == len(documents_async)
     assert sync_time > 0 and async_time > 0
@@ -268,17 +266,17 @@ async def test_concurrent_vs_sequential_performance(sample_pdf_path):
     """Test to compare concurrent async operations vs sequential sync operations."""
     reader = PDFReader()
     num_operations = 5
-    
+
     print(f"\n=== Concurrent vs Sequential Performance ({num_operations} operations) ===")
-    
+
     # Time concurrent async operations
     start_time = time.perf_counter()
     tasks = [reader.async_read(sample_pdf_path) for _ in range(num_operations)]
     concurrent_results = await asyncio.gather(*tasks)
     concurrent_time = time.perf_counter() - start_time
-    
+
     print(f"Concurrent async operations: {concurrent_time:.4f}s")
-    
+
     # Time sequential sync operations
     start_time = time.perf_counter()
     sequential_results = []
@@ -286,9 +284,9 @@ async def test_concurrent_vs_sequential_performance(sample_pdf_path):
         result = reader.read(sample_pdf_path)
         sequential_results.append(result)
     sequential_time = time.perf_counter() - start_time
-    
+
     print(f"Sequential sync operations: {sequential_time:.4f}s")
-    
+
     # Calculate performance improvement
     if sequential_time > concurrent_time:
         improvement = sequential_time / concurrent_time
@@ -296,12 +294,12 @@ async def test_concurrent_vs_sequential_performance(sample_pdf_path):
     else:
         improvement = concurrent_time / sequential_time
         print(f"Sequential sync is {improvement:.2f}x faster than concurrent async")
-    
+
     print(f"Average time per operation:")
-    print(f"  Concurrent async: {concurrent_time/num_operations:.4f}s")
-    print(f"  Sequential sync: {sequential_time/num_operations:.4f}s")
+    print(f"  Concurrent async: {concurrent_time / num_operations:.4f}s")
+    print(f"  Sequential sync: {sequential_time / num_operations:.4f}s")
     print("=" * 60)
-    
+
     # Verify results
     assert len(concurrent_results) == num_operations
     assert len(sequential_results) == num_operations
@@ -313,17 +311,17 @@ async def test_concurrent_vs_sequential_performance(sample_pdf_path):
 def test_pdf_url_reader_performance_comparison(sample_pdf_url):
     """Test to compare sync vs async performance for PDF URL reading."""
     reader = PDFUrlReader()
-    
+
     # Time sync operation
     print("\n=== PDF URL Reader Performance Comparison ===")
     documents_sync, sync_time = time_sync_operation(reader.read, sample_pdf_url)
-    
+
     # Time async operation
     async def run_async():
         return await reader.async_read(sample_pdf_url)
-    
+
     documents_async, async_time = asyncio.run(time_async_operation(run_async))
-    
+
     # Calculate performance difference
     if sync_time > async_time:
         improvement = sync_time / async_time
@@ -331,10 +329,10 @@ def test_pdf_url_reader_performance_comparison(sample_pdf_url):
     else:
         improvement = async_time / sync_time
         print(f"Sync is {improvement:.2f}x faster than async")
-    
+
     print(f"Sync time: {sync_time:.4f}s, Async time: {async_time:.4f}s")
     print("=" * 50)
-    
+
     # Verify both operations produce the same results
     assert len(documents_sync) == len(documents_async)
     assert sync_time > 0 and async_time > 0

@@ -9,20 +9,16 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.knowledge.url import UrlKnowledge
 from agno.models.openai import OpenAIChat
-from agno.vectordb.lancedb import LanceDb, SearchType
+from agno.vectordb.pgvector import PgVector
 
-# Setup paths
-cwd = Path(__file__).parent
-tmp_dir = cwd.joinpath("tmp")
-tmp_dir.mkdir(parents=True, exist_ok=True)
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Initialize knowledge base
 agent_knowledge = UrlKnowledge(
     urls=["https://docs.agno.com/introduction"],
-    vector_db=LanceDb(
-        uri=str(tmp_dir.joinpath("lancedb")),
-        table_name="agno_assist_knowledge",
-        search_type=SearchType.hybrid,
+    vector_db=PgVector(
+        table_name="url_documents",
+        db_url=db_url,
     ),
 )
 

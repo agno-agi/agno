@@ -650,7 +650,7 @@ class Knowledge:
         """Add a custom reader to the knowledge base."""
         if self.readers is None:
             self.readers = {}
-        
+
         # Generate a key for the reader
         reader_key = self._generate_reader_key(reader)
         self.readers[reader_key] = reader

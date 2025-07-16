@@ -7,11 +7,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# document_store = LocalSourceStore(
-#     name="local_source_store",
-#     description="Local source store",
-#     storage_path="tmp/sources",
-# )
 
 vector_db = PgVector(
     table_name="vectors",
@@ -28,7 +23,6 @@ contents_db = PostgresDb(
 knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
-    # document_store=document_store,
     contents_db=contents_db,
     vector_store=vector_db,
 )
