@@ -4,10 +4,12 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+vector_db=PgVector(table_name="vectors", db_url=db_url)
+
 knowledge = Knowledge(
     name="My PG Vector Knowledge Base",
     description="This is a knowledge base that uses a PG Vector DB",
-    vector_store=PgVector(table_name="vectors", db_url=db_url),
+    vector_store=vector_db,
 )
 knowledge.add_content(
     name="Recipes",
@@ -15,6 +17,18 @@ knowledge.add_content(
     metadata={"doc_type": "recipe_book"},
 )
 
-knowledge.remove_vectors_by_name("Recipes")
+agent = Agent(
+    knowledge=knowledge,
+    # Show tool calls in the response
+    show_tool_calls=True,
+    # Enable the agent to search the knowledge base
+    search_knowledge=True,
+    # Enable the agent to read the chat history
+    read_chat_history=True,
+)
+
+agent.print_response("How do I make pad thai?", markdown=True)
+
+vector_db.delete_by_name("Recipes")
 # or
-knowledge.remove_vectors_by_metadata({"doc_type": "recipe_book"})
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
