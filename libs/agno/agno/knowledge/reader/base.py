@@ -2,9 +2,9 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
-from agno.document.base import Document
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document.base import Document
 
 
 @dataclass

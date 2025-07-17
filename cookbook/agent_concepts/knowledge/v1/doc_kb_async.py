@@ -1,8 +1,8 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.document.base import Document
 from agno.knowledge.document import DocumentKnowledgeBase
+from agno.knowledge.document.base import Document
 from agno.vectordb.pgvector import PgVector
 
 fun_facts = """

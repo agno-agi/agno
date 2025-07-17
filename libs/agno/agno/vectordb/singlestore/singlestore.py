@@ -13,7 +13,7 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 

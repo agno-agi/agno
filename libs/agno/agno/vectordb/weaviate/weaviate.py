@@ -17,7 +17,7 @@ try:
 except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger

@@ -12,7 +12,6 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.app.utils import generate_id
 from agno.cli.console import console
-from agno.os.interfaces.base import BaseInterface
 from agno.os.apps import (
     EvalApp,
     KnowledgeApp,
@@ -21,6 +20,7 @@ from agno.os.apps import (
     SessionApp,
 )
 from agno.os.apps.base import BaseApp
+from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team

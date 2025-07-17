@@ -1,7 +1,7 @@
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.reranker.base import Reranker
 from agno.utils.log import logger
 

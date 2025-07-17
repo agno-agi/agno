@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info
 

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_info, logger

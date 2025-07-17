@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.reranker.base import Reranker
 from agno.utils.log import logger
 

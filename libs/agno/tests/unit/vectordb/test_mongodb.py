@@ -8,7 +8,7 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.database import Database
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.mongodb import MongoDb
 
 

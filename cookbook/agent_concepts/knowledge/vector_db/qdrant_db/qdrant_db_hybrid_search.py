@@ -1,6 +1,6 @@
 import typer
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from agno.vectordb.search import SearchType
 from rich.prompt import Prompt
@@ -13,18 +13,23 @@ vector_db = Qdrant(
     search_type=SearchType.hybrid,
 )
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=vector_db,
+knowledge = Knowledge(
+    name="My Qdrant Vector Knowledge Base",
+    vector_store=vector_db,
+)
+
+knowledge.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
 )
 
 
 def qdrantdb_agent(user: str = "user"):
     agent = Agent(
         user_id=user,
-        knowledge=knowledge_base,
+        knowledge=knowledge,
         search_knowledge=True,
-        show_tool_calls=True,
     )
 
     while True:
@@ -35,7 +40,4 @@ def qdrantdb_agent(user: str = "user"):
 
 
 if __name__ == "__main__":
-    # Comment out after first run
-    knowledge_base.load(recreate=True)
-
     typer.run(qdrantdb_agent)

@@ -1,8 +1,8 @@
 import json
 from typing import Any, List, Optional, Union, cast
 
-from agno.document import Document
 from agno.knowledge.combined import CombinedKnowledgeBase
+from agno.knowledge.document import Document
 from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.tools import Toolkit
 from agno.utils.log import log_debug

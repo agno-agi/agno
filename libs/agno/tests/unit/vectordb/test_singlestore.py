@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.engine import Engine
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.distance import Distance
 from agno.vectordb.singlestore import SingleStore
 

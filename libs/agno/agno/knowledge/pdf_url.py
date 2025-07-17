@@ -1,7 +1,7 @@
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 from agno.knowledge.reader.pdf_reader import PDFUrlImageReader, PDFUrlReader
 from agno.utils.log import log_info, logger
 

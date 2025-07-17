@@ -1,7 +1,7 @@
 from typing import AsyncIterator, Iterator, List
 
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 from agno.knowledge.reader.firecrawl_reader import FirecrawlReader
 
 

@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.knowledge.reader.docx_reader import DocxReader
 
 
