@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -876,22 +876,423 @@ class DynamoDb(BaseDb):
 
     # --- Metrics ---
 
-    # TODO:
     def calculate_metrics(self) -> Optional[Any]:
+        """Calculate metrics for all dates without complete metrics.
+        
+        Returns:
+            Optional[Any]: The calculated metrics or None if no metrics table.
+        
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
         if not self.metrics_table_name:
             return None
 
         try:
-            dates_to_calculate = get_dates_to_calculate_metrics_for(self.client, self.metrics_table_name)
-
-            for date_to_calculate in dates_to_calculate:
-                metrics_data = calculate_date_metrics(self.client, self.metrics_table_name, date_to_calculate)
-
-            return True
+            from agno.db.dynamo.utils import get_dates_to_calculate_metrics_for
+            from agno.db.postgres.utils import calculate_date_metrics, get_dates_to_calculate_metrics_for as pg_get_dates
+            from agno.utils.log import log_info
+            from datetime import datetime, timezone, timedelta
+            
+            # Get starting date for metrics calculation
+            starting_date = self._get_metrics_calculation_starting_date()
+            if starting_date is None:
+                log_info("No session data found. Won't calculate metrics.")
+                return None
+                
+            # Get dates that need metrics calculation
+            dates_to_process = pg_get_dates(starting_date)
+            if not dates_to_process:
+                log_info("Metrics already calculated for all relevant dates.")
+                return None
+                
+            # Get timestamp range for session data
+            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            end_timestamp = int(
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+            )
+            
+            # Get all sessions for the date range
+            sessions = self._get_all_sessions_for_metrics_calculation(
+                start_timestamp=start_timestamp, end_timestamp=end_timestamp
+            )
+            
+            # Process session data for metrics calculation
+            from agno.db.postgres.utils import fetch_all_sessions_data
+            all_sessions_data = fetch_all_sessions_data(
+                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+            )
+            
+            if not all_sessions_data:
+                log_info("No new session data found. Won't calculate metrics.")
+                return None
+                
+            # Calculate metrics for each date
+            results = []
+            metrics_records = []
+            for date_to_process in dates_to_process:
+                date_key = date_to_process.isoformat()
+                sessions_for_date = all_sessions_data.get(date_key, {})
+                
+                # Skip dates with no sessions
+                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+                    continue
+                    
+                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                metrics_records.append(metrics_record)
+                
+            # Store metrics in DynamoDB
+            if metrics_records:
+                results = self._bulk_upsert_metrics(metrics_records)
+                
+            return results
 
         except Exception as e:
             log_error(f"Failed to calculate metrics: {e}")
             return None
+    
+    def _get_metrics_calculation_starting_date(self) -> Optional[date]:
+        """Get the first date for which metrics calculation is needed:
+        1. If there are metrics records, return the date of the first day without a complete metrics record.
+        2. If there are no metrics records, return the date of the first recorded session.
+        3. If there are no metrics records and no sessions records, return None.
+        
+        Returns:
+            Optional[date]: The starting date for which metrics calculation is needed.
+        """
+        try:
+            metrics_table_name = self._get_table("metrics")
+            
+            # 1. Check for existing metrics records
+            response = self.client.scan(
+                TableName=metrics_table_name,
+                ProjectionExpression="#date, completed",
+                ExpressionAttributeNames={"#date": "date"},
+                Limit=1000  # Get reasonable number of records to find incomplete ones
+            )
+            
+            metrics_items = response.get("Items", [])
+            
+            # Handle pagination to get all metrics records
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(
+                    TableName=metrics_table_name,
+                    ProjectionExpression="#date, completed",
+                    ExpressionAttributeNames={"#date": "date"},
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                    Limit=1000
+                )
+                metrics_items.extend(response.get("Items", []))
+            
+            if metrics_items:
+                # Find the latest date with metrics
+                latest_complete_date = None
+                incomplete_dates = []
+                
+                for item in metrics_items:
+                    metrics_data = deserialize_from_dynamodb_item(item)
+                    record_date = datetime.fromisoformat(metrics_data["date"]).date()
+                    is_completed = metrics_data.get("completed", False)
+                    
+                    if is_completed:
+                        if latest_complete_date is None or record_date > latest_complete_date:
+                            latest_complete_date = record_date
+                    else:
+                        incomplete_dates.append(record_date)
+                
+                # Return the earliest incomplete date, or the day after the latest complete date
+                if incomplete_dates:
+                    return min(incomplete_dates)
+                elif latest_complete_date:
+                    return latest_complete_date + timedelta(days=1)
+            
+            # 2. No metrics records. Return the date of the first recorded session.
+            sessions_table_name = self._get_table("sessions")
+            
+            earliest_session_date = None
+            for session_type in ["agent", "team", "workflow"]:
+                response = self.client.query(
+                    TableName=sessions_table_name,
+                    IndexName="session_type-created_at-index",
+                    KeyConditionExpression="session_type = :session_type",
+                    ExpressionAttributeValues={":session_type": {"S": session_type}},
+                    ScanIndexForward=True,  # Ascending order to get earliest
+                    Limit=1
+                )
+                
+                items = response.get("Items", [])
+                if items:
+                    first_session = deserialize_from_dynamodb_item(items[0])
+                    first_session_timestamp = first_session.get("created_at")
+                    
+                    if first_session_timestamp:
+                        session_date = datetime.fromtimestamp(first_session_timestamp, tz=timezone.utc).date()
+                        if earliest_session_date is None or session_date < earliest_session_date:
+                            earliest_session_date = session_date
+            
+            # 3. Return the earliest session date or None if no sessions exist
+            return earliest_session_date
+            
+        except Exception as e:
+            log_error(f"Failed to get metrics calculation starting date: {e}")
+            return None
+    
+    def _get_all_sessions_for_metrics_calculation(self, start_timestamp: int, end_timestamp: int) -> List[Dict[str, Any]]:
+        """Get all sessions within a timestamp range for metrics calculation.
+        
+        Args:
+            start_timestamp: Start timestamp (inclusive)
+            end_timestamp: End timestamp (exclusive)
+            
+        Returns:
+            List[Dict[str, Any]]: List of session data dictionaries
+        """
+        try:
+            table_name = self._get_table("sessions")
+            all_sessions = []
+            
+            # Query sessions by different types within the time range
+            for session_type in ["agent", "team", "workflow"]:
+                response = self.client.query(
+                    TableName=table_name,
+                    IndexName="session_type-created_at-index",
+                    KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
+                    ExpressionAttributeValues={
+                        ":session_type": {"S": session_type},
+                        ":start_ts": {"N": str(start_timestamp)},
+                        ":end_ts": {"N": str(end_timestamp)}
+                    }
+                )
+                
+                items = response.get("Items", [])
+                
+                # Handle pagination
+                while "LastEvaluatedKey" in response:
+                    response = self.client.query(
+                        TableName=table_name,
+                        IndexName="session_type-created_at-index",
+                        KeyConditionExpression="session_type = :session_type AND created_at BETWEEN :start_ts AND :end_ts",
+                        ExpressionAttributeValues={
+                            ":session_type": {"S": session_type},
+                            ":start_ts": {"N": str(start_timestamp)},
+                            ":end_ts": {"N": str(end_timestamp)}
+                        },
+                        ExclusiveStartKey=response["LastEvaluatedKey"]
+                    )
+                    items.extend(response.get("Items", []))
+                
+                # Deserialize sessions
+                for item in items:
+                    session_data = deserialize_from_dynamodb_item(item)
+                    if session_data:
+                        all_sessions.append(session_data)
+            
+            return all_sessions
+            
+        except Exception as e:
+            log_error(f"Failed to get sessions for metrics calculation: {e}")
+            return []
+    
+    def _bulk_upsert_metrics(self, metrics_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Bulk upsert metrics records into DynamoDB with proper deduplication.
+        
+        Args:
+            metrics_records: List of metrics records to upsert
+            
+        Returns:
+            List[Dict[str, Any]]: List of upserted records
+        """
+        try:
+            table_name = self._get_table("metrics")
+            results = []
+            
+            # Process each record individually to handle proper upsert
+            for record in metrics_records:
+                upserted_record = self._upsert_single_metrics_record(table_name, record)
+                if upserted_record:
+                    results.append(upserted_record)
+            
+            return results
+            
+        except Exception as e:
+            log_error(f"Failed to bulk upsert metrics: {e}")
+            return []
+    
+    def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Upsert a single metrics record, checking for existing records with the same date.
+        
+        Args:
+            table_name: The DynamoDB table name
+            record: The metrics record to upsert
+            
+        Returns:
+            Optional[Dict[str, Any]]: The upserted record or None if failed
+        """
+        try:
+            date_str = record.get("date")
+            if not date_str:
+                log_error("Metrics record missing date field")
+                return None
+                
+            # Convert date object to string if needed
+            if hasattr(date_str, "isoformat"):
+                date_str = date_str.isoformat()
+            
+            # Check if a record already exists for this date
+            existing_record = self._get_existing_metrics_record(table_name, date_str)
+            
+            if existing_record:
+                # Update existing record
+                return self._update_existing_metrics_record(table_name, existing_record, record)
+            else:
+                # Create new record
+                return self._create_new_metrics_record(table_name, record)
+                
+        except Exception as e:
+            log_error(f"Failed to upsert single metrics record: {e}")
+            return None
+    
+    def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
+        """Get existing metrics record for a given date.
+        
+        Args:
+            table_name: The DynamoDB table name
+            date_str: The date string to search for
+            
+        Returns:
+            Optional[Dict[str, Any]]: The existing record or None if not found
+        """
+        try:
+            # Query using the date-aggregation_period-index
+            response = self.client.query(
+                TableName=table_name,
+                IndexName="date-aggregation_period-index",
+                KeyConditionExpression="#date = :date AND aggregation_period = :period",
+                ExpressionAttributeNames={"#date": "date"},
+                ExpressionAttributeValues={
+                    ":date": {"S": date_str},
+                    ":period": {"S": "daily"}
+                },
+                Limit=1
+            )
+            
+            items = response.get("Items", [])
+            if items:
+                return deserialize_from_dynamodb_item(items[0])
+            return None
+            
+        except Exception as e:
+            log_error(f"Failed to get existing metrics record for date {date_str}: {e}")
+            return None
+    
+    def _update_existing_metrics_record(self, table_name: str, existing_record: Dict[str, Any], new_record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing metrics record.
+        
+        Args:
+            table_name: The DynamoDB table name
+            existing_record: The existing record
+            new_record: The new record data
+            
+        Returns:
+            Optional[Dict[str, Any]]: The updated record or None if failed
+        """
+        try:
+            # Use the existing record's ID
+            new_record["id"] = existing_record["id"]
+            new_record["updated_at"] = int(time.time())
+            
+            # Prepare and serialize the record
+            prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
+            item = self._serialize_metrics_to_dynamo_item(prepared_record)
+            
+            # Update the record
+            self.client.put_item(TableName=table_name, Item=item)
+            
+            return new_record
+            
+        except Exception as e:
+            log_error(f"Failed to update existing metrics record: {e}")
+            return None
+    
+    def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create a new metrics record.
+        
+        Args:
+            table_name: The DynamoDB table name
+            record: The record to create
+            
+        Returns:
+            Optional[Dict[str, Any]]: The created record or None if failed
+        """
+        try:
+            # Prepare and serialize the record
+            prepared_record = self._prepare_metrics_record_for_dynamo(record)
+            item = self._serialize_metrics_to_dynamo_item(prepared_record)
+            
+            # Create the record
+            self.client.put_item(TableName=table_name, Item=item)
+            
+            return record
+            
+        except Exception as e:
+            log_error(f"Failed to create new metrics record: {e}")
+            return None
+    
+    def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare a metrics record for DynamoDB serialization by converting all data types properly.
+        
+        Args:
+            record: The metrics record to prepare
+            
+        Returns:
+            Dict[str, Any]: The prepared record ready for DynamoDB serialization
+        """
+        def convert_value(value):
+            """Recursively convert values to DynamoDB-compatible types."""
+            if value is None:
+                return None
+            elif isinstance(value, bool):
+                return value
+            elif isinstance(value, (int, float)):
+                return value
+            elif isinstance(value, str):
+                return value
+            elif hasattr(value, "isoformat"):  # date/datetime objects
+                return value.isoformat()
+            elif isinstance(value, dict):
+                return {k: convert_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [convert_value(item) for item in value]
+            else:
+                return str(value)
+        
+        return {key: convert_value(value) for key, value in record.items()}
+    
+    def _serialize_metrics_to_dynamo_item(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize metrics data to DynamoDB item format with proper boolean handling.
+        
+        Args:
+            data: The metrics data to serialize
+            
+        Returns:
+            Dict[str, Any]: DynamoDB-ready item
+        """
+        import json
+        
+        item = {}
+        for key, value in data.items():
+            if value is not None:
+                if isinstance(value, bool):
+                    item[key] = {"BOOL": value}
+                elif isinstance(value, (int, float)):
+                    item[key] = {"N": str(value)}
+                elif isinstance(value, str):
+                    item[key] = {"S": value}
+                elif isinstance(value, (dict, list)):
+                    item[key] = {"S": json.dumps(value)}
+                else:
+                    item[key] = {"S": str(value)}
+        return item
 
     def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
