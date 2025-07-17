@@ -4057,7 +4057,7 @@ class Agent:
                 self.memory = AgentMemory(**self.memory)
                 # Convert dict to Memory
             elif isinstance(self.memory, dict):
-                memory_dict = self.memory
+                memory_dict = self.memory.copy()
                 memory_dict.pop("runs")
                 self.memory = Memory(**memory_dict)
             else:
