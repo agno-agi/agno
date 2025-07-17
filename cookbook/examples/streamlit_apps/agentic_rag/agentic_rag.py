@@ -33,8 +33,8 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge import AgentKnowledge
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq

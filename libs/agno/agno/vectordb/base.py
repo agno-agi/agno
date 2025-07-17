@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from agno.document import Document
+from agno.knowledge.document import Document
 
 
 class VectorDb(ABC):
@@ -96,5 +96,17 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_by_content_id(self, id: str) -> bool:
+    def delete_by_id(self, id: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_name(self, name: str) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_content_id(self, content_id: str) -> bool:
         raise NotImplementedError

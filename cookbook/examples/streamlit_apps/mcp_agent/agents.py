@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
-from agno.embedder.openai import OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.url import UrlKnowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini

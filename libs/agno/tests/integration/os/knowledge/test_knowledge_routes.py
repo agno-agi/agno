@@ -9,9 +9,9 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from agno.knowledge.content import Content, ContentData
+from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.os.managers.knowledge.router import attach_routes
+from agno.os.apps.knowledge.router import attach_routes
 
 
 @pytest.fixture
@@ -26,12 +26,12 @@ def mock_knowledge():
 @pytest.fixture
 def mock_content():
     """Create a mock Content instance."""
-    content_data = ContentData(content=b"test content", type="text/plain")
+    file_data = FileData(content=b"test content", type="text/plain")
     return Content(
         id=str(uuid4()),
         name="test_content",
         description="Test content description",
-        content_data=content_data,
+        file_data=file_data,
         size=len(b"test content"),
         status="Completed",
         created_at=1234567890,
@@ -54,7 +54,7 @@ class TestKnowledgeContentEndpoints:
     def test_upload_content_success(self, test_app, mock_knowledge, mock_content):
         """Test successful content upload."""
         # Mock the background task processing
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:  # Fixed import path
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:  # Fixed import path
             # Create test file
             test_file_content = b"test file content"
             test_file = BytesIO(test_file_content)
@@ -80,7 +80,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_with_url(self, test_app, mock_knowledge):
         """Test content upload with URL."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={
@@ -98,7 +98,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_invalid_json(self, test_app, mock_knowledge):
         """Test content upload with invalid JSON metadata."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={
@@ -254,7 +254,7 @@ class TestBackgroundTaskProcessing:
 
     def test_process_content_success(self, mock_knowledge, mock_content):
         """Test successful content processing."""
-        from agno.os.managers.knowledge.router import process_content
+        from agno.os.apps.knowledge.router import process_content
 
         content_id = str(uuid4())
         reader_id = "text_reader"
@@ -263,8 +263,8 @@ class TestBackgroundTaskProcessing:
         mock_reader = Mock()
         mock_knowledge.readers = {"text_reader": mock_reader}
 
-        # Mock the knowledge._add_content_from_api method
-        with patch.object(mock_knowledge, "_add_content_from_api") as mock_add:
+        # Mock the knowledge.process_content method
+        with patch.object(mock_knowledge, "process_content") as mock_add:
             # Call the function
             process_content(mock_knowledge, content_id, mock_content, reader_id)
 
@@ -278,13 +278,13 @@ class TestBackgroundTaskProcessing:
 
     def test_process_content_with_exception(self, mock_knowledge, mock_content):
         """Test content processing with exception."""
-        from agno.os.managers.knowledge.router import process_content
+        from agno.os.apps.knowledge.router import process_content
 
         content_id = str(uuid4())
         reader_id = "test_reader"
 
-        # Mock the knowledge._add_content_from_api method to raise an exception
-        with patch.object(mock_knowledge, "_add_content_from_api", side_effect=Exception("Test error")):
+        # Mock the knowledge.process_content method to raise an exception
+        with patch.object(mock_knowledge, "process_content", side_effect=Exception("Test error")):
             # Should not raise an exception
             process_content(mock_knowledge, content_id, mock_content, reader_id)
 
@@ -294,7 +294,7 @@ class TestFileUploadScenarios:
 
     def test_upload_large_file(self, test_app, mock_knowledge):
         """Test uploading a large file."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             # Create a large file content
             large_content = b"x" * (10 * 1024 * 1024)  # 10MB
             test_file = BytesIO(large_content)
@@ -309,7 +309,7 @@ class TestFileUploadScenarios:
 
     def test_upload_without_file(self, test_app, mock_knowledge):
         """Test uploading content without a file."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             response = test_app.post(
                 "/content",
                 data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
@@ -321,7 +321,7 @@ class TestFileUploadScenarios:
 
     def test_upload_with_special_characters(self, test_app, mock_knowledge):
         """Test uploading content with special characters in metadata."""
-        with patch("agno.os.managers.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
             special_metadata = {"special_chars": "!@#$%^&*()", "unicode": "测试内容", "quotes": '{"nested": "value"}'}
 
             response = test_app.post(

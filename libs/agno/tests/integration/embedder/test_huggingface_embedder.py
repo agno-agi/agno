@@ -1,6 +1,6 @@
 import pytest
 
-from agno.embedder.huggingface import HuggingfaceCustomEmbedder
+from agno.knowledge.embedder.huggingface import HuggingfaceCustomEmbedder
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.distance import Distance
 from agno.vectordb.milvus import Milvus
 

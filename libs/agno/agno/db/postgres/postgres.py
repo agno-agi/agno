@@ -1481,7 +1481,7 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
-            return []
+            return [] if deserialize else ([], 0)
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True

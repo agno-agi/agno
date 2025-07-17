@@ -20,7 +20,7 @@ from couchbase.options import ClusterOptions
 from couchbase.result import GetResult, MultiMutationResult
 from couchbase.scope import Scope
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.couchbase.couchbase import CouchbaseSearch, OpenAIEmbedder
 
 

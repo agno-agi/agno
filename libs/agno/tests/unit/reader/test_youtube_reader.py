@@ -2,8 +2,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.document.base import Document
-from agno.document.reader.youtube_reader import YouTubeReader
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.youtube_reader import YouTubeReader
 
 
 @pytest.fixture

@@ -3,8 +3,8 @@ from textwrap import dedent
 from typing import Any, List, Optional, Union
 
 from agno.agent import Agent
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger

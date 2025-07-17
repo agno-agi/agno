@@ -13,7 +13,7 @@ to deploy a PostgreSQL database.
 """
 
 from agno.agent import Agent
-from agno.embedder.ollama import OllamaEmbedder
+from agno.knowledge.embedder.ollama import OllamaEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.ollama import OllamaTools
 from agno.vectordb.pgvector import PgVector

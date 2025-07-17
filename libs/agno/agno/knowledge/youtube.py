@@ -1,9 +1,9 @@
 import asyncio
 from typing import AsyncIterator, Iterator, List
 
-from agno.document import Document
-from agno.document.reader.youtube_reader import YouTubeReader
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
+from agno.knowledge.reader.youtube_reader import YouTubeReader
 
 
 class YouTubeKnowledgeBase(AgentKnowledge):

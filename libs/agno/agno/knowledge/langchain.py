@@ -1,7 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional
 
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 from agno.utils.log import log_debug, logger
 
 

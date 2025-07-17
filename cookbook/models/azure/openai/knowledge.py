@@ -1,7 +1,7 @@
 """Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai` to install dependencies."""
 
 from agno.agent import Agent
-from agno.embedder.azure_openai import AzureOpenAIEmbedder
+from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.models.azure import AzureOpenAI
 from agno.vectordb.pgvector import PgVector

@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from agno.document.reader import Reader
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
+from agno.knowledge.reader import Reader
 
 
 @dataclass
-class ContentData:
+class FileData:
     content: Optional[Union[str, bytes]] = None
     type: Optional[str] = None
 
@@ -18,7 +18,7 @@ class Content:
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
-    content_data: Optional[Union[str, ContentData]] = None
+    file_data: Optional[Union[str, FileData]] = None
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
     file_type: Optional[str] = None

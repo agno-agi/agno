@@ -10,8 +10,8 @@ try:
 except ImportError:
     raise ImportError("`clickhouse-connect` not installed. Use `pip install clickhouse-connect` to install it")
 
-from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -62,7 +62,7 @@ class Clickhouse(VectorDb):
         # Embedder for embedding the document contents
         _embedder = embedder
         if _embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -573,3 +573,12 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
         return True
+
+    def delete_by_id(self, id: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_name(self, name: str) -> bool:
+        return NotImplementedError
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        return NotImplementedError

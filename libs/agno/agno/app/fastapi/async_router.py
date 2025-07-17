@@ -143,7 +143,7 @@ def get_async_router(
                     raise HTTPException(status_code=404, detail="KnowledgeBase not found")
 
                 if file.content_type == "application/pdf":
-                    from agno.document.reader.pdf_reader import PDFReader
+                    from agno.knowledge.reader.pdf_reader import PDFReader
 
                     contents = await file.read()
                     pdf_file = BytesIO(contents)
@@ -152,7 +152,7 @@ def get_async_router(
                     if agent.knowledge is not None:
                         await agent.knowledge.async_load_documents(file_content)
                 elif file.content_type == "text/csv":
-                    from agno.document.reader.csv_reader import CSVReader
+                    from agno.knowledge.reader.csv_reader import CSVReader
 
                     contents = await file.read()
                     csv_file = BytesIO(contents)
@@ -161,7 +161,7 @@ def get_async_router(
                     if agent.knowledge is not None:
                         await agent.knowledge.async_load_documents(file_content)
                 elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                    from agno.document.reader.docx_reader import DocxReader
+                    from agno.knowledge.reader.docx_reader import DocxReader
 
                     contents = await file.read()
                     docx_file = BytesIO(contents)
@@ -170,7 +170,7 @@ def get_async_router(
                     if agent.knowledge is not None:
                         await agent.knowledge.async_load_documents(file_content)
                 elif file.content_type == "text/plain":
-                    from agno.document.reader.text_reader import TextReader
+                    from agno.knowledge.reader.text_reader import TextReader
 
                     contents = await file.read()
                     text_file = BytesIO(contents)
@@ -180,7 +180,7 @@ def get_async_router(
                         await agent.knowledge.async_load_documents(file_content)
 
                 elif file.content_type == "application/json":
-                    from agno.document.reader.json_reader import JSONReader
+                    from agno.knowledge.reader.json_reader import JSONReader
 
                     contents = await file.read()
                     json_file = BytesIO(contents)

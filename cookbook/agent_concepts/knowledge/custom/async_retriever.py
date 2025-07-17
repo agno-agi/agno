@@ -2,8 +2,8 @@ import asyncio
 from typing import Optional
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from qdrant_client import AsyncQdrantClient
 
@@ -16,17 +16,16 @@ vector_db = Qdrant(
     collection="thai-recipes", url="http://localhost:6333", embedder=embedder
 )
 # Load the knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=vector_db,
+knowledge = Knowledge(
+    vector_store=vector_db,
 )
 
-# Load the knowledge base
-# knowledge_base.aload(recreate=True)  # Comment out after first run
-# Knowledge base is now loaded
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
+
+
 # ---------------------------------------------------------
-
-
 # Define the custom async retriever
 # This is the function that the agent will use to retrieve documents
 async def retriever(
@@ -75,7 +74,7 @@ async def amain():
     )
 
     # Load the knowledge base (uncomment for first run)
-    await knowledge_base.aload(recreate=True)
+    await knowledge.aload(recreate=True)
 
     # Example query
     query = "List down the ingredients to make Massaman Gai"
