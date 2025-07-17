@@ -53,4 +53,4 @@ if __name__ == "__main__":
     - http://localhost:8001/eval/{index}/eval-runs/performance
     - http://localhost:8001/eval/{index}/eval-runs/reliability
     """
-    agent_os.serve(app="eval_demo:app", reload=True)
+    agent_os.serve(app="evals_demo:app", reload=True)
