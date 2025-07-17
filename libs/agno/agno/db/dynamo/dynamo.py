@@ -549,9 +549,36 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
 
-    # TODO:
     def get_all_memory_topics(self) -> List[str]:
-        return []
+        """Get all memory topics from the database.
+
+        Returns:
+            List[str]: List of unique memory topics.
+        """
+        try:
+            table_name = self._get_table("user_memories")
+
+            # Scan the entire table to get all memories
+            response = self.client.scan(TableName=table_name)
+            items = response.get("Items", [])
+
+            # Handle pagination
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                items.extend(response.get("Items", []))
+
+            # Extract topics from all memories
+            all_topics = set()
+            for item in items:
+                memory_data = deserialize_from_dynamodb_item(item)
+                topics = memory_data.get("memory", {}).get("topics", [])
+                all_topics.update(topics)
+
+            return list(all_topics)
+
+        except Exception as e:
+            log_debug(f"Exception reading from memory table: {e}")
+            return []
 
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
@@ -722,13 +749,100 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get user memories: {e}")
             return [] if deserialize else ([], 0)
 
-    # TODO:
     def get_user_memory_stats(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        return [], 0
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            table_name = self._get_table("user_memories")
+
+            response = self.client.scan(TableName=table_name)
+            items = response.get("Items", [])
+
+            # Handle pagination
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                items.extend(response.get("Items", []))
+
+            # Aggregate stats by user_id
+            user_stats = {}
+            for item in items:
+                memory_data = deserialize_from_dynamodb_item(item)
+                user_id = memory_data.get("user_id")
+
+                if user_id:
+                    if user_id not in user_stats:
+                        user_stats[user_id] = {
+                            "user_id": user_id,
+                            "total_memories": 0,
+                            "last_memory_updated_at": None,
+                        }
+
+                    user_stats[user_id]["total_memories"] += 1
+
+                    last_updated = memory_data.get("last_updated")
+                    if last_updated:
+                        # Convert ISO string to timestamp if needed
+                        if isinstance(last_updated, str):
+                            try:
+                                from datetime import datetime
+
+                                last_updated_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+                                last_updated_timestamp = int(last_updated_dt.timestamp())
+                            except ValueError:
+                                last_updated_timestamp = None
+                        else:
+                            last_updated_timestamp = last_updated
+
+                        if last_updated_timestamp and (
+                            user_stats[user_id]["last_memory_updated_at"] is None
+                            or last_updated_timestamp > user_stats[user_id]["last_memory_updated_at"]
+                        ):
+                            user_stats[user_id]["last_memory_updated_at"] = last_updated_timestamp
+
+            # Convert to list and apply sorting
+            stats_list = list(user_stats.values())
+            stats_list.sort(
+                key=lambda x: x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0,
+                reverse=True,
+            )
+
+            total_count = len(stats_list)
+
+            # Apply pagination
+            if limit is not None:
+                start_index = 0
+                if page is not None and page > 1:
+                    start_index = (page - 1) * limit
+                stats_list = stats_list[start_index : start_index + limit]
+
+            return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Failed to get user memory stats: {e}")
+            return [], 0
 
     def upsert_user_memory(
         self, memory: MemoryRow, deserialize: Optional[bool] = True

@@ -54,7 +54,7 @@ class UserStatsSchema(BaseModel):
         last_updated_at = user_stats_dict.get("last_memory_updated_at")
 
         return cls(
-            user_id=user_stats_dict["user_id"],
+            user_id=str(user_stats_dict["user_id"]),
             total_memories=user_stats_dict["total_memories"],
             last_memory_updated_at=datetime.fromtimestamp(last_updated_at, tz=timezone.utc)
             if last_updated_at
