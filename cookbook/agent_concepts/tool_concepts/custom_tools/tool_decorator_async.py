@@ -28,11 +28,16 @@ class DemoTools:
                 story.pop("text", None)
             return json.dumps(story)
 
-
-    @tool(description="Get the current weather for a city using the MetaWeather public API")
+    @tool(
+        description="Get the current weather for a city using the MetaWeather public API"
+    )
     async def get_current_weather(agent: Agent) -> str:
-        city = agent.context.get("city", "San Francisco") if agent.context else "San Francisco"
-        
+        city = (
+            agent.context.get("city", "San Francisco")
+            if agent.context
+            else "San Francisco"
+        )
+
         async with httpx.AsyncClient() as client:
             # Geocode city to get latitude and longitude
             geo_resp = await client.get(

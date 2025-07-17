@@ -177,7 +177,9 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team", "self"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
@@ -322,7 +324,7 @@ class Function(BaseModel):
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction
-        
+
         # Don't wrap async generator with validate_call
         if isasyncgenfunction(func):
             return func
@@ -337,7 +339,9 @@ class Function(BaseModel):
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]]
+        self.parameters["required"] = [
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+        ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
