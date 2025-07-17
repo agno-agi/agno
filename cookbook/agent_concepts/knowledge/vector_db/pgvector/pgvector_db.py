@@ -4,7 +4,7 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-vector_db=PgVector(table_name="vectors", db_url=db_url)
+vector_db = PgVector(table_name="vectors", db_url=db_url)
 
 knowledge = Knowledge(
     name="My PG Vector Knowledge Base",

@@ -25,7 +25,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger, log_warning
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -259,12 +259,12 @@ class PineconeDb(VectorDb):
             metadata = document.meta_data.copy()
             if filters:
                 metadata.update(filters)
-    
+
             if document.name:
                 metadata["name"] = document.name
             if document.content_id:
                 metadata["content_id"] = document.content_id
-            
+
             data_to_upsert = {
                 "id": document.id,
                 "values": document.embedding,
@@ -330,7 +330,7 @@ class PineconeDb(VectorDb):
                 metadata["name"] = doc.name
             if doc.content_id:
                 metadata["content_id"] = doc.content_id
-            
+
             data_to_upsert = {
                 "id": doc.id,
                 "values": doc.embedding,
@@ -351,7 +351,6 @@ class PineconeDb(VectorDb):
         )
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Pinecone doesn't support insert. Log warning and redirect to async_upsert."""
         log_warning("Pinecone does not support insert operations. Redirecting to async_upsert instead.")
         await self.async_upsert(documents, filters)
 
@@ -365,15 +364,6 @@ class PineconeDb(VectorDb):
         return True
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents into the index.
-
-        This method is not supported by Pinecone. Use `upsert` instead.
-
-        Args:
-            documents (List[Document]): The documents to insert.
-            filters (Optional[Dict[str, Any]], optional): The filters for the insert. Defaults to None.
-
-        """
         log_warning("Pinecone does not support insert operations. Redirecting to upsert instead.")
         self.upsert(documents, filters)
 
@@ -522,7 +512,7 @@ class PineconeDb(VectorDb):
             filter_conditions = {}
             for key, value in metadata.items():
                 filter_conditions[key] = {"$eq": value}
-            
+
             self.index.delete(filter=filter_conditions)
             return True
         except Exception as e:
