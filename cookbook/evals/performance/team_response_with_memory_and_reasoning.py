@@ -6,10 +6,11 @@ from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
+from agno.utils.pprint import apprint_run_response
 
 users = [
     "abel@example.com",
@@ -44,9 +45,9 @@ agent_storage = PostgresStorage(
 team_storage = PostgresStorage(
     table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
 )
+agent_memory = Memory(db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url))
 
 team_memory = Memory(db=PostgresMemoryDb(table_name="team_memory", db_url=db_url))
-agent_memory = Memory(db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url))
 
 
 def get_weather(city: str) -> str:
@@ -1003,7 +1004,7 @@ This comprehensive guide provides a starting point for discovering all that {cit
 
 weather_agent = Agent(
     agent_id="weather_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_weather],
@@ -1018,7 +1019,7 @@ weather_agent = Agent(
 
 activities_agent = Agent(
     agent_id="activities_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_activities],
@@ -1032,7 +1033,7 @@ activities_agent = Agent(
 )
 
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     members=[weather_agent, activities_agent],
     tools=[ReasoningTools(add_instructions=True)],
     instructions="Be concise, reply with one sentence.",
@@ -1047,54 +1048,69 @@ team = Team(
     num_history_runs=1,
     stream=True,
     stream_intermediate_steps=True,
+    cache_session=False,
 )
 
 
+async def run_team_for_user(user: str, print_responses: bool = False):
+    # Make four requests to the team, to build up history
+    random_city = random.choice(cities)
+    session_id = f"session_{user}_{uuid.uuid4()}"
+    response_iterator = await team.arun(
+        message=f"I love {random_city}!",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"Create a report on the activities and weather in {random_city}.",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"What else can you tell me about {random_city}?",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"What other cities are similar to {random_city}?",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+
 async def run_team():
-    async def run_team_for_user(user: str):
-        random_city = random.choice(cities)
-        response_iterator = await team.arun(
-            message=f"I love {random_city}!",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-
-        response_iterator = await team.arun(
-            message=f"Create a report on the activities and weather in {random_city}.",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-
-        response_iterator = await team.arun(
-            message=f"What else can you tell me about {random_city}?",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-
-        response_iterator = await team.arun(
-            message=f"What other cities are similar to {random_city}?",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-
     tasks = []
 
     # Run all 5 users concurrently
-    # for user in users:
-    #     tasks.append(run_team_for_user(user))
+    for user in users:
+        tasks.append(run_team_for_user(user))
 
-    # await asyncio.gather(*tasks)
-    await run_team_for_user("user_1")
+    await asyncio.gather(*tasks)
 
-    print("Team memory runs:", len(team.memory.runs))
+    print("Team memory runs:", sum(len(runs) for runs in team.memory.runs.values()))
     print("Team memory memories:", len(team.memory.memories))
 
     return "Successfully ran team"
@@ -1103,7 +1119,7 @@ async def run_team():
 team_response_with_memory_impact = PerformanceEval(
     name="Team Memory Impact",
     func=run_team,
-    num_iterations=1,
+    num_iterations=5,
     warmup_runs=0,
     measure_runtime=False,
     debug_mode=True,
