@@ -3,6 +3,7 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
+from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
@@ -18,6 +19,7 @@ basic_agent = Agent(
     agent_id="basic-agent",
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
+    memory=Memory(db=db),
     markdown=True,
 )
 
