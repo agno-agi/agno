@@ -1,7 +1,8 @@
 import json
 import time
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional, Union
+from uuid import uuid4
 
 from agno.db.base import SessionType
 from agno.db.schemas import MemoryRow
@@ -13,65 +14,7 @@ from agno.session import Session
 from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info
 
-# TODO:
-# Some serialization/deserialization is here because the schema was wrong.
-# Confirm what is needed and what not and clean everything
-
-
-def serialize_session_json_fields(session: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse dict fields in the given session to JSON strings"""
-    serialized = session.copy()
-
-    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-
-    for field in json_fields:
-        if field in serialized and serialized[field] is not None:
-            if isinstance(serialized[field], (dict, list)):
-                serialized[field] = json.dumps(serialized[field])
-
-    return serialized
-
-
-def deserialize_session_json_fields(session: Dict[str, Any]) -> Dict[str, Any]:
-    """Deserialize JSON fields in session data from DynamoDB storage."""
-    deserialized = session.copy()
-
-    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-
-    for field in json_fields:
-        if field in deserialized and deserialized[field] is not None:
-            if isinstance(deserialized[field], str):
-                try:
-                    deserialized[field] = json.loads(deserialized[field])
-                except json.JSONDecodeError:
-                    log_error(f"Failed to deserialize {field} field")
-                    deserialized[field] = None
-
-    return deserialized
-
-
-def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        # Deserialize JSON fields
-        session = deserialize_session_json_fields(session)
-
-        # Convert timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in session and session[field] is not None:
-                if isinstance(session[field], (int, float)):
-                    session[field] = datetime.fromtimestamp(session[field], tz=timezone.utc)
-                elif isinstance(session[field], str):
-                    try:
-                        session[field] = datetime.fromisoformat(session[field])
-                    except ValueError:
-                        session[field] = datetime.fromtimestamp(float(session[field]), tz=timezone.utc)
-
-        return Session.from_dict(session)
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
-        return None
+# -- Serialization utils --
 
 
 def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -142,8 +85,8 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
             "size": getattr(knowledge, "size", None),
             "linked_to": getattr(knowledge, "linked_to", None),
             "access_count": getattr(knowledge, "access_count", None),
-            "created_at": int(knowledge.created_at.timestamp()) if knowledge.created_at else None,
-            "updated_at": int(knowledge.updated_at.timestamp()) if knowledge.updated_at else None,
+            "created_at": int(knowledge.created_at) if knowledge.created_at else None,
+            "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
         }
     )
 
@@ -192,107 +135,6 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
     if "updated_at" in data and data["updated_at"]:
         data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
     return EvalRunRecord(run_id=data["run_id"], eval_type=data["eval_type"], eval_data=data["eval_data"])
-
-
-def hydrate_session(session: dict) -> dict:
-    """Convert nested dictionaries to their corresponding object types.
-
-    Args:
-        session (dict): The session dictionary to hydrate.
-
-    Returns:
-        dict: The hydrated session dictionary.
-    """
-    if session.get("summary") is not None:
-        session["summary"] = SessionSummary.from_dict(session["summary"])
-    if session.get("runs") is not None:
-        if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
-        elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
-
-    return session
-
-
-# -- Session Upsert Helpers --
-
-
-def prepare_session_data(session: "Session") -> Dict[str, Any]:
-    """Prepare session data for storage by serializing JSON fields and setting session type."""
-    from agno.session import AgentSession, TeamSession, WorkflowSession
-
-    serialized_session = serialize_session_json_fields(session.to_dict())
-
-    # Set the session type
-    if isinstance(session, AgentSession):
-        serialized_session["session_type"] = SessionType.AGENT.value
-    elif isinstance(session, TeamSession):
-        serialized_session["session_type"] = SessionType.TEAM.value
-    elif isinstance(session, WorkflowSession):
-        serialized_session["session_type"] = SessionType.WORKFLOW.value
-
-    return serialized_session
-
-
-def merge_with_existing_session(new_session: Dict[str, Any], existing_item: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge new session data with existing session, preserving important fields."""
-    existing_session = deserialize_from_dynamodb_item(existing_item)
-
-    # Start with existing session as base
-    merged_session = existing_session.copy()
-
-    if "session_data" in new_session:
-        merged_session_data = merge_session_data(
-            existing_session.get("session_data", {}), new_session.get("session_data", {})
-        )
-        merged_session["session_data"] = json.dumps(merged_session_data)
-
-    for key, value in new_session.items():
-        if key != "created_at" and key != "session_data" and value is not None:
-            merged_session[key] = value
-
-    # Always preserve created_at and set updated_at
-    merged_session["created_at"] = existing_session.get("created_at")
-    merged_session["updated_at"] = int(time.time())
-
-    return merged_session
-
-
-# TODO: typing
-def merge_session_data(existing_data: Any, new_data: Any) -> Dict[str, Any]:
-    """Merge session_data fields, handling JSON string conversion."""
-
-    # Parse existing session_data
-    if isinstance(existing_data, str):
-        existing_data = json.loads(existing_data)
-    existing_data = existing_data or {}
-
-    # Parse new session_data
-    if isinstance(new_data, str):
-        new_data = json.loads(new_data)
-    new_data = new_data or {}
-
-    # Merge letting new data take precedence
-    return {**existing_data, **new_data}
-
-
-def deserialize_session_result(
-    serialized_session: Dict[str, Any], original_session: "Session", deserialize: Optional[bool]
-) -> Optional[Union["Session", Dict[str, Any]]]:
-    """Deserialize the session result based on the deserialize flag and session type."""
-    from agno.session import AgentSession, TeamSession, WorkflowSession
-
-    if not deserialize:
-        return serialized_session
-
-    if isinstance(original_session, AgentSession):
-        return AgentSession.from_dict(serialized_session)
-    elif isinstance(original_session, TeamSession):
-        return TeamSession.from_dict(serialized_session)
-    elif isinstance(original_session, WorkflowSession):
-        return WorkflowSession.from_dict(serialized_session)
-
-    return None
 
 
 # -- DB Utils --
@@ -344,10 +186,268 @@ def apply_sorting(
     return sorted(items, key=lambda x: x.get(sort_by, ""), reverse=reverse)
 
 
-# -- Metrics Utils --
+# -- Session utils --
+
+
+def prepare_session_data(session: "Session") -> Dict[str, Any]:
+    """Prepare session data for storage by serializing JSON fields and setting session type."""
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    serialized_session = session.to_dict()
+
+    # Handle JSON fields
+    json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
+    for field in json_fields:
+        if field in serialized_session and serialized_session[field] is not None:
+            if isinstance(serialized_session[field], (dict, list)):
+                serialized_session[field] = json.dumps(serialized_session[field])
+
+    # Set the session type
+    if isinstance(session, AgentSession):
+        serialized_session["session_type"] = SessionType.AGENT.value
+    elif isinstance(session, TeamSession):
+        serialized_session["session_type"] = SessionType.TEAM.value
+    elif isinstance(session, WorkflowSession):
+        serialized_session["session_type"] = SessionType.WORKFLOW.value
+
+    return serialized_session
+
+
+def merge_with_existing_session(new_session: Dict[str, Any], existing_item: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge new session data with existing session, preserving important fields."""
+    existing_session = deserialize_from_dynamodb_item(existing_item)
+
+    # Start with existing session as base
+    merged_session = existing_session.copy()
+
+    if "session_data" in new_session:
+        merged_session_data = merge_session_data(
+            existing_session.get("session_data", {}), new_session.get("session_data", {})
+        )
+        merged_session["session_data"] = json.dumps(merged_session_data)
+
+    for key, value in new_session.items():
+        if key != "created_at" and key != "session_data" and value is not None:
+            merged_session[key] = value
+
+    # Always preserve created_at and set updated_at
+    merged_session["created_at"] = existing_session.get("created_at")
+    merged_session["updated_at"] = int(time.time())
+
+    return merged_session
+
+
+def merge_session_data(existing_data: Any, new_data: Any) -> Dict[str, Any]:
+    """Merge session_data fields, handling JSON string conversion."""
+
+    # Parse existing session_data
+    if isinstance(existing_data, str):
+        existing_data = json.loads(existing_data)
+    existing_data = existing_data or {}
+
+    # Parse new session_data
+    if isinstance(new_data, str):
+        new_data = json.loads(new_data)
+    new_data = new_data or {}
+
+    # Merge letting new data take precedence
+    return {**existing_data, **new_data}
+
+
+def deserialize_session_result(
+    serialized_session: Dict[str, Any], original_session: "Session", deserialize: Optional[bool]
+) -> Optional[Union["Session", Dict[str, Any]]]:
+    """Deserialize the session result based on the deserialize flag and session type."""
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    if not deserialize:
+        return serialized_session
+
+    if isinstance(original_session, AgentSession):
+        return AgentSession.from_dict(serialized_session)
+    elif isinstance(original_session, TeamSession):
+        return TeamSession.from_dict(serialized_session)
+    elif isinstance(original_session, WorkflowSession):
+        return WorkflowSession.from_dict(serialized_session)
+
+    return None
+
+
+def hydrate_session(session: dict) -> dict:
+    """Convert nested dictionaries to their corresponding object types.
+
+    Args:
+        session (dict): The session dictionary to hydrate.
+
+    Returns:
+        dict: The hydrated session dictionary.
+    """
+
+    if session.get("summary") is not None:
+        session["summary"] = SessionSummary.from_dict(session["summary"])
+    if session.get("runs") is not None:
+        if session["session_type"] == SessionType.AGENT:
+            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
+        elif session["session_type"] == SessionType.TEAM:
+            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+
+    return session
+
+
+def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
+    """Deserialize session data from DynamoDB format to Session object."""
+    try:
+        deserialized = session.copy()
+
+        # Handle JSON fields
+        json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
+        for field in json_fields:
+            if field in deserialized and deserialized[field] is not None:
+                if isinstance(deserialized[field], str):
+                    try:
+                        deserialized[field] = json.loads(deserialized[field])
+                    except json.JSONDecodeError:
+                        log_error(f"Failed to deserialize {field} field")
+                        deserialized[field] = None
+
+        # Handle timestamp fields
+        for field in ["created_at", "updated_at"]:
+            if field in deserialized and deserialized[field] is not None:
+                if isinstance(deserialized[field], (int, float)):
+                    deserialized[field] = datetime.fromtimestamp(deserialized[field], tz=timezone.utc)
+                elif isinstance(deserialized[field], str):
+                    try:
+                        deserialized[field] = datetime.fromisoformat(deserialized[field])
+                    except ValueError:
+                        deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
+
+        return Session.from_dict(deserialized)  # type: ignore
+
+    except Exception as e:
+        log_error(f"Failed to deserialize session: {e}")
+        return None
+
+
+# -- Metrics utils --
+
+
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
+    """Calculate metrics for the given single date.
+    Args:
+        date_to_process (date): The date to calculate metrics for.
+        sessions_data (dict): The sessions data to calculate metrics for.
+    Returns:
+        dict: The calculated metrics.
+    """
+    metrics = {
+        "users_count": 0,
+        "agent_sessions_count": 0,
+        "team_sessions_count": 0,
+        "workflow_sessions_count": 0,
+        "agent_runs_count": 0,
+        "team_runs_count": 0,
+        "workflow_runs_count": 0,
+    }
+    token_metrics = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "audio_tokens": 0,
+        "input_audio_tokens": 0,
+        "output_audio_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+    }
+    model_counts = {}
+    session_types = [
+        ("agent", "agent_sessions_count", "agent_runs_count"),
+        ("team", "team_sessions_count", "team_runs_count"),
+        ("workflow", "workflow_sessions_count", "workflow_runs_count"),
+    ]
+    all_user_ids = set()
+    for session_type, sessions_count_key, runs_count_key in session_types:
+        sessions = sessions_data.get(session_type, [])
+        metrics[sessions_count_key] = len(sessions)
+        for session in sessions:
+            if session.get("user_id"):
+                all_user_ids.add(session["user_id"])
+            metrics[runs_count_key] += len(session.get("runs", []))
+            if runs := session.get("runs", []):
+                for run in runs:
+                    if model_id := run.get("model"):
+                        model_provider = run.get("model_provider", "")
+                        model_counts[f"{model_id}:{model_provider}"] = (
+                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
+                        )
+            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            for field in token_metrics:
+                token_metrics[field] += session_metrics.get(field, 0)
+    model_metrics = []
+    for model, count in model_counts.items():
+        model_id, model_provider = model.split(":")
+        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+    metrics["users_count"] = len(all_user_ids)
+    current_time = int(time.time())
+    return {
+        "id": str(uuid4()),
+        "date": date_to_process,
+        "completed": date_to_process < datetime.now(timezone.utc).date(),
+        "token_metrics": token_metrics,
+        "model_metrics": model_metrics,
+        "created_at": current_time,
+        "updated_at": current_time,
+        "aggregation_period": "daily",
+        **metrics,
+    }
+
+
+def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
+    """Return the list of dates to calculate metrics for.
+    Args:
+        starting_date (date): The starting date to calculate metrics for.
+    Returns:
+        list[date]: The list of dates to calculate metrics for.
+    """
+    today = datetime.now(timezone.utc).date()
+    days_diff = (today - starting_date).days + 1
+    if days_diff <= 0:
+        return []
+    return [starting_date + timedelta(days=x) for x in range(days_diff)]
 
 
 def fetch_all_sessions_data(
+    sessions: List[Dict[str, Any]], dates_to_process: list[date], start_timestamp: int
+) -> Optional[dict]:
+    """Return all session data for the given dates, for all session types.
+    Args:
+        sessions: List of session data dictionaries
+        dates_to_process (list[date]): The dates to fetch session data for.
+        start_timestamp: The start timestamp for the range
+    Returns:
+        dict: A dictionary with dates as keys and session data as values, for all session types.
+    Example:
+    {
+        "2000-01-01": {
+            "agent": [<session1>, <session2>, ...],
+            "team": [...],
+            "workflow": [...],
+        }
+    }
+    """
+    if not dates_to_process:
+        return None
+    all_sessions_data = {
+        date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
+    }
+    for session in sessions:
+        session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+        if session_date in all_sessions_data:
+            all_sessions_data[session_date][session["session_type"]].append(session)
+    return all_sessions_data
+
+
+def fetch_all_sessions_data_by_type(
     dynamodb_client,
     table_name: str,
     session_type: str,
@@ -438,72 +538,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
         log_error(f"Failed to bulk upsert metrics: {e}")
 
 
-def calculate_date_metrics(
-    dynamodb_client, table_name: str, date_to_calculate: date, user_id: Optional[str] = None
-) -> Dict[str, Any]:
-    """Calculate metrics for a specific date."""
-    try:
-        # Query metrics for the date
-        date_str = date_to_calculate.isoformat()
-
-        query_kwargs = {
-            "TableName": table_name,
-            "IndexName": "user_id-date-index" if user_id else "date-index",
-            "KeyConditionExpression": "#date = :date",
-            "ExpressionAttributeNames": {"#date": "date"},
-            "ExpressionAttributeValues": {":date": {"S": date_str}},
-        }
-
-        if user_id:
-            query_kwargs["KeyConditionExpression"] = "#user_id = :user_id AND #date = :date"
-            query_kwargs["ExpressionAttributeNames"]["#user_id"] = "user_id"
-            query_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
-
-        response = dynamodb_client.query(**query_kwargs)
-        items = response.get("Items", [])
-
-        # Calculate aggregated metrics
-        total_requests = len(items)
-        total_tokens = sum(int(item.get("tokens", {}).get("N", "0")) for item in items)
-        total_cost = sum(float(item.get("cost", {}).get("N", "0")) for item in items)
-
-        return {
-            "date": date_str,
-            "total_requests": total_requests,
-            "total_tokens": total_tokens,
-            "total_cost": total_cost,
-        }
-
-    except Exception as e:
-        log_error(f"Failed to calculate date metrics: {e}")
-        return {}
-
-
-def get_dates_to_calculate_metrics_for(
-    dynamodb_client, table_name: str, user_id: Optional[str] = None, days_back: int = 30
-) -> List[date]:
-    """Get dates that need metrics calculation."""
-    dates = []
-
-    try:
-        # Get recent dates that have data
-        from datetime import timedelta
-
-        end_date = datetime.now(timezone.utc).date()
-        start_date = end_date - timedelta(days=days_back)
-
-        current_date = start_date
-        while current_date <= end_date:
-            dates.append(current_date)
-            current_date += timedelta(days=1)
-
-    except Exception as e:
-        log_error(f"Failed to get dates for metrics calculation: {e}")
-
-    return dates
-
-
-# -- Query Building Utils --
+# -- Query utils --
 
 
 def build_query_filter_expression(filters: Dict[str, Any]) -> tuple[Optional[str], Dict[str, str], Dict[str, Any]]:
@@ -621,7 +656,7 @@ def process_query_results(
     sort_order: Optional[str] = None,
     limit: Optional[int] = None,
     page: Optional[int] = None,
-    deserialize_func: Optional[callable] = None,
+    deserialize_func: Optional[Callable] = None,
     deserialize: bool = True,
 ) -> Union[List[Any], tuple[List[Any], int]]:
     """Process query results with sorting, pagination, and deserialization.

@@ -11,6 +11,7 @@ from agno.db.dynamo.utils import (
     apply_sorting,
     build_query_filter_expression,
     build_topic_filter_expression,
+    calculate_date_metrics,
     create_table_if_not_exists,
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
@@ -18,6 +19,8 @@ from agno.db.dynamo.utils import (
     deserialize_session,
     deserialize_session_result,
     execute_query_with_pagination,
+    fetch_all_sessions_data,
+    get_dates_to_calculate_metrics_for,
     hydrate_session,
     merge_with_existing_session,
     prepare_session_data,
@@ -115,7 +118,14 @@ class DynamoDb(BaseDb):
                     log_error(f"Failed to create table {table_name}: {e}")
 
     def _table_exists(self, table_name: str) -> bool:
-        """Check if a DynamoDB table exists."""
+        """Check if a DynamoDB table with the given name exists.
+
+        Args:
+            table_name: The name of the table to check
+
+        Returns:
+            bool: True if the table exists, False otherwise
+        """
         try:
             self.client.describe_table(TableName=table_name)
             return True
@@ -210,7 +220,7 @@ class DynamoDb(BaseDb):
             return
 
         try:
-            # Proccess the items to delete in batches of the max allowed size or less
+            # Process the items to delete in batches of the max allowed size or less
             for i in range(0, len(session_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = session_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
                 delete_requests = []
@@ -401,7 +411,11 @@ class DynamoDb(BaseDb):
             return []
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -517,7 +531,10 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while deleting the user memory.
         """
         try:
-            self.client.delete_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
+            self.client.delete_item(
+                TableName=self.user_memory_table_name,
+                Key={"memory_id": {"S": memory_id}},
+            )
             log_debug(f"Deleted user memory {memory_id}")
 
         except Exception as e:
@@ -656,7 +673,11 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("user_memories")
 
             # Build filter expressions for component filters
-            filter_expression, expression_attribute_names, expression_attribute_values = build_query_filter_expression(
+            (
+                filter_expression,
+                expression_attribute_names,
+                expression_attribute_values,
+            ) = build_query_filter_expression(
                 filters={
                     "agent_id": agent_id,
                     "team_id": team_id,
@@ -802,17 +823,8 @@ class DynamoDb(BaseDb):
 
                     last_updated = memory_data.get("last_updated")
                     if last_updated:
-                        # Convert ISO string to timestamp if needed
-                        if isinstance(last_updated, str):
-                            try:
-                                from datetime import datetime
-
-                                last_updated_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
-                                last_updated_timestamp = int(last_updated_dt.timestamp())
-                            except ValueError:
-                                last_updated_timestamp = None
-                        else:
-                            last_updated_timestamp = last_updated
+                        last_updated_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+                        last_updated_timestamp = int(last_updated_dt.timestamp())
 
                         if last_updated_timestamp and (
                             user_stats[user_id]["last_memory_updated_at"] is None
@@ -823,7 +835,7 @@ class DynamoDb(BaseDb):
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
             stats_list.sort(
-                key=lambda x: x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0,
+                key=lambda x: (x["last_memory_updated_at"] if x["last_memory_updated_at"] is not None else 0),
                 reverse=True,
             )
 
@@ -887,10 +899,6 @@ class DynamoDb(BaseDb):
             return None
 
         try:
-            from datetime import datetime, timedelta
-
-            from agno.db.postgres.utils import calculate_date_metrics
-            from agno.db.postgres.utils import get_dates_to_calculate_metrics_for as pg_get_dates
             from agno.utils.log import log_info
 
             # Get starting date for metrics calculation
@@ -900,7 +908,7 @@ class DynamoDb(BaseDb):
                 return None
 
             # Get dates that need metrics calculation
-            dates_to_process = pg_get_dates(starting_date)
+            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
             if not dates_to_process:
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
@@ -917,10 +925,11 @@ class DynamoDb(BaseDb):
             )
 
             # Process session data for metrics calculation
-            from agno.db.postgres.utils import fetch_all_sessions_data
 
             all_sessions_data = fetch_all_sessions_data(
-                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+                sessions=sessions,
+                dates_to_process=dates_to_process,
+                start_timestamp=start_timestamp,
             )
 
             if not all_sessions_data:
@@ -1171,7 +1180,10 @@ class DynamoDb(BaseDb):
                 IndexName="date-aggregation_period-index",
                 KeyConditionExpression="#date = :date AND aggregation_period = :period",
                 ExpressionAttributeNames={"#date": "date"},
-                ExpressionAttributeValues={":date": {"S": date_str}, ":period": {"S": "daily"}},
+                ExpressionAttributeValues={
+                    ":date": {"S": date_str},
+                    ":period": {"S": "daily"},
+                },
                 Limit=1,
             )
 
@@ -1185,7 +1197,10 @@ class DynamoDb(BaseDb):
             return None
 
     def _update_existing_metrics_record(
-        self, table_name: str, existing_record: Dict[str, Any], new_record: Dict[str, Any]
+        self,
+        table_name: str,
+        existing_record: Dict[str, Any],
+        new_record: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
         """Update an existing metrics record.
 
@@ -1317,7 +1332,7 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("metrics")
 
             # Build query parameters
-            scan_kwargs = {"TableName": table_name}
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
 
             if starting_date or ending_date:
                 filter_expressions = []
@@ -1366,7 +1381,9 @@ class DynamoDb(BaseDb):
 
         try:
             response = self.client.get_item(
-                TableName=self.knowledge_table_name, Key={"id": {"S": id}}, ProjectionExpression="status"
+                TableName=self.knowledge_table_name,
+                Key={"id": {"S": id}},
+                ProjectionExpression="status",
             )
 
             item = response.get("Item")
@@ -1424,7 +1441,8 @@ class DynamoDb(BaseDb):
             # Handle pagination
             while "LastEvaluatedKey" in response:
                 response = self.client.scan(
-                    TableName=self.knowledge_table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
+                    TableName=self.knowledge_table_name,
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
                 )
                 items.extend(response.get("Items", []))
 
@@ -1440,7 +1458,11 @@ class DynamoDb(BaseDb):
             # Apply sorting
             if sort_by:
                 reverse = sort_order == "desc"
-                knowledge_rows = sorted(knowledge_rows, key=lambda x: getattr(x, sort_by, ""), reverse=reverse)
+                knowledge_rows = sorted(
+                    knowledge_rows,
+                    key=lambda x: getattr(x, sort_by, ""),
+                    reverse=reverse,
+                )
 
             # Get total count before pagination
             total_count = len(knowledge_rows)
@@ -1644,7 +1666,10 @@ class DynamoDb(BaseDb):
                 Key={"run_id": {"S": eval_run_id}},
                 UpdateExpression="SET #name = :name, updated_at = :updated_at",
                 ExpressionAttributeNames={"#name": "name"},
-                ExpressionAttributeValues={":name": {"S": name}, ":updated_at": {"N": str(int(time.time()))}},
+                ExpressionAttributeValues={
+                    ":name": {"S": name},
+                    ":updated_at": {"N": str(int(time.time()))},
+                },
                 ReturnValues="ALL_NEW",
             )
 
