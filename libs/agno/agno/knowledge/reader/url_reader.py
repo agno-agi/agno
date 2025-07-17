@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug

@@ -1,7 +1,7 @@
 from typing import List, Optional
 
-from agno.document.base import Document
 from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document.base import Document
 from agno.models.base import Model
 from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message

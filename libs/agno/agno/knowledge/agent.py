@@ -4,9 +4,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tupl
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agno.document import Document
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb import VectorDb

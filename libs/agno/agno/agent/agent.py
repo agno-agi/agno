@@ -4593,7 +4593,7 @@ class Agent:
         Returns:
             Optional[List[Dict[str, Any]]]: List of relevant document dicts.
         """
-        from agno.document import Document
+        from agno.knowledge.document import Document
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -4663,7 +4663,7 @@ class Agent:
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
-        from agno.document import Document
+        from agno.knowledge.document import Document
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -5948,7 +5948,7 @@ class Agent:
         """
         import json
 
-        from agno.document import Document
+        from agno.knowledge.document import Document
 
         if self.knowledge is None:
             return "Knowledge base not available"

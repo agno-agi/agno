@@ -7041,7 +7041,7 @@ class Team:
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Return a list of references from the knowledge base"""
-        from agno.document import Document
+        from agno.knowledge.document import Document
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -7098,7 +7098,7 @@ class Team:
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
-        from agno.document import Document
+        from agno.knowledge.document import Document
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:

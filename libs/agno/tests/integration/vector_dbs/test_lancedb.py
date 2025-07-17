@@ -3,7 +3,7 @@ import logging
 
 import pytest
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.utils.log import logger
 from agno.vectordb.lancedb.lance_db import LanceDb
 

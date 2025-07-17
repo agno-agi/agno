@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb

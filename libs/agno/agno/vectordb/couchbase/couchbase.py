@@ -3,7 +3,7 @@ import time
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Union
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.utils.log import log_debug, logger

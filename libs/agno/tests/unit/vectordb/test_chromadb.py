@@ -4,7 +4,7 @@ from typing import List
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.distance import Distance
 

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Weaviate
 from agno.vectordb.weaviate.index import Distance, VectorIndex

@@ -12,9 +12,9 @@ knowledge = Knowledge(
 knowledge.add_content(
     name="Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Recipes from website"},
+    metadata={"doc_type": "recipe_book"},
 )
 
 knowledge.remove_vectors_by_name("Recipes")
 # or
-knowledge.remove_vectors_by_metadata({"user_tag": "Recipes from website"})
+knowledge.remove_vectors_by_metadata({"doc_type": "recipe_book"})
