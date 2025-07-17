@@ -27,7 +27,7 @@ source .venv/bin/activate
 ### 2. Install dependencies
 
 ```shell
-pip install -r cookbook/examples/streamlit_apps/agentic_rag/requirements.txt
+pip install -r cookbook/examples/streamlit_apps/deep_researcher/requirements.txt
 ```
 
 ### 3. Configure API Keys
@@ -51,7 +51,7 @@ You can use the Deep Researcher Agent in three ways. Each method below includes 
 Run the Streamlit app:
 
 ```bash
-uv run streamlit run app.py
+streamlit run cookbook/examples/streamlit_apps/deep_researcher/app.py
 ```
 
 Open your browser at [http://localhost:8501](http://localhost:8501)
