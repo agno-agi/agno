@@ -27,10 +27,7 @@ How to setup and run:
     ```bash
     export OPENAI_API_KEY="your_openai_api_key"
     ```
-5. Run the agent:
-    ```bash
-    python gibsonai.py
-    ```
+5. Run the GibsonAI agent by running this file.
 6. Check created database and schema on GibsonAI dashboard: https://app.gibsonai.com
 
 This logs you into the [GibsonAI CLI](https://docs.gibsonai.com/reference/cli-quickstart)
@@ -79,6 +76,9 @@ async def run_gibsonai_agent(message: str) -> None:
 if __name__ == "__main__":
     asyncio.run(
         run_gibsonai_agent(
-            "Create a database for blog posts platform with users and posts tables."
+            """
+            Create a database for blog posts platform with users and posts tables.
+            You can decide the schema of the tables without double checking with me.
+            """
         )
     )
