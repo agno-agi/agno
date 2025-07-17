@@ -109,6 +109,7 @@ webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
+daytona=["daytona"]
 oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
@@ -336,6 +337,7 @@ module = [
   "cohere.*",
   "crawl4ai.*",
   "daytona.*",
+  "daytona_api_client.*",
   "discord.*",
   "docker.*",
   "docx.*",
