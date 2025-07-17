@@ -62,5 +62,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    basic_agent.run("Remember my favorite color is blue.")
     agent_os.serve(app="dynamo_demo:app", reload=True)
