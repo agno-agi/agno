@@ -98,7 +98,6 @@ team = Team(
     instructions="Be concise, reply with one sentence.",
     memory=memory,
     storage=team_storage,
-    tools=[ReasoningTools()],
     markdown=True,
     enable_user_memories=True,
     add_history_to_messages=True,

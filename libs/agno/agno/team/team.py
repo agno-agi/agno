@@ -1191,7 +1191,6 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team asynchronously and return the response."""
-
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
