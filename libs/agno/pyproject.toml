@@ -335,7 +335,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
-  "daytona_sdk.*",
+  "daytona.*",
   "discord.*",
   "docker.*",
   "docx.*",
