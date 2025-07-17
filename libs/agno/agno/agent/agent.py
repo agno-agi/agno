@@ -3933,6 +3933,8 @@ class Agent:
 
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
+        from copy import deepcopy 
+        session = deepcopy(session) # Prevent subsequent pop from causing missing runs and messages
 
         if not hasattr(session, "memory"):
             return
