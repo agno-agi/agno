@@ -42,7 +42,6 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseEvent
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
 from agno.session import TeamSession
-from agno.session.summarizer import SessionSummary
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -5100,7 +5099,7 @@ class Team:
 
             # Then add a summary of the interaction to the system prompt
             if self.add_session_summary_references:
-                session_summary: SessionSummary = self.team_session.get_session_summary()  # type: ignore
+                session_summary = self.team_session.get_session_summary()  # type: ignore
                 if session_summary is not None:
                     system_message_content += "Here is a brief summary of your previous interactions:\n\n"
                     system_message_content += "<summary_of_previous_interactions>\n"

@@ -15,7 +15,6 @@ agent = Agent(
     session_id="chat_history",
     instructions="You are a helpful assistant that can answer questions about space and oceans.",
     add_history_to_messages=True,
-    store_chat_history=True,
 )
 
 agent.print_response("Tell me a new interesting fact about space")

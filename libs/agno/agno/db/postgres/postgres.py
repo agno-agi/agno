@@ -18,9 +18,9 @@ from agno.db.postgres.utils import (
     is_table_available,
     is_valid_table,
 )
-from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -276,7 +276,6 @@ class PostgresDb(BaseDb):
             raise
 
     # -- Session methods --
-
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -576,7 +575,6 @@ class PostgresDb(BaseDb):
                         runs=session_dict.get("runs"),
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
-                        chat_history=session_dict.get("chat_history"),
                         summary=session_dict.get("summary"),
                         extra_data=session_dict.get("extra_data"),
                         created_at=session_dict.get("created_at"),
@@ -590,7 +588,6 @@ class PostgresDb(BaseDb):
                             user_id=session_dict.get("user_id"),
                             agent_data=session_dict.get("agent_data"),
                             session_data=session_dict.get("session_data"),
-                            chat_history=session_dict.get("chat_history"),
                             summary=session_dict.get("summary"),
                             extra_data=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
@@ -617,7 +614,6 @@ class PostgresDb(BaseDb):
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
                         extra_data=session_dict.get("extra_data"),
-                        chat_history=session_dict.get("chat_history"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -632,7 +628,6 @@ class PostgresDb(BaseDb):
                             summary=session_dict.get("summary"),
                             extra_data=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
-                            chat_history=session_dict.get("chat_history"),
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
@@ -655,7 +650,6 @@ class PostgresDb(BaseDb):
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
                         extra_data=session_dict.get("extra_data"),
-                        chat_history=session_dict.get("chat_history"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -669,7 +663,6 @@ class PostgresDb(BaseDb):
                             summary=session_dict.get("summary"),
                             extra_data=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
-                            chat_history=session_dict.get("chat_history"),
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
@@ -685,7 +678,6 @@ class PostgresDb(BaseDb):
             return None
 
     # -- Memory methods --
-
     def delete_user_memory(self, memory_id: str) -> bool:
         """Delete a user memory from the database.
 
@@ -753,7 +745,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Exception reading from memory table: {e}")
             return []
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[MemoryRow]:
+    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
         """Get a memory from the database.
 
         Args:
@@ -761,9 +753,9 @@ class PostgresDb(BaseDb):
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
-            Union[MemoryRow, Dict[str, Any], None]:
-                - When deserialize=True: MemoryRow object
-                - When deserialize=False: Memory dictionary
+            Union[UserMemory, Dict[str, Any], None]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
 
         Raises:
             Exception: If an error occurs during retrieval.
@@ -781,13 +773,7 @@ class PostgresDb(BaseDb):
                 memory_raw = result._mapping
                 if not deserialize:
                     return memory_raw
-
-            return MemoryRow(
-                id=memory_raw["memory_id"],
-                user_id=memory_raw["user_id"],
-                memory=memory_raw["memory"],
-                last_updated=memory_raw["last_updated"],
-            )
+            return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -806,7 +792,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as MemoryRow objects.
 
         Args:
@@ -823,8 +809,8 @@ class PostgresDb(BaseDb):
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
         Returns:
-            Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of MemoryRow objects
+            Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of UserMemory objects
                 - When deserialize=False: Tuple of (memory dictionaries, total count)
 
         Raises:
@@ -871,15 +857,7 @@ class PostgresDb(BaseDb):
                 if not deserialize:
                     return user_memories_raw, total_count
 
-            return [
-                MemoryRow(
-                    id=record["memory_id"],
-                    user_id=record["user_id"],
-                    memory=record["memory"],
-                    last_updated=record["last_updated"],
-                )
-                for record in user_memories_raw
-            ]
+            return [UserMemory.from_dict(record) for record in user_memories_raw]
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -951,18 +929,18 @@ class PostgresDb(BaseDb):
             return [], 0
 
     def upsert_user_memory(
-        self, memory: MemoryRow, deserialize: Optional[bool] = True
-    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        self, memory: UserMemory, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the database.
 
         Args:
-            memory (MemoryRow): The user memory to upsert.
+            memory (UserMemory): The user memory to upsert.
             deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
 
         Returns:
-            Optional[Union[MemoryRow, Dict[str, Any]]]:
-                - When deserialize=True: MemoryRow object
-                - When deserialize=False: Memory dictionary
+            Optional[Union[UserMemory, Dict[str, Any]]]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
 
         Raises:
             Exception: If an error occurs during upsert.
@@ -971,25 +949,30 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="user_memories")
 
             with self.Session() as sess, sess.begin():
-                if memory.id is None:
-                    memory.id = str(uuid4())
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
 
                 stmt = postgresql.insert(table).values(
+                    memory_id=memory.memory_id,
+                    memory=memory.memory,
+                    topics=memory.topics,
+                    input=memory.input,
                     user_id=memory.user_id,
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
-                    memory_id=memory.id,
-                    memory=memory.memory,
-                    topics=memory.memory.get("topics", []),
-                    feedback=memory.memory.get("feedback", None),
+                    workflow_id=memory.workflow_id,
                     last_updated=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
-                        topics=memory.memory.get("topics", []),
-                        feedback=memory.memory.get("feedback", None),
+                        topics=memory.topics,
+                        input=memory.input,
+                        user_id=memory.user_id,
+                        agent_id=memory.agent_id,
+                        team_id=memory.team_id,
+                        workflow_id=memory.workflow_id,
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)
@@ -1001,21 +984,13 @@ class PostgresDb(BaseDb):
             if not user_memory_raw or not deserialize:
                 return user_memory_raw
 
-            return MemoryRow(
-                id=user_memory_raw["memory_id"],
-                user_id=user_memory_raw["user_id"],
-                agent_id=user_memory_raw["agent_id"],
-                team_id=user_memory_raw["team_id"],
-                memory=user_memory_raw["memory"],
-                last_updated=user_memory_raw["last_updated"],
-            )
+            return UserMemory.from_dict(user_memory_raw)
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
 
     # -- Metrics methods --
-
     def _get_all_sessions_for_metrics_calculation(
         self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -1510,7 +1485,7 @@ class PostgresDb(BaseDb):
             return [] if deserialize else ([], 0)
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, serialize: bool = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
@@ -1532,7 +1507,7 @@ class PostgresDb(BaseDb):
                 )
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, serialize=serialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 

@@ -8,7 +8,7 @@ from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.session.summarizer import SessionSummary
+from agno.session.summary import SessionSummary
 
 
 class CustomJSONEncoder(json.JSONEncoder):

@@ -312,7 +312,11 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the session.
         """
         try:
+            data = self._get_record("sessions", session_id)
+            if data is None:
+                return None
 
+            return data
 
         except Exception as e:
             log_debug(f"Exception reading session: {e}")

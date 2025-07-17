@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.models.message import Message
 from agno.run.base import RunStatus
 from agno.run.response import RunResponse
-from agno.session.summarizer import SessionSummary, SessionSummaryResponse
+from agno.session.summary import SessionSummary, SessionSummaryResponse
 from agno.utils.log import log_debug, log_warning
 
 
@@ -37,8 +37,6 @@ class AgentSession:
     extra_data: Optional[Dict[str, Any]] = None
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
-    # List of all messages in the session
-    chat_history: Optional[list[Message]] = None
     # List of all runs in the session
     runs: Optional[List[RunResponse]] = None
     # Summary of the session
@@ -54,16 +52,8 @@ class AgentSession:
 
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
-        session_dict["chat_history"] = [msg.to_dict() for msg in self.chat_history] if self.chat_history else None
 
         return session_dict
-
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {
-            "model": self.agent_data.get("model") if self.agent_data else None,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[AgentSession]:
@@ -74,10 +64,6 @@ class AgentSession:
         runs = data.get("runs")
         if runs is not None and isinstance(runs[0], dict):
             runs = [RunResponse.from_dict(run) for run in runs]
-
-        chat_history = data.get("chat_history")
-        if chat_history is not None and isinstance(chat_history[0], dict):
-            chat_history = [Message.from_dict(msg) for msg in chat_history]
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
@@ -95,10 +81,16 @@ class AgentSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=chat_history,
             runs=runs,
             summary=summary,
         )
+
+    def telemetry_data(self) -> Dict[str, Any]:
+        return {
+            "model": self.agent_data.get("model") if self.agent_data else None,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
     def add_run(self, run: RunResponse):
         """Adds a RunResponse, together with some calculated data, to the runs list."""

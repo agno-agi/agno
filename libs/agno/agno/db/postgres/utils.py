@@ -11,7 +11,7 @@ from agno.db.base import SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.session.summarizer import SessionSummary
+from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -45,8 +45,6 @@ def hydrate_session(session: dict) -> dict:
 
 
 # -- DB util methods --
-
-
 def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order: Optional[str] = None):
     """Apply sorting to the given SQLAlchemy statement.
 
@@ -144,8 +142,6 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
 
 # -- Metrics util methods --
-
-
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
     """Bulk upsert metrics into the database.
 

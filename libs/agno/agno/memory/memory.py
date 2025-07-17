@@ -1,5 +1,4 @@
 import json
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
@@ -8,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas import MemoryRow
+from agno.db.schemas.memory import UserMemory
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.manager import MemoryManager
 from agno.models.base import Model
@@ -27,34 +26,6 @@ class MemorySearchResponse(BaseModel):
     memory_ids: List[str] = Field(
         ..., description="The IDs of the memories that are most semantically similar to the query."
     )
-
-
-@dataclass
-class UserMemory:
-    """Model for User Memories"""
-
-    memory: str
-    topics: Optional[List[str]] = None
-    input: Optional[str] = None
-    last_updated: Optional[datetime] = None
-    memory_id: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            "memory_id": self.memory_id,
-            "memory": self.memory,
-            "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
-            "input": self.input,
-        }
-        return {k: v for k, v in _dict.items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
-        last_updated = data.get("last_updated")
-        if last_updated:
-            data["last_updated"] = datetime.fromisoformat(last_updated)
-        return cls(**data)
 
 
 @dataclass
@@ -102,8 +73,6 @@ class Memory:
     # Model used for memories and summaries
     model: Optional[Model] = None
 
-    # Memories per memory ID per user
-    memories: Optional[Dict[str, Dict[str, UserMemory]]] = None
     # Manager to manage memories
     memory_manager: Optional[MemoryManager] = None
 
@@ -115,55 +84,26 @@ class Memory:
     # Whether to clear memories
     clear_memories: bool = False
 
+    # TODO: Scope of team context
     # Team context
     team_context: Optional[TeamContext] = None
 
     debug_mode: bool = False
-    version: int = 2
 
-    def __init__(
-        self,
-        model: Optional[Model] = None,
-        memory_manager: Optional[MemoryManager] = None,
-        db: Optional[BaseDb] = None,
-        memories: Optional[Dict[str, Dict[str, UserMemory]]] = None,
-        runs: Optional[Dict[str, List[Union[RunResponse, TeamRunResponse]]]] = None,
-        debug_mode: bool = False,
-        delete_memories: bool = False,
-        clear_memories: bool = False,
-    ):
-        self.memories = memories or {}
-        self.runs = runs or {}
-
-        self.debug_mode = debug_mode
-
-        self.delete_memories = delete_memories
-        self.clear_memories = clear_memories
-
-        self.model = model
-
-        if self.model is not None and isinstance(self.model, str):
-            raise ValueError("Model must be a Model object, not a string")
-
-        self.memory_manager = memory_manager
-
-        self.db = db
-
-        # We are making memories
+    def __post_init__(self):
         if self.model is not None:
+            if isinstance(self.model, str):
+                raise ValueError("Model must be a Model object, not a string.")
             if self.memory_manager is None:
-                self.memory_manager = MemoryManager(model=deepcopy(self.model))
-            # Set the model on the memory manager if it is not set
-            if self.memory_manager.model is None:
-                self.memory_manager.model = deepcopy(self.model)
-
-        self.debug_mode = debug_mode
+                self.memory_manager = MemoryManager(model=self.model)
+            elif self.memory_manager.model is None:
+                self.memory_manager.model = self.model
 
     def set_model(self, model: Model) -> None:
         if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=deepcopy(model))
+            self.memory_manager = MemoryManager(model=model)
         if self.memory_manager.model is None:
-            self.memory_manager.model = deepcopy(model)
+            self.memory_manager.model = model
 
     def get_model(self) -> Model:
         if self.model is None:
@@ -178,7 +118,7 @@ class Memory:
             self.model = OpenAIChat(id="gpt-4o")
         return self.model
 
-    def refresh_from_db(self, user_id: Optional[str] = None):
+    def read_from_db(self, user_id: Optional[str] = None):
         if self.db:
             # If no user_id is provided, read all memories
             if user_id is None:
@@ -186,11 +126,11 @@ class Memory:
             else:
                 all_memories = self.db.get_user_memories(user_id=user_id)
 
-            # Reset the memories
-            self.memories = {}
+            memories = {}
             for memory in all_memories:
-                if memory.user_id is not None and memory.id is not None:
-                    self.memories.setdefault(memory.user_id, {})[memory.id] = UserMemory.from_dict(memory.memory)
+                if memory.user_id is not None and memory.memory_id is not None:
+                    memories.setdefault(memory.user_id, {})[memory.memory_id] = memory.memory
+            return memories
         return None
 
     def set_log_level(self):
@@ -202,56 +142,40 @@ class Memory:
 
     def initialize(self, user_id: Optional[str] = None):
         self.set_log_level()
-        self.refresh_from_db(user_id=user_id)
-
-    def to_dict(self) -> Dict[str, Any]:
-        _memory_dict = {}
-        # Add memories if they exist
-        if self.memories is not None:
-            _memory_dict["memories"] = {
-                user_id: {memory_id: memory.to_dict() for memory_id, memory in user_memories.items()}
-                for user_id, user_memories in self.memories.items()
-            }
-
-        # if self.team_context is not None:
-        #     _memory_dict["team_context"] = {}
-        #     for session_id, team_context in self.team_context.items():
-        #         if session_id is not None:
-        #             _memory_dict["team_context"][session_id] = team_context.to_dict()
-
-        _memory_dict = {k: v for k, v in _memory_dict.items() if v is not None}
-        return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
         """Get the user memories for a given user id"""
-        if user_id is None:
-            user_id = "default"
-        # Refresh from the Db
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-        if self.memories is None:
+        if self.db:
+            if user_id is None:
+                user_id = "default"
+            # Refresh from the Db
+            memories = self.read_from_db(user_id=user_id)
+            if memories is None:
+                return []
+            return list(memories.get(user_id, {}).values())
+        else:
+            log_warning("Memory Db not provided.")
             return []
-        return list(self.memories.get(user_id, {}).values())
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
-        if user_id is None:
-            user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-        if self.memories is None:
+        if self.db:
+            if user_id is None:
+                user_id = "default"
+            # Refresh from the DB
+            memories = self.read_from_db(user_id=user_id)
+            if memories is None:
+                return None
+            return memories.get(user_id, {}).get(memory_id, None)
+        else:
+            log_warning("Memory Db not provided.")
             return None
-        return self.memories.get(user_id, {}).get(memory_id, None)
 
     def add_user_memory(
         self,
         memory: UserMemory,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> str:
         """Add a user memory for a given user id
         Args:
@@ -260,39 +184,34 @@ class Memory:
         Returns:
             str: The id of the memory
         """
-        from uuid import uuid4
-
-        memory_id = memory.memory_id or str(uuid4())
-        if memory.memory_id is None:
-            memory.memory_id = memory_id
-        if user_id is None:
-            user_id = "default"
-
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-
-        if not memory.last_updated:
-            memory.last_updated = datetime.now()
-
-        self.memories.setdefault(user_id, {})[memory_id] = memory  # type: ignore
         if self.db:
-            self._upsert_db_memory(
-                memory=MemoryRow(
-                    id=memory_id,
-                    user_id=user_id,
-                    memory=memory.to_dict(),
-                    last_updated=memory.last_updated or datetime.now(),
-                )
-            )
-        return memory_id
+            from uuid import uuid4
+
+            memory_id = memory.memory_id or str(uuid4())
+            if memory.memory_id is None:
+                memory.memory_id = memory_id
+            if user_id is None:
+                user_id = "default"
+
+            if not memory.last_updated:
+                memory.last_updated = datetime.now()
+
+            memories = self.read_from_db(user_id=user_id)
+            if memories is None:
+                memories = {}
+            memories.setdefault(user_id, {})[memory_id] = memory
+            if self.db:
+                self._upsert_db_memory(memory=memory)
+            return memory_id
+        else:
+            log_warning("Memory Db not provided.")
+            return None
 
     def replace_user_memory(
         self,
         memory_id: str,
         memory: UserMemory,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> Optional[str]:
         """Replace a user memory for a given user id
         Args:
@@ -302,59 +221,51 @@ class Memory:
         Returns:
             str: The id of the memory
         """
-
-        if user_id is None:
-            user_id = "default"
-
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-
-        if not memory.last_updated:
-            memory.last_updated = datetime.now()
-
-        if memory_id not in self.memories[user_id]:  # type: ignore
-            log_warning(f"Memory {memory_id} not found for user {user_id}")
-            return None
-
-        self.memories.setdefault(user_id, {})[memory_id] = memory  # type: ignore
         if self.db:
-            self._upsert_db_memory(
-                memory=MemoryRow(
-                    id=memory_id,
-                    user_id=user_id,
-                    memory=memory.to_dict(),
-                    last_updated=memory.last_updated or datetime.now(),
-                )
-            )
+            if user_id is None:
+                user_id = "default"
 
-        return memory_id
+            if not memory.last_updated:
+                memory.last_updated = datetime.now()
+
+            memories = self.read_from_db(user_id=user_id)
+            if memories is None:
+                memories = {}
+            if memory_id not in memories[user_id]:
+                log_warning(f"Memory {memory_id} not found for user {user_id}")
+                return None
+
+            self._upsert_db_memory(memory=memory)
+
+            return memory_id
+        else:
+            log_warning("Memory Db not provided.")
+            return None
 
     def delete_user_memory(
         self,
         memory_id: str,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> None:
         """Delete a user memory for a given user id
         Args:
             memory_id (str): The id of the memory to delete
             user_id (Optional[str]): The user id to delete the memory from. If not provided, the memory is deleted from the "default" user.
         """
-        if user_id is None:
-            user_id = "default"
-
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
-
-        if memory_id not in self.memories[user_id]:  # type: ignore
-            log_warning(f"Memory {memory_id} not found for user {user_id}")
-            return None
-
-        del self.memories[user_id][memory_id]  # type: ignore
         if self.db:
+            if user_id is None:
+                user_id = "default"
+
+            memories = self.read_from_db(user_id=user_id)
+
+            if memory_id not in memories[user_id]:  # type: ignore
+                log_warning(f"Memory {memory_id} not found for user {user_id}")
+                return None
+
             self._delete_db_memory(memory_id=memory_id)
+        else:
+            log_warning("Memory Db not provided.")
+            return None
 
     # -*- Agent Functions
     def create_user_memories(
@@ -364,7 +275,6 @@ class Memory:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -387,12 +297,13 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = memories.get(user_id, {})  # type: ignore
         existing_memories = [
-            {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
+            {"memory_id": memory_id, "memory": memory} for memory_id, memory in existing_memories.items()
         ]
         response = self.memory_manager.create_or_update_memories(  # type: ignore
             messages=messages,
@@ -406,7 +317,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.refresh_from_db(user_id=user_id)
+        self.read_from_db(user_id=user_id)
         return response
 
     async def acreate_user_memories(
@@ -416,7 +327,6 @@ class Memory:
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> str:
         """Creates memories from multiple messages and adds them to the memory db."""
         self.set_log_level()
@@ -439,10 +349,11 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = memories.get(user_id, {})  # type: ignore
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
@@ -459,7 +370,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.refresh_from_db()
+        self.read_from_db(user_id=user_id)
 
         return response
 
@@ -475,9 +386,11 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        self.refresh_from_db(user_id=user_id)
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = memories.get(user_id, {})  # type: ignore
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
@@ -492,7 +405,7 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.refresh_from_db(user_id=user_id)
+        self.read_from_db(user_id=user_id)
 
         return response
 
@@ -509,9 +422,11 @@ class Memory:
         if user_id is None:
             user_id = "default"
 
-        self.refresh_from_db(user_id=user_id)
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        existing_memories = self.memories.get(user_id, {})  # type: ignore
+        existing_memories = memories.get(user_id, {})  # type: ignore
         existing_memories = [
             {"memory_id": memory_id, "memory": memory.memory} for memory_id, memory in existing_memories.items()
         ]
@@ -526,12 +441,12 @@ class Memory:
         )
 
         # We refresh from the DB
-        self.refresh_from_db(user_id=user_id)
+        self.read_from_db(user_id=user_id)
 
         return response
 
     # -*- Memory Db Functions
-    def _upsert_db_memory(self, memory: MemoryRow) -> str:
+    def _upsert_db_memory(self, memory: UserMemory) -> str:
         """Use this function to add a memory to the database."""
         try:
             if not self.db:
@@ -580,65 +495,18 @@ class Memory:
             log_warning(f"Error upserting session into db: {e}")
             return None
 
-    # -*- Chat History Functions
-    def read_chat_history(self, session_id: str, session_type: SessionType) -> Optional[List[Message]]:
-        """Read the chat history from the session"""
-        if not self.db:
-            raise ValueError("Db not initialized")
-        session = self.read_session(session_id=session_id, session_type=session_type)
-        if session and session.chat_history:
-            return [Message.from_dict(msg) for msg in session.chat_history]
-        return None
+    def clear(self) -> None:
+        """Clears the memory."""
+        if self.db:
+            self.db.clear()
 
     # -*- Utility Functions
-    # TODO: Remove this function from memory
-    def get_messages_for_session(
-        self,
-        session_id: str,
-        user_role: str = "user",
-        assistant_role: Optional[List[str]] = None,
-        skip_history_messages: bool = True,
-    ) -> List[Message]:
-        """Returns a list of messages for the session that iterate through user message and assistant response."""
-
-        if assistant_role is None:
-            assistant_role = ["assistant", "model", "CHATBOT"]
-
-        final_messages: List[Message] = []
-        session_runs = self.runs.get(session_id, []) if self.runs else []
-        for run_response in session_runs:
-            if run_response and run_response.messages:
-                user_message_from_run = None
-                assistant_message_from_run = None
-
-                # Start from the beginning to look for the user message
-                for message in run_response.messages:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
-                        continue
-                    if message.role == user_role:
-                        user_message_from_run = message
-                        break
-
-                # Start from the end to look for the assistant response
-                for message in run_response.messages[::-1]:
-                    if hasattr(message, "from_history") and message.from_history and skip_history_messages:
-                        continue
-                    if message.role in assistant_role:
-                        assistant_message_from_run = message
-                        break
-
-                if user_message_from_run and assistant_message_from_run:
-                    final_messages.append(user_message_from_run)
-                    final_messages.append(assistant_message_from_run)
-        return final_messages
-
     def search_user_memories(
         self,
         query: Optional[str] = None,
         limit: Optional[int] = None,
         retrieval_method: Optional[Literal["last_n", "first_n", "agentic"]] = None,
         user_id: Optional[str] = None,
-        refresh_from_db: bool = True,
     ) -> List[UserMemory]:
         """Search through user memories using the specified retrieval method.
 
@@ -660,10 +528,11 @@ class Memory:
 
         self.set_log_level()
 
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        if not self.memories:
+        if not memories:
             return []
 
         # Use default retrieval method if not specified
@@ -702,7 +571,11 @@ class Memory:
 
     def _search_user_memories_agentic(self, user_id: str, query: str, limit: Optional[int] = None) -> List[UserMemory]:
         """Search through user memories using agentic search."""
-        if not self.memories:
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
+
+        if not memories:
             return []
 
         model = self.get_model()
@@ -712,7 +585,7 @@ class Memory:
         log_debug("Searching for memories", center=True)
 
         # Get all memories as a list
-        user_memories: Dict[str, UserMemory] = self.memories[user_id]
+        user_memories: Dict[str, UserMemory] = memories[user_id]
         system_message_str = "Your task is to search through user memories and return the IDs of the memories that are related to the query.\n"
         system_message_str += "\n<user_memories>\n"
         for memory in user_memories.values():
@@ -777,10 +650,11 @@ class Memory:
         Returns:
             A list of the most recent UserMemory objects.
         """
-        if not self.memories:
-            return []
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        memories_dict = self.memories.get(user_id, {})
+        memories_dict = memories.get(user_id, {})
 
         # Sort memories by last_updated timestamp if available
         if memories_dict:
@@ -810,10 +684,11 @@ class Memory:
         Returns:
             A list of the oldest UserMemory objects.
         """
-        if not self.memories:
-            return []
+        memories = self.read_from_db(user_id=user_id)
+        if memories is None:
+            memories = {}
 
-        memories_dict = self.memories.get(user_id, {})
+        memories_dict = memories.get(user_id, {})
         # Sort memories by last_updated timestamp if available
         if memories_dict:
             # Convert to list of values for sorting
@@ -834,13 +709,6 @@ class Memory:
 
         return sorted_memories_list
 
-    def clear(self) -> None:
-        """Clears the memory."""
-        if self.db:
-            self.db.clear()
-        self.memories = {}
-        self.summaries = {}
-
     def deep_copy(self) -> "Memory":
         from copy import deepcopy
 
@@ -849,7 +717,7 @@ class Memory:
 
         # Manually deepcopy fields that are known to be safe
         for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "memory_manager", "summary_manager"]:
+            if field_name not in ["db", "memory_manager"]:
                 try:
                     setattr(copied_obj, field_name, deepcopy(field_value))
                 except Exception as e:
@@ -858,7 +726,6 @@ class Memory:
 
         copied_obj.db = self.db
         copied_obj.memory_manager = self.memory_manager
-        copied_obj.summary_manager = self.summary_manager
 
         return copied_obj
 

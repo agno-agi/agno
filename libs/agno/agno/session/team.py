@@ -10,7 +10,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.response import RunStatus
 from agno.run.team import TeamRunResponse
-from agno.session.summarizer import SessionSummary, SessionSummaryResponse
+from agno.session.summary import SessionSummary, SessionSummaryResponse
 from agno.utils.log import log_debug, log_warning
 
 

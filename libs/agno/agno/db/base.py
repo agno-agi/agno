@@ -3,7 +3,7 @@ from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.db.schemas import MemoryRow
+from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import Session
@@ -34,7 +34,6 @@ class BaseDb(ABC):
         self.knowledge_table_name = knowledge_table
 
     # --- Sessions ---
-
     @abstractmethod
     def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT) -> bool:
         raise NotImplementedError
@@ -81,7 +80,6 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- User Memory ---
-
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
         raise NotImplementedError
@@ -97,7 +95,7 @@ class BaseDb(ABC):
     @abstractmethod
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -114,7 +112,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[MemoryRow], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -127,12 +125,11 @@ class BaseDb(ABC):
 
     @abstractmethod
     def upsert_user_memory(
-        self, memory: MemoryRow, deserialize: Optional[bool] = True
-    ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
+        self, memory: UserMemory, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         raise NotImplementedError
 
     # --- Metrics ---
-
     @abstractmethod
     def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
@@ -144,7 +141,6 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-
     @abstractmethod
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get knowledge content by ID."""
@@ -171,8 +167,7 @@ class BaseDb(ABC):
         """Delete knowledge content by ID."""
         raise NotImplementedError
 
-    # --- Eval ---
-
+    # --- Evals ---
     @abstractmethod
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[Dict[str, Any]]:
         raise NotImplementedError

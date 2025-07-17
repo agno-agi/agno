@@ -140,8 +140,6 @@ class Agent:
     add_memory_references: Optional[bool] = None
     # Extra data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # If True, stores the flat list of messages in the chat_history field of the session
-    store_chat_history: bool = False
 
     # --- Agent History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
@@ -351,7 +349,6 @@ class Agent:
         retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         extra_data: Optional[Dict[str, Any]] = None,
-        store_chat_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
@@ -429,7 +426,6 @@ class Agent:
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
-        self.store_chat_history = store_chat_history
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -567,6 +563,13 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
+    def set_memory(self) -> None:
+        if self.memory is None:
+            self.memory = Memory()
+
+        if (self.enable_agentic_memory or self.enable_user_memories) and self.memory.model is None:
+            self.memory.set_model(self.model)
+
     def set_defaults(self) -> None:
         if self.add_memory_references is None:
             self.add_memory_references = self.enable_user_memories or self.enable_agentic_memory
@@ -596,16 +599,9 @@ class Agent:
         self.set_default_model()
         self.set_debug()
         self.set_agent_id()
+        self.set_memory()
 
         log_debug(f"Agent ID: {self.agent_id}", center=True)
-
-        if self.memory is None:
-            self.memory = Memory()
-
-        # Default to the agent's model if no model is provided
-        if isinstance(self.memory, Memory):
-            if self.memory.model is None and self.model is not None:
-                self.memory.set_model(self.model)
 
         if self._formatter is None:
             self._formatter = SafeFormatter()
@@ -643,11 +639,12 @@ class Agent:
         Steps:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save session to storage
-        7. Save output to file if save_response_to_file is set
+        3. Update the RunResponse with the model response
+        4. Add RunResponse to Agent Session
+        5. Update Agent Memory
+        6. Calculate session metrics
+        7. Save session to storage
+        8. Optional: Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -668,9 +665,10 @@ class Agent:
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
 
+        # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # 3. Add the RunResponse to Agent Session
+        # 4. Add the RunResponse to Agent Session
         self.add_run_to_session(
             run_response=run_response,
         )
@@ -681,7 +679,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update Agent Memory
+        # 5. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -690,7 +688,7 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 5. Calculate session metrics
+        # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
         self.run_response.status = RunStatus.completed
@@ -698,10 +696,10 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        # 6. Save session to memory
+        # 7. Save session to memory
         self.save_session(user_id=user_id, session_id=session_id)
 
-        # 7. Save output to file if save_response_to_file is set
+        # 8. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         # Log Agent Run
@@ -725,11 +723,11 @@ class Agent:
         Steps:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
-        3. Add the run to memory
+        3. Add the RunResponse to the Agent Session
         4. Update Agent Memory
         5. Calculate session metrics
-        6. Save output to file if save_response_to_file is set
-        7. Save session to storage
+        6. Save session to storage
+        7. Optional: Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -754,7 +752,7 @@ class Agent:
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         )
 
-        # 3. Add the run to memory
+        # 3. Add RunResponse to Agent Session
         self.add_run_to_session(
             run_response=run_response,
         )
@@ -784,7 +782,7 @@ class Agent:
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
-        # 6. Save output to file if save_response_to_file is set
+        # 7. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
@@ -1060,11 +1058,12 @@ class Agent:
         Steps:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save session to storage
-        7. Save output to file if save_response_to_file is set
+        3. Update the RunResponse with the model response
+        4. Add RunResponse to Agent Session
+        5. Update Agent Memory
+        6. Calculate session metrics
+        7. Save session to storage
+        8. Optional: Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1085,9 +1084,10 @@ class Agent:
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
+        # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # 3. Add the run to memory
+        # 4. Add RunResponse to Agent Session
         self.add_run_to_session(
             run_response=run_response,
         )
@@ -1098,7 +1098,7 @@ class Agent:
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update Agent Memory
+        # 5. Update Agent Memory
         async for _ in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -1106,7 +1106,7 @@ class Agent:
         ):
             pass
 
-        # 5. Calculate session metrics
+        # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
         self.run_response.status = RunStatus.completed
@@ -1114,10 +1114,10 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        # 6. Save session to storage
+        # 7. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
-        # 7. Save output to file if save_response_to_file is set
+        # 8. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         # Log Agent Run
@@ -1140,12 +1140,12 @@ class Agent:
 
         Steps:
         1. Reason about the task if reasoning is enabled
-        2. Generate a response from the Model
-        3. Add the run to memory
+        2. Generate a response from the Model (includes running function calls)
+        3. Add the RunResponse to the Agent Session
         4. Update Agent Memory
         5. Calculate session metrics
-        6. Save output to file if save_response_to_file is set
-        7. Save session to storage
+        6. Save session to storage
+        7. Optional: Save output to file if save_response_to_file is set
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1171,7 +1171,7 @@ class Agent:
         ):
             yield event
 
-        # 3. Add the run to memory
+        # 3. Add RunResponse to Agent Session
         self.add_run_to_session(
             run_response=run_response,
         )
@@ -1184,7 +1184,7 @@ class Agent:
                 yield item
             return
 
-        # 4. Update Agent Memory
+        # 5. Update Agent Memory
         async for event in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -1192,7 +1192,7 @@ class Agent:
         ):
             yield event
 
-        # 5. Calculate session metrics
+        # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
         self.run_response.status = RunStatus.completed
@@ -1203,7 +1203,7 @@ class Agent:
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
 
-        # 7. Save output to file if save_response_to_file is set
+        # 8. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
@@ -3758,8 +3758,6 @@ class Agent:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
             # Update the session_data with the latest data
             session.session_data = self.get_agent_session_data()
-            if self.store_chat_history:
-                session.chat_history = session.get_chat_history()
 
             self.memory.upsert_session(session=session)
 
@@ -3818,12 +3816,8 @@ class Agent:
 
     def get_chat_history(self) -> List[Message]:
         """Read the chat history from the session"""
-        # If the chat history is already set, return it
-        if self.agent_session is not None and self.agent_session.chat_history is not None:
-            return self.agent_session.chat_history
-        # Else read from the db
-        if self.memory is not None and self.memory.db is not None:
-            return self.memory.read_chat_history(session_id=self.session_id, session_type="agent")
+        if self.agent_session is not None:
+            return self.agent_session.get_chat_history()
         return []
 
     def format_message_with_state_variables(self, msg: Any) -> Any:
@@ -4046,7 +4040,7 @@ class Agent:
                     )
                     system_message_content += "<memories_from_previous_interactions>"
                     for _memory in user_memories:  # type: ignore
-                        system_message_content += f"\n- {_memory.memory}"
+                        system_message_content += f"\n- {_memory}"
                     system_message_content += "\n</memories_from_previous_interactions>\n\n"
                     system_message_content += (
                         "Note: this information is from previous interactions and may be updated in this conversation. "
@@ -4892,7 +4886,7 @@ class Agent:
             raise Exception("Model not set")
 
         gen_session_name_prompt = "Conversation\n"
-        messages_for_generating_session_name = self.memory.get_messages_for_session(session_id=session_id)
+        messages_for_generating_session_name = self.agent_session.get_messages_for_session(session_id=session_id)
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -5712,7 +5706,7 @@ class Agent:
 
             history: List[Dict[str, Any]] = []
             if isinstance(self.memory, Memory):
-                all_chats = self.memory.get_messages_for_session(session_id=session_id)
+                all_chats = self.agent_session.get_messages_for_session(session_id=session_id)
 
                 if len(all_chats) == 0:
                     return ""

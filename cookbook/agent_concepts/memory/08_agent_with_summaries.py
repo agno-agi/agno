@@ -8,7 +8,7 @@ from agno.agent.agent import Agent
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.memory import Memory
 from agno.models.anthropic.claude import Claude
-from agno.session.summarizer import SessionSummarizer
+from agno.session.summary import SessionSummarizer
 from rich.pretty import pprint
 
 memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")

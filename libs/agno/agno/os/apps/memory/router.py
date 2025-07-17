@@ -1,10 +1,11 @@
 import math
 from typing import List, Optional
+from uuid import uuid4
 
 from fastapi import HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
-from agno.db.schemas import MemoryRow
+from agno.db.schemas import UserMemory
 from agno.memory import Memory
 from agno.os.apps.memory.schemas import (
     DeleteMemoriesRequest,
@@ -22,8 +23,11 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
         user_memory = memory.db.upsert_user_memory(
-            memory=MemoryRow(
-                id=None, memory={"memory": payload.memory, "topics": payload.topics}, user_id=payload.user_id
+            memory=UserMemory(
+                memory_id=str(uuid4()),
+                memory=payload.memory,
+                topics=payload.topics or [],
+                user_id=payload.user_id,
             ),
             deserialize=False,
         )
@@ -68,7 +72,6 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             sort_order=sort_order,
             deserialize=False,
         )
-
         return PaginatedResponse(
             data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
             meta=PaginationInfo(
@@ -103,8 +106,11 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
             raise HTTPException(status_code=500, detail="Database not initialized")
 
         user_memory = memory.db.upsert_user_memory(
-            memory=MemoryRow(
-                id=memory_id, memory={"memory": payload.memory, "topics": payload.topics or []}, user_id=payload.user_id
+            memory=UserMemory(
+                memory_id=memory_id,
+                memory=payload.memory,
+                topics=payload.topics or [],
+                user_id=payload.user_id,
             ),
             deserialize=False,
         )

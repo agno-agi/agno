@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from agno.db.base import SessionType
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
-from agno.session.summarizer import SessionSummary
+from agno.session.summary import SessionSummary
 from agno.utils.log import log_warning
 
 try:
