@@ -1497,7 +1497,7 @@ class PostgresDb(BaseDb):
 
                 result = sess.execute(stmt).fetchall()
                 if not result:
-                    return [] if serialize else ([], 0)
+                    return [] if deserialize else ([], 0)
 
                 eval_runs_raw = [row._mapping for row in result]
                 if not deserialize:
@@ -1507,7 +1507,7 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_debug(f"Exception getting eval runs: {e}")
-            return []
+            return [] if deserialize else ([], 0)
 
     def rename_eval_run(
         self, eval_run_id: str, name: str, serialize: bool = True

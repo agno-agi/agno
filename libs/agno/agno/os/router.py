@@ -157,27 +157,27 @@ def get_base_router(
         apps_response = AppsResponse(
             session=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
-                for app in os.managers
+                for app in os.apps
                 if app.type == "session"
             ],
             knowledge=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
-                for app in os.managers
+                for app in os.apps
                 if app.type == "knowledge"
             ],
             memory=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
-                for app in os.managers
+                for app in os.apps
                 if app.type == "memory"
             ],
             eval=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
-                for app in os.managers
+                for app in os.apps
                 if app.type == "eval"
             ],
             metrics=[
                 ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
-                for app in os.managers
+                for app in os.apps
                 if app.type == "metrics"
             ],
         )
@@ -190,7 +190,6 @@ def get_base_router(
 
         return ConfigResponse(
             os_id=os.os_id,
-            name=os.name,
             description=os.description,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
