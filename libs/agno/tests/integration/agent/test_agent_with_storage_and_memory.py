@@ -43,6 +43,40 @@ def test_agent_runs_in_memory(chat_agent):
     assert len(chat_agent.agent_session.memory["runs"]) == 1
 
 
+def test_agent_runs_in_memory_default_memory(agent_storage):
+    # No memory is set on the agent
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        add_history_to_messages=True,
+        num_history_runs=3,
+    )
+    session_id = "test_session"
+    agent.run("What is the capital of France?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 1
+    assert len(agent.agent_session.memory["runs"]) == 1
+
+    agent.run("What is the capital of Germany?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 2
+    assert len(agent.agent_session.memory["runs"]) == 2
+
+    agent.run("What have I asked so far?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 3
+    assert len(agent.agent_session.memory["runs"]) == 3
+
+    # New agent instance
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        add_history_to_messages=True,
+        num_history_runs=3,
+    )
+
+    agent.run("What have I asked so far?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 4
+    assert len(agent.agent_session.memory["runs"]) == 4
+
+
 def test_agent_runs_in_memory_legacy(chat_agent):
     chat_agent.memory = AgentMemory()
     session_id = "test_session"
