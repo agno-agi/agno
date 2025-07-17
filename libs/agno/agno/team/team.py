@@ -624,6 +624,7 @@ class Team:
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_defaults()
         self._set_default_model()
+        self._set_storage_mode()
 
         # Set debug mode
         self._set_debug()
@@ -733,11 +734,6 @@ class Team:
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 
-        self._set_storage_mode()
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
-
         return session_id, user_id
 
     @overload
@@ -804,6 +800,9 @@ class Team:
 
         # Initialize Team
         self.initialize_team(session_id=session_id)
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -1201,7 +1200,12 @@ class Team:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
         log_debug(f"Session ID: {session_id}", center=True)
+        
+        # Initialize Team
         self.initialize_team(session_id=session_id)
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
 
         effective_filters = knowledge_filters
 

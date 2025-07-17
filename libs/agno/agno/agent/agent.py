@@ -759,9 +759,6 @@ class Agent:
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
 
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
-
         return session_id, user_id
 
     def _run(
@@ -1001,12 +998,15 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
-        # Initialize the Agent
-        self.initialize_agent()
-
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
+        
+        # Initialize the Agent
+        self.initialize_agent()
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
 
         log_debug(f"Session ID: {session_id}", center=True)
 
@@ -1377,14 +1377,18 @@ class Agent:
     ) -> Any:
         """Async Run the Agent and return the response."""
 
-        # Initialize the Agent
-        self.initialize_agent()
 
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
         log_debug(f"Session ID: {session_id}", center=True)
+        
+        # Initialize the Agent
+        self.initialize_agent()
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
 
         effective_filters = knowledge_filters
         # When filters are passed manually
