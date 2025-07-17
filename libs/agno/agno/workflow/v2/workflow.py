@@ -78,6 +78,7 @@ class Workflow:
     # Workflow identification - make name optional with default
     name: Optional[str] = None
     workflow_id: Optional[str] = None
+    app_id: Optional[str] = None
     description: Optional[str] = None
 
     # Workflow configuration
@@ -112,6 +113,7 @@ class Workflow:
     def __init__(
         self,
         workflow_id: Optional[str] = None,
+        app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         storage: Optional[Storage] = None,
@@ -126,6 +128,7 @@ class Workflow:
         store_events: bool = False,
         events_to_skip: Optional[List[WorkflowRunEvent]] = None,
     ):
+        self.app_id = app_id
         self.workflow_id = workflow_id
         self.name = name
         self.description = description
