@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader
 from agno.knowledge.reader.csv_reader import CSVReader
 from agno.knowledge.reader.docx_reader import DocxReader

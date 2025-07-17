@@ -9,10 +9,10 @@ except ImportError:
         "The `qdrant-client` package is not installed. Please install it via `pip install qdrant-client`."
     )
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -343,6 +343,7 @@ class Qdrant(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_id": document.content_id,
             }
 
             # Add filters as metadata if provided
@@ -401,6 +402,7 @@ class Qdrant(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_id": document.content_id,
             }
 
             # Add filters as metadata if provided
@@ -641,7 +643,8 @@ class Qdrant(VectorDb):
                     content=result.payload["content"],
                     embedder=self.embedder,
                     embedding=result.vector,  # type: ignore
-                    usage=result.payload["usage"],
+                    usage=result.payload.get("usage"),
+                    content_id=result.payload.get("content_id"),
                 )
             )
 
@@ -676,6 +679,9 @@ class Qdrant(VectorDb):
 
         return None
 
+    def optimize(self) -> None:
+        pass
+
     def drop(self) -> None:
         if self.exists():
             log_debug(f"Deleting collection: {self.collection}")
@@ -699,20 +705,158 @@ class Qdrant(VectorDb):
         count_result: models.CountResult = self.client.count(collection_name=self.collection, exact=True)
         return count_result.count
 
-    def optimize(self) -> None:
-        pass
+    def point_exists(self, id: str) -> bool:
+        """Check if a point with the given ID exists in the collection."""
+        try:
+            log_info(f"Checking if point with ID '{id}' (type: {type(id)}) exists in collection '{self.collection}'")
+            points = self.client.retrieve(
+                collection_name=self.collection, ids=[id], with_payload=False, with_vectors=False
+            )
+            log_info(f"Retrieved {len(points)} points for ID '{id}'")
+            if len(points) > 0:
+                log_info(f"Found point with ID: {points[0].id} (type: {type(points[0].id)})")
+            return len(points) > 0
+        except Exception as e:
+            log_info(f"Error checking if point {id} exists: {e}")
+            return False
 
     def delete(self) -> bool:
         return self.client.delete_collection(collection_name=self.collection)
 
     def delete_by_id(self, id: str) -> bool:
-        return NotImplementedError
+        try:
+            # Check if point exists before deletion
+            if not self.point_exists(id):
+                log_warning(f"Point with ID {id} does not exist")
+                return True
+
+            self.client.delete(
+                collection_name=self.collection,
+                points_selector=models.PointIdsList(points=[id]),
+                wait=True,  # Wait for the operation to complete
+            )
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting point with ID {id}: {e}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
-        return NotImplementedError
+        """Delete all points that have the specified name in their payload (precise match)."""
+        try:
+            log_info(f"Attempting to delete all points with name: {name}")
+
+            # Create a filter to find all points with the specified name (precise match)
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="name", match=models.MatchValue(value=name))]
+            )
+
+            # First, count how many points will be deleted
+            count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
+
+            if count_result.count == 0:
+                log_warning(f"No points found with name: {name}")
+                return True
+
+            log_info(f"Found {count_result.count} points to delete with name: {name}")
+
+            # Delete all points matching the filter
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=filter_condition,
+                wait=True,  # Wait for the operation to complete
+            )
+
+            # Check if the deletion was successful
+            if result.status == models.UpdateStatus.COMPLETED:
+                log_info(f"Successfully deleted {count_result.count} points with name: {name}")
+                return True
+            else:
+                log_warning(f"Deletion failed for name {name}. Status: {result.status}")
+                return False
+
+        except Exception as e:
+            log_warning(f"Error deleting points with name {name}: {e}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        return NotImplementedError
+        """Delete all points where the given metadata is contained in the meta_data payload field."""
+        try:
+            log_info(f"Attempting to delete all points with metadata: {metadata}")
+
+            # Create filter conditions for each metadata key-value pair
+            filter_conditions = []
+            for key, value in metadata.items():
+                # Use the meta_data prefix since that's how metadata is stored in the payload
+                filter_conditions.append(
+                    models.FieldCondition(key=f"meta_data.{key}", match=models.MatchValue(value=value))
+                )
+
+            # Create a filter that requires ALL metadata conditions to match
+            filter_condition = models.Filter(must=filter_conditions)
+
+            # First, count how many points will be deleted
+            count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
+
+            if count_result.count == 0:
+                log_warning(f"No points found with metadata: {metadata}")
+                return True
+
+            log_info(f"Found {count_result.count} points to delete with metadata: {metadata}")
+
+            # Delete all points matching the filter
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=filter_condition,
+                wait=True,  # Wait for the operation to complete
+            )
+
+            # Check if the deletion was successful
+            if result.status == models.UpdateStatus.COMPLETED:
+                log_info(f"Successfully deleted {count_result.count} points with metadata: {metadata}")
+                return True
+            else:
+                log_warning(f"Deletion failed for metadata {metadata}. Status: {result.status}")
+                return False
+
+        except Exception as e:
+            log_warning(f"Error deleting points with metadata {metadata}: {e}")
+            return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
-        return NotImplementedError
+        """Delete all points that have the specified content_id in their payload."""
+        try:
+            log_info(f"Attempting to delete all points with content_id: {content_id}")
+
+            # Create a filter to find all points with the specified content_id
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))]
+            )
+
+            # First, count how many points will be deleted
+            count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
+
+            if count_result.count == 0:
+                log_warning(f"No points found with content_id: {content_id}")
+                return True
+
+            log_info(f"Found {count_result.count} points to delete with content_id: {content_id}")
+
+            # Delete all points matching the filter
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=filter_condition,
+                wait=True,  # Wait for the operation to complete
+            )
+
+            # Check if the deletion was successful
+            if result.status == models.UpdateStatus.COMPLETED:
+                log_info(f"Successfully deleted {count_result.count} points with content_id: {content_id}")
+                return True
+            else:
+                log_warning(f"Deletion failed for content_id {content_id}. Status: {result.status}")
+                return False
+
+        except Exception as e:
+            log_warning(f"Error deleting points with content_id {content_id}: {e}")
+            return False

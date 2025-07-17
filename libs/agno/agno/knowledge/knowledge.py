@@ -7,9 +7,9 @@ from uuid import uuid4
 
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.document import Document
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.content import Content, FileData
+from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb

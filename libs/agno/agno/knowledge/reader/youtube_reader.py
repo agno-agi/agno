@@ -1,7 +1,7 @@
 import asyncio
 from typing import List, Optional
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info, logger
 

@@ -4,7 +4,7 @@ from typing import List
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.lancedb import LanceDb
 from agno.vectordb.search import SearchType
 

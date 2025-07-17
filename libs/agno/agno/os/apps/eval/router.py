@@ -38,7 +38,7 @@ def attach_routes(
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
         model_id: Optional[str] = Query(default=None, description="Model ID"),
-        filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type"),
+        filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
@@ -60,12 +60,12 @@ def attach_routes(
         )
 
         return PaginatedResponse(
-            data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],
+            data=[EvalSchema.from_dict(eval_run) for eval_run in eval_runs],  # type: ignore
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
-                total_count=total_count,
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
             ),
         )
 
