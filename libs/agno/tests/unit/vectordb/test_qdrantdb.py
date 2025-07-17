@@ -288,10 +288,6 @@ def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
     # Mock delete_by_name method
     with patch.object(qdrant_db, "delete_by_name") as mock_delete_by_name:
         mock_delete_by_name.return_value = True
-<<<<<<< HEAD
-
-=======
->>>>>>> 5113a1c59 (feat: Pinecone DB(#3870))
         # Test delete by name
         result = qdrant_db.delete_by_name("tom_kha")
         assert result is True
