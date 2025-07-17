@@ -1,7 +1,7 @@
 from typing import List, Optional
 
-from agno.document.base import Document
 from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document.base import Document
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 

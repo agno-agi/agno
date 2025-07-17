@@ -2,8 +2,8 @@ from typing import AsyncIterator, Iterator, List, Optional
 
 from agno.aws.resource.s3.bucket import S3Bucket  # type: ignore
 from agno.aws.resource.s3.object import S3Object  # type: ignore
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 
 
 class S3KnowledgeBase(AgentKnowledge):

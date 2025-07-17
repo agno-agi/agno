@@ -1,7 +1,7 @@
 import json
 from typing import List, Optional
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.wikipedia import WikipediaKnowledgeBase
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info

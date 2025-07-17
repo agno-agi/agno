@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from cassandra.cluster import Session
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.cassandra import Cassandra
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 

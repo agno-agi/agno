@@ -1,6 +1,5 @@
 from agno.agent import Agent
-from agno.document import Document
-from agno.knowledge.document import DocumentKnowledgeBase
+from agno.knowledge.document import Document, DocumentKnowledgeBase
 from agno.vectordb.lancedb import LanceDb
 
 # Initialize LanceDB

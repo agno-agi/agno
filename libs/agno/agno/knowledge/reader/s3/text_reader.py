@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import List
 
-from agno.document.base import Document
+from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug, log_info, logger
 

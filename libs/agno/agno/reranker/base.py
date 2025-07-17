@@ -2,7 +2,7 @@ from typing import List
 
 from pydantic import BaseModel, ConfigDict
 
-from agno.document import Document
+from agno.knowledge.document import Document
 
 
 class Reranker(BaseModel):

@@ -24,7 +24,6 @@ agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
     read_chat_history=True,
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

@@ -6,8 +6,8 @@ from typing import Any, ClassVar, Dict, Iterator, List, Optional, Union
 import textract
 from pydantic import Field
 
-from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.document import Document
 from agno.knowledge.reader.markdown_reader import MarkdownReader
 from agno.knowledge.reader.pdf_reader import PDFUrlReader
 from agno.knowledge.reader.url_reader import URLReader

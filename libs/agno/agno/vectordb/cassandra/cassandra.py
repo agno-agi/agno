@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Dict, Iterable, List, Optional
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_info
 from agno.vectordb.base import VectorDb

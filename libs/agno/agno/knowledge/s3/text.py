@@ -1,6 +1,6 @@
 from typing import AsyncIterator, Iterator, List
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.knowledge.reader.s3.text_reader import S3TextReader
 from agno.knowledge.s3.base import S3KnowledgeBase
 
