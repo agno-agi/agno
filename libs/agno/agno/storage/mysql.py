@@ -5,6 +5,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, log_warning, logger
 
@@ -29,7 +30,7 @@ class MySQLStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using a MySQL table.
@@ -46,7 +47,7 @@ class MySQLStorage(Storage):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             schema_version (int): Version of the schema. Defaults to 1.
             auto_upgrade_schema (bool): Whether to automatically upgrade the schema.
-            mode (Optional[Literal["agent", "team", "workflow"]]): The mode of the storage.
+            mode (Optional[Literal["agent", "team", "workflow", "workflow_v2"]]): The mode of the storage.
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
         """
@@ -79,12 +80,12 @@ class MySQLStorage(Storage):
         log_debug(f"Created MySQLStorage: '{self.schema}.{self.table_name}'")
 
     @property
-    def mode(self) -> Literal["agent", "team", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow", "workflow_v2"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow", "workflow_v2"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(MySQLStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -127,7 +128,11 @@ class MySQLStorage(Storage):
                 Column("workflow_id", String(255), index=True),
                 Column("workflow_data", JSON),
             ]
-
+        elif self.mode == "workflow_v2":
+            specific_columns = [
+                Column("workflow_id", String(255), index=True),
+                Column("workflow_data", JSON),
+            ]
         # Create table with all columns
         table = Table(
             self.table_name,
@@ -278,6 +283,8 @@ class MySQLStorage(Storage):
                     return TeamSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(result._mapping) if result is not None else None
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None
         except Exception as e:
             if "doesn't exist" in str(e) or "doesn't exist" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -311,7 +318,8 @@ class MySQLStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-
+                    elif self.mode == "workflow_v2":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
                 # execute query
@@ -346,7 +354,9 @@ class MySQLStorage(Storage):
                         stmt = stmt.where(self.table.c.agent_id == entity_id)
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
-                    else:
+                    elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                    elif self.mode == "workflow_v2":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -357,8 +367,10 @@ class MySQLStorage(Storage):
                         return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
                     elif self.mode == "team":
                         return [TeamSession.from_dict(row._mapping) for row in rows]  # type: ignore
-                    else:
+                    elif self.mode == "workflow":
                         return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                    elif self.mode == "workflow_v2":
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]  # type: ignore[misc]
                 else:
                     return []
         except Exception as e:
@@ -399,7 +411,8 @@ class MySQLStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
-
+                    elif self.mode == "workflow_v2":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # Order by created_at desc and limit results
                 stmt = stmt.order_by(self.table.c.created_at.desc())
                 if limit is not None:
@@ -417,7 +430,8 @@ class MySQLStorage(Storage):
                             session = TeamSession.from_dict(row._mapping)  # type: ignore
                         elif self.mode == "workflow":
                             session = WorkflowSession.from_dict(row._mapping)  # type: ignore
-
+                        elif self.mode == "workflow_v2":
+                            session = WorkflowSessionV2.from_dict(row._mapping)  # type: ignore
                         if session is not None:
                             sessions.append(session)
                     return sessions
@@ -494,7 +508,7 @@ class MySQLStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -505,7 +519,7 @@ class MySQLStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -517,7 +531,7 @@ class MySQLStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -528,18 +542,18 @@ class MySQLStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
                         updated_at=int(time.time()),
                     )
-                else:
+                elif self.mode == "workflow":
                     stmt = mysql.insert(self.table).values(
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -549,13 +563,38 @@ class MySQLStorage(Storage):
                     stmt = stmt.on_duplicate_key_update(
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
                         updated_at=int(time.time()),
                     )
+                elif self.mode == "workflow_v2":
+                    # Convert session to dict to ensure proper serialization
+                    session_dict = session.to_dict()
 
+                    stmt = mysql.insert(self.table).values(
+                        session_id=session.session_id,
+                        workflow_id=session.workflow_id,  # type: ignore
+                        workflow_name=session.workflow_name,  # type: ignore
+                        user_id=session.user_id,
+                        runs=session_dict.get("runs"),
+                        workflow_data=session.workflow_data,  # type: ignore
+                        session_data=session.session_data,
+                        extra_data=session.extra_data,
+                    )
+                    # Define the upsert if the session_id already exists
+                    # See: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update
+                    stmt = stmt.on_duplicate_key_update(
+                        workflow_id=session.workflow_id,  # type: ignore
+                        workflow_name=session.workflow_name,  # type: ignore
+                        user_id=session.user_id,
+                        runs=session_dict.get("runs"),  # type: ignore
+                        workflow_data=session.workflow_data,  # type: ignore
+                        session_data=session.session_data,
+                        extra_data=session.extra_data,
+                        updated_at=int(time.time()),
+                    )
                 sess.execute(stmt)
         except Exception as e:
             if create_and_retry and not self.table_exists():
