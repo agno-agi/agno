@@ -1,12 +1,6 @@
 # Deep Researcher Agent
 
-![Demo](./assets/demo.png)
-
 A multi-stage AI-powered research workflow agent that automates comprehensive web research, analysis, and report generation using Agno, Scrapegraph, and Nebius AI.
-
-## How It Works
-
-![Workflow](./assets/workflow.gif)
 
 1. **Searcher**: Finds and extracts high-quality, up-to-date information from the web using Scrapegraph and Nebius AI.
 2. **Analyst**: Synthesizes, interprets, and organizes the research findings, highlighting key insights and trends.
@@ -42,8 +36,6 @@ export SGAI_API_KEY=your_scrapegraph_api_key_here
 
 ## Usage
 
-![usage](./assets/usage.gif)
-
 You can use the Deep Researcher Agent in three ways. Each method below includes a demo image so you know what to expect.
 
 ### Web Interface
@@ -55,10 +47,6 @@ streamlit run cookbook/examples/streamlit_apps/deep_researcher/app.py
 ```
 
 Open your browser at [http://localhost:8501](http://localhost:8501)
-
-What it looks like:
-
-![demo](./assets/demo.png)
 
 ### MCP Server
 
@@ -85,8 +73,6 @@ Add the following configuration to your .cursor/mcp.json or Claude/claude_deskto
 ```
 
 This allows tools like Claude Desktop to manage and launch the MCP server automatically.
-
-![Claude Desktop Demo](./assets/mcp-demo.png)
 
 ## Contributing
 
