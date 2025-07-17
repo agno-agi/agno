@@ -128,14 +128,6 @@ def serialize_memory_row(memory: MemoryRow) -> Dict[str, Any]:
     return serialize_to_dynamo_item(memory.to_dict())
 
 
-def deserialize_memory_row(item: Dict[str, Any]) -> MemoryRow:
-    """Convert DynamoDB item to MemoryRow."""
-    data = deserialize_from_dynamodb_item(item)
-    return MemoryRow(
-        id=data["memory_id"], user_id=data["user_id"], memory=data["memory"], last_updated=data.get("last_updated")
-    )
-
-
 def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
     """Convert KnowledgeRow to DynamoDB item format."""
     return serialize_to_dynamo_item(
@@ -351,16 +343,7 @@ def apply_sorting(
 
     reverse = sort_order == "desc"
 
-    def get_sort_key(item: Dict[str, Any]) -> Any:
-        value = item.get(sort_by)
-        if isinstance(value, dict):
-            if "N" in value:
-                return float(value["N"])
-            elif "S" in value:
-                return value["S"]
-        return value or 0
-
-    return sorted(items, key=get_sort_key, reverse=reverse)
+    return sorted(items, key=lambda x: x.get(sort_by, ""), reverse=reverse)
 
 
 # -- Metrics Utils --

@@ -1,6 +1,6 @@
 import json
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -16,7 +16,6 @@ from agno.db.dynamo.utils import (
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
-    deserialize_memory_row,
     deserialize_session,
     deserialize_session_result,
     execute_query_with_pagination,
@@ -29,7 +28,7 @@ from agno.db.dynamo.utils import (
     serialize_to_dynamo_item,
 )
 from agno.db.schemas import MemoryRow
-from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error
@@ -554,32 +553,6 @@ class DynamoDb(BaseDb):
     def get_all_memory_topics(self) -> List[str]:
         return []
 
-    def get_user_memory_raw(self, memory_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a user memory from the database as a raw dictionary.
-
-        Args:
-            memory_id: The ID of the memory to get.
-
-        Returns:
-            Optional[Dict[str, Any]]: The user memory data if found, None otherwise.
-
-        Raises:
-            Exception: If any error occurs while getting the user memory.
-        """
-
-        try:
-            response = self.client.get_item(TableName=self.user_memory_table_name, Key={"memory_id": {"S": memory_id}})
-
-            item = response.get("Item")
-            if item:
-                return deserialize_from_dynamodb_item(item)
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get user memory {memory_id}: {e}")
-            return None
-
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[MemoryRow, Dict[str, Any]]]:
@@ -603,10 +576,16 @@ class DynamoDb(BaseDb):
             if not item:
                 return None
 
+            item = deserialize_from_dynamodb_item(item)
             if not deserialize:
                 return item
 
-            return deserialize_memory_row(item)
+            return MemoryRow(
+                id=item["memory_id"],
+                user_id=item["user_id"],
+                memory=item["memory"],
+                last_updated=item.get("last_updated"),
+            )
 
         except Exception as e:
             log_error(f"Failed to get user memory {memory_id}: {e}")
@@ -652,18 +631,13 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("user_memories")
 
             # Build filter expressions for component filters
-            filters = {
-                "agent_id": agent_id,
-                "team_id": team_id,
-                "workflow_id": workflow_id,
-            }
-            filter_expression, attr_names, attr_values = build_query_filter_expression(filters)
-            expression_attribute_names = {}
-            expression_attribute_values = {}
-            expression_attribute_names.update(attr_names)
-            expression_attribute_values.update(attr_values)
-
-            # Note: user_id is handled separately in GSI key condition, not in filter expression
+            filter_expression, expression_attribute_names, expression_attribute_values = build_query_filter_expression(
+                filters={
+                    "agent_id": agent_id,
+                    "team_id": team_id,
+                    "workflow_id": workflow_id,
+                }
+            )
 
             # Build topic filter expression if topics provided
             if topics:
@@ -680,7 +654,6 @@ class DynamoDb(BaseDb):
             # Determine whether to use GSI query or table scan
             if user_id:
                 # Use GSI query when user_id is provided
-                index_name = "user_id-created_at-index"
                 key_condition_expression = "#user_id = :user_id"
 
                 # Set up expression attributes for GSI key condition
@@ -691,7 +664,7 @@ class DynamoDb(BaseDb):
                 items = execute_query_with_pagination(
                     self.client,
                     table_name,
-                    index_name,
+                    "user_id-last_updated-index",
                     key_condition_expression,
                     expression_attribute_names,
                     expression_attribute_values,
@@ -708,9 +681,9 @@ class DynamoDb(BaseDb):
                 if filter_expression:
                     scan_kwargs["FilterExpression"] = filter_expression
                 if expression_attribute_names:
-                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names  # type: ignore
                 if expression_attribute_values:
-                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values  # type: ignore
 
                 # Execute scan
                 response = self.client.scan(**scan_kwargs)
@@ -722,14 +695,9 @@ class DynamoDb(BaseDb):
                     response = self.client.scan(**scan_kwargs)
                     items.extend(response.get("Items", []))
 
-                scan_items = []
-                for item in items:
-                    item_data = deserialize_from_dynamodb_item(item)
-                    if item_data:
-                        scan_items.append(item_data)
-                items = scan_items
+            items = [deserialize_from_dynamodb_item(item) for item in items]
 
-            if sort_by and sort_by != "created_at":
+            if sort_by and sort_by != "last_updated":
                 items = apply_sorting(items, sort_by, sort_order)
 
             if page:
@@ -778,6 +746,7 @@ class DynamoDb(BaseDb):
             table_name = self._get_table("user_memories")
             memory_dict = memory.to_dict()
             memory_dict["memory_id"] = memory.id
+            memory_dict["last_updated"] = datetime.now(timezone.utc).isoformat()
             item = serialize_to_dynamo_item(memory_dict)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -1006,16 +975,13 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to create eval run {eval_run.run_id}: {e}")
             return None
 
-    # TODO: batch
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         if not eval_run_ids or not self.eval_table_name:
             return
 
         try:
-            batch_size = 25
-
-            for i in range(0, len(eval_run_ids), batch_size):
-                batch = eval_run_ids[i : i + batch_size]
+            for i in range(0, len(eval_run_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = eval_run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
                 delete_requests = []
                 for eval_run_id in batch:
@@ -1058,28 +1024,22 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get eval run {eval_run_id}: {e}")
             return None
 
-    def get_eval_runs_raw(
+    def get_eval_runs(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
         eval_type: Optional[List[EvalType]] = None,
-        filter_type: Optional[EvalFilterType] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        if not self.eval_table_name:
-            return [], 0
-
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
-            # Build scan parameters
             scan_kwargs = {"TableName": self.eval_table_name}
 
-            # Add filters if provided
             filter_expressions = []
             expression_values = {}
 
@@ -1101,7 +1061,7 @@ class DynamoDb(BaseDb):
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
-                scan_kwargs["ExpressionAttributeValues"] = expression_values
+                scan_kwargs["ExpressionAttributeValues"] = expression_values  # type: ignore
 
             # Execute scan
             response = self.client.scan(**scan_kwargs)
@@ -1129,38 +1089,18 @@ class DynamoDb(BaseDb):
             # Apply pagination
             eval_data = apply_pagination(eval_data, limit, page)
 
-            return eval_data, total_count
+            if not deserialize:
+                return eval_data, total_count
+
+            eval_runs = []
+            for eval_item in eval_data:
+                eval_run = EvalRunRecord.model_validate(eval_item)
+                eval_runs.append(eval_run)
+            return eval_runs
 
         except Exception as e:
             log_error(f"Failed to get eval runs: {e}")
-            return [], 0
-
-    def get_eval_runs(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
-    ) -> List[EvalRunRecord]:
-        eval_data, _ = self.get_eval_runs_raw(
-            limit, page, sort_by, sort_order, table, agent_id, team_id, workflow_id, model_id, eval_type
-        )
-
-        eval_runs = []
-        for eval_item in eval_data:
-            try:
-                eval_run = EvalRunRecord.model_validate(eval_item)
-                eval_runs.append(eval_run)
-            except Exception as e:
-                log_error(f"Failed to deserialize eval run: {e}")
-
-        return eval_runs
+            return [] if deserialize else ([], 0)
 
     def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
         if not self.eval_table_name:

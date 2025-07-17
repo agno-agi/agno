@@ -24,7 +24,7 @@ class UserMemorySchema(BaseModel):
     def from_dict(cls, memory_dict: Dict[str, Any]) -> "UserMemorySchema":
         return cls(
             memory_id=memory_dict["memory_id"],
-            user_id=memory_dict["user_id"],
+            user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
             workflow_id=memory_dict.get("workflow_id"),

@@ -74,41 +74,41 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
-        {"AttributeName": "created_at", "AttributeType": "N"},
+        {"AttributeName": "last_updated", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         {
-            "IndexName": "user_id-created_at-index",
+            "IndexName": "user_id-last_updated-index",
             "KeySchema": [
                 {"AttributeName": "user_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                {"AttributeName": "last_updated", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "agent_id-created_at-index",
+            "IndexName": "agent_id-last_updated-index",
             "KeySchema": [
                 {"AttributeName": "agent_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                {"AttributeName": "last_updated", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "team_id-created_at-index",
+            "IndexName": "team_id-last_updated-index",
             "KeySchema": [
                 {"AttributeName": "team_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                {"AttributeName": "last_updated", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "workflow_id-created_at-index",
+            "IndexName": "workflow_id-last_updated-index",
             "KeySchema": [
                 {"AttributeName": "workflow_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                {"AttributeName": "last_updated", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
