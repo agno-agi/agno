@@ -554,7 +554,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import iscoroutinefunction
 
-        def execute_entrypoint():
+        def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -572,9 +572,9 @@ class FunctionCall(BaseModel):
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
                 def next_func(**kwargs):
-                    return inner_func()
+                    return inner_func(name, func, kwargs)
 
-                hook_args = self._build_hook_args(hook, name, func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 return hook(**hook_args)
 
@@ -716,7 +716,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
 
-        async def execute_entrypoint_async():
+        async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -729,7 +729,7 @@ class FunctionCall(BaseModel):
                 result = await result
             return result
 
-        def execute_entrypoint():
+        def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -750,11 +750,11 @@ class FunctionCall(BaseModel):
                 # The hook will call next_func to continue the chain
                 async def next_func(**kwargs):
                     if iscoroutinefunction(inner_func):
-                        return await inner_func()
+                        return await inner_func(name, func, kwargs)
                     else:
-                        return inner_func()
+                        return inner_func(name, func, kwargs)
 
-                hook_args = self._build_hook_args(hook, name, func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 if iscoroutinefunction(hook):
                     return await hook(**hook_args)
