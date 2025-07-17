@@ -288,7 +288,6 @@ def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
     # Mock delete_by_name method
     with patch.object(qdrant_db, "delete_by_name") as mock_delete_by_name:
         mock_delete_by_name.return_value = True
-
         # Test delete by name
         result = qdrant_db.delete_by_name("tom_kha")
         assert result is True
@@ -393,12 +392,10 @@ def test_delete_by_name_multiple_documents(qdrant_db, mock_qdrant_client):
     ):
         mock_delete_by_name.return_value = True
         mock_name_exists.side_effect = [False, True]  # tom_kha doesn't exist, pad_thai exists
-
         # Test delete all documents with name "tom_kha"
         result = qdrant_db.delete_by_name("tom_kha")
         assert result is True
         mock_delete_by_name.assert_called_once_with("tom_kha")
-
         # Verify name_exists behavior
         assert qdrant_db.name_exists("tom_kha") is False
         assert qdrant_db.name_exists("pad_thai") is True

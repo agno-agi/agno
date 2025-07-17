@@ -25,7 +25,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -255,10 +255,20 @@ class PineconeDb(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             document.meta_data["text"] = document.content
+            # Include name and content_id in metadata
+            metadata = document.meta_data.copy()
+            if filters:
+                metadata.update(filters)
+
+            if document.name:
+                metadata["name"] = document.name
+            if document.content_id:
+                metadata["content_id"] = document.content_id
+
             data_to_upsert = {
                 "id": document.id,
                 "values": document.embedding,
-                "metadata": document.meta_data,
+                "metadata": metadata,
             }
             if self.use_hybrid_search:
                 data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(document.content)
@@ -308,16 +318,23 @@ class PineconeDb(VectorDb):
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
-    def _prepare_vectors(self, documents):
+    def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
         vectors = []
         for doc in documents:
             doc.embed(embedder=self.embedder)
             doc.meta_data["text"] = doc.content
+            # Include name and content_id in metadata
+            metadata = doc.meta_data.copy()
+            if doc.name:
+                metadata["name"] = doc.name
+            if doc.content_id:
+                metadata["content_id"] = doc.content_id
+
             data_to_upsert = {
                 "id": doc.id,
                 "values": doc.embedding,
-                "metadata": doc.meta_data,
+                "metadata": metadata,
             }
             if self.use_hybrid_search:
                 data_to_upsert["sparse_values"] = self.sparse_encoder.encode_documents(doc.content)
@@ -334,8 +351,8 @@ class PineconeDb(VectorDb):
         )
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Pinecone doesn't support insert. Raise an error."""
-        raise NotImplementedError("Pinecone does not support insert operations. Use async_upsert instead.")
+        log_warning("Pinecone does not support insert operations. Redirecting to async_upsert instead.")
+        await self.async_upsert(documents, filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert operation is available.
@@ -347,19 +364,8 @@ class PineconeDb(VectorDb):
         return True
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents into the index.
-
-        This method is not supported by Pinecone. Use `upsert` instead.
-
-        Args:
-            documents (List[Document]): The documents to insert.
-            filters (Optional[Dict[str, Any]], optional): The filters for the insert. Defaults to None.
-
-        Raises:
-            NotImplementedError: This method is not supported by Pinecone.
-
-        """
-        raise NotImplementedError("Pinecone does not support insert operations. Use upsert instead.")
+        log_warning("Pinecone does not support insert operations. Redirecting to upsert instead.")
+        self.upsert(documents, filters)
 
     def _hybrid_scale(self, dense: List[float], sparse: Dict[str, Any], alpha: float):
         """Hybrid vector scaling using a convex combination
@@ -479,3 +485,57 @@ class PineconeDb(VectorDb):
 
     async def async_drop(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def delete_by_id(self, id: str) -> bool:
+        """Delete a document by ID."""
+        try:
+            self.index.delete(ids=[id])
+            return True
+        except Exception as e:
+            log_warning(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete documents by name (stored in metadata)."""
+        try:
+            # Delete all documents where metadata.name equals the given name
+            self.index.delete(filter={"name": {"$eq": name}})
+            return True
+        except Exception as e:
+            log_warning(f"Error deleting documents with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete documents by metadata."""
+        try:
+            # Build filter for metadata matching
+            filter_conditions = {}
+            for key, value in metadata.items():
+                filter_conditions[key] = {"$eq": value}
+
+            self.index.delete(filter=filter_conditions)
+            return True
+        except Exception as e:
+            log_warning(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete documents by content ID (stored in metadata)."""
+        try:
+            # Delete all documents where metadata.content_id equals the given content_id
+            self.index.delete(filter={"content_id": {"$eq": content_id}})
+            return True
+        except Exception as e:
+            log_warning(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
+
+    def get_count(self) -> int:
+        """Get the count of documents in the index."""
+        try:
+            # Pinecone doesn't have a direct count method, so we use describe_index_stats
+            stats = self.index.describe_index_stats()
+            # The stats include total_vector_count which gives us the count
+            return stats.total_vector_count
+        except Exception as e:
+            log_warning(f"Error getting document count: {e}")
+            return 0
