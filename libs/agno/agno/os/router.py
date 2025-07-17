@@ -190,7 +190,6 @@ def get_base_router(
 
         return ConfigResponse(
             os_id=os.os_id,
-            name=os.name,
             description=os.description,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
