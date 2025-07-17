@@ -18,6 +18,10 @@ knowledge.add_content(
     metadata={"user_tag": "Recipes from website"},
 )
 
+# Create and use the agent
+agent = Agent(knowledge=knowledge)
+agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+
 knowledge.remove_vectors_by_name("Recipes")
 # or
 knowledge.remove_vectors_by_metadata({"user_tag": "Recipes from website"})
