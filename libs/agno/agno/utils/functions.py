@@ -22,6 +22,7 @@ def get_function_call(
     if function_to_call is None:
         log_error(f"Function {name} not found")
         return None
+    
 
     function_call = FunctionCall(function=function_to_call)
     if call_id is not None:
