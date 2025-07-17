@@ -643,8 +643,8 @@ class Qdrant(VectorDb):
                     content=result.payload["content"],
                     embedder=self.embedder,
                     embedding=result.vector,  # type: ignore
-                    usage=result.payload["usage"],
-                    content_id=result.payload["content_id"],
+                    usage=result.payload.get("usage"),
+                    content_id=result.payload.get("content_id"),
                 )
             )
 
