@@ -17,8 +17,8 @@ from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
 from agno.workflow.v2.workflow import Workflow as WorkflowV2
+from agno.workflow.workflow import Workflow
 
 
 async def agent_chat_response_streamer(
@@ -84,6 +84,7 @@ async def team_chat_response_streamer(
         yield error_response.to_json()
         return
 
+
 async def workflow_response_streamer(
     workflow: WorkflowV2,
     body: Union[Dict[str, Any], str],
@@ -91,13 +92,22 @@ async def workflow_response_streamer(
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     try:
-        run_response = await workflow.arun(
-            **body if isinstance(body, dict) else body,
-            user_id=user_id,
-            session_id=session_id,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
+        if isinstance(body, dict):
+            run_response = await workflow.arun(  # type: ignore
+                **body,
+                user_id=user_id,
+                session_id=session_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        else:
+            run_response = await workflow.arun(  # type: ignore
+                body,
+                user_id=user_id,
+                session_id=session_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
         async for run_response_chunk in run_response:
             yield run_response_chunk.to_json()
     except Exception as e:
@@ -379,12 +389,11 @@ def get_async_router(
                     media_type="text/event-stream",
                 )
             elif workflow:
-                
                 if isinstance(workflow, Workflow):
                     workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
                     workflow_instance.user_id = user_id
                     workflow_instance.session_name = None
-                    
+
                     if isinstance(workflow_input, dict):
                         return StreamingResponse(
                             (json.dumps(asdict(result)) for result in await workflow_instance.arun(**workflow_input)),
@@ -396,16 +405,12 @@ def get_async_router(
                             media_type="text/event-stream",
                         )
                 else:
-                    if isinstance(workflow_input, dict):
-                        return StreamingResponse(
-                            workflow_response_streamer(workflow, workflow_input, session_id=session_id, user_id=user_id),  # type: ignore
-                            media_type="text/event-stream",
-                        )
-                    else:
-                        return StreamingResponse(
-                            workflow_response_streamer(workflow, workflow_input, session_id=session_id, user_id=user_id),  # type: ignore
-                            media_type="text/event-stream",
-                        )
+                    return StreamingResponse(
+                        workflow_response_streamer(
+                            workflow, workflow_input, session_id=session_id, user_id=user_id
+                        ),  # type: ignore
+                        media_type="text/event-stream",
+                    )
         else:
             if agent:
                 run_response = cast(
