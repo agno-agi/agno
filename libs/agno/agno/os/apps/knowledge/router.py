@@ -21,6 +21,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         url: Optional[str] = Form(None),
         metadata: Optional[str] = Form(None, description="JSON metadata"),
         file: Optional[UploadFile] = File(None),
+        text_content: Optional[str] = Form(None),
         reader_id: Optional[str] = Form(None),
     ):
         content_id = str(uuid4())
@@ -35,6 +36,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
         if file:
             content_bytes = await file.read()
+        elif text_content:
+            content_bytes = text_content.encode("utf-8")
         else:
             content_bytes = None
 
@@ -57,14 +60,22 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata}
 
-        file_data = (
-            FileData(
+        if text_content:
+            file_data = FileData(
                 content=content_bytes,
-                type=file.content_type if file.content_type else None,
+                type="text/plain",
             )
-            if file
-            else None
-        )
+        elif file:
+            file_data = (
+                FileData(
+                    content=content_bytes,
+                    type=file.content_type if file.content_type else None,
+                )
+                if file
+                else None
+            )
+        else:
+            file_data = None
 
         content = Content(
             name=name if name else file.filename,
@@ -72,7 +83,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             url=parsed_urls,
             metadata=parsed_metadata,
             file_data=file_data,
-            size=file.size if file else None,
+            size=file.size if file else None if text_content else len(content_bytes),
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
