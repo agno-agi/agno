@@ -248,6 +248,7 @@ async def test_async_search(mock_embedder):
         assert len(results) == 1
         assert results[0].name == "test_doc"
 
+
 def test_delete_by_id(qdrant_db, sample_documents, mock_qdrant_client):
     """Test deleting documents by ID"""
     # Mock insert and get_count
@@ -258,9 +259,10 @@ def test_delete_by_id(qdrant_db, sample_documents, mock_qdrant_client):
     # Mock delete_by_id method
     with patch.object(qdrant_db, "delete_by_id") as mock_delete_by_id:
         mock_delete_by_id.return_value = True
-        
+
         # Get the actual ID that would be generated for the first document
         from hashlib import md5
+
         cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode()).hexdigest()
 
@@ -286,7 +288,7 @@ def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
     # Mock delete_by_name method
     with patch.object(qdrant_db, "delete_by_name") as mock_delete_by_name:
         mock_delete_by_name.return_value = True
-        
+
         # Test delete by name
         result = qdrant_db.delete_by_name("tom_kha")
         assert result is True
@@ -391,12 +393,12 @@ def test_delete_by_name_multiple_documents(qdrant_db, mock_qdrant_client):
     ):
         mock_delete_by_name.return_value = True
         mock_name_exists.side_effect = [False, True]  # tom_kha doesn't exist, pad_thai exists
-        
+
         # Test delete all documents with name "tom_kha"
         result = qdrant_db.delete_by_name("tom_kha")
         assert result is True
         mock_delete_by_name.assert_called_once_with("tom_kha")
-        
+
         # Verify name_exists behavior
         assert qdrant_db.name_exists("tom_kha") is False
         assert qdrant_db.name_exists("pad_thai") is True
