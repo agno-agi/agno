@@ -257,6 +257,9 @@ class PineconeDb(VectorDb):
             document.meta_data["text"] = document.content
             # Include name and content_id in metadata
             metadata = document.meta_data.copy()
+            if filters:
+                metadata.update(filters)
+    
             if document.name:
                 metadata["name"] = document.name
             if document.content_id:
@@ -535,3 +538,14 @@ class PineconeDb(VectorDb):
         except Exception as e:
             log_warning(f"Error deleting documents with content_id {content_id}: {e}")
             return False
+
+    def get_count(self) -> int:
+        """Get the count of documents in the index."""
+        try:
+            # Pinecone doesn't have a direct count method, so we use describe_index_stats
+            stats = self.index.describe_index_stats()
+            # The stats include total_vector_count which gives us the count
+            return stats.total_vector_count
+        except Exception as e:
+            log_warning(f"Error getting document count: {e}")
+            return 0
