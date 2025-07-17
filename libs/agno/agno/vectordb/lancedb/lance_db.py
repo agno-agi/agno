@@ -583,18 +583,6 @@ class LanceDb(VectorDb):
     def delete(self) -> bool:
         return False
 
-    def id_exists(self, id: str) -> bool:
-        """Check if a document with the given ID exists in the database"""
-        if self.table is None:
-            return False
-
-        try:
-            result = self.table.search().where(f"{self._id}='{id}'").to_arrow()
-            return len(result) > 0
-        except Exception as e:
-            logger.error(f"Error checking ID existence: {e}")
-            return False
-
     def name_exists(self, name: str) -> bool:
         """Check if a document with the given name exists in the database"""
         if self.table is None:

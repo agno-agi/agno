@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-if TYPE_CHECKING:
-    from agno.knowledge.embedder import Embedder
+from agno.knowledge.embedder import Embedder
 
 
 @dataclass
@@ -21,7 +20,7 @@ class Document:
     size: Optional[int] = None
     name: Optional[str] = None
 
-    def embed(self, embedder: Optional["Embedder"] = None) -> None:
+    def embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder"""
 
         _embedder = embedder or self.embedder
