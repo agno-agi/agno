@@ -64,52 +64,77 @@ class Neo4jTools(Toolkit):
             tools.append(self.run_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 
-    def list_labels(self) -> str:
-        """List all node labels in the Neo4j database."""
+    def list_labels(self) -> list:
+        """
+        Retrieve all node labels present in the connected Neo4j database.
+
+        Returns:
+            list: A list of label names (str) for all node types in the database.
+            Returns an empty list if an error occurs.
+        """
         try:
             log_debug("Listing node labels in Neo4j database")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.labels()")
-                # Each record has a 'label' field
                 labels = [record["label"] for record in result]
-            return json.dumps(labels)
+            return labels
         except Exception as e:
             logger.error(f"Error listing labels: {e}")
-            return f"Error: {e}"
+            return []
 
-    def list_relationship_types(self) -> str:
-        """List all relationship types in the Neo4j database."""
+    def list_relationship_types(self) -> list:
+        """
+        Retrieve all relationship types present in the connected Neo4j database.
+
+        Returns:
+            list: A list of relationship type names (str) in the database.
+            Returns an empty list if an error occurs.
+        """
         try:
             log_debug("Listing relationship types in Neo4j database")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.relationshipTypes()")
-                # Each record has a 'relationshipType' field
                 types = [record["relationshipType"] for record in result]
-            return json.dumps(types)
+            return types
         except Exception as e:
             logger.error(f"Error listing relationship types: {e}")
-            return f"Error: {e}"
+            return []
 
-    def get_schema(self) -> str:
-        """Get the database schema (nodes and relationships) visualization."""
+    def get_schema(self) -> list:
+        """
+        Retrieve a visualization of the database schema, including nodes and relationships.
+
+        Returns:
+            list: A list of dictionaries representing the schema visualization as returned by Neo4j's 'CALL db.schema.visualization()'.
+            Returns an empty list if an error occurs.
+        """
         try:
             log_debug("Retrieving Neo4j schema visualization")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
-            return json.dumps(schema_data)
+            return schema_data
         except Exception as e:
             logger.error(f"Error getting Neo4j schema: {e}")
-            return f"Error: {e}"
+            return []
 
-    def run_cypher_query(self, query: str) -> str:
-        """Run an arbitrary Cypher query and return the result."""
+    def run_cypher_query(self, query: str) -> list:
+        """
+        Execute an arbitrary Cypher query against the connected Neo4j database.
+
+        Args:
+            query (str): The Cypher query string to execute.
+
+        Returns:
+            list: A list of dictionaries representing the query result rows.
+            Returns an empty list if an error occurs.
+        """
         try:
             log_debug(f"Running Cypher query: {query}")
             with self.driver.session(database=self.database) as session:
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
-            return json.dumps(data, default=str)
+            return data
         except Exception as e:
             logger.error(f"Error running Cypher query: {e}")
-            return f"Error: {e}"
+            return []
