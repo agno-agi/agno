@@ -179,8 +179,6 @@ def serialize_eval_record(eval_record: EvalRunRecord) -> Dict[str, Any]:
             "model_id": getattr(eval_record, "model_id", None),
             "model_provider": getattr(eval_record, "model_provider", None),
             "evaluated_component_name": getattr(eval_record, "evaluated_component_name", None),
-            "created_at": int(eval_record.created_at.timestamp()) if eval_record.created_at else None,
-            "updated_at": int(eval_record.updated_at.timestamp()) if eval_record.updated_at else None,
         }
     )
 

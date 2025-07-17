@@ -781,13 +781,26 @@ class DynamoDb(BaseDb):
 
     def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
-    ) -> Tuple[List[Any], Optional[int]]:
-        if not self.metrics_table_name:
-            return [], 0
+    ) -> Tuple[List[Any], int]:
+        """
+        Get metrics from the database.
+
+        Args:
+            starting_date: The starting date to filter metrics by.
+            ending_date: The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[Any], int]: A tuple containing the metrics data and the total count.
+
+        Raises:
+            Exception: If any error occurs while getting the metrics.
+        """
 
         try:
+            table_name = self._get_table("metrics")
+
             # Build query parameters
-            scan_kwargs = {"TableName": self.metrics_table_name}
+            scan_kwargs = {"TableName": table_name}
 
             if starting_date or ending_date:
                 filter_expressions = []
@@ -829,8 +842,6 @@ class DynamoDb(BaseDb):
             return [], 0
 
     # --- Knowledge ---
-
-    # TODO: not all methods are implemented yet
 
     def get_source_status(self, id: str) -> Optional[str]:
         if not self.knowledge_table_name:
@@ -960,19 +971,22 @@ class DynamoDb(BaseDb):
 
     # --- Eval ---
 
-    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[Dict[str, Any]]:
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         if not self.eval_table_name:
             return None
 
         try:
             item = serialize_eval_record(eval_run)
+            current_time = int(datetime.now(timezone.utc).timestamp())
+            item["created_at"] = {"N": str(current_time)}
+            item["updated_at"] = {"N": str(current_time)}
 
             self.client.put_item(TableName=self.eval_table_name, Item=item)
 
-            return eval_run.model_dump()
+            return eval_run
 
         except Exception as e:
-            log_error(f"Failed to create eval run {eval_run.run_id}: {e}")
+            log_error(f"Failed to create eval run: {e}")
             return None
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1038,7 +1052,8 @@ class DynamoDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
-            scan_kwargs = {"TableName": self.eval_table_name}
+            table_name = self._get_table("evals")
+            scan_kwargs = {"TableName": table_name}
 
             filter_expressions = []
             expression_values = {}

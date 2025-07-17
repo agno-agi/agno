@@ -127,7 +127,6 @@ EVAL_TABLE_SCHEMA = {
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
-        {"AttributeName": "model_id", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
