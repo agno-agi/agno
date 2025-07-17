@@ -119,6 +119,8 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
+    # If True, cache the session in memory
+    cache_session: bool = True
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -318,9 +320,13 @@ class Agent:
 
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
+    # Set when this agent is part of a workflow.
+    workflow_session_id: Optional[str] = None
 
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
+    # Optional workflow session state. Set by the workflow.
+    workflow_session_state: Optional[Dict[str, Any]] = None
 
     # --- Debug & Monitoring ---
     # Enable debug logs
@@ -347,6 +353,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         search_previous_sessions_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
+        cache_session: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -436,6 +443,8 @@ class Agent:
         self.session_state = session_state
         self.search_previous_sessions_history = search_previous_sessions_history
         self.num_history_sessions = num_history_sessions
+
+        self.cache_session = cache_session
 
         self.context = context
         self.add_context = add_context
@@ -543,7 +552,7 @@ class Agent:
         self.session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict, Message]] = None
+        self.run_input: Optional[Union[str, List, Dict, Message, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[RunResponse] = None
 
@@ -695,10 +704,14 @@ class Agent:
             self.session_state["current_user_id"] = user_id
             if self.team_session_state is not None:
                 self.team_session_state["current_user_id"] = user_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
         if session_id is not None:
             self.session_state["current_session_id"] = session_id
             if self.team_session_state is not None:
                 self.team_session_state["current_session_id"] = session_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
 
     def _reset_session_state(self) -> None:
         """Reset the session state for the agent."""
@@ -745,9 +758,6 @@ class Agent:
             self.session_state = session_state
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         return session_id, user_id
 
@@ -929,7 +939,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -950,7 +960,7 @@ class Agent:
     @overload
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -970,7 +980,7 @@ class Agent:
 
     def run(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -988,15 +998,17 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
-
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
-
-        log_debug(f"Session ID: {session_id}", center=True)
-
+        
         # Initialize the Agent
         self.initialize_agent()
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
+
+        log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -1346,7 +1358,7 @@ class Agent:
 
     async def arun(
         self,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1365,14 +1377,18 @@ class Agent:
     ) -> Any:
         """Async Run the Agent and return the response."""
 
+
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
         log_debug(f"Session ID: {session_id}", center=True)
-
+        
         # Initialize the Agent
         self.initialize_agent()
+        
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
 
         effective_filters = knowledge_filters
         # When filters are passed manually
@@ -1598,6 +1614,9 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        # Initialize the Agent
+        self.initialize_agent()
+
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
@@ -1605,9 +1624,6 @@ class Agent:
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
-
-        # Initialize the Agent
-        self.initialize_agent()
 
         # Initialize Session
         # Use the default user_id and session_id when necessary
@@ -1988,6 +2004,9 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        # Initialize the Agent
+        self.initialize_agent()
+
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
@@ -1995,9 +2014,6 @@ class Agent:
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
-
-        # Initialize the Agent
-        self.initialize_agent()
 
         # Initialize Session
         # Use the default user_id and session_id when necessary
@@ -3869,6 +3885,8 @@ class Agent:
             session_data["session_state"] = self.session_state
         if self.team_session_state is not None and len(self.team_session_state) > 0:
             session_data["team_session_state"] = self.team_session_state
+        if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
+            session_data["workflow_session_state"] = self.workflow_session_state
         if self.session_metrics is not None:
             session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
         if self.team_data is not None:
@@ -3905,12 +3923,15 @@ class Agent:
             memory_dict = None
 
         self.team_session_id = cast(str, self.team_session_id)
+        self.workflow_session_id = cast(str, self.workflow_session_id)
+
         self.agent_id = cast(str, self.agent_id)
         return AgentSession(
             session_id=session_id,
             agent_id=self.agent_id,
             user_id=user_id,
             team_session_id=self.team_session_id,
+            workflow_session_id=self.workflow_session_id,
             memory=memory_dict,
             agent_data=self.get_agent_data(),
             session_data=self.get_session_data(),
@@ -3920,6 +3941,9 @@ class Agent:
 
     def load_agent_session(self, session: AgentSession):
         """Load the existing Agent from an AgentSession (from the database)"""
+
+        if not hasattr(session, "memory"):
+            return
 
         from agno.utils.merge_dict import merge_dictionaries
 
@@ -3977,6 +4001,22 @@ class Agent:
                         # Update the current team_session_state
                         self.team_session_state = team_session_state_from_db
 
+            if "workflow_session_state" in session.session_data:
+                workflow_session_state_from_db = session.session_data.get("workflow_session_state")
+                if (
+                    workflow_session_state_from_db is not None
+                    and isinstance(workflow_session_state_from_db, dict)
+                    and len(workflow_session_state_from_db) > 0
+                ):
+                    # If the workflow_session_state is already set, merge the workflow_session_state from the database with the current workflow_session_state
+                    if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
+                        # This updates workflow_session_state_from_db
+                        # If there are conflicting keys, values from workflow_session_state_from_db will take precedence
+                        merge_dictionaries(self.workflow_session_state, workflow_session_state_from_db)
+                    else:
+                        # Update the current workflow_session_state
+                        self.workflow_session_state = workflow_session_state_from_db
+
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
                 session_metrics_from_db = session.session_data.get("session_metrics")
@@ -4024,6 +4064,7 @@ class Agent:
                 # Convert dict to Memory
             elif isinstance(self.memory, dict):
                 memory_dict = self.memory
+
                 memory_dict.pop("runs")
                 self.memory = Memory(**memory_dict)
             else:
@@ -4079,6 +4120,7 @@ class Agent:
                         self.memory.runs[session.session_id] = []
                         for run in session.memory["runs"]:
                             run_session_id = run["session_id"]
+
                             if "team_id" in run:
                                 self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
                             else:
@@ -4147,10 +4189,10 @@ class Agent:
         if not self.storage:
             return
 
-        agent_session_from_db = self.storage.read(session_id=session_id)
+        agent_session_from_db = self.storage.read(session_id=session_id)  # type: ignore
         if (
             agent_session_from_db is not None
-            and agent_session_from_db.memory is not None
+            and agent_session_from_db.memory is not None  # type: ignore
             and "runs" in agent_session_from_db.memory  # type: ignore
         ):
             if isinstance(self.memory, AgentMemory):
@@ -4192,6 +4234,11 @@ class Agent:
                 AgentSession,
                 self.storage.upsert(session=self.get_agent_session(session_id=session_id, user_id=user_id)),
             )
+
+        if not self.cache_session:
+            if self.memory is not None and self.memory.runs is not None and session_id in self.memory.runs:
+                self.memory.runs.pop(session_id)  # type: ignore
+
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -4278,6 +4325,7 @@ class Agent:
         format_variables = ChainMap(
             self.session_state or {},
             self.team_session_state or {},
+            self.workflow_session_state or {},
             self.context or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
@@ -4614,7 +4662,7 @@ class Agent:
     def get_user_message(
         self,
         *,
-        message: Optional[Union[str, List]],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -4687,10 +4735,28 @@ class Agent:
             )
 
         # 2. If create_default_user_message is False or message is a list, return the message as is.
-        if not self.create_default_user_message or isinstance(message, list):
+        if not self.create_default_user_message:
             return Message(
                 role=self.user_message_role,
                 content=message,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
+            )
+
+        # Handle list messages by converting to string
+        if isinstance(message, list):
+            # Convert list to string (join with newlines if all elements are strings)
+            if all(isinstance(item, str) for item in message):
+                message_content = "\n".join(message)
+            else:
+                message_content = str(message)
+
+            return Message(
+                role=self.user_message_role,
+                content=message_content,
                 images=images,
                 audio=audio,
                 videos=videos,
@@ -4719,6 +4785,10 @@ class Agent:
         # Format the message with the session state variables
         if self.add_state_in_messages:
             user_msg_content = self.format_message_with_state_variables(message)
+
+        # Convert to string for concatenation operations
+        user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
         # 4.1 Add references to user message
         if (
             self.add_references
@@ -4726,15 +4796,18 @@ class Agent:
             and references.references is not None
             and len(references.references) > 0
         ):
-            user_msg_content += "\n\nUse the following references from the knowledge base if it helps:\n"
-            user_msg_content += "<references>\n"
-            user_msg_content += self.convert_documents_to_string(references.references) + "\n"
-            user_msg_content += "</references>"
+            user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+            user_msg_content_str += "<references>\n"
+            user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
+            user_msg_content_str += "</references>"
         # 4.2 Add context to user message
         if self.add_context and self.context is not None:
-            user_msg_content += "\n\n<context>\n"
-            user_msg_content += self.convert_context_to_string(self.context) + "\n"
-            user_msg_content += "</context>"
+            user_msg_content_str += "\n\n<context>\n"
+            user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
+            user_msg_content_str += "</context>"
+
+        # Use the string version for the final content
+        user_msg_content = user_msg_content_str
 
         # Return the user message
         return Message(
@@ -4750,7 +4823,7 @@ class Agent:
     def get_run_messages(
         self,
         *,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         session_id: str,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4877,6 +4950,14 @@ class Agent:
                 user_message = Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+        # 4.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role=self.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
         # Add user message to run_messages
         if user_message is not None:
             run_messages.user_message = user_message
@@ -6731,6 +6812,7 @@ class Agent:
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                     team_session_id=agent_session.team_session_id,
+                    workflow_session_id=agent_session.workflow_session_id,
                 ),
                 monitor=self.monitoring,
             )
@@ -6758,6 +6840,7 @@ class Agent:
                     session_id=agent_session.session_id,
                     agent_data=agent_session.to_dict() if self.monitoring else agent_session.telemetry_data(),
                     team_session_id=agent_session.team_session_id,
+                    workflow_session_id=agent_session.workflow_session_id,
                 ),
                 monitor=self.monitoring,
             )
@@ -6770,7 +6853,7 @@ class Agent:
 
     def print_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -7219,7 +7302,7 @@ class Agent:
 
     async def aprint_response(
         self,
-        message: Optional[Union[List, Dict, str, Message]] = None,
+        message: Optional[Union[List, Dict, str, Message, BaseModel]] = None,
         *,
         messages: Optional[List[Union[Dict, Message]]] = None,
         session_id: Optional[str] = None,
