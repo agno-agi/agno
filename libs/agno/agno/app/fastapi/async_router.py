@@ -406,9 +406,7 @@ def get_async_router(
                         )
                 else:
                     return StreamingResponse(
-                        workflow_response_streamer(
-                            workflow, workflow_input, session_id=session_id, user_id=user_id
-                        ),  # type: ignore
+                        workflow_response_streamer(workflow, workflow_input, session_id=session_id, user_id=user_id),  # type: ignore
                         media_type="text/event-stream",
                     )
         else:
