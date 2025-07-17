@@ -736,7 +736,7 @@ class DynamoDb(BaseDb):
                     id=item["memory_id"],
                     memory=item["memory"],
                     last_updated=item["last_updated"],
-                    user_id=item.get("user_id"),
+                    user_id=str(item.get("user_id")),
                     agent_id=item.get("agent_id"),
                     team_id=item.get("team_id"),
                 )

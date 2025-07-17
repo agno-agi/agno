@@ -6609,7 +6609,7 @@ class Team:
         # Try to load from database
         if self.memory is not None and self.memory.db is not None:
             self.team_session = cast(
-                TeamSession, self.memory.read_session(session_id=session_id, session_type=SessionType.TEAM.value)
+                TeamSession, self.memory.read_session(session_id=session_id, session_type=SessionType.TEAM)
             )
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
