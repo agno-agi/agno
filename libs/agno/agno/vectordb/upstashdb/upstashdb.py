@@ -11,7 +11,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_info, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -255,7 +255,7 @@ class UpstashVectorDb(VectorDb):
         """
         _namespace = self.namespace if namespace is None else namespace
 
-        filter_str = "" if filters is None else str(filters)
+        # filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
@@ -268,7 +268,7 @@ class UpstashVectorDb(VectorDb):
                 vector=dense_embedding,
                 namespace=_namespace,
                 top_k=limit,
-                filter=filter_str,
+                # filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
@@ -278,14 +278,14 @@ class UpstashVectorDb(VectorDb):
                 data=query,
                 namespace=_namespace,
                 top_k=limit,
-                filter=filter_str,
+                # filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
             )
 
         if response is None:
-            logger.info(f"No results found for query: {query}")
+            log_info(f"No results found for query: {query}")
             return []
 
         search_results = []
@@ -329,3 +329,6 @@ class UpstashVectorDb(VectorDb):
         This method is empty as Upstash automatically optimizes indexes.
         """
         pass
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -13,45 +13,58 @@
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
-## Overview
+## What is Agno?
 
-**[Agno](https://docs.agno.com) is a lightweight library for building Multimodal Agents with memory, knowledge and tools.**
+[Agno](https://docs.agno.com) is a full-stack framework for building Multi-Agent Systems with memory, knowledge and reasoning.
 
-1. Build lightning-fast Agents that work with text, image, audio and video.
-2. Add memory, knowledge and tools as needed.
-3. Run anywhere, Agno is open-source.
+Use Agno to build the 5 levels of Agentic Systems:
+- Level 1: Agents with tools and instructions.
+- Level 2: Agents with knowledge and storage.
+- Level 3: Agents with memory and reasoning.
+- Level 4: Agent Teams that can reason and collaborate.
+- Level 5: Agentic Workflows with state and determinism.
 
-## AI Engineering is Software Engineering
+Example: Level 1 Reasoning Agent that uses the YFinance API to answer questions:
 
-When building AI products, 80% of your solution will be standard python code, and the remaining 20% will use Agents for automation. Agno is designed for such use cases.
-
-Write your AI logic using familiar programming constructs (if, else, while, for) and avoid complex abstractions like graphs and chains. Here's a simple Agent that can search the web:
-
-```python websearch_agent.py
+```python reasoning_finance_agent.py
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
-    markdown=True
+reasoning_agent = Agent(
+    model=Claude(id="claude-sonnet-4-20250514"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+    ],
+    instructions="Use tables to display data.",
+    markdown=True,
 )
-agent.print_response("What's happening in New York?", stream=True)
 ```
 
-## Key features
+https://github.com/user-attachments/assets/4ef27ba6-a781-4fb0-b49c-bfd838123c83
 
-Agno is designed to be simple, fast and model agnostic. Here are some key features:
+## Get Started
 
-- **Lightning Fast**: Agent creation is ~10,000x faster than LangGraph (see [performance](#performance)).
-- **Model Agnostic**: Use any model, any provider, no lock-in.
-- **Multi Modal**: Native support for text, image, audio and video.
-- **Multi Agent**: Build teams of specialized agents.
-- **Memory Management**: Store agent sessions and state in a database.
-- **Knowledge Stores**: Use vector databases for RAG or dynamic few-shot.
-- **Structured Outputs**: Make Agents respond with structured data.
-- **Monitoring**: Track agent sessions and performance in real-time on [agno.com](https://app.agno.com).
+If you're new to Agno, read the documentation to build your [first Agent](https://docs.agno.com/introduction/agents), chat with it on the [playground](https://docs.agno.com/introduction/playground) and monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+
+After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
+
+## Why Agno?
+
+Agno will help you build best-in-class, highly-performant agentic systems, saving you hours of research and boilerplate. Here are some key features that set Agno apart:
+
+- **Model Agnostic**: Agno provides a unified interface to 23+ model providers, no lock-in.
+- **Highly performant**: Agents instantiate in **~3μs** and use **~6.5Kib** memory on average.
+- **Reasoning is a first class citizen**: Reasoning improves reliability and is a must-have for complex autonomous agents. Agno supports 3 approaches to reasoning: Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
+- **Natively Multi-Modal**: Agno Agents are natively multi-modal, they accept text, image, audio and video as input and generate text, image, audio and video as output.
+- **Advanced Multi-Agent Architecture**: Agno provides an industry leading multi-agent architecture (**Agent Teams**) with reasoning, memory, and shared context.
+- **Built-in Agentic Search**: Agents can search for information at runtime using 20+ vector databases. Agno provides state-of-the-art Agentic RAG, **fully async and highly performant.**
+- **Built-in Memory & Session Storage**: Agents come with built-in `Storage` & `Memory` drivers that give your Agents long-term memory and session storage.
+- **Structured Outputs**: Agno Agents can return fully-typed responses using model provided structured outputs or `json_mode`.
+- **Pre-built FastAPI Routes**: After building your Agents, serve them using pre-built FastAPI routes. 0 to production in minutes.
+- **Monitoring**: Monitor agent sessions and performance in real-time on [agno.com](https://app.agno.com).
 
 ## Installation
 
@@ -59,137 +72,65 @@ Agno is designed to be simple, fast and model agnostic. Here are some key featur
 pip install -U agno
 ```
 
-## What are Agents?
+## Example - Reasoning Agent
 
-**Agents** are AI programs that execute tasks autonomously. They solve problems by running tools, accessing knowledge and memory to improve responses. Unlike traditional programs that follow a predefined execution path, agents dynamically adapt their approach based on context, knowledge and tool results.
+Let's build a Reasoning Agent to get a sense of Agno's capabilities.
 
-Instead of a rigid binary definition, let's think of Agents in terms of agency and autonomy.
-
-- **Level 0**: Agents with no tools (basic inference tasks).
-- **Level 1**: Agents with tools for autonomous task execution.
-- **Level 2**: Agents with knowledge, combining memory and reasoning.
-- **Level 3**: Teams of specialized agents collaborating on complex workflows.
-
-## Example - Basic Agent
+Save this code to a file: `reasoning_agent.py`.
 
 ```python
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.anthropic import Claude
+from agno.tools.reasoning import ReasoningTools
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You are an enthusiastic news reporter with a flair for storytelling!",
-    markdown=True
-)
-agent.print_response("Tell me about a breaking news story from New York.", stream=True)
-```
-
-To run the agent, install dependencies and export your `OPENAI_API_KEY`.
-
-```shell
-pip install agno openai
-
-export OPENAI_API_KEY=sk-xxxx
-
-python basic_agent.py
-```
-
-[View this example in the cookbook](./cookbook/getting_started/01_basic_agent.py)
-
-## Example - Agent with tools
-
-This basic agent will obviously make up a story, lets give it a tool to search the web.
-
-```python
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You are an enthusiastic news reporter with a flair for storytelling!",
-    tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
-    markdown=True
-)
-agent.print_response("Tell me about a breaking news story from New York.", stream=True)
-```
-
-Install dependencies and run the Agent:
-
-```shell
-pip install duckduckgo-search
-
-python agent_with_tools.py
-```
-
-Now you should see a much more relevant result.
-
-[View this example in the cookbook](./cookbook/getting_started/02_agent_with_tools.py)
-
-## Example - Agent with knowledge
-
-Agents can store knowledge in a vector database and use it for RAG or dynamic few-shot learning.
-
-**Agno agents use Agentic RAG** by default, which means they will search their knowledge base for the specific information they need to achieve their task.
-
-```python
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.embedder.openai import OpenAIEmbedder
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.vectordb.lancedb import LanceDb, SearchType
-
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    description="You are a Thai cuisine expert!",
-    instructions=[
-        "Search your knowledge base for Thai recipes.",
-        "If the question is better suited for the web, search the web to fill in gaps.",
-        "Prefer the information in your knowledge base over the web results."
+    model=Claude(id="claude-sonnet-4-20250514"),
+    tools=[
+        ReasoningTools(add_instructions=True),
+        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
     ],
-    knowledge=PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-        vector_db=LanceDb(
-            uri="tmp/lancedb",
-            table_name="recipes",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
-    tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
-    markdown=True
+    instructions=[
+        "Use tables to display data",
+        "Only output the report, no other text",
+    ],
+    markdown=True,
 )
-
-# Comment out after the knowledge base is loaded
-if agent.knowledge is not None:
-    agent.knowledge.load()
-
-agent.print_response("How do I make chicken and galangal in coconut milk soup", stream=True)
-agent.print_response("What is the history of Thai curry?", stream=True)
+agent.print_response(
+    "Write a report on NVDA",
+    stream=True,
+    show_full_reasoning=True,
+    stream_intermediate_steps=True,
+)
 ```
 
-Install dependencies and run the Agent:
+Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
 
 ```shell
-pip install lancedb tantivy pypdf duckduckgo-search
+uv venv --python 3.12
+source .venv/bin/activate
 
-python agent_with_knowledge.py
+uv pip install agno anthropic yfinance
+
+export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
+
+python reasoning_agent.py
 ```
 
-[View this example in the cookbook](./cookbook/getting_started/03_agent_with_knowledge.py)
+We can see the Agent is reasoning through the task, using the `ReasoningTools` and `YFinanceTools` to gather information. This is how the output looks like:
+
+https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
 
 ## Example - Multi Agent Teams
 
-Agents work best when they have a singular purpose, a narrow scope and a small number of tools. When the number of tools grows beyond what the language model can handle or the tools belong to different categories, use a team of agents to spread the load.
+Agents are the atomic unit of work, and work best when they have a narrow scope and a small number of tools. When the number of tools grows beyond what the model can handle or you need to handle multiple concepts, use a team of agents to spread the load.
 
 ```python
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
+from agno.team import Team
 
 web_agent = Agent(
     name="Web Agent",
@@ -211,9 +152,11 @@ finance_agent = Agent(
     markdown=True,
 )
 
-agent_team = Agent(
-    team=[web_agent, finance_agent],
+agent_team = Team(
+    mode="coordinate",
+    members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
+    success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
     show_tool_calls=True,
     markdown=True,
@@ -234,10 +177,10 @@ python agent_team.py
 
 ## Performance
 
-At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents to achieve their goals. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed to power high performance agentic systems:
+At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed for building high performance agentic systems:
 
-- Agent instantiation: ~2μs on average (~10,000x faster than LangGraph).
-- Memory footprint: ~3.75Kib on average (~50x less memory than LangGraph).
+- Agent instantiation: ~3μs on average
+- Memory footprint: ~6.5Kib on average
 
 > Tested on an Apple M4 Mackbook Pro.
 
@@ -271,41 +214,31 @@ Agno is on the left, notice how it finishes before LangGraph gets 1/2 way throug
 
 https://github.com/user-attachments/assets/ba466d45-75dd-45ac-917b-0a56c5742e23
 
-Dividing the average time of a Langgraph Agent by the average time of an Agno Agent:
-
-```
-0.020526s / 0.000002s ~ 10,263
-```
-
-In this particular run, **Agno Agents startup is roughly 10,000 times faster than Langgraph Agents**. The numbers continue to favor Agno as the number of tools grow, and we add memory and knowledge stores.
-
 ### Memory usage
 
 To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
 
 We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
 
-Dividing the average memory usage of a Langgraph Agent by the average memory usage of an Agno Agent:
-
-```
-0.137273/0.002528 ~ 54.3
-```
-
-**Langgraph Agents use ~50x more memory than Agno Agents**. In our opinion, memory usage is a much more important metric than instantiation time. As we start running thousands of Agents in production, these numbers directly start affecting the cost of running the Agents.
-
 ### Conclusion
 
 Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
 
-We'll be publishing accuracy and reliability benchmarks running on Github actions in the coming weeks. Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
+Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
 
-## Cursor Setup
+## Complete Documentation Index
+
+For LLMs and AI assistants to understand and navigate Agno's complete documentation, we provide an [LLMs.txt](https://docs.agno.com/llms.txt) or [LLMs-Full.txt](https://docs.agno.com/llms-full.txt) file.
+
+This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
+
+### Cursor Setup
 
 When building Agno agents, using Agno documentation as a source in Cursor is a great way to speed up your development.
 
-1. In Cursor, go to the settings or preferences section.
-2. Find the section to manage documentation sources.
-3. Add `https://docs.agno.com` to the list of documentation URLs.
+1. In Cursor, go to the "Cursor Settings" menu.
+2. Find the "Indexing & Docs" section.
+3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
 4. Save the changes.
 
 Now, Cursor will have access to the Agno documentation.
@@ -313,10 +246,9 @@ Now, Cursor will have access to the Agno documentation.
 ## Documentation, Community & More examples
 
 - Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Getting Started Examples: <a href="https://github.com/agno-agi/agno/tree/main/cookbook/getting_started" target="_blank" rel="noopener noreferrer">Getting Started Cookbook</a>
-- All Examples: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
 - Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Chat: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
+- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Contributions
 

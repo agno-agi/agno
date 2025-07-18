@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +20,25 @@ MOCK_PLACES_RESPONSE = {
         }
     ]
 }
+
+MOCK_PLACES_V1_RESPONSE = MagicMock()
+MOCK_PLACES_V1_RESPONSE.places = [
+    MagicMock(
+        display_name=MagicMock(text="Test Business"),
+        formatted_address="123 Test St, Test City",
+        rating=4.5,
+        reviews=[
+            MagicMock(text=MagicMock(text="Great place!"), rating=5),
+            MagicMock(text=MagicMock(text="Good service"), rating=4),
+        ],
+        id="test_place_id",
+        international_phone_number="123-456-7890",
+        website_uri="https://test.com",
+        regular_opening_hours=MagicMock(
+            weekday_descriptions=["Monday: 9:00 AM – 5:00 PM", "Tuesday: 9:00 AM – 5:00 PM"]
+        ),
+    )
+]
 
 MOCK_PLACE_DETAILS = {
     "result": {
@@ -80,7 +99,8 @@ MOCK_TIMEZONE_RESPONSE = {
 def google_maps_tools():
     """Create a GoogleMapTools instance with a mock API key."""
     with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "AIzaTest"}):
-        return GoogleMapTools()
+        with patch("google.maps.places_v1.PlacesClient"):
+            return GoogleMapTools()
 
 
 @pytest.fixture
@@ -92,17 +112,28 @@ def mock_client():
 
 def test_search_places(google_maps_tools):
     """Test the search_places method."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        with patch.object(google_maps_tools.client, "place") as mock_place:
-            mock_places.return_value = MOCK_PLACES_RESPONSE
-            mock_place.return_value = MOCK_PLACE_DETAILS
+    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+        mock_search_text.return_value = MOCK_PLACES_V1_RESPONSE
 
-            result = json.loads(google_maps_tools.search_places("test query"))
+        result = json.loads(google_maps_tools.search_places("test query"))
 
-            assert len(result) == 1
-            assert result[0]["name"] == "Test Business"
-            assert result[0]["phone"] == "123-456-7890"
-            assert result[0]["website"] == "https://test.com"
+        assert len(result) == 1
+        assert result[0]["name"] == "Test Business"
+        assert result[0]["address"] == "123 Test St, Test City"
+        assert result[0]["phone"] == "123-456-7890"
+        assert result[0]["website"] == "https://test.com"
+        assert result[0]["rating"] == 4.5
+        assert len(result[0]["reviews"]) == 2
+        assert result[0]["reviews"][0]["text"] == "Great place!"
+        assert result[0]["reviews"][0]["rating"] == 5
+        assert len(result[0]["hours"]) == 2
+        assert result[0]["hours"][0] == "Monday: 9:00 AM – 5:00 PM"
+
+        # Verify the request was made correctly
+        mock_search_text.assert_called_once()
+        request_arg = mock_search_text.call_args[1]["request"]
+        assert request_arg.text_query == "test query"
+        assert mock_search_text.call_args[1]["metadata"] == [("x-goog-fieldmask", "*")]
 
 
 def test_get_directions(google_maps_tools):
@@ -208,110 +239,39 @@ def test_initialization_without_api_key():
             GoogleMapTools()
 
 
-def test_initialization_with_selective_tools():
-    """Test initialization with only selected tools."""
-    with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "AIzaTest"}):
-        tools = GoogleMapTools(
-            search_places=True,
-            get_directions=False,
-            validate_address=False,
-            geocode_address=True,
-            reverse_geocode=False,
-            get_distance_matrix=False,
-            get_elevation=False,
-            get_timezone=False,
-        )
-
-        assert "search_places" in [func.name for func in tools.functions.values()]
-        assert "get_directions" not in [func.name for func in tools.functions.values()]
-        assert "geocode_address" in [func.name for func in tools.functions.values()]
-
-
 def test_search_places_success(google_maps_tools):
     """Test the search_places method with successful response."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        with patch.object(google_maps_tools.client, "place") as mock_place:
-            mock_places.return_value = MOCK_PLACES_RESPONSE
-            mock_place.return_value = MOCK_PLACE_DETAILS
+    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+        mock_search_text.return_value = MOCK_PLACES_V1_RESPONSE
 
-            result = json.loads(google_maps_tools.search_places("test query"))
+        result = json.loads(google_maps_tools.search_places("test query"))
 
-            assert len(result) == 1
-            assert result[0]["name"] == "Test Business"
-            assert result[0]["phone"] == "123-456-7890"
-            assert result[0]["website"] == "https://test.com"
-            mock_places.assert_called_once_with("test query")
-            mock_place.assert_called_once_with("test_place_id")
+        assert len(result) == 1
+        assert result[0]["name"] == "Test Business"
+        assert result[0]["phone"] == "123-456-7890"
+        assert result[0]["website"] == "https://test.com"
+
+        # Verify the request was made correctly
+        mock_search_text.assert_called_once()
+        request_arg = mock_search_text.call_args[1]["request"]
+        assert request_arg.text_query == "test query"
 
 
 def test_search_places_no_results(google_maps_tools):
     """Test search_places when no results are returned."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        mock_places.return_value = {"results": []}
+    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+        empty_response = MagicMock()
+        empty_response.places = []
+        mock_search_text.return_value = empty_response
+
         result = json.loads(google_maps_tools.search_places("test query"))
         assert result == []
 
 
-def test_search_places_none_response(google_maps_tools):
-    """Test search_places when None is returned."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        mock_places.return_value = None
+def test_search_places_error(google_maps_tools):
+    """Test search_places when an error occurs."""
+    with patch.object(google_maps_tools.places_client, "search_text") as mock_search_text:
+        mock_search_text.side_effect = Exception("API Error")
+
         result = json.loads(google_maps_tools.search_places("test query"))
         assert result == []
-
-
-def test_search_places_missing_results_key(google_maps_tools):
-    """Test search_places when response is missing results key."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        mock_places.return_value = {"status": "OK"}
-        result = json.loads(google_maps_tools.search_places("test query"))
-        assert result == []
-
-
-def test_search_places_missing_place_id(google_maps_tools):
-    """Test search_places when place_id is missing."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        mock_places.return_value = {
-            "results": [
-                {
-                    "name": "Test Business",
-                    "formatted_address": "123 Test St",
-                    "rating": 4.5,
-                }
-            ]
-        }
-        result = json.loads(google_maps_tools.search_places("test query"))
-        assert len(result) == 1
-        assert result[0]["name"] == "Test Business"
-        assert "phone" not in result[0]
-        assert "website" not in result[0]
-
-
-def test_search_places_invalid_details(google_maps_tools):
-    """Test search_places when place details are invalid."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        with patch.object(google_maps_tools.client, "place") as mock_place:
-            mock_places.return_value = MOCK_PLACES_RESPONSE
-            mock_place.return_value = {"status": "NOT_FOUND"}  # Missing 'result' key
-
-            result = json.loads(google_maps_tools.search_places("test query"))
-
-            assert len(result) == 1
-            assert result[0]["name"] == "Test Business"
-            assert "phone" not in result[0]
-            assert "website" not in result[0]
-
-
-def test_search_places_details_error(google_maps_tools):
-    """Test search_places when place details call raises an error."""
-    with patch.object(google_maps_tools.client, "places") as mock_places:
-        with patch.object(google_maps_tools.client, "place") as mock_place:
-            mock_places.return_value = MOCK_PLACES_RESPONSE
-            mock_place.side_effect = Exception("API Error")
-
-            result = json.loads(google_maps_tools.search_places("test query"))
-
-            assert len(result) == 1
-            assert result[0]["name"] == "Test Business"
-            assert "phone" not in result[0]
-            assert "website" not in result[0]

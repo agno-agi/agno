@@ -1,11 +1,12 @@
 from os import getenv
-from typing import Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from openai import OpenAI
@@ -23,9 +24,8 @@ class DalleTools(Toolkit):
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
         api_key: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(name="dalle")
-
         self.model = model
         self.n = n
         self.size = size
@@ -50,13 +50,17 @@ class DalleTools(Toolkit):
         if not self.api_key:
             logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
-        self.register(self.create_image)
+        tools: List[Any] = []
+        tools.append(self.create_image)
+
+        super().__init__(name="dalle", tools=tools, **kwargs)
+
         # TODO:
         # - Add support for response_format
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Agent, prompt: str) -> str:
+    def create_image(self, agent: Union[Agent, Team], prompt: str) -> str:
         """Use this function to generate an image for a prompt.
 
         Args:
@@ -70,7 +74,7 @@ class DalleTools(Toolkit):
 
         try:
             client = OpenAI(api_key=self.api_key)
-            logger.debug(f"Generating image using prompt: {prompt}")
+            log_debug(f"Generating image using prompt: {prompt}")
             response: ImagesResponse = client.images.generate(
                 prompt=prompt,
                 model=self.model,
@@ -79,18 +83,20 @@ class DalleTools(Toolkit):
                 size=self.size,
                 style=self.style,
             )
-            logger.debug("Image generated successfully")
+            log_debug("Image generated successfully")
 
             # Update the run response with the image URLs
             response_str = ""
-            for img in response.data:
-                agent.add_image(
-                    ImageArtifact(
-                        id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
-                    )
-                )
-                response_str += f"Image has been generated at the URL {img.url}\n"
-            return response_str
+            if response.data:
+                for img in response.data:
+                    if img.url:
+                        agent.add_image(
+                            ImageArtifact(
+                                id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
+                            )
+                        )
+                        response_str += f"Image has been generated at the URL {img.url}\n"
+            return response_str or "No images were generated"
         except Exception as e:
             logger.error(f"Failed to generate image: {e}")
             return f"Error: {e}"
