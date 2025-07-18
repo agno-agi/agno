@@ -12,7 +12,6 @@ Prerequisites:
 """
 
 import asyncio
-import os
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -24,12 +23,10 @@ from mcp import StdioServerParameters
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
 
-    server_params = StdioServerParameters(
-        command="npx", args=["-y", "@modelcontextprotocol/server-sequential-thinking"]
-    )
-
     async with (
-        MCPTools(server_params=server_params) as sequential_thinking_mcp_tools,
+        MCPTools(
+            command="npx -y @modelcontextprotocol/server-sequential-thinking"
+        ) as sequential_thinking_mcp_tools,
     ):
         agent = Agent(
             tools=[

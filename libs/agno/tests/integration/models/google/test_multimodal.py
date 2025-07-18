@@ -10,8 +10,9 @@ from agno.models.google import Gemini
 
 def test_image_input():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -34,8 +35,9 @@ def test_audio_input_bytes():
 
     # Provide the agent with the audio file and get result as text
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -47,8 +49,9 @@ def test_audio_input_bytes():
 
 def test_audio_input_url():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -64,8 +67,9 @@ def test_audio_input_url():
 
 def test_video_input_bytes():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-exp"),
+        model=Gemini(id="gemini-2.0-flash-001"),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -93,6 +97,7 @@ def test_image_generation():
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -119,6 +124,7 @@ def test_image_generation_streaming():
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -130,12 +136,11 @@ def test_image_generation_streaming():
 
     image_received = False
     for chunk in response:
-        if chunk.images:
+        if chunk.image:
             image_received = True
-            assert len(chunk.images) > 0
-            assert chunk.images[0].content is not None
+            assert chunk.image is not None
 
-            image = PILImage.open(BytesIO(chunk.images[0].content))
+            image = PILImage.open(BytesIO(chunk.image.content))
             assert image.format in ["JPEG", "PNG"]
 
     assert image_received, "No image was received in the stream"
@@ -149,6 +154,7 @@ def test_image_editing():
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -177,6 +183,7 @@ def test_image_generation_with_detailed_prompt():
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -211,6 +218,7 @@ def test_combined_text_and_image_generation():
             response_modalities=["Text", "Image"],
         ),
         exponential_backoff=True,
+        delay_between_retries=5,
         markdown=True,
         telemetry=False,
         monitoring=False,

@@ -15,12 +15,13 @@ def fetch_with_retry(
     url: str,
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff_factor: int = DEFAULT_BACKOFF_FACTOR,
+    proxy: Optional[str] = None,
 ) -> httpx.Response:
     """Synchronous HTTP GET with retry logic."""
 
     for attempt in range(max_retries):
         try:
-            response = httpx.get(url)
+            response = httpx.get(url, proxy=proxy) if proxy else httpx.get(url)
             response.raise_for_status()
             return response
         except httpx.RequestError as e:
@@ -42,12 +43,14 @@ async def async_fetch_with_retry(
     client: Optional[httpx.AsyncClient] = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff_factor: int = DEFAULT_BACKOFF_FACTOR,
+    proxy: Optional[str] = None,
 ) -> httpx.Response:
     """Asynchronous HTTP GET with retry logic."""
 
     async def _fetch():
         if client is None:
-            async with httpx.AsyncClient() as local_client:
+            client_args = {"proxy": proxy} if proxy else {}
+            async with httpx.AsyncClient(**client_args) as local_client:  # type: ignore
                 return await local_client.get(url)
         else:
             return await client.get(url)

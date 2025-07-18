@@ -1,7 +1,7 @@
 import asyncio
 from typing import Iterator  # noqa
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunResponseEvent  # noqa
 from agno.models.deepinfra import DeepInfra  # noqa
 
 agent = Agent(

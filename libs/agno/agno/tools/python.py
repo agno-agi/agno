@@ -1,7 +1,7 @@
 import functools
 import runpy
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -18,6 +18,7 @@ class PythonTools(Toolkit):
         base_dir: Optional[Path] = None,
         save_and_run: bool = True,
         pip_install: bool = False,
+        uv_pip_install: bool = False,
         run_code: bool = False,
         list_files: bool = False,
         run_files: bool = False,
@@ -26,26 +27,29 @@ class PythonTools(Toolkit):
         safe_locals: Optional[dict] = None,
         **kwargs,
     ):
-        super().__init__(name="python_tools", **kwargs)
-
         self.base_dir: Path = base_dir or Path.cwd()
 
         # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
+        tools: List[Any] = []
         if run_code:
-            self.register(self.run_python_code, sanitize_arguments=False)
+            tools.append(self.run_python_code)
         if save_and_run:
-            self.register(self.save_to_file_and_run, sanitize_arguments=False)
+            tools.append(self.save_to_file_and_run)
         if pip_install:
-            self.register(self.pip_install_package)
+            tools.append(self.pip_install_package)
+        if uv_pip_install:
+            tools.append(self.uv_pip_install_package)
         if run_files:
-            self.register(self.run_python_file_return_variable)
+            tools.append(self.run_python_file_return_variable)
         if read_files:
-            self.register(self.read_file)
+            tools.append(self.read_file)
         if list_files:
-            self.register(self.list_files)
+            tools.append(self.list_files)
+
+        super().__init__(name="python_tools", tools=tools, **kwargs)
 
     def save_to_file_and_run(
         self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
@@ -187,6 +191,27 @@ class PythonTools(Toolkit):
             import sys
 
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            return f"successfully installed package {package_name}"
+        except Exception as e:
+            logger.error(f"Error installing package {package_name}: {e}")
+            return f"Error installing package {package_name}: {e}"
+
+    def uv_pip_install_package(self, package_name: str) -> str:
+        """This function installs a package using uv and pip in the current environment.
+        If successful, returns a success message.
+        If failed, returns an error message.
+
+        :param package_name: The name of the package to install.
+        :return: success message if successful, otherwise returns an error message.
+        """
+        try:
+            warn()
+
+            log_debug(f"Installing package {package_name}")
+            import subprocess
+            import sys
+
+            subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")

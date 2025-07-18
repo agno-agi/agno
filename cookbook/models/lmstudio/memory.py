@@ -6,8 +6,9 @@ Steps:
 3. Run: `python cookbook/models/lmstudio/memory.py` to run the agent
 """
 
-from agno.agent import Agent, AgentMemory
-from agno.memory.db.postgres import PgMemoryDb
+from agno.agent import Agent
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.lmstudio import LMStudio
 from agno.storage.agent.postgres import PostgresAgentStorage
 
@@ -15,11 +16,11 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
     # Store the memories and summary in a database
-    memory=AgentMemory(
-        db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
-        create_user_memories=True,
-        create_session_summary=True,
+    memory=Memory(
+        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
     ),
+    enable_user_memories=True,
+    enable_session_summaries=True,
     # Store agent sessions in a database
     storage=PostgresAgentStorage(
         table_name="personalized_agent_sessions", db_url=db_url
