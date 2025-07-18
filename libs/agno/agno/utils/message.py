@@ -1,13 +1,17 @@
 from typing import Dict, List, Union
 
+from pydantic import BaseModel
+
 from agno.models.message import Message
 
 
-def get_text_from_message(message: Union[List, Dict, str, Message]) -> str:
+def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -> str:
     """Return the user texts from the message"""
 
     if isinstance(message, str):
         return message
+    if isinstance(message, BaseModel):
+        return message.model_dump_json(indent=2, exclude_none=True)
     if isinstance(message, list):
         text_messages = []
         if len(message) == 0:
