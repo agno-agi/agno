@@ -108,6 +108,7 @@ class TestMem0Toolkit:
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "Test message"}],
             user_id="test_user_add",
+            infer=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -119,6 +120,7 @@ class TestMem0Toolkit:
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": json.dumps(dict_content)}],
             user_id="user1",
+            infer=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -129,6 +131,7 @@ class TestMem0Toolkit:
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "123"}],
             user_id="user1",
+            infer=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -204,3 +207,24 @@ class TestMem0Toolkit:
         mock_memory_client_instance.delete_all.side_effect = Exception("Test delete_all error")
         result_str = toolkit_api_key.delete_all_memories(dummy_agent)
         assert "Error deleting all memories: Test delete_all error" in result_str
+
+    def test_add_memory_with_infer_false(self, monkeypatch, dummy_agent):
+        """Test that infer parameter can be configured to False"""
+        # Set up mocks for this specific test
+        mock_memory = MagicMock()
+        mock_memory.add.return_value = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
+
+        MockMemory.from_config.return_value = mock_memory
+
+        # Test with config-based toolkit set to infer=False
+        monkeypatch.delenv("MEM0_API_KEY", raising=False)
+        toolkit_config = Mem0Tools(config={}, user_id="test_user", infer=False)
+        result_str = toolkit_config.add_memory(dummy_agent, content="Test message")
+
+        mock_memory.add.assert_called_once_with(
+            [{"role": "user", "content": "Test message"}],
+            user_id="test_user",
+            infer=False,
+        )
+        expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
+        assert json.loads(result_str) == expected_result

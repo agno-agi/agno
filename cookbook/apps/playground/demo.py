@@ -214,9 +214,14 @@ movie_writer = Agent(
     name="Movie Writer Agent",
     model=OpenAIChat(id="gpt-4o"),
     response_model=MovieScript,
+    storage=SqliteStorage(
+        table_name="movie_writer",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
-app = Playground(
+playground = Playground(
     agents=[
         simple_agent,
         web_agent,
@@ -226,7 +231,11 @@ app = Playground(
         image_agent,
         movie_writer,
     ],
-).get_app()
+    app_id="demo-playground-app",
+    name="Demo Playground",
+    description="A playground for demo",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("demo:app", reload=True)
+    playground.serve(app="demo:app", reload=True)

@@ -43,7 +43,10 @@ def test_init(meilisearch, mock_embedder):
 
 def test_create(meilisearch):
     """Test create method."""
-    with patch.object(meilisearch, "exists", return_value=False):
+    with (
+        patch.object(meilisearch, "exists", return_value=False),
+        patch.object(meilisearch, "wait_for_task", return_value=True),
+    ):
         meilisearch.create()
         meilisearch.client.create_index.assert_called_once_with("test_index", options={"primaryKey": "id"})
         meilisearch.client.index.return_value.update_settings.assert_called_once()
@@ -118,8 +121,9 @@ def test_delete(meilisearch):
 def test_drop(meilisearch):
     meilisearch.client.delete_index.return_value = MagicMock(task_uid="1")
 
-    with patch.object(meilisearch, "exists", return_value=True), patch.object(
-        meilisearch, "wait_for_task", return_value=True
+    with (
+        patch.object(meilisearch, "exists", return_value=True),
+        patch.object(meilisearch, "wait_for_task", return_value=True),
     ):
         meilisearch.drop()
 

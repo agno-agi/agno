@@ -1,14 +1,11 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
-from agno.memory import memory
+from agno.app.whatsapp import WhatsappAPI
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
 from agno.models.google import Gemini
-from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.youtube import YouTubeTools
@@ -98,9 +95,14 @@ StudyBuddy = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+whatsapp_app = WhatsappAPI(
     agent=StudyBuddy,
-).get_app()
+    name="StudyBuddy",
+    app_id="study_buddy",
+    description="A study buddy that helps users achieve their educational goals through personalized guidance, interactive learning, and comprehensive resource curation.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("study_friend:app", port=8000, reload=True)
+    whatsapp_app.serve(app="study_friend:app", port=8000, reload=True)

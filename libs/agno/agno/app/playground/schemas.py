@@ -32,7 +32,7 @@ class AgentGetResponse(BaseModel):
     instructions: Optional[Union[List[str], str, Callable]] = None
 
     @classmethod
-    def from_agent(self, agent: Agent) -> "AgentGetResponse":
+    def from_agent(self, agent: Agent, async_mode: bool = False) -> "AgentGetResponse":
         if agent.memory:
             memory_dict: Optional[Dict[str, Any]] = {}
             if isinstance(agent.memory, AgentMemory) and agent.memory.db:
@@ -52,7 +52,7 @@ class AgentGetResponse(BaseModel):
                 memory_dict = None
         else:
             memory_dict = None
-        tools = agent.get_tools(session_id=str(uuid4()))
+        tools = agent.get_tools(session_id=str(uuid4()), async_mode=async_mode)
         return AgentGetResponse(
             agent_id=agent.agent_id,
             name=agent.name,
@@ -107,6 +107,7 @@ class WorkflowRunRequest(BaseModel):
     input: Dict[str, Any]
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    stream: bool = True
 
 
 class WorkflowSessionResponse(BaseModel):
@@ -148,12 +149,12 @@ class TeamGetResponse(BaseModel):
     expected_output: Optional[str] = None
     context: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
-    response_model: Optional[str] = None
     storage: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
+    async_mode: bool = False
 
     @classmethod
-    def from_team(self, team: Team) -> "TeamGetResponse":
+    def from_team(self, team: Team, async_mode: bool = False) -> "TeamGetResponse":
         import json
 
         memory_dict: Optional[Dict[str, Any]] = {}
@@ -186,14 +187,13 @@ class TeamGetResponse(BaseModel):
             expected_output=team.expected_output,
             context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
             enable_agentic_context=team.enable_agentic_context,
-            response_model=team.response_model,
             mode=team.mode,
             storage={"name": team.storage.__class__.__name__} if team.storage else None,
             memory=memory_dict,
             members=[
-                AgentGetResponse.from_agent(member)
+                AgentGetResponse.from_agent(member, async_mode=async_mode)
                 if isinstance(member, Agent)
-                else TeamGetResponse.from_team(member)
+                else TeamGetResponse.from_team(member, async_mode=async_mode)
                 if isinstance(member, Team)
                 else None
                 for member in team.members

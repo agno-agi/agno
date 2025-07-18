@@ -34,6 +34,8 @@ class FalTools(Toolkit):
         tools = []
         tools.append(self.generate_media)
 
+        super().__init__(name="fal-tools", tools=tools, **kwargs)
+
     def on_queue_update(self, update):
         if isinstance(update, fal_client.InProgress) and update.logs:
             for log in update.logs:

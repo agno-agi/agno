@@ -150,7 +150,7 @@ def main() -> None:
 ### Notable Substances
 {chr(10).join("- " + drug for drug in world_data.drugs)}"""
 
-                    # Display tool calls if available
+                    # Display tool calls if available+
                     if run_response.tools and len(run_response.tools) > 0:
                         display_tool_calls(tool_calls_container, run_response.tools)
 

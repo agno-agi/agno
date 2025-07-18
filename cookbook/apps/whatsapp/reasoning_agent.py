@@ -1,6 +1,5 @@
 from agno.agent import Agent
-from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
+from agno.app.whatsapp import WhatsappAPI
 from agno.models.anthropic.claude import Claude
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
@@ -22,9 +21,14 @@ reasoning_finance_agent = Agent(
     markdown=True,
 )
 
-app = WhatsappAPI(
+whatsapp_app = WhatsappAPI(
     agent=reasoning_finance_agent,
-).get_app()
+    name="Reasoning Finance Agent",
+    app_id="reasoning_finance_agent",
+    description="A finance agent that uses tables to display data and reasoning tools to reason about the data.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("reasoning_agent:app", port=8000, reload=True)
+    whatsapp_app.serve(app="reasoning_agent:app", port=8000, reload=True)

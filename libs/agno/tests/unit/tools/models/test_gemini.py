@@ -33,9 +33,10 @@ def mock_gemini_tools(mock_client):
             return None
         return None
 
-    with patch("agno.tools.models.gemini.Client", return_value=mock_client) as _, patch(
-        "agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect
-    ) as _:
+    with (
+        patch("agno.tools.models.gemini.Client", return_value=mock_client) as _,
+        patch("agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect) as _,
+    ):
         gemini_tools = GeminiTools(api_key="fake_test_key")
         gemini_tools.client = mock_client
         return gemini_tools
@@ -69,9 +70,10 @@ def test_gemini_tools_init_with_api_key_arg():
             return None
         return None
 
-    with patch("agno.tools.models.gemini.Client") as mock_client_cls, patch(
-        "agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect
-    ) as _:
+    with (
+        patch("agno.tools.models.gemini.Client") as mock_client_cls,
+        patch("agno.tools.models.gemini.getenv", side_effect=mock_getenv_side_effect) as _,
+    ):
         mock_client_instance = MagicMock()
         mock_client_cls.return_value = mock_client_instance
 
@@ -256,3 +258,12 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
     assert result == "Failed to generate video: API error"
     mock_agent.add_video.assert_not_called()
+
+
+def test_empty_response_handling(mock_gemini_tools, mock_agent):
+    """Test that empty responses from Gemini are handled correctly."""
+    mock_response = MagicMock()
+    mock_response.generated_images = []
+    mock_gemini_tools.client.models.generate_images.return_value = mock_response
+    response = mock_gemini_tools.generate_image(mock_agent, "Test prompt")
+    assert response == "Failed to generate image: No images were generated."

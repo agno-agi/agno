@@ -79,7 +79,10 @@ class ApifyTools(Toolkit):
             for actor_id in actor_list:
                 tools.append(actor_id)
 
-        super().__init__(name="ApifyTools", tools=tools)
+        super().__init__(name="ApifyTools", tools=[], auto_register=False)
+
+        for actor_id in tools:
+            self.register_actor(actor_id)
 
     def register_actor(self, actor_id: str) -> None:
         """Register an Apify Actor as a function in the toolkit.
@@ -156,7 +159,7 @@ Returns:
             actor_function.__doc__ = docstring
 
             # Register the function with the toolkit
-            self.register(actor_function, sanitize_arguments=False)
+            self.register(actor_function)
             # Fix params schema
             self.functions[tool_name].parameters = props_to_json_schema(properties, required)
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")

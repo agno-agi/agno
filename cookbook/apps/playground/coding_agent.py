@@ -26,7 +26,13 @@ coding_agent = Agent(
     ),
 )
 
-app = Playground(agents=[coding_agent]).get_app()
+playground = Playground(
+    agents=[coding_agent],
+    name="Coding Agent",
+    description="A playground for coding agent",
+    app_id="coding-agent",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("coding_agent:app", reload=True)
+    playground.serve(app="coding_agent:app", reload=True)

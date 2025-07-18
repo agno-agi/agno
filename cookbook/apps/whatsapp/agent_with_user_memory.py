@@ -1,8 +1,7 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.app.whatsapp.app import WhatsappAPI
-from agno.app.whatsapp.serve import serve_whatsapp_app
+from agno.app.whatsapp import WhatsappAPI
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.manager import MemoryManager
 from agno.memory.v2.memory import Memory
@@ -51,9 +50,14 @@ personal_agent = Agent(
 )
 
 
-app = WhatsappAPI(
+whatsapp_app = WhatsappAPI(
     agent=personal_agent,
-).get_app()
+    name="Agent with User Memory",
+    app_id="agent_with_user_memory",
+    description="A agent that can chat with the user about things and make them feel good.",
+)
+
+app = whatsapp_app.get_app()
 
 if __name__ == "__main__":
-    serve_whatsapp_app("agent_with_user_memory:app", port=8000, reload=True)
+    whatsapp_app.serve(app="agent_with_user_memory:app", port=8000, reload=True)

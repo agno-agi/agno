@@ -82,19 +82,17 @@ class Function(BaseModel):
     entrypoint: Optional[Callable] = None
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
-    # If True, the arguments are sanitized before being passed to the function.
-    sanitize_arguments: bool = True
+    # If True, the arguments are sanitized before being passed to the function. (Deprecated)
+    sanitize_arguments: bool = False
     # If True, the function call will show the result along with sending it to the model.
     show_result: bool = False
     # If True, the agent will stop after the function call.
     stop_after_tool_call: bool = False
     # Hook that runs before the function is executed.
     # If defined, can accept the FunctionCall instance as a parameter.
-    # Deprecated: Use tool_hooks instead.
     pre_hook: Optional[Callable] = None
     # Hook that runs after the function is executed, regardless of success/failure.
     # If defined, can accept the FunctionCall instance as a parameter.
-    # Deprecated: Use tool_hooks instead.
     post_hook: Optional[Callable] = None
 
     # A list of hooks to run around tool calls.
@@ -131,12 +129,12 @@ class Function(BaseModel):
         )
 
     @classmethod
-    def from_callable(cls, c: Callable, strict: bool = False) -> "Function":
-        from inspect import getdoc, isasyncgenfunction, signature
+    def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
+        from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
-        function_name = c.__name__
+        function_name = name or c.__name__
         parameters = {"type": "object", "properties": {}, "required": []}
         try:
             sig = signature(c)
@@ -153,7 +151,7 @@ class Function(BaseModel):
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "self"]
             }
 
             # Parse docstring for parameters
@@ -179,7 +177,9 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
@@ -192,11 +192,8 @@ class Function(BaseModel):
         except Exception as e:
             log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
 
-        # Don't wrap async generator with validate_call
-        if isasyncgenfunction(c):
-            entrypoint = c
-        else:
-            entrypoint = validate_call(c, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        entrypoint = cls._wrap_callable(c)
+
         return cls(
             name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),
@@ -206,7 +203,7 @@ class Function(BaseModel):
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
-        from inspect import getdoc, isasyncgenfunction, signature
+        from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
 
@@ -240,7 +237,7 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team"]
+            excluded_params = ["return", "agent", "team", "self"]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -319,15 +316,32 @@ class Function(BaseModel):
             self.parameters = parameters
 
         try:
-            # Don't wrap async generator with validate_call
-            if not isasyncgenfunction(self.entrypoint):
-                self.entrypoint = validate_call(self.entrypoint, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
             log_warning(f"Failed to add validate decorator to entrypoint: {e}")
 
+    @staticmethod
+    def _wrap_callable(func: Callable) -> Callable:
+        """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
+        from inspect import isasyncgenfunction
+
+        # Don't wrap async generator with validate_call
+        if isasyncgenfunction(func):
+            return func
+        # Don't wrap callables that are already wrapped with validate_call
+        elif getattr(func, "_wrapped_for_validation", False):
+            return func
+        # Wrap the callable with validate_call
+        else:
+            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+            return wrapped
+
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
+        self.parameters["required"] = [
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+        ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
@@ -396,6 +410,8 @@ class Function(BaseModel):
 
 class FunctionExecutionResult(BaseModel):
     status: Literal["success", "failure"]
+    result: Optional[Any] = None
+    error: Optional[str] = None
 
 
 class FunctionCall(BaseModel):
@@ -505,6 +521,34 @@ class FunctionCall(BaseModel):
             entrypoint_args["fc"] = self
         return entrypoint_args
 
+    def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the arguments for the hook."""
+        from inspect import signature
+
+        hook_args = {}
+        # Check if the hook has an agent argument
+        if "agent" in signature(hook).parameters:
+            hook_args["agent"] = self.function._agent
+        # Check if the hook has an team argument
+        if "team" in signature(hook).parameters:
+            hook_args["team"] = self.function._team
+
+        if "name" in signature(hook).parameters:
+            hook_args["name"] = name
+        if "function_name" in signature(hook).parameters:
+            hook_args["function_name"] = name
+        if "function" in signature(hook).parameters:
+            hook_args["function"] = func
+        if "func" in signature(hook).parameters:
+            hook_args["func"] = func
+        if "function_call" in signature(hook).parameters:
+            hook_args["function_call"] = func
+        if "args" in signature(hook).parameters:
+            hook_args["args"] = args
+        if "arguments" in signature(hook).parameters:
+            hook_args["arguments"] = args
+        return hook_args
+
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
@@ -534,7 +578,9 @@ class FunctionCall(BaseModel):
                 def next_func(**kwargs):
                     return inner_func(name, func, kwargs)
 
-                return hook(name, next_func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
+
+                return hook(**hook_args)
 
             return wrapper
 
@@ -556,7 +602,7 @@ class FunctionCall(BaseModel):
         from inspect import isgenerator
 
         if self.function.entrypoint is None:
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
 
         log_debug(f"Running: {self.get_call_str()}")
 
@@ -574,7 +620,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                return FunctionExecutionResult(status="success")
+                return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
         try:
@@ -607,12 +653,12 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error=str(e))
 
         # Execute post-hook if it exists
         self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success")
+        return FunctionExecutionResult(status="success", result=self.result)
 
     async def _handle_pre_hook_async(self):
         """Handles the async pre-hook for the function call."""
@@ -712,10 +758,12 @@ class FunctionCall(BaseModel):
                     else:
                         return inner_func(name, func, kwargs)
 
+                hook_args = self._build_hook_args(hook, name, next_func, args)
+
                 if iscoroutinefunction(hook):
-                    return await hook(name, next_func, args)
+                    return await hook(**hook_args)
                 else:
-                    return hook(name, next_func, args)
+                    return hook(**hook_args)
 
             return wrapper
 
@@ -727,7 +775,6 @@ class FunctionCall(BaseModel):
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
         else:
             chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
-
         return chain
 
     async def aexecute(self) -> FunctionExecutionResult:
@@ -735,7 +782,7 @@ class FunctionCall(BaseModel):
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
 
         if self.function.entrypoint is None:
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
 
         log_debug(f"Running: {self.get_call_str()}")
 
@@ -757,7 +804,7 @@ class FunctionCall(BaseModel):
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
                 self.result = cached_result
-                return FunctionExecutionResult(status="success")
+                return FunctionExecutionResult(status="success", result=cached_result)
 
         # Execute function
         try:
@@ -790,7 +837,7 @@ class FunctionCall(BaseModel):
             log_warning(f"Could not run function {self.get_call_str()}")
             log_exception(e)
             self.error = str(e)
-            return FunctionExecutionResult(status="failure")
+            return FunctionExecutionResult(status="failure", error=str(e))
 
         # Execute post-hook if it exists
         if iscoroutinefunction(self.function.post_hook):
@@ -798,4 +845,4 @@ class FunctionCall(BaseModel):
         else:
             self._handle_post_hook()
 
-        return FunctionExecutionResult(status="success")
+        return FunctionExecutionResult(status="success", result=self.result)

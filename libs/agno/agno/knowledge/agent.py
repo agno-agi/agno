@@ -44,7 +44,7 @@ class AgentKnowledge(BaseModel):
         raise NotImplementedError
 
     @property
-    def async_document_lists(self) -> AsyncIterator[List[Document]]:
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         """Iterator that yields lists of documents in the knowledge base
         Each object yielded by the iterator is a list of documents.
         """
@@ -123,7 +123,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=document_list, filters=doc.meta_data)
+                for doc in document_list:
+                    self.vector_db.upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -132,7 +133,8 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    self.vector_db.insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
@@ -165,7 +167,8 @@ class AgentKnowledge(BaseModel):
 
         log_info("Loading knowledge base")
         num_documents = 0
-        async for document_list in self.async_document_lists:
+        document_iterator = self.async_document_lists
+        async for document_list in document_iterator:  # type: ignore
             documents_to_load = document_list
             # Track metadata for filtering capabilities
             for doc in document_list:
@@ -174,16 +177,18 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=document_list, filters=doc.meta_data)
+                for doc in document_list:
+                    await self.vector_db.async_upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
                 if skip_existing:
                     log_debug("Filtering out existing documents before insertion.")
-                    documents_to_load = self.filter_existing_documents(document_list)
+                    documents_to_load = await self.async_filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        await self.vector_db.async_insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
@@ -434,6 +439,43 @@ class AgentKnowledge(BaseModel):
 
         return filtered_documents
 
+    async def async_filter_existing_documents(self, documents: List[Document]) -> List[Document]:
+        """Filter out documents that already exist in the vector database.
+
+        This helper method is used across various knowledge base implementations
+        to avoid inserting duplicate documents.
+
+        Args:
+            documents (List[Document]): List of documents to filter
+
+        Returns:
+            List[Document]: Filtered list of documents that don't exist in the database
+        """
+        from agno.utils.log import log_debug, log_info
+
+        if not self.vector_db:
+            log_debug("No vector database configured, skipping document filtering")
+            return documents
+
+        # Use set for O(1) lookups
+        seen_content = set()
+        original_count = len(documents)
+        filtered_documents = []
+
+        for doc in documents:
+            # Check hash and existence in DB
+            content_hash = doc.content  # Assuming doc.content is reliable hash key
+            if content_hash not in seen_content and not await self.vector_db.async_doc_exists(doc):
+                seen_content.add(content_hash)
+                filtered_documents.append(doc)
+            else:
+                log_debug(f"Skipping existing document: {doc.name} (or duplicate content)")
+
+        if len(filtered_documents) < original_count:
+            log_info(f"Skipped {original_count - len(filtered_documents)} existing/duplicate documents.")
+
+        return filtered_documents
+
     def _track_metadata_structure(self, metadata: Optional[Dict[str, Any]]) -> None:
         """Track metadata structure to enable filter extraction from queries
 
@@ -650,7 +692,7 @@ class AgentKnowledge(BaseModel):
             documents_to_insert = documents
             if skip_existing:
                 log_debug("Filtering out existing documents before insertion.")
-                documents_to_insert = self.filter_existing_documents(documents)
+                documents_to_insert = await self.async_filter_existing_documents(documents)
 
             if documents_to_insert:  # type: ignore
                 log_debug(f"Inserting {len(documents_to_insert)} new documents.")
