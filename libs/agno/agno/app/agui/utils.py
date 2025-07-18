@@ -1,5 +1,6 @@
 """Logic used by the AG-UI router."""
 
+import json
 import uuid
 from collections import deque
 from collections.abc import Iterator
@@ -18,6 +19,7 @@ from ag_ui.core import (
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    ToolCallResultEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
 
@@ -159,7 +161,7 @@ def _create_events_from_chunk(
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
-                delta=str(tool_call.tool_args),
+                delta=json.dumps(tool_call.tool_args),
             )
             events_to_emit.append(args_event)
 
@@ -173,6 +175,16 @@ def _create_events_from_chunk(
                     tool_call_id=tool_call.tool_call_id,  # type: ignore
                 )
                 events_to_emit.append(end_event)
+
+                if tool_call.result is not None:
+                    result_event = ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        content=str(tool_call.result),
+                        role="tool",
+                        message_id=str(uuid.uuid4()),
+                    )
+                    events_to_emit.append(result_event)
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
