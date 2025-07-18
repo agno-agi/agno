@@ -90,6 +90,7 @@ confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
+evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
@@ -197,6 +198,7 @@ tools = [
   "agno[todoist]",
   "agno[matplotlib]",
   "agno[elevenlabs]",
+  "agno[evm]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
@@ -343,6 +345,7 @@ module = [
   "duckduckgo_search.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "eth_account.*",
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
@@ -356,6 +359,7 @@ module = [
   "googleapiclient.*",
   "googlesearch.*",
   "groq.*",
+  "hexbytes.*",
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
@@ -426,6 +430,7 @@ module = [
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "web3.*",
   "webexpythonsdk.*",
   "wikipedia.*",
   "yaml.*",
