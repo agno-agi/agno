@@ -32,12 +32,13 @@ from typing import Dict, Iterator, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunEvent, RunResponse, Workflow
+from agno.workflow import RunResponse, Workflow
 from pydantic import BaseModel, Field
 
 
@@ -105,7 +106,6 @@ class BlogPostGenerator(Workflow):
            - Find supporting data and statistics\
         """),
         response_model=SearchResults,
-        structured_outputs=True,
     )
 
     # Content Scraper: Extracts and processes article content
@@ -138,7 +138,6 @@ class BlogPostGenerator(Workflow):
            - Maintain readability\
         """),
         response_model=ScrapedArticle,
-        structured_outputs=True,
     )
 
     # Content Writer Agent: Crafts engaging blog posts from research
@@ -218,8 +217,9 @@ class BlogPostGenerator(Workflow):
         if use_cached_report:
             cached_blog_post = self.get_cached_blog_post(topic)
             if cached_blog_post:
-                yield RunResponse(
-                    content=cached_blog_post, event=RunEvent.workflow_completed
+                yield WorkflowCompletedEvent(
+                    run_id=self.run_id,
+                    content=cached_blog_post,
                 )
                 return
 
@@ -229,8 +229,8 @@ class BlogPostGenerator(Workflow):
         )
         # If no search_results are found for the topic, end the workflow
         if search_results is None or len(search_results.articles) == 0:
-            yield RunResponse(
-                event=RunEvent.workflow_completed,
+            yield WorkflowCompletedEvent(
+                run_id=self.run_id,
                 content=f"Sorry, could not find any articles on the topic: {topic}",
             )
             return
@@ -414,9 +414,10 @@ if __name__ == "__main__":
         session_id=f"generate-blog-post-on-{url_safe_topic}",
         storage=SqliteStorage(
             table_name="generate_blog_post_workflows",
+            mode="workflow",
+            auto_upgrade_schema=True,
             db_file="tmp/agno_workflows.db",
         ),
-        debug_mode=True,
     )
 
     # Execute the workflow with caching enabled

@@ -4,13 +4,25 @@ from typing import List, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.openai.like import OpenAILike
 from agno.utils.log import logger
 
 
-def get_openai_reasoning_agent(reasoning_model: Model, **kwargs) -> "Agent":  # type: ignore  # noqa: F821
-    from agno.agent import Agent
-
-    return Agent(model=reasoning_model, **kwargs)
+def is_openai_reasoning_model(reasoning_model: Model) -> bool:
+    return (
+        (
+            reasoning_model.__class__.__name__ == "OpenAIChat"
+            or reasoning_model.__class__.__name__ == "OpenAIResponses"
+            or reasoning_model.__class__.__name__ == "AzureOpenAI"
+        )
+        and (
+            ("o4" in reasoning_model.id)
+            or ("o3" in reasoning_model.id)
+            or ("o1" in reasoning_model.id)
+            or ("4.1" in reasoning_model.id)
+            or ("4.5" in reasoning_model.id)
+        )
+    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
 def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
@@ -23,6 +35,7 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
         return None
 
     reasoning_content: str = ""
+    # We use the normal content as no reasoning content is returned
     if reasoning_agent_response.content is not None:
         # Extract content between <think> tags if present
         content = reasoning_agent_response.content

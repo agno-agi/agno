@@ -37,6 +37,10 @@ class WorkspaceSettings(BaseSettings):
     # If True, force pull images in FROM
     force_pull_images: bool = False
 
+    # Test Settings
+    test_env: str = "test"
+    test_key: Optional[str] = None
+
     # Development Settings
     dev_env: str = "dev"
     dev_key: Optional[str] = None
@@ -90,6 +94,19 @@ class WorkspaceSettings(BaseSettings):
     ws_schema: Optional[WorkspaceSchema] = None
 
     model_config = SettingsConfigDict(extra="allow")
+
+    @field_validator("test_key", mode="before")
+    def set_test_key(cls, test_key, info: ValidationInfo):
+        if test_key is not None:
+            return test_key
+        ws_name = info.data.get("ws_name")
+        if ws_name is None:
+            raise ValueError("`ws_name` is None: Please set a valid value")
+        test_env = info.data.get("test_env")
+        if test_env is None:
+            raise ValueError("`test_env` is None: Please set a valid value")
+
+        return f"{ws_name}-{test_env}"
 
     @field_validator("dev_key", mode="before")
     def set_dev_key(cls, dev_key, info: ValidationInfo):

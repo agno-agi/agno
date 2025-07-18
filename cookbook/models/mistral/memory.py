@@ -6,8 +6,9 @@ Steps:
 3. Run: `python cookbook/models/mistral/memory.py` to run the agent
 """
 
-from agno.agent import Agent, AgentMemory
-from agno.memory.db.postgres import PgMemoryDb
+from agno.agent import Agent
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.mistral.mistral import MistralChat
 from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -17,11 +18,11 @@ agent = Agent(
     model=MistralChat(id="mistral-large-latest"),
     tools=[DuckDuckGoTools()],
     # Store the memories and summary in a database
-    memory=AgentMemory(
-        db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
-        create_user_memories=True,
-        create_session_summary=True,
+    memory=Memory(
+        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
     ),
+    enable_user_memories=True,
+    enable_session_summaries=True,
     # Store agent sessions in a database
     storage=PostgresStorage(table_name="personalized_agent_sessions", db_url=db_url),
     show_tool_calls=True,

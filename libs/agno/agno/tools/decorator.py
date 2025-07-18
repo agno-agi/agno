@@ -1,12 +1,55 @@
 from functools import update_wrapper, wraps
-from typing import Any, Callable, Dict, Optional, TypeVar, Union, overload
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
-from agno.tools.function import Function
+from agno.tools.function import Function, get_entrypoint_docstring
 from agno.utils.log import logger
 
 # Type variable for better type hints
 F = TypeVar("F", bound=Callable[..., Any])
 ToolConfig = TypeVar("ToolConfig", bound=Dict[str, Any])
+
+
+def _is_async_function(func: Callable) -> bool:
+    """
+    Check if a function is async, even when wrapped by decorators like @staticmethod.
+
+    This function tries to detect async functions by:
+    1. Checking the function directly with inspect functions
+    2. Looking at the original function if it's wrapped
+    3. Checking the function's code object for async indicators
+    """
+    from inspect import iscoroutine, iscoroutinefunction
+
+    # First, try the standard inspect functions
+    if iscoroutinefunction(func) or iscoroutine(func):
+        return True
+
+    # If the function has a __wrapped__ attribute, check the original function
+    if hasattr(func, "__wrapped__"):
+        original_func = func.__wrapped__
+        if iscoroutinefunction(original_func) or iscoroutine(original_func):
+            return True
+
+    # Check if the function has CO_COROUTINE flag in its code object
+    try:
+        if hasattr(func, "__code__") and func.__code__.co_flags & 0x80:  # CO_COROUTINE flag
+            return True
+    except (AttributeError, TypeError):
+        pass
+
+    # For static methods, try to get the original function
+    try:
+        if hasattr(func, "__func__"):
+            original_func = func.__func__
+            if iscoroutinefunction(original_func) or iscoroutine(original_func):
+                return True
+            # Check the code object of the original function
+            if hasattr(original_func, "__code__") and original_func.__code__.co_flags & 0x80:
+                return True
+    except (AttributeError, TypeError):
+        pass
+
+    return False
 
 
 @overload
@@ -19,11 +62,21 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     strict: Optional[bool] = None,
+    instructions: Optional[str] = None,
+    add_instructions: bool = True,
     sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
-    stop_after_call: Optional[bool] = None,
+    stop_after_tool_call: Optional[bool] = None,
+    requires_confirmation: Optional[bool] = None,
+    requires_user_input: Optional[bool] = None,
+    user_input_fields: Optional[List[str]] = None,
+    external_execution: Optional[bool] = None,
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
+    tool_hooks: Optional[List[Callable]] = None,
+    cache_results: bool = False,
+    cache_dir: Optional[str] = None,
+    cache_ttl: int = 3600,
 ) -> Callable[[F], Function]: ...
 
 
@@ -38,11 +91,21 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         name: Optional[str] - Override for the function name
         description: Optional[str] - Override for the function description
         strict: Optional[bool] - Flag for strict parameter checking
-        sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function
+        sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function (Deprecated)
+        instructions: Optional[str] - Instructions for using the tool
+        add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
-        stop_after_call: Optional[bool] - If True, the agent will stop after the function call.
+        stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
+        requires_confirmation: Optional[bool] - If True, the function will require user confirmation before execution
+        requires_user_input: Optional[bool] - If True, the function will require user input before execution
+        user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
+        external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
+        tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
+        cache_results: bool - If True, enable caching of function results
+        cache_dir: Optional[str] - Directory to store cache files
+        cache_ttl: int - Time-to-live for cached results in seconds
 
     Returns:
         Union[Function, Callable[[F], Function]]: Decorated function or decorator
@@ -55,6 +118,10 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         @tool(name="custom_name", description="Custom description")
         def another_function():
             pass
+
+        @tool
+        async def my_async_function():
+            pass
     """
     # Move valid kwargs to a frozen set at module level
     VALID_KWARGS = frozenset(
@@ -62,11 +129,21 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "name",
             "description",
             "strict",
+            "instructions",
+            "add_instructions",
             "sanitize_arguments",
             "show_result",
-            "stop_after_call",
+            "stop_after_tool_call",
+            "requires_confirmation",
+            "requires_user_input",
+            "user_input_fields",
+            "external_execution",
             "pre_hook",
             "post_hook",
+            "tool_hooks",
+            "cache_results",
+            "cache_dir",
+            "cache_ttl",
         }
     )
 
@@ -77,26 +154,99 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             f"Invalid tool configuration arguments: {invalid_kwargs}. Valid arguments are: {sorted(VALID_KWARGS)}"
         )
 
+    # Check that only one of requires_user_input, requires_confirmation, and external_execution is set at the same time
+    exclusive_flags = [
+        kwargs.get("requires_user_input", False),
+        kwargs.get("requires_confirmation", False),
+        kwargs.get("external_execution", False),
+    ]
+    true_flags_count = sum(1 for flag in exclusive_flags if flag)
+
+    if true_flags_count > 1:
+        raise ValueError(
+            "Only one of 'requires_user_input', 'requires_confirmation', or 'external_execution' can be set to True at the same time."
+        )
+
     def decorator(func: F) -> Function:
+        from inspect import isasyncgenfunction
+
         @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
                 logger.error(
                     f"Error in tool {func.__name__!r}: {e!r}",
-                    exc_info=True,  # Include stack trace
+                    exc_info=True,
                 )
                 raise
 
-        # Preserve the original signature
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        @wraps(func)
+        async def async_gen_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(
+                    f"Error in async generator tool {func.__name__!r}: {e!r}",
+                    exc_info=True,
+                )
+                raise
+
+        # Choose appropriate wrapper based on function type
+        if isasyncgenfunction(func):
+            wrapper = async_gen_wrapper
+        elif _is_async_function(func):
+            wrapper = async_wrapper
+        else:
+            wrapper = sync_wrapper
+
+        # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
+
+        if kwargs.get("requires_user_input", True):
+            kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])
+
+        if kwargs.get("user_input_fields"):
+            kwargs["requires_user_input"] = True
 
         # Create Function instance with any provided kwargs
         tool_config = {
             "name": kwargs.get("name", func.__name__),
+            "description": kwargs.get(
+                "description", get_entrypoint_docstring(wrapper)
+            ),  # Get docstring if description not provided
+            "instructions": kwargs.get("instructions"),
+            "add_instructions": kwargs.get("add_instructions", True),
             "entrypoint": wrapper,
-            **{k: v for k, v in kwargs.items() if k != "name" and v is not None},
+            "cache_results": kwargs.get("cache_results", False),
+            "cache_dir": kwargs.get("cache_dir"),
+            "cache_ttl": kwargs.get("cache_ttl", 3600),
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in [
+                    "name",
+                    "description",
+                    "instructions",
+                    "add_instructions",
+                    "cache_results",
+                    "cache_dir",
+                    "cache_ttl",
+                ]
+                and v is not None
+            },
         }
         return Function(**tool_config)
 

@@ -1,21 +1,22 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
+
+from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.models.base import MessageData, Model
+from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from boto3 import client as AwsClient
     from boto3.session import Session
     from botocore.exceptions import ClientError
 except ImportError:
-    logger.error("`boto3` not installed. Please install it via `pip install boto3`.")
-    raise
+    raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
 @dataclass
@@ -36,6 +37,7 @@ class AwsBedrock(Model):
         aws_region (Optional[str]): The AWS region to use.
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
+        aws_sso_auth (Optional[str]): Removes the need for an access and secret access key by leveraging the current profile's authentication
         session (Optional[Session]): A boto3 Session object to use for authentication.
     """
 
@@ -43,6 +45,7 @@ class AwsBedrock(Model):
     name: str = "AwsBedrock"
     provider: str = "AwsBedrock"
 
+    aws_sso_auth: Optional[bool] = False
     aws_region: Optional[str] = None
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
@@ -58,6 +61,12 @@ class AwsBedrock(Model):
     client: Optional[AwsClient] = None
 
     def get_client(self) -> AwsClient:
+        """
+        Get the Bedrock client.
+
+        Returns:
+            AwsClient: The Bedrock client.
+        """
         if self.client is not None:
             return self.client
 
@@ -69,28 +78,38 @@ class AwsBedrock(Model):
         self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
         self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-        if not self.aws_access_key_id or not self.aws_secret_access_key:
-            raise AgnoError(
-                message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
-                status_code=400,
-            )
+        if self.aws_sso_auth:
+            self.client = AwsClient(service_name="bedrock-runtime", region_name=self.aws_region)
+        else:
+            if not self.aws_access_key_id or not self.aws_secret_access_key:
+                raise AgnoError(
+                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
+                    status_code=400,
+                )
 
-        self.client = AwsClient(
-            service_name="bedrock-runtime",
-            region_name=self.aws_region,
-            aws_access_key_id=self.aws_access_key_id,
-            aws_secret_access_key=self.aws_secret_access_key,
-        )
+            self.client = AwsClient(
+                service_name="bedrock-runtime",
+                region_name=self.aws_region,
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+            )
         return self.client
 
-    def _format_tools_for_request(self) -> List[Dict[str, Any]]:
-        tools = []
-        if self._functions is not None:
-            for f_name, function in self._functions.items():
+    def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """
+        Format the tools for the request.
+
+        Returns:
+            List[Dict[str, Any]]: The formatted tools.
+        """
+        parsed_tools = []
+        if tools is not None:
+            for tool_def in tools:
+                func_def = tool_def.get("function", {})
                 properties = {}
                 required = []
 
-                for param_name, param_info in function.parameters.get("properties", {}).items():
+                for param_name, param_info in func_def.get("parameters", {}).get("properties", {}).items():
                     param_type = param_info.get("type")
                     if isinstance(param_type, list):
                         param_type = [t for t in param_type if t != "null"][0]
@@ -105,19 +124,25 @@ class AwsBedrock(Model):
                     ):
                         required.append(param_name)
 
-                tools.append(
+                parsed_tools.append(
                     {
                         "toolSpec": {
-                            "name": f_name,
-                            "description": function.description or "",
+                            "name": func_def.get("name") or "",
+                            "description": func_def.get("description") or "",
                             "inputSchema": {"json": {"type": "object", "properties": properties, "required": required}},
                         }
                     }
                 )
 
-        return tools
+        return parsed_tools
 
     def _get_inference_config(self) -> Dict[str, Any]:
+        """
+        Get the inference config.
+
+        Returns:
+            Dict[str, Any]: The inference config.
+        """
         request_kwargs = {
             "maxTokens": self.max_tokens,
             "temperature": self.temperature,
@@ -125,18 +150,22 @@ class AwsBedrock(Model):
             "stopSequences": self.stop_sequences,
         }
 
-        request_kwargs = {k: v for k, v in request_kwargs.items() if v is not None}
-        return request_kwargs
+        return {k: v for k, v in request_kwargs.items() if v is not None}
 
     def _format_messages(self, messages: List[Message]) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+        """
+        Format the messages for the request.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]: The formatted messages.
+        """
         formatted_messages: List[Dict[str, Any]] = []
         system_message = None
         for message in messages:
             if message.role == "system":
                 system_message = [{"text": message.content}]
             else:
-                formatted_message: Dict[str, Any] = {"role": message.role}
-                formatted_message["content"] = []
+                formatted_message: Dict[str, Any] = {"role": message.role, "content": []}
                 # Handle tool results
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
@@ -158,123 +187,129 @@ class AwsBedrock(Model):
 
                 if message.images:
                     for image in message.images:
-                        # Only supported via bytes for now
-                        if image.content and image.format:
-                            if image.format not in ["png", "jpeg", "webp", "gif"]:
-                                raise ValueError(f"Unsupported image format: {image.format}")
-
-                            formatted_message["content"].append(
-                                {
-                                    "image": {
-                                        "format": image.format,
-                                        "source": {
-                                            "bytes": image.content,
-                                        },
-                                    }
-                                }
-                            )
-                        else:
+                        if not image.content or not image.format:
                             raise ValueError("Image content and format are required.")
 
+                        if image.format not in ["png", "jpeg", "webp", "gif"]:
+                            raise ValueError(f"Unsupported image format: {image.format}")
+
+                        formatted_message["content"].append(
+                            {
+                                "image": {
+                                    "format": image.format,
+                                    "source": {
+                                        "bytes": image.content,
+                                    },
+                                }
+                            }
+                        )
                 if message.audio:
-                    logger.warning("Audio input is currently unsupported.")
+                    log_warning("Audio input is currently unsupported.")
 
                 if message.videos:
                     for video in message.videos:
-                        if video.content and video.format:
-                            if video.format not in [
-                                "mp4",
-                                "mov",
-                                "mkv",
-                                "webm",
-                                "flv",
-                                "mpeg",
-                                "mpg",
-                                "wmv",
-                                "three_gp",
-                            ]:
-                                raise ValueError(f"Unsupported video format: {video.format}")
-
-                            formatted_message["content"].append(
-                                {
-                                    "video": {
-                                        "format": video.format,
-                                        "source": {
-                                            "bytes": video.content,
-                                        },
-                                    }
-                                }
-                            )
-                        else:
+                        if not video.content or not video.format:
                             raise ValueError("Video content and format are required.")
+
+                        if video.format not in [
+                            "mp4",
+                            "mov",
+                            "mkv",
+                            "webm",
+                            "flv",
+                            "mpeg",
+                            "mpg",
+                            "wmv",
+                            "three_gp",
+                        ]:
+                            raise ValueError(f"Unsupported video format: {video.format}")
+
+                        formatted_message["content"].append(
+                            {
+                                "video": {
+                                    "format": video.format,
+                                    "source": {
+                                        "bytes": video.content,
+                                    },
+                                }
+                            }
+                        )
+                if message.files is not None and len(message.files) > 0:
+                    log_warning("File input is currently unsupported.")
+
                 formatted_messages.append(formatted_message)
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
         return formatted_messages, system_message
 
-    def invoke(self, messages: List[Message]) -> Dict[str, Any]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Invoke the Bedrock API.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            Dict[str, Any]: The response from the Bedrock API.
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
-            if self._functions is not None:
-                tool_config = {"tools": self._format_tools_for_request()}
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
             body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
+                body.update(**self.request_params)
 
             return self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
         except ClientError as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[Dict[str, Any]]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[Dict[str, Any]]:
         """
         Invoke the Bedrock API with streaming.
-
-        Args:
-            messages (List[Message]): The messages to include in the request.
-
-        Returns:
-            Iterator[Dict[str, Any]]: The streamed response.
         """
         try:
             formatted_messages, system_message = self._format_messages(messages)
-            inference_config = self._get_inference_config()
 
             tool_config = None
-            if self._functions is not None:
-                tool_config = {"tools": self._format_tools_for_request()}
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
-                "inferenceConfig": inference_config,
+                "inferenceConfig": self._get_inference_config(),
             }
             body = {k: v for k, v in body.items() if v is not None}
 
+            if self.request_params:
+                body.update(**self.request_params)
+
             return self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)["stream"]
         except ClientError as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            logger.error(f"Unexpected error calling Bedrock API: {str(e)}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Overwrite the default from the base model
@@ -289,7 +324,7 @@ class AwsBedrock(Model):
             function_call_results (List[Message]): The results of the function calls.
             tool_ids (List[str]): The tool ids.
         """
-        if len(function_call_results) > 0:
+        if function_call_results:
             tool_result_content: List = []
 
             for _fc_message_index, _fc_message in enumerate(function_call_results):
@@ -301,7 +336,16 @@ class AwsBedrock(Model):
 
             messages.append(Message(role="user", content=tool_result_content))
 
-    def parse_provider_response(self, response: Dict[str, Any]) -> ModelResponse:
+    def parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
+        """
+        Parse the provider response.
+
+        Args:
+            response (Dict[str, Any]): The response from the provider.
+
+        Returns:
+            ModelResponse: The parsed response.
+        """
         model_response = ModelResponse()
 
         if "output" in response and "message" in response["output"]:
@@ -348,14 +392,29 @@ class AwsBedrock(Model):
         return model_response
 
     def process_response_stream(
-        self, messages: List[Message], assistant_message: Message, stream_data: MessageData
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
+        """
+        Process the synchronous response stream.
+
+        Args:
+            messages (List[Message]): The messages to include in the request.
+            assistant_message (Message): The assistant message.
+            stream_data (MessageData): The stream data.
+        """
         tool_use: Dict[str, Any] = {}
         content = []
         tool_ids = []
 
-        for response_delta in self.invoke_stream(messages=messages):
+        for response_delta in self.invoke_stream(
+            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+        ):
             model_response = ModelResponse(role="assistant")
             should_yield = False
             if "contentBlockStart" in response_delta:
@@ -380,7 +439,7 @@ class AwsBedrock(Model):
                     try:
                         tool_use["input"] = json.loads(tool_use["input"])
                     except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse tool input as JSON: {e}")
+                        log_error(f"Failed to parse tool input as JSON: {e}")
                         tool_use["input"] = {}
                     content.append({"toolUse": tool_use})
                     tool_ids.append(tool_use["toolUseId"])
@@ -426,7 +485,7 @@ class AwsBedrock(Model):
                 should_yield = True
 
             if model_response.response_usage is not None:
-                self._add_usage_metrics_to_assistant_message(
+                _add_usage_metrics_to_assistant_message(
                     assistant_message=assistant_message, response_usage=model_response.response_usage
                 )
 

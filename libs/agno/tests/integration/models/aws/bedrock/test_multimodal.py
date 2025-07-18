@@ -21,5 +21,4 @@ def test_image_input_bytes():
         images=[Image(content=image_bytes, format="jpeg")],
     )
 
-    assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()

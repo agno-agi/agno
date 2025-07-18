@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from sqlalchemy import Engine, create_engine
@@ -28,9 +28,8 @@ class SQLTools(Toolkit):
         list_tables: bool = True,
         describe_table: bool = True,
         run_sql_query: bool = True,
+        **kwargs,
     ):
-        super().__init__(name="sql_tools")
-
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
@@ -48,16 +47,20 @@ class SQLTools(Toolkit):
         self.db_engine: Engine = _engine
         self.Session: sessionmaker[Session] = sessionmaker(bind=self.db_engine)
 
+        self.schema = schema
+
         # Tables this toolkit can access
         self.tables: Optional[Dict[str, Any]] = tables
 
-        # Register functions in the toolkit
+        tools: List[Any] = []
         if list_tables:
-            self.register(self.list_tables)
+            tools.append(self.list_tables)
         if describe_table:
-            self.register(self.describe_table)
+            tools.append(self.describe_table)
         if run_sql_query:
-            self.register(self.run_sql_query)
+            tools.append(self.run_sql_query)
+
+        super().__init__(name="sql_tools", tools=tools, **kwargs)
 
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the database.
@@ -69,9 +72,13 @@ class SQLTools(Toolkit):
             return json.dumps(self.tables)
 
         try:
-            logger.debug("listing tables in the database")
-            table_names = inspect(self.db_engine).get_table_names()
-            logger.debug(f"table_names: {table_names}")
+            log_debug("listing tables in the database")
+            inspector = inspect(self.db_engine)
+            if self.schema:
+                table_names = inspector.get_table_names(schema=self.schema)
+            else:
+                table_names = inspector.get_table_names()
+            log_debug(f"table_names: {table_names}")
             return json.dumps(table_names)
         except Exception as e:
             logger.error(f"Error getting tables: {e}")
@@ -88,10 +95,15 @@ class SQLTools(Toolkit):
         """
 
         try:
-            logger.debug(f"Describing table: {table_name}")
-            table_names = inspect(self.db_engine)
-            table_schema = table_names.get_columns(table_name)
-            return json.dumps([str(column) for column in table_schema])
+            log_debug(f"Describing table: {table_name}")
+            inspector = inspect(self.db_engine)
+            table_schema = inspector.get_columns(table_name, schema=self.schema)
+            return json.dumps(
+                [
+                    {"name": column["name"], "type": str(column["type"]), "nullable": column["nullable"]}
+                    for column in table_schema
+                ]
+            )
         except Exception as e:
             logger.error(f"Error getting table schema: {e}")
             return f"Error getting table schema: {e}"
@@ -124,7 +136,7 @@ class SQLTools(Toolkit):
         Returns:
             List[dict]: The result of the query.
         """
-        logger.debug(f"Running sql |\n{sql}")
+        log_debug(f"Running sql |\n{sql}")
 
         with self.Session() as sess, sess.begin():
             result = sess.execute(text(sql))

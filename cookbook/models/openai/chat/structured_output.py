@@ -1,4 +1,4 @@
-from typing import List
+from typing import Dict, List
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
@@ -23,6 +23,10 @@ class MovieScript(BaseModel):
     storyline: str = Field(
         ..., description="3 sentence storyline for the movie. Make it exciting!"
     )
+    rating: Dict[str, int] = Field(
+        ...,
+        description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
+    )
 
 
 # Agent that uses JSON mode
@@ -30,14 +34,14 @@ json_mode_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You write movie scripts.",
     response_model=MovieScript,
+    use_json_mode=True,
 )
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=OpenAIChat(id="gpt-4o-2024-08-06"),
+    model=OpenAIChat(id="gpt-4o"),
     description="You write movie scripts.",
     response_model=MovieScript,
-    structured_outputs=True,
 )
 
 

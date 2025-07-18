@@ -39,7 +39,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# json_mode_response: RunResponse = await json_mode_agent.arun("New York")
-# pprint(json_mode_response.content)
+# response: RunResponse = await agent.arun("New York")
+# pprint(response.content)
 
 asyncio.run(agent.aprint_response("Find a cool movie idea about London and write it."))
