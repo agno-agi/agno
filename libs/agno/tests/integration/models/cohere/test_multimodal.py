@@ -64,7 +64,7 @@ def test_image_input_local_file():
 def test_image_input_with_tool_call():
     agent = Agent(
         model=Cohere(id="c4ai-aya-vision-8b"),
-        tools=[DuckDuckGoTools()],
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
         monitoring=False,

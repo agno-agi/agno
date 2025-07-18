@@ -1,12 +1,19 @@
 [project]
 name = "agno"
-version = "1.1.13"
-description = "Agno: a lightweight framework for building multi-modal Agents"
+version = "1.7.5"
+description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
+]
+keywords = [
+  "agent",
+  "reasoning",
+  "llm",
+  "large-language-model",
+  "framework",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -39,53 +46,108 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "ruff", "timeout-decorator", "types-pyyaml", "fastapi", "uvicorn"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+
+# Models integration test dependencies
+integration-tests = [
+    "exa_py",
+    "duckduckgo-search",
+    "yfinance",
+    "sqlalchemy",
+    "Pillow"
+]
+
+# Dependencies for Telemetry
+opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]
+weave = ["weave"]
+openlit = ["openlit", "agno[opentelemetry]"]
+arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-proto-grpc", "opentelemetry-distro"]
+langfuse = ["langfuse"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]
+azure = ["azure-ai-inference", "aiohttp"]
+cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
+infinity = ["infinity_client"]
 google = ["google-genai"]
 groq = ["groq"]
-mistral = ["mistralai"]
-openai = ["openai"]
-ollama = ["ollama"]
 ibm = ["ibm-watsonx-ai"]
+litellm = ["litellm"]
 lmstudio = ["lmstudio"]
+meta = ["llama-api-client"]
+mistral = ["mistralai"]
+ollama = ["ollama"]
+openai = ["openai"]
+
 # Dependencies for Tools
-exa = ["exa_py"]
-yfinance = ["yfinance"]
+agentql = ["agentql"]
+apify = ["apify-client"]
+brave = ["brave-search"]
+browserbase = ["browserbase", "playwright"]
+cartesia = ["cartesia"]
+confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
-newspaper = ["newspaper4k", "lxml_html_clean"]
-youtube = ["youtube_transcript_api"]
+elevenlabs = ["elevenlabs"]
+exa = ["exa_py"]
+fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
+crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
+google_bigquery = ["google-cloud-bigquery"]
 googlemaps = ["googlemaps", "google-maps-places"]
-todoist = ["todoist-api-python"]
-elevenlabs = ["elevenlabs"]
-fal = ["fal_client"]
-webex = ["webexpythonsdk"]
+matplotlib = ["matplotlib"]
 mcp = ["mcp"]
-browserbase = ["browserbase", "playwright"]
+mem0 = ["mem0ai"]
+newspaper = ["newspaper4k", "lxml_html_clean"]
+opencv = ["opencv-python"]
+todoist = ["todoist-api-python"]
+valyu = ["valyu"]
+webex = ["webexpythonsdk"]
+yfinance = ["yfinance"]
+youtube = ["youtube_transcript_api"]
+zep = ["zep-cloud"]
+oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
 sqlite = ["sqlalchemy"]
+gcs = ["google-cloud-storage"]
+firestore = ["google-cloud-firestore"]
+redis = ["redis"]
 
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
 lancedb = ["lancedb==0.20.0", "tantivy"]
 qdrant = ["qdrant-client"]
+couchbase = ["couchbase"]
 cassandra = ["cassio"]
 mongodb = ["pymongo[srv]"]
 singlestore = ["sqlalchemy"]
+weaviate = ["weaviate-client"]
+milvusdb = ["pymilvus>=2.5.10"]
+clickhouse = ["clickhouse-connect"]
+pinecone = ["pinecone==5.4.2"]
+surrealdb = ["surrealdb>=1.0.4"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 docx = ["python-docx"]
+text = ["aiofiles"]
+csv = ["aiofiles"]
+markdown = ["unstructured", "markdown", "aiofiles"]
+
+# Dependencies for AG-UI integration
+agui = ["ag-ui-protocol"]
+
+# Dependencies for Embedders
+huggingface = [
+    "huggingface-hub",
+]
 
 # Dependencies for Performance
 performance = ["memory_profiler"]
@@ -102,33 +164,52 @@ aws = ["agno-aws", "agno-docker"]
 # All models
 models = [
   "agno[anthropic]",
+  "agno[azure]",
+  "agno[cerebras]",
   "agno[cohere]",
+  "agno[infinity]",
   "agno[google]",
   "agno[groq]",
+  "agno[ibm]",
+  "agno[infinity]",
+  "agno[litellm]",
+  "agno[meta]",
   "agno[mistral]",
   "agno[ollama]",
-  "agno[openai]",
-  "agno[ibm]"
+  "agno[openai]"
 ]
 
 # All tools
 tools = [
+  "agno[apify]",
+  "agno[brave]",
   "agno[exa]",
+  "agno[cartesia]",
   "agno[ddg]",
   "agno[duckdb]",
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[crawl4ai]",
   "agno[github]",
   "agno[gmail]",
   "agno[googlemaps]",
   "agno[todoist]",
+  "agno[matplotlib]",
   "agno[elevenlabs]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
-  "agno[yfinance]",
+  "agno[agentql]",
+  "agno[opencv]",
+  "agno[valyu]",
+#  "agno[yfinance]",  # Broken right now
+  "agno[confluence]",
+  "agno[oxylabs]",
+  "agno[zep]",
+  "agno[mem0]",
+  "agno[google_bigquery]",
 ]
 
 # All storage
@@ -136,6 +217,9 @@ storage = [
   "agno[sql]",
   "agno[postgres]",
   "agno[sqlite]",
+  "agno[gcs]",
+  "agno[firestore]",
+  "agno[redis]",
 ]
 
 # All vector databases
@@ -144,15 +228,29 @@ vectordbs = [
   "agno[chromadb]",
   "agno[lancedb]",
   "agno[qdrant]",
+  "agno[couchbase]",
   "agno[cassandra]",
   "agno[mongodb]",
-  "agno[singlestore]"
+  "agno[singlestore]",
+  "agno[weaviate]",
+  "agno[milvusdb]",
+  "agno[clickhouse]",
+  "agno[pinecone]",
+  "agno[surrealdb]"
 ]
 
 # All knowledge
 knowledge = [
   "agno[pdf]",
   "agno[docx]",
+  "agno[text]",
+  "agno[csv]",
+  "agno[markdown]"
+]
+
+# All embedders
+embedders = [
+  "agno[huggingface]"
 ]
 
 # All libraries for testing
@@ -163,8 +261,10 @@ tests = [
     "agno[storage]",
     "agno[vectordbs]",
     "agno[knowledge]",
+    "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
+    "agno[agui]",
     "twine",
     "build",
 ]
@@ -190,12 +290,12 @@ include = ["LICENSE"]
 
 [tool.pytest.ini_options]
 log_cli = true
-testpaths = "tests"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
+target-version = "py39"
 # Ignore `F401` (import violations) in all `__init__.py` files
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -210,7 +310,9 @@ exclude = ["tests*"]
 
 [[tool.mypy.overrides]]
 module = [
+  "ag_ui.*",
   "agentql.*",
+  "aiofiles.*",
   "altair.*",
   "anthropic.*",
   "apify_client.*",
@@ -222,21 +324,29 @@ module = [
   "botocore.*",
   "bs4.*",
   "bson.*",
+  "brave.*",
   "browserbase.*",
   "cassio.*",
+  "cerebras.*",
+  "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "daytona_sdk.*",
+  "discord.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
   "duckduckgo_search.*",
   "email_validator.*",
+  "e2b_code_interpreter.*",
   "exa_py.*",
   "fastapi.*",
+  "fastembed.*",
+  "filetype.*",
   "firecrawl.*",
   "github.*",
   "google.*",
@@ -249,12 +359,16 @@ module = [
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
+  "infinity_client.*",
   "jira.*",
   "kubernetes.*",
   "lancedb.*",
   "langchain_core.*",
   "langchain.*",
   "llama_index.*",
+  "llama_api_client.*",
+  "litellm.*",
+  "matplotlib.*",
   "mem0.*",
   "mcp.*",
   "memory_profiler.*",
@@ -265,6 +379,7 @@ module = [
   "numpy.*",
   "ollama.*",
   "openai.*",
+  "cv2.*",
   "openbb.*",
   "pandas.*",
   "pgvector.*",
@@ -281,6 +396,7 @@ module = [
   "pytz.*",
   "qdrant_client.*",
   "rapidocr_onnxruntime.*",
+  "redis.*",
   "replicate.*",
   "requests.*",
   "scrapegraph_py.*",
@@ -297,19 +413,28 @@ module = [
   "tavily.*",
   "textract.*",
   "timeout_decorator.*",
+  "tiktoken.*",
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
   "upstash_vector.*",
+  "urllib3.*",
   "uvicorn.*",
+  "valyu.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
   "webexpythonsdk.*",
   "wikipedia.*",
+  "yaml.*",
   "yfinance.*",
   "youtube_transcript_api.*",
+  "couchbase.*",
+  "acouchbase.*",
+  "zep_cloud.*",
+  "oxylabs.*",
+  "surrealdb.*"
 ]
 ignore_missing_imports = true

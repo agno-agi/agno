@@ -11,7 +11,7 @@ except ImportError:
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -62,7 +62,7 @@ class LanceDb(VectorDb):
             from agno.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            logger.info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_info("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -125,7 +125,7 @@ class LanceDb(VectorDb):
                     "Please install tantivy-py `pip install tantivy` to use the full text search feature."  # noqa: E501
                 )
 
-        logger.debug(f"Initialized LanceDb with table: '{self.table_name}'")
+        log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
     async def _get_async_connection(self) -> lancedb.AsyncConnection:
         """Get or create an async connection to LanceDB."""
@@ -146,7 +146,7 @@ class LanceDb(VectorDb):
             conn = await self._get_async_connection()
             schema = self._base_schema()
 
-            logger.debug(f"Creating table asynchronously: {self.table_name}")
+            log_debug(f"Creating table asynchronously: {self.table_name}")
             self.async_table = await conn.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)
 
     def _base_schema(self) -> pa.Schema:
@@ -167,7 +167,7 @@ class LanceDb(VectorDb):
     def _init_table(self) -> lancedb.db.LanceTable:
         schema = self._base_schema()
 
-        logger.info(f"Creating table: {self.table_name}")
+        log_info(f"Creating table: {self.table_name}")
         tbl = self.connection.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
@@ -210,16 +210,25 @@ class LanceDb(VectorDb):
 
         Args:
             documents (List[Document]): List of documents to insert
-            filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
         """
         if len(documents) <= 0:
-            logger.info("No documents to insert")
+            log_info("No documents to insert")
             return
 
-        logger.info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         for document in documents:
+            if self.doc_exists(document):
+                continue
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data = document.meta_data.copy() if document.meta_data else {}
+                meta_data.update(filters)
+                document.meta_data = meta_data
+
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
@@ -236,14 +245,14 @@ class LanceDb(VectorDb):
                     "payload": json.dumps(payload),
                 }
             )
-            logger.debug(f"Parsed document: {document.name} ({document.meta_data})")
+            log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return
 
         if not data:
-            logger.debug("No new data to insert")
+            log_debug("No new data to insert")
             return
 
         if self.on_bad_vectors is not None:
@@ -251,7 +260,7 @@ class LanceDb(VectorDb):
         else:
             self.table.add(data)
 
-        logger.debug(f"Inserted {len(data)} documents")
+        log_debug(f"Inserted {len(data)} documents")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -262,14 +271,23 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
         """
         if len(documents) <= 0:
-            logger.debug("No documents to insert")
+            log_debug("No documents to insert")
             return
 
-        logger.info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
         data = []
 
         # Prepare documents for insertion
         for document in documents:
+            if await self.async_doc_exists(document):
+                continue
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data = document.meta_data.copy() if document.meta_data else {}
+                meta_data.update(filters)
+                document.meta_data = meta_data
+
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
@@ -286,10 +304,10 @@ class LanceDb(VectorDb):
                     "payload": json.dumps(payload),
                 }
             )
-            logger.debug(f"Parsed document: {document.name} ({document.meta_data})")
+            log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if not data:
-            logger.debug("No new data to insert")
+            log_debug("No new data to insert")
             return
 
         try:
@@ -300,7 +318,7 @@ class LanceDb(VectorDb):
             else:
                 await self.async_table.add(data)  # type: ignore
 
-            logger.debug(f"Asynchronously inserted {len(data)} documents")
+            log_debug(f"Asynchronously inserted {len(data)} documents")
         except Exception as e:
             logger.error(f"Error during async document insertion: {e}")
             raise
@@ -313,23 +331,67 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        self.insert(documents)
+        self.insert(documents, filters=filters)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         await self.async_insert(documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """
+        Search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
+
+        results = None
+
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit)
+            results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
+
+        if results is None:
+            return []
+
+        search_results = self._build_search_results(results)
+
+        # Filter results based on metadata if filters are provided
+        if filters and search_results:
+            filtered_results = []
+            for doc in search_results:
+                if doc.meta_data is None:
+                    continue
+
+                # Check if all filter criteria match
+                match = True
+                for key, value in filters.items():
+                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results.append(doc)
+
+            search_results = filtered_results
+
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+
+        log_info(f"Found {len(search_results)} documents")
+        return search_results
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -348,25 +410,58 @@ class LanceDb(VectorDb):
         # TODO: Search is not yet supported in async (https://github.com/lancedb/lancedb/pull/2049)
         if self.connection:
             self.table = self.connection.open_table(name=self.table_name)
+
+        results = None
+
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit)
+            results = self.vector_search(query, limit)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit)
         else:
             logger.error(f"Invalid search type '{self.search_type}'.")
             return []
+
+        if results is None:
+            return []
+
+        search_results = self._build_search_results(results)
+
+        # Filter results based on metadata if filters are provided
+        if filters and search_results:
+            filtered_results = []
+            for doc in search_results:
+                if doc.meta_data is None:
+                    continue
+
+                # Check if all filter criteria match
+                match = True
+                for key, value in filters.items():
+                    if key not in doc.meta_data or doc.meta_data[key] != value:
+                        match = False
+                        break
+
+                if match:
+                    filtered_results.append(doc)
+
+            search_results = filtered_results
+
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+
+        log_info(f"Found {len(search_results)} documents")
+        return search_results
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
-            return []
+            return None
 
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
-            return []
+            return None  # type: ignore
 
         results = self.table.search(
             query=query_embedding,
@@ -376,23 +471,18 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        results = results.to_pandas()
-
-        search_results = self._build_search_results(results)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        return search_results
+        return results.to_pandas()
 
     def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             logger.error(f"Error getting embedding for Query: {query}")
             return []
+
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []
+
         if not self.fts_index_exists:
             self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
             self.fts_index_exists = True
@@ -410,36 +500,23 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        results = results.to_pandas()
-
-        search_results = self._build_search_results(results)
-
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-
-        return search_results
+        return results.to_pandas()
 
     def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
         if self.table is None:
             logger.error("Table not initialized. Please create the table first")
             return []
+
         if not self.fts_index_exists:
             self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
             self.fts_index_exists = True
 
-        results = (
-            self.table.search(
-                query=query,
-                query_type="fts",
-            )
-            .limit(limit)
-            .to_pandas()
-        )
-        search_results = self._build_search_results(results)
+        results = self.table.search(
+            query=query,
+            query_type="fts",
+        ).limit(limit)
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
-        return search_results
+        return results.to_pandas()
 
     def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
         search_results: List[Document] = []
@@ -464,13 +541,13 @@ class LanceDb(VectorDb):
 
     def drop(self) -> None:
         if self.exists():
-            logger.debug(f"Deleting collection: {self.table_name}")
+            log_debug(f"Deleting collection: {self.table_name}")
             self.connection.drop_table(self.table_name)  # type: ignore
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
         if await self.async_exists():
-            logger.debug(f"Deleting collection: {self.table_name}")
+            log_debug(f"Deleting collection: {self.table_name}")
             conn = await self._get_async_connection()
             await conn.drop_table(self.table_name)
 
@@ -518,3 +595,6 @@ class LanceDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking name existence: {e}")
             return False
+
+    async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

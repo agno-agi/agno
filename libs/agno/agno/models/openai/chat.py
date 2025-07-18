@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -9,10 +9,10 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import AudioResponse
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.log import logger
-from agno.utils.openai import audio_to_message, images_to_message
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
@@ -25,7 +25,6 @@ try:
         ChoiceDelta,
         ChoiceDeltaToolCall,
     )
-    from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -41,7 +40,7 @@ class OpenAIChat(Model):
     id: str = "gpt-4o"
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
-    supports_structured_outputs: bool = True
+    supports_native_structured_outputs: bool = True
 
     # Request parameters
     store: Optional[bool] = None
@@ -58,7 +57,6 @@ class OpenAIChat(Model):
         None  # E.g. {"voice": "alloy", "format": "wav"}. `format` must be one of `wav`, `mp3`, `flac`, `opus`, or `pcm16`. `voice` must be one of `ash`, `ballad`, `coral`, `sage`, `verse`, `alloy`, `echo`, and `shimmer`.
     )
     presence_penalty: Optional[float] = None
-    response_format: Optional[Any] = None
     seed: Optional[int] = None
     stop: Optional[Union[str, List[str]]] = None
     temperature: Optional[float] = None
@@ -67,6 +65,7 @@ class OpenAIChat(Model):
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
+    role_map: Optional[Dict[str, str]] = None
 
     # Client parameters
     api_key: Optional[str] = None
@@ -79,20 +78,13 @@ class OpenAIChat(Model):
     http_client: Optional[httpx.Client] = None
     client_params: Optional[Dict[str, Any]] = None
 
-    # OpenAI clients
-    client: Optional[OpenAIClient] = None
-    async_client: Optional[AsyncOpenAIClient] = None
-
-    # Internal parameters. Not used for API requests
-    # Whether to use the structured outputs with this Model.
-    structured_outputs: bool = False
-
     # The role to map the message role to.
-    role_map = {
+    default_role_map = {
         "system": "developer",
         "user": "user",
         "assistant": "assistant",
         "tool": "tool",
+        "model": "assistant",
     }
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -100,7 +92,7 @@ class OpenAIChat(Model):
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
-                logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+                log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
         # Define base client params
         base_params = {
@@ -128,14 +120,10 @@ class OpenAIChat(Model):
         Returns:
             OpenAIClient: An instance of the OpenAI client.
         """
-        if self.client:
-            return self.client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
-        self.client = OpenAIClient(**client_params)
-        return self.client
+        return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
         """
@@ -144,9 +132,6 @@ class OpenAIChat(Model):
         Returns:
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
-            return self.async_client
-
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
             client_params["http_client"] = self.http_client
@@ -157,8 +142,12 @@ class OpenAIChat(Model):
             )
         return AsyncOpenAIClient(**client_params)
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -178,7 +167,6 @@ class OpenAIChat(Model):
             "modalities": self.modalities,
             "audio": self.audio,
             "presence_penalty": self.presence_penalty,
-            "response_format": self.response_format,
             "seed": self.seed,
             "stop": self.stop,
             "temperature": self.temperature,
@@ -189,19 +177,41 @@ class OpenAIChat(Model):
             "metadata": self.metadata,
         }
 
+        # Handle response format - always use JSON schema approach
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Convert Pydantic to JSON schema for regular endpoint
+                from agno.utils.models.schema_utils import get_response_schema_for_provider
+
+                schema = get_response_schema_for_provider(response_format, "openai")
+                base_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": schema,
+                        "strict": True,
+                    },
+                }
+            else:
+                # Handle other response format types (like {"type": "json_object"})
+                base_params["response_format"] = response_format
+
         # Filter out None values
         request_params = {k: v for k, v in base_params.items() if v is not None}
 
         # Add tools
-        if self._tools is not None and len(self._tools) > 0:
-            request_params["tools"] = self._tools
+        if tools is not None and len(tools) > 0:
+            request_params["tools"] = tools
 
-            if self.tool_choice is not None:
-                request_params["tool_choice"] = self.tool_choice
+            if tool_choice is not None:
+                request_params["tool_choice"] = tool_choice
 
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -224,9 +234,6 @@ class OpenAIChat(Model):
                 "modalities": self.modalities,
                 "audio": self.audio,
                 "presence_penalty": self.presence_penalty,
-                "response_format": self.response_format
-                if isinstance(self.response_format, dict)
-                else str(self.response_format),
                 "seed": self.seed,
                 "stop": self.stop,
                 "temperature": self.temperature,
@@ -236,12 +243,6 @@ class OpenAIChat(Model):
                 "extra_query": self.extra_query,
             }
         )
-        if self._tools is not None:
-            model_dict["tools"] = self._tools
-            if self.tool_choice is not None:
-                model_dict["tool_choice"] = self.tool_choice
-            else:
-                model_dict["tool_choice"] = "auto"
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
@@ -256,7 +257,7 @@ class OpenAIChat(Model):
             Dict[str, Any]: The formatted message.
         """
         message_dict: Dict[str, Any] = {
-            "role": self.role_map[message.role],
+            "role": self.role_map[message.role] if self.role_map else self.default_role_map[message.role],
             "content": message.content,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
@@ -280,23 +281,42 @@ class OpenAIChat(Model):
                     message_dict["content"].extend(audio_to_message(audio=message.audio))
 
         if message.audio_output is not None:
-            message_dict["content"] = None
+            message_dict["content"] = ""
             message_dict["audio"] = {"id": message.audio_output.id}
 
-        if message.videos is not None:
-            logger.warning("Video input is currently unsupported.")
+        if message.videos is not None and len(message.videos) > 0:
+            log_warning("Video input is currently unsupported.")
 
         # OpenAI expects the tool_calls to be None if empty, not an empty list
         if message.tool_calls is not None and len(message.tool_calls) == 0:
             message_dict["tool_calls"] = None
 
+        if message.files is not None:
+            # Ensure content is a list of parts
+            content = message_dict.get("content")
+            if isinstance(content, str):  # wrap existing text
+                text = content
+                message_dict["content"] = [{"type": "text", "text": text}]
+            elif content is None:
+                message_dict["content"] = []
+            # Insert each file part before text parts
+            for file in message.files:
+                file_part = _format_file_for_message(file)
+                if file_part:
+                    message_dict["content"].insert(0, file_part)
+
         # Manually add the content field even if it is None
         if message.content is None:
-            message_dict["content"] = None
-
+            message_dict["content"] = ""
         return message_dict
 
-    def invoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
+    def invoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Send a chat completion request to the OpenAI API.
 
@@ -307,23 +327,13 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if self.response_format is not None and self.structured_outputs:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                    return self.get_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.request_kwargs,
-                    )
-                else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
-
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
-            logger.error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -337,11 +347,14 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            logger.error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            log_error(f"API status error from OpenAI API: {e}")
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -354,10 +367,16 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            logger.error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke(self, messages: List[Message]) -> Union[ChatCompletion, ParsedChatCompletion]:
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> ChatCompletion:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
@@ -368,22 +387,13 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            if self.response_format is not None and self.structured_outputs:
-                if isinstance(self.response_format, type) and issubclass(self.response_format, BaseModel):
-                    return await self.get_async_client().beta.chat.completions.parse(
-                        model=self.id,
-                        messages=[self._format_message(m) for m in messages],  # type: ignore
-                        **self.request_kwargs,
-                    )
-                else:
-                    raise ValueError("response_format must be a subclass of BaseModel if structured_outputs=True")
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
-            logger.error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -397,11 +407,14 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            logger.error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            log_error(f"API status error from OpenAI API: {e}")
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -414,10 +427,16 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            logger.error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
+    def invoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Iterator[ChatCompletionChunk]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
@@ -427,16 +446,17 @@ class OpenAIChat(Model):
         Returns:
             Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
         """
+
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )  # type: ignore
         except RateLimitError as e:
-            logger.error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -450,11 +470,14 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            logger.error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            log_error(f"API status error from OpenAI API: {e}")
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -467,10 +490,16 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            logger.error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> AsyncIterator[ChatCompletionChunk]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
@@ -480,18 +509,19 @@ class OpenAIChat(Model):
         Returns:
             Any: An asynchronous iterator of chat completion chunks.
         """
+
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.request_kwargs,
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
                 yield chunk
         except RateLimitError as e:
-            logger.error(f"Rate limit error from OpenAI API: {e}")
+            log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
             error_message = (
                 error_message.get("message", "Unknown model error")
@@ -505,11 +535,14 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except APIConnectionError as e:
-            logger.error(f"API connection error from OpenAI API: {e}")
+            log_error(f"API connection error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except APIStatusError as e:
-            logger.error(f"API status error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
+            log_error(f"API status error from OpenAI API: {e}")
+            try:
+                error_message = e.response.json().get("error", {})
+            except Exception:
+                error_message = e.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -522,7 +555,7 @@ class OpenAIChat(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            logger.error(f"Error from OpenAI API: {e}")
+            log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -566,15 +599,13 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(self, response: Union[ChatCompletion, ParsedChatCompletion]) -> ModelResponse:
+    def parse_provider_response(
+        self,
+        response: ChatCompletion,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
-
-        Args:
-            response: Response from invoke() method
-
-        Returns:
-            ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
 
@@ -587,19 +618,6 @@ class OpenAIChat(Model):
 
         # Get response message
         response_message = response.choices[0].message
-
-        # Parse structured outputs if enabled
-        try:
-            if (
-                self.response_format is not None
-                and self.structured_outputs
-                and issubclass(self.response_format, BaseModel)
-            ):
-                parsed_object = response_message.parsed  # type: ignore
-                if parsed_object is not None:
-                    model_response.parsed = parsed_object
-        except Exception as e:
-            logger.warning(f"Error retrieving structured outputs: {e}")
 
         # Add role
         if response_message.role is not None:
@@ -614,7 +632,7 @@ class OpenAIChat(Model):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                logger.warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {e}")
 
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
@@ -640,10 +658,21 @@ class OpenAIChat(Model):
                         transcript=response_message.audio.transcript,
                     )
             except Exception as e:
-                logger.warning(f"Error processing audio: {e}")
+                log_warning(f"Error processing audio: {e}")
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
+
+        # Add citations if present
+        if hasattr(response, "citations") and response.citations:
+            citations = Citations()
+            url_citations = []
+            for citation_url in response.citations:
+                url_citations.append(UrlCitation(url=str(citation_url)))
+
+            citations.urls = url_citations
+            citations.raw = response.citations
+            model_response.citations = citations
 
         if response.usage is not None:
             model_response.response_usage = response.usage
@@ -662,39 +691,50 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
-            delta: ChoiceDelta = response_delta.choices[0].delta
+            choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
-            # Add audio if present
-            if hasattr(delta, "audio") and delta.audio is not None:
-                try:
-                    if isinstance(delta.audio, dict):
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.get("id"),
-                            content=delta.audio.get("data"),
-                            expires_at=delta.audio.get("expires_at"),
-                            transcript=delta.audio.get("transcript"),
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                    else:
-                        model_response.audio = AudioResponse(
-                            id=delta.audio.id,
-                            content=delta.audio.data,
-                            expires_at=delta.audio.expires_at,
-                            transcript=delta.audio.transcript,
-                            sample_rate=24000,
-                            mime_type="pcm16",
-                        )
-                except Exception as e:
-                    logger.warning(f"Error processing audio: {e}")
+                # Add audio if present
+                if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
+                    try:
+                        if isinstance(choice_delta.audio, dict):
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.get("id"),
+                                content=choice_delta.audio.get("data"),
+                                expires_at=choice_delta.audio.get("expires_at"),
+                                transcript=choice_delta.audio.get("transcript"),
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                        else:
+                            model_response.audio = AudioResponse(
+                                id=choice_delta.audio.id,
+                                content=choice_delta.audio.data,
+                                expires_at=choice_delta.audio.expires_at,
+                                transcript=choice_delta.audio.transcript,
+                                sample_rate=24000,
+                                mime_type="pcm16",
+                            )
+                    except Exception as e:
+                        log_warning(f"Error processing audio: {e}")
+
+        if hasattr(response_delta, "citations") and response_delta.citations:
+            citations = Citations()
+            url_citations = []
+            for citation_url in response_delta.citations:
+                url_citations.append(UrlCitation(url=str(citation_url)))
+
+            citations.urls = url_citations
+            citations.raw = response_delta.citations
+            model_response.citations = citations
 
         # Add usage metrics if present
         if response_delta.usage is not None:

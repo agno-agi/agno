@@ -6,8 +6,8 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 
 def test_image_input():
     agent = Agent(
-        model=xAI(id="grok-2-vision-latest"),
-        tools=[DuckDuckGoTools()],
+        model=xAI(id="grok-2-vision-1212"),
+        tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
         monitoring=False,

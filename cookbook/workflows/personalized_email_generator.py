@@ -273,7 +273,6 @@ class PersonalisedEmailGenerator(Workflow):
             Remember: Quality over quantity. Focus on insights that could lead to meaningful business conversations.\
         """),
         response_model=CompanyInfo,
-        structured_outputs=True,
     )
 
     email_creator: Agent = Agent(
@@ -441,6 +440,8 @@ def main():
             session_id="personalized-email-generator",
             storage=SqliteStorage(
                 table_name="personalized_email_workflows",
+                mode="workflow",
+                auto_upgrade_schema=True,
                 db_file="tmp/agno_workflows.db",
             ),
         )

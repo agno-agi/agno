@@ -5,8 +5,10 @@ from uuid import UUID
 from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
+from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 
 try:
     from pymongo import MongoClient
@@ -24,7 +26,7 @@ class MongoDbStorage(Storage):
         db_url: Optional[str] = None,
         db_name: str = "agno",
         client: Optional[MongoClient] = None,
-        mode: Optional[Literal["agent", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using MongoDB.
@@ -59,7 +61,11 @@ class MongoDbStorage(Storage):
             self.collection.create_index("created_at")
             if self.mode == "agent":
                 self.collection.create_index("agent_id")
+            elif self.mode == "team":
+                self.collection.create_index("team_id")
             elif self.mode == "workflow":
+                self.collection.create_index("workflow_id")
+            elif self.mode == "workflow_v2":
                 self.collection.create_index("workflow_id")
         except PyMongoError as e:
             logger.error(f"Error creating indexes: {e}")
@@ -84,8 +90,12 @@ class MongoDbStorage(Storage):
                 doc.pop("_id", None)
                 if self.mode == "agent":
                     return AgentSession.from_dict(doc)
+                elif self.mode == "team":
+                    return TeamSession.from_dict(doc)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(doc)
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(doc)
             return None
         except PyMongoError as e:
             logger.error(f"Error reading session: {e}")
@@ -106,9 +116,12 @@ class MongoDbStorage(Storage):
             if entity_id is not None:
                 if self.mode == "agent":
                     query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
-
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
             cursor = self.collection.find(query, {"session_id": 1}).sort("created_at", -1)
 
             return [str(doc["session_id"]) for doc in cursor]
@@ -131,9 +144,12 @@ class MongoDbStorage(Storage):
             if entity_id is not None:
                 if self.mode == "agent":
                     query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
-
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
             cursor = self.collection.find(query).sort("created_at", -1)
             sessions: List[Session] = []
             for doc in cursor:
@@ -143,6 +159,10 @@ class MongoDbStorage(Storage):
                     _agent_session = AgentSession.from_dict(doc)
                     if _agent_session is not None:
                         sessions.append(_agent_session)
+                elif self.mode == "team":
+                    _team_session = TeamSession.from_dict(doc)
+                    if _team_session is not None:
+                        sessions.append(_team_session)
                 elif self.mode == "workflow":
                     _workflow_session = WorkflowSession.from_dict(doc)
                     if _workflow_session is not None:
@@ -150,6 +170,65 @@ class MongoDbStorage(Storage):
             return sessions
         except PyMongoError as e:
             logger.error(f"Error getting sessions: {e}")
+            return []
+
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        try:
+            # Build the query
+            query = {}
+            if user_id is not None:
+                query["user_id"] = user_id
+            if entity_id is not None:
+                if self.mode == "agent":
+                    query["agent_id"] = entity_id
+                elif self.mode == "team":
+                    query["team_id"] = entity_id
+                elif self.mode == "workflow":
+                    query["workflow_id"] = entity_id
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
+            # Execute query with sort and limit
+            cursor = self.collection.find(query)
+            cursor = cursor.sort("created_at", -1)  # Sort by created_at descending
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            sessions: List[Session] = []
+            for doc in cursor:
+                # Remove MongoDB _id before converting to Session object
+                doc.pop("_id", None)
+                session: Optional[Session] = None
+
+                if self.mode == "agent":
+                    session = AgentSession.from_dict(doc)
+                elif self.mode == "team":
+                    session = TeamSession.from_dict(doc)
+                elif self.mode == "workflow":
+                    session = WorkflowSession.from_dict(doc)
+                elif self.mode == "workflow_v2":
+                    session = WorkflowSessionV2.from_dict(doc)
+                if session is not None:
+                    sessions.append(session)
+
+            return sessions
+
+        except PyMongoError as e:
+            logger.error(f"Error getting last {limit} sessions: {e}")
             return []
 
     def upsert(self, session: Session, create_and_retry: bool = True) -> Optional[Session]:
@@ -192,7 +271,7 @@ class MongoDbStorage(Storage):
             return None
 
         except PyMongoError as e:
-            logger.error(f"Error upserting session: {e}")
+            logger.warning(f"Error upserting session: {e}")
             return None
 
     def delete_session(self, session_id: Optional[str] = None) -> None:
@@ -209,9 +288,9 @@ class MongoDbStorage(Storage):
         try:
             result = self.collection.delete_one({"session_id": session_id})
             if result.deleted_count == 0:
-                logger.debug(f"No session found with session_id: {session_id}")
+                log_debug(f"No session found with session_id: {session_id}")
             else:
-                logger.debug(f"Successfully deleted session with session_id: {session_id}")
+                log_debug(f"Successfully deleted session with session_id: {session_id}")
         except PyMongoError as e:
             logger.error(f"Error deleting session: {e}")
 
