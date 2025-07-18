@@ -14,7 +14,7 @@ def test_embedder_initialization(embedder):
     assert embedder.id == "jina-embeddings-v3"  # Field is 'id' not 'model'
     assert embedder.dimensions == 1024
     assert embedder.embedding_type == "float"
-    assert embedder.late_chunking == False
+    assert not embedder.late_chunking
     assert embedder.api_key is not None  # Should load from environment
 
 
@@ -80,12 +80,12 @@ def test_custom_configuration():
         dimensions=512,  # Different dimensions
         embedding_type="float",
         late_chunking=True,
-        timeout=30.0
+        timeout=30.0,
     )
-    
+
     text = "Test with custom configuration"
     embeddings = custom_embedder.get_embedding(text)
-    
+
     assert isinstance(embeddings, list)
     assert len(embeddings) > 0
     # Note: dimensions might still be 1024 if the API doesn't support 512 for this model
@@ -96,7 +96,7 @@ def test_different_embedding_types():
     # Test with float type (default)
     float_embedder = JinaEmbedder(embedding_type="float")
     text = "Test different embedding types"
-    
+
     embeddings = float_embedder.get_embedding(text)
     assert isinstance(embeddings, list)
     assert all(isinstance(x, float) for x in embeddings)
@@ -105,11 +105,11 @@ def test_different_embedding_types():
 def test_late_chunking_feature():
     """Test the late chunking feature for better long document processing"""
     chunking_embedder = JinaEmbedder(late_chunking=True)
-    
+
     # Test with a longer document
     long_text = "This is a longer document that would benefit from late chunking. " * 50
     embeddings = chunking_embedder.get_embedding(long_text)
-    
+
     assert isinstance(embeddings, list)
     assert len(embeddings) > 0
     assert len(embeddings) == chunking_embedder.dimensions
@@ -118,7 +118,7 @@ def test_late_chunking_feature():
 def test_api_key_validation():
     """Test that missing API key is handled gracefully"""
     embedder_no_key = JinaEmbedder(api_key=None)
-    
+
     # The embedder should return empty list when API key is missing
     # (since the error is caught and logged as warning)
     embeddings = embedder_no_key.get_embedding("Test text")
@@ -129,4 +129,4 @@ def test_empty_text_handling(embedder):
     """Test handling of empty text"""
     embeddings = embedder.get_embedding("")
     # Should return empty list or handle gracefully
-    assert isinstance(embeddings, list) 
+    assert isinstance(embeddings, list)
