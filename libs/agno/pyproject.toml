@@ -388,6 +388,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
