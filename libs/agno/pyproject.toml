@@ -104,6 +104,9 @@ mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 todoist = ["todoist-api-python"]
+elevenlabs = ["elevenlabs"]
+smallestai = ["smallestai"]
+fal = ["fal_client"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
@@ -197,6 +200,7 @@ tools = [
   "agno[todoist]",
   "agno[matplotlib]",
   "agno[elevenlabs]",
+  "agno[smallestai]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
