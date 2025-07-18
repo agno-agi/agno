@@ -265,3 +265,84 @@ def test_parse_json_with_prefix_suffix_noise():
     assert result is not None
     assert len(result.reasoning_steps) == 1
     assert result.reasoning_steps[0].title == "Only Step"
+
+
+def test_parse_preserves_field_name_case():
+    """Test that field names with mixed case are preserved correctly"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+        camelCase: str
+        UPPER_CASE: str
+
+    content = '{"Supplier_name": "test supplier", "newData": "some data", "camelCase": "camel value", "UPPER_CASE": "upper value"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == "test supplier"
+    assert result.newData == "some data"
+    assert result.camelCase == "camel value"
+    assert result.UPPER_CASE == "upper value"
+
+
+def test_parse_preserves_field_name_case_with_cleanup_path():
+    """Test that field names with mixed case are preserved when going through the cleanup path"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = '{"Supplier_name": "test \\"quoted\\" supplier", "newData": "some \\"quoted\\" data"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_preserves_field_name_case_with_markdown():
+    """Test that field names with mixed case are preserved when parsing from markdown blocks with special formatting"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = """```json
+    {
+        "Supplier_name": "test "quoted" supplier",
+        "newData": "some "quoted" data"
+    }
+    ```"""
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_json_with_python_code_in_value():
+    """Test parsing JSON with valid Python code containing # and * characters as a value"""
+
+    class CodeModel(BaseModel):
+        function_name: str
+        code: str
+        description: str
+
+    content = """```json
+    {
+        "function_name": "calculate_factorial",
+        "code": "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+        "description": "A recursive factorial function with comments and multiplication"
+    }
+    ```"""
+
+    result = parse_response_model_str(content, CodeModel)
+
+    assert result is not None
+    assert result.function_name == "calculate_factorial"
+    assert (
+        result.code
+        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+    )
+    assert result.description == "A recursive factorial function with comments and multiplication"
