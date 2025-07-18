@@ -141,7 +141,7 @@ class TestBitbucketTools:
         mock_response.headers = {"Content-Type": "application/xml"}
         mock_request.return_value = mock_response
 
-        with patch("agno.utils.log.logger.warning") as mock_logger:
+        with patch("agno.tools.bitbucket.logger.warning") as mock_logger:
             result = bitbucket_tools._make_request("GET", "/test")
 
             assert result == {}
@@ -184,7 +184,7 @@ class TestBitbucketTools:
         """Test list_repositories error handling."""
         mock_request.side_effect = Exception("API Error")
 
-        with patch("agno.utils.log.logger.error") as mock_logger:
+        with patch("agno.tools.bitbucket.logger.error") as mock_logger:
             result = bitbucket_tools.list_repositories()
 
             result_data = json.loads(result)
@@ -296,7 +296,7 @@ class TestBitbucketTools:
         mock_response = {"values": []}
         mock_request.return_value = mock_response
 
-        with patch("agno.utils.log.logger.debug") as mock_logger:
+        with patch("agno.tools.bitbucket.logger.debug") as mock_logger:
             bitbucket_tools.list_all_pull_requests(state="INVALID")
 
             mock_logger.assert_called_once()
@@ -388,7 +388,7 @@ class TestBitbucketTools:
         """Test that errors are properly formatted as JSON."""
         mock_request.side_effect = Exception("Test error")
 
-        with patch("agno.utils.log.logger.error"):
+        with patch("agno.tools.bitbucket.logger.error"):
             result = bitbucket_tools.list_repositories()
 
             result_data = json.loads(result)
