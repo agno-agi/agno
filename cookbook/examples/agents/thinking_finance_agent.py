@@ -61,6 +61,7 @@ finance_agent = Agent(
     add_datetime_to_instructions=True,
     show_tool_calls=True,
     markdown=True,
+    stream_intermediate_steps=True,
 )
 
 # Example usage with detailed market analysis request

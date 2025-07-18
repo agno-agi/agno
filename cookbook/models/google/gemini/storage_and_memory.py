@@ -2,8 +2,8 @@
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.memory import AgentMemory
-from agno.memory.db.postgres import PgMemoryDb
+from agno.memory.v2.db.postgres import PostgresMemoryDb
+from agno.memory.v2.memory import Memory
 from agno.models.google import Gemini
 from agno.storage.postgres import PostgresStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -18,16 +18,16 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-2.0-flash-001"),
     tools=[DuckDuckGoTools()],
     knowledge=knowledge_base,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     # Store the memories and summary in a database
-    memory=AgentMemory(
-        db=PgMemoryDb(table_name="agent_memory", db_url=db_url),
-        create_user_memories=True,
-        create_session_summary=True,
+    memory=Memory(
+        db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),
     ),
+    enable_user_memories=True,
+    enable_session_summaries=True,
     show_tool_calls=True,
     # This setting adds a tool to search the knowledge base for information
     search_knowledge=True,

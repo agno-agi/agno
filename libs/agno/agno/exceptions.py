@@ -22,6 +22,17 @@ class AgentRunException(Exception):
 class RetryAgentRun(AgentRunException):
     """Exception raised when a tool call should be retried."""
 
+    def __init__(
+        self,
+        exc,
+        user_message: Optional[Union[str, Message]] = None,
+        agent_message: Optional[Union[str, Message]] = None,
+        messages: Optional[List[Union[dict, Message]]] = None,
+    ):
+        super().__init__(
+            exc, user_message=user_message, agent_message=agent_message, messages=messages, stop_execution=False
+        )
+
 
 class StopAgentRun(AgentRunException):
     """Exception raised when an agent should stop executing entirely."""
@@ -75,3 +86,9 @@ class ModelRateLimitError(ModelProviderError):
         self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
     ):
         super().__init__(message, status_code, model_name, model_id)
+
+
+class EvalError(Exception):
+    """Exception raised when an evaluation fails."""
+
+    pass

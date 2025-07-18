@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_info
 
 try:
     from google import genai
@@ -33,7 +33,7 @@ class GeminiEmbedder(Embedder):
 
         self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
         if not self.api_key:
-            logger.error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+            log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
 
         if self.api_key:
             _client_params["api_key"] = self.api_key
@@ -67,16 +67,29 @@ class GeminiEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         response = self._response(text=text)
         try:
-            return response.embeddings[0].values
+            if response.embeddings and len(response.embeddings) > 0:
+                values = response.embeddings[0].values
+                if values is not None:
+                    return values
+            log_info("No embeddings found in response")
+            return []
         except Exception as e:
-            logger.warning(e)
+            log_error(f"Error extracting embeddings: {e}")
             return []
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
+    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
-        usage = response.metadata.billable_character_count if response.metadata else None
+        usage = None
+        if response.metadata and hasattr(response.metadata, "billable_character_count"):
+            usage = {"billable_character_count": response.metadata.billable_character_count}
+
         try:
-            return response.embeddings[0].values, usage
+            if response.embeddings and len(response.embeddings) > 0:
+                values = response.embeddings[0].values
+                if values is not None:
+                    return values, usage
+            log_info("No embeddings found in response")
+            return [], usage
         except Exception as e:
-            logger.warning(e)
+            log_error(f"Error extracting embeddings: {e}")
             return [], usage

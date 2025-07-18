@@ -24,26 +24,34 @@ class DuckDbTools(Toolkit):
         export_tables: bool = False,
         **kwargs,
     ):
-        super().__init__(name="duckdb_tools", **kwargs)
-
         self.db_path: Optional[str] = db_path
         self.read_only: bool = read_only
         self.config: Optional[dict] = config
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        self.register(self.show_tables)
-        self.register(self.describe_table)
+        tools: List[Any] = []
+        tools.append(self.show_tables)
+        tools.append(self.describe_table)
         if inspect_queries:
-            self.register(self.inspect_query)
+            tools.append(self.inspect_query)
         if run_queries:
-            self.register(self.run_query)
+            tools.append(self.run_query)
         if create_tables:
-            self.register(self.create_table_from_path)
+            tools.append(self.create_table_from_path)
         if summarize_tables:
-            self.register(self.summarize_table)
+            tools.append(self.summarize_table)
         if export_tables:
-            self.register(self.export_table_to_path)
+            tools.append(self.export_table_to_path)
+
+        tools.append(self.load_local_path_to_table)
+        tools.append(self.load_local_csv_to_table)
+        tools.append(self.load_s3_path_to_table)
+        tools.append(self.load_s3_csv_to_table)
+        tools.append(self.create_fts_index)
+        tools.append(self.full_text_search)
+
+        super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 
     @property
     def connection(self) -> duckdb.DuckDBPyConnection:
@@ -197,7 +205,12 @@ class DuckDbTools(Toolkit):
         if replace:
             create_statement = "CREATE OR REPLACE TABLE"
 
-        create_statement += f" '{table}' AS SELECT * FROM '{path}';"
+        # Check if the file is a CSV
+        if path.lower().endswith(".csv"):
+            create_statement += f" {table} AS SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true);"
+        else:
+            create_statement += f" {table} AS SELECT * FROM '{path}';"
+
         self.run_query(create_statement)
         log_debug(f"Created table {table} from {path}")
         return table
@@ -245,7 +258,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -273,13 +286,13 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
             select_statement += ")"
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
         self.run_query(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")
@@ -304,7 +317,7 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS SELECT * FROM '{path}';"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM '{path}';"
         self.run_query(create_statement)
 
         log_debug(f"Loaded {path} into duckdb as {table}")
@@ -331,13 +344,13 @@ class DuckDbTools(Toolkit):
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
-        select_statement = f"SELECT * FROM read_csv('{path}'"
+        select_statement = f"SELECT * FROM read_csv('{path}', ignore_errors=false, auto_detect=true"
         if delimiter is not None:
             select_statement += f", delim='{delimiter}')"
         else:
             select_statement += ")"
 
-        create_statement = f"CREATE OR REPLACE TABLE '{table}' AS {select_statement};"
+        create_statement = f"CREATE OR REPLACE TABLE {table} AS {select_statement};"
         self.run_query(create_statement)
 
         log_debug(f"Loaded CSV {path} into duckdb as {table}")

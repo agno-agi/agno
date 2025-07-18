@@ -141,13 +141,13 @@ def test_update_task_success(todoist_tools, mock_todoist_api):
 
 def test_close_task_success(todoist_tools, mock_todoist_api):
     """Test successful task closure."""
-    mock_todoist_api.close_task.return_value = True
+    mock_todoist_api.complete_task.return_value = True
 
     result = todoist_tools.close_task("123")
     result_data = json.loads(result)
 
     assert result_data["success"] is True
-    mock_todoist_api.close_task.assert_called_once_with("123")
+    mock_todoist_api.complete_task.assert_called_once_with("123")
 
 
 def test_delete_task_success(todoist_tools, mock_todoist_api):
@@ -195,7 +195,7 @@ def test_get_active_tasks_success(todoist_tools, mock_todoist_api):
     mock_task2.labels = []
     mock_task2.due = None
 
-    mock_todoist_api.get_tasks.return_value = [mock_task1, mock_task2]
+    mock_todoist_api.get_tasks.return_value = [[mock_task1, mock_task2]]
 
     result = todoist_tools.get_active_tasks()
     result_data = json.loads(result)

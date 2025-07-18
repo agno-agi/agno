@@ -1,5 +1,7 @@
+import asyncio
 from io import BytesIO
 from typing import List
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -30,7 +32,7 @@ class S3PDFReader(Reader):
             documents = [
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -44,3 +46,14 @@ class S3PDFReader(Reader):
             return documents
         except Exception:
             raise
+
+    async def async_read(self, s3_object: S3Object) -> List[Document]:
+        """Asynchronously read PDF files from S3 by running the synchronous read operation in a thread.
+
+        Args:
+            s3_object (S3Object): The S3 object to read
+
+        Returns:
+            List[Document]: List of documents from the PDF file
+        """
+        return await asyncio.to_thread(self.read, s3_object)

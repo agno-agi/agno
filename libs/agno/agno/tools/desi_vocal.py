@@ -1,11 +1,12 @@
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional, Union
 from uuid import uuid4
 
 import requests
 
 from agno.agent import Agent
 from agno.media import AudioArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import logger
 
@@ -17,16 +18,17 @@ class DesiVocalTools(Toolkit):
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
         **kwargs,
     ):
-        super().__init__(name="desi_vocal_tools", **kwargs)
-
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
             logger.error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
 
         self.voice_id = voice_id
 
-        self.register(self.get_voices)
-        self.register(self.text_to_speech)
+        tools: List[Any] = []
+        tools.append(self.get_voices)
+        tools.append(self.text_to_speech)
+
+        super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
 
     def get_voices(self) -> str:
         """
@@ -61,7 +63,7 @@ class DesiVocalTools(Toolkit):
             logger.error(f"Failed to get voices: {e}")
             return f"Error: {e}"
 
-    def text_to_speech(self, agent: Agent, prompt: str, voice_id: Optional[str] = None) -> str:
+    def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> str:
         """
         Use this function to generate audio from text.
         Args:

@@ -1,20 +1,11 @@
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Iterator, List, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
-from agno.exceptions import ModelProviderError
-from agno.models.message import Message
+from pydantic import BaseModel
+
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import log_error
-
-try:
-    from openai import APIConnectionError, APIStatusError, RateLimitError
-    from openai.types.chat.chat_completion_chunk import (
-        ChatCompletionChunk,
-    )
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`openai` not installed. Please install using `pip install openai`")
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -23,11 +14,12 @@ class xAI(OpenAILike):
     Class for interacting with the xAI API.
 
     Attributes:
-        id (str): The ID of the language model.
-        name (str): The name of the API.
-        provider (str): The provider of the API.
+        id (str): The ID of the language model. Defaults to "grok-beta".
+        name (str): The name of the API. Defaults to "xAI".
+        provider (str): The provider of the API. Defaults to "xAI".
         api_key (Optional[str]): The API key for the xAI API.
-        base_url (Optional[str]): The base URL for the xAI API.
+        base_url (Optional[str]): The base URL for the xAI API. Defaults to "https://api.x.ai/v1".
+        search_parameters (Optional[Dict[str, Any]]): Search parameters for enabling live search.
     """
 
     id: str = "grok-beta"
@@ -35,118 +27,32 @@ class xAI(OpenAILike):
     provider: str = "xAI"
 
     api_key: Optional[str] = getenv("XAI_API_KEY")
-    base_url: Optional[str] = "https://api.x.ai/v1"
+    base_url: str = "https://api.x.ai/v1"
 
-    def invoke_stream(self, messages: List[Message]) -> Iterator[ChatCompletionChunk]:
+    search_parameters: Optional[Dict[str, Any]] = None
+
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
-        Send a streaming chat completion request to the OpenAI API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
+        Returns keyword arguments for API requests, including search parameters.
 
         Returns:
-            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
+            Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
+        request_params = super().get_request_params(
+            response_format=response_format, tools=tools, tool_choice=tool_choice
+        )
 
-        try:
-            yield from self.get_client().chat.completions.create(
-                model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
-                stream=True,
-                **self.request_kwargs,
-            )  # type: ignore
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
-            error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
-            )
-            raise ModelProviderError(
-                message=error_message,
-                status_code=e.response.status_code,
-                model_name=self.name,
-                model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            try:
-                error_message = e.response.json().get("error", {})
-            except Exception:
-                error_message = e.response.text
-            error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
-            )
-            raise ModelProviderError(
-                message=error_message,
-                status_code=e.response.status_code,
-                model_name=self.name,
-                model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        if self.search_parameters:
+            existing_body = request_params.get("extra_body") or {}
+            existing_body.update({"search_parameters": self.search_parameters})
+            request_params["extra_body"] = existing_body
 
-    async def ainvoke_stream(self, messages: List[Message]) -> AsyncIterator[ChatCompletionChunk]:
-        """
-        Sends an asynchronous streaming chat completion request to the OpenAI API.
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
 
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: An asynchronous iterator of chat completion chunks.
-        """
-
-        try:
-            async_stream = await self.get_async_client().chat.completions.create(
-                model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
-                stream=True,
-                **self.request_kwargs,
-            )
-            async for chunk in async_stream:  # type: ignore
-                yield chunk
-        except RateLimitError as e:
-            log_error(f"Rate limit error from OpenAI API: {e}")
-            error_message = e.response.json().get("error", {})
-            error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
-            )
-            raise ModelProviderError(
-                message=error_message,
-                status_code=e.response.status_code,
-                model_name=self.name,
-                model_id=self.id,
-            ) from e
-        except APIConnectionError as e:
-            log_error(f"API connection error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"API status error from OpenAI API: {e}")
-            try:
-                error_message = e.response.json().get("error", {})
-            except Exception:
-                error_message = e.response.text
-            error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
-            )
-            raise ModelProviderError(
-                message=error_message,
-                status_code=e.response.status_code,
-                model_name=self.name,
-                model_id=self.id,
-            ) from e
-        except Exception as e:
-            log_error(f"Error from OpenAI API: {e}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        return request_params

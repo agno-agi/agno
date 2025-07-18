@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, List
+from typing import Any, List, Optional
 
 from agno.document.base import Document
 from agno.document.chunking.fixed import FixedSizeChunking
@@ -12,9 +12,16 @@ class Reader:
     """Base class for reading documents"""
 
     chunk: bool = True
-    chunk_size: int = 3000
+    chunk_size: int = 5000
     separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
-    chunking_strategy: ChunkingStrategy = field(default_factory=FixedSizeChunking)
+    chunking_strategy: Optional[ChunkingStrategy] = None
+
+    def __init__(
+        self, chunk: bool = True, chunk_size: int = 5000, chunking_strategy: Optional[ChunkingStrategy] = None
+    ) -> None:
+        self.chunk = chunk
+        self.chunk_size = chunk_size
+        self.chunking_strategy = chunking_strategy
 
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
@@ -23,7 +30,9 @@ class Reader:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
-        return self.chunking_strategy.chunk(document)
+        if self.chunking_strategy is None:
+            self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
+        return self.chunking_strategy.chunk(document)  # type: ignore
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:
         """

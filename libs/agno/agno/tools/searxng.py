@@ -1,10 +1,10 @@
 import json
 import urllib.parse
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import httpx
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
@@ -23,28 +23,28 @@ class Searxng(Toolkit):
         videos: bool = False,
         **kwargs,
     ):
-        super().__init__(name="searxng", **kwargs)
-
         self.host = host
         self.engines = engines
         self.fixed_max_results = fixed_max_results
 
-        self.register(self.search)
-
+        tools: List[Any] = []
+        tools.append(self.search)
         if images:
-            self.register(self.image_search)
+            tools.append(self.image_search)
         if it:
-            self.register(self.it_search)
+            tools.append(self.it_search)
         if map:
-            self.register(self.map_search)
+            tools.append(self.map_search)
         if music:
-            self.register(self.music_search)
+            tools.append(self.music_search)
         if news:
-            self.register(self.news_search)
+            tools.append(self.news_search)
         if science:
-            self.register(self.science_search)
+            tools.append(self.science_search)
         if videos:
-            self.register(self.video_search)
+            tools.append(self.video_search)
+
+        super().__init__(name="searxng", tools=tools, **kwargs)
 
     def search(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
@@ -159,3 +159,7 @@ class Searxng(Toolkit):
             return json.dumps(resp)
         except Exception as e:
             return f"Error fetching results from searxng: {e}"
+
+
+# Alias for consistency with other tools
+SearxngTools = Searxng

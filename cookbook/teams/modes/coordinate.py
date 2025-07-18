@@ -62,7 +62,7 @@ article_reader = Agent(
 hn_team = Team(
     name="HackerNews Team",
     mode="coordinate",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3"),
     members=[hn_researcher, web_searcher, article_reader],
     instructions=[
         "First, search hackernews for what the user is asking about.",
@@ -72,9 +72,9 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     response_model=Article,
+    add_member_tools_to_system_message=False,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
     enable_agentic_context=True,
 )

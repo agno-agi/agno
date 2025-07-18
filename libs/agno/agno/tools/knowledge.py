@@ -1,10 +1,11 @@
 import json
 from textwrap import dedent
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 
 from agno.agent import Agent
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -25,13 +26,6 @@ class KnowledgeTools(Toolkit):
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 
-        super().__init__(
-            name="knowledge_tools",
-            instructions=instructions,
-            add_instructions=add_instructions,
-            **kwargs,
-        )
-
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
@@ -40,18 +34,29 @@ class KnowledgeTools(Toolkit):
                     self.instructions += "\n" + few_shot_examples
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
+        else:
+            self.instructions = instructions
 
         # The knowledge to search
         self.knowledge: AgentKnowledge = knowledge
-        # Register tools
-        if think:
-            self.register(self.think)
-        if search:
-            self.register(self.search)
-        if analyze:
-            self.register(self.analyze)
 
-    def think(self, agent: Agent, thought: str) -> str:
+        tools: List[Any] = []
+        if think:
+            tools.append(self.think)
+        if search:
+            tools.append(self.search)
+        if analyze:
+            tools.append(self.analyze)
+
+        super().__init__(
+            name="knowledge_tools",
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            tools=tools,
+            **kwargs,
+        )
+
+    def think(self, agent: Union[Agent, Team], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
         Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
@@ -85,7 +90,7 @@ class KnowledgeTools(Toolkit):
             logger.error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"
 
-    def search(self, agent: Agent, query: str) -> str:
+    def search(self, agent: Union[Agent, Team], query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
@@ -107,7 +112,7 @@ class KnowledgeTools(Toolkit):
             logger.error(f"Error searching knowledge base: {e}")
             return f"Error searching knowledge base: {e}"
 
-    def analyze(self, agent: Agent, analysis: str) -> str:
+    def analyze(self, agent: Union[Agent, Team], analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
         If not, go back to "Think" or "Search" with refined queries.
 

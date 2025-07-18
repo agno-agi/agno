@@ -1,10 +1,11 @@
 import asyncio
 from pathlib import Path
-from time import sleep
-from typing import IO, Any, List, Union
+from typing import IO, Any, List, Optional, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_info, logger
 
 try:
@@ -42,7 +43,7 @@ def process_image_page(doc_name: str, page_number: int, page: Any) -> Document:
     # Append the document
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -76,7 +77,7 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
 
     return Document(
         name=doc_name,
-        id=f"{doc_name}_{page_number}",
+        id=str(uuid4()),
         meta_data={"page": page_number},
         content=content,
     )
@@ -115,7 +116,7 @@ class PDFReader(BasePDFReader):
             documents.append(
                 Document(
                     name=doc_name,
-                    id=f"{doc_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=page.extract_text(),
                 )
@@ -144,7 +145,7 @@ class PDFReader(BasePDFReader):
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
-                id=f"{doc_name}_{page_number}",
+                id=str(uuid4()),
                 meta_data={"page": page_number},
                 content=page.extract_text(),
             )
@@ -165,33 +166,20 @@ class PDFReader(BasePDFReader):
 class PDFUrlReader(BasePDFReader):
     """Reader for PDF files from URL"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
         from io import BytesIO
 
-        import httpx
-
         log_info(f"Reading: {url}")
-        # Retry the request up to 3 times with exponential backoff
-        for attempt in range(3):
-            try:
-                response = httpx.get(url)
-                break
-            except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
-                    raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
 
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            raise
+        # Retry the request up to 3 times with exponential backoff
+        response = fetch_with_retry(url, proxy=self.proxy)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -220,25 +208,9 @@ class PDFUrlReader(BasePDFReader):
 
         log_info(f"Reading: {url}")
 
-        async with httpx.AsyncClient() as client:
-            # Retry the request up to 3 times with exponential backoff
-            for attempt in range(3):
-                try:
-                    response = await client.get(url)
-                    break
-                except httpx.RequestError as e:
-                    if attempt == 2:  # Last attempt
-                        logger.error(f"Failed to fetch PDF after 3 attempts: {e}")
-                        raise
-                    wait_time = 2**attempt
-                    logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                    await asyncio.sleep(wait_time)
-
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-                raise
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
+            response = await async_fetch_with_retry(url, client=client)
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -321,6 +293,10 @@ class PDFImageReader(BasePDFReader):
 class PDFUrlImageReader(BasePDFReader):
     """Reader for PDF files from URL with text and images extraction"""
 
+    def __init__(self, proxy: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.proxy = proxy
+
     def read(self, url: str) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
@@ -331,7 +307,7 @@ class PDFUrlImageReader(BasePDFReader):
 
         # Read the PDF from the URL
         log_info(f"Reading: {url}")
-        response = httpx.get(url)
+        response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
@@ -356,7 +332,8 @@ class PDFUrlImageReader(BasePDFReader):
 
         log_info(f"Reading: {url}")
 
-        async with httpx.AsyncClient() as client:
+        client_args = {"proxy": self.proxy} if self.proxy else {}
+        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await client.get(url)
             response.raise_for_status()
 
