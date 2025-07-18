@@ -27,7 +27,6 @@ class JinaEmbedder(Embedder):
     timeout: Optional[float] = None
 
     def _get_headers(self) -> Dict[str, str]:
-        """Get request headers with authorization."""
         if not self.api_key:
             raise ValueError(
                 "API key is required for Jina embedder. Set JINA_API_KEY environment variable or pass api_key parameter."
