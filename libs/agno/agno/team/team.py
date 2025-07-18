@@ -800,7 +800,7 @@ class Team:
 
         # Initialize Team
         self.initialize_team(session_id=session_id)
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
@@ -1200,10 +1200,10 @@ class Team:
             session_id=session_id, user_id=user_id, session_state=session_state
         )
         log_debug(f"Session ID: {session_id}", center=True)
-        
+
         # Initialize Team
         self.initialize_team(session_id=session_id)
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 

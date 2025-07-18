@@ -391,11 +391,11 @@ def get_sync_router(
                     if isinstance(workflow_input, dict):
                         return StreamingResponse(
                             (json.dumps(asdict(result)) for result in workflow_instance.run(**workflow_input)),
-                        media_type="text/event-stream",
-                    )
+                            media_type="text/event-stream",
+                        )
                     else:
                         return StreamingResponse(
-                            (json.dumps(asdict(result)) for result in workflow_instance.run(workflow_input)),
+                            (json.dumps(asdict(result)) for result in workflow_instance.run(workflow_input)),  # type: ignore
                             media_type="text/event-stream",
                         )
                 else:
@@ -438,7 +438,7 @@ def get_sync_router(
                     if isinstance(workflow_input, dict):
                         return workflow_instance.run(**workflow_input).to_dict()
                     else:
-                        return workflow_instance.run(workflow_input).to_dict()
+                        return workflow_instance.run(workflow_input).to_dict()  # type: ignore
                 else:
                     if isinstance(workflow_input, dict):
                         return workflow.run(**workflow_input, session_id=session_id, user_id=user_id).to_dict()
