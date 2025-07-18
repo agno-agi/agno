@@ -1,5 +1,4 @@
 import asyncio
-from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -23,6 +22,7 @@ from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
+from agno.utils.string import safe_content_hash
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -239,15 +239,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise.
         """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        try:
-            content_hash = md5(cleaned_content.encode('utf-8')).hexdigest()
-        except UnicodeEncodeError:
-            cleaned_content = ''.join(
-                '\ufffd' if '\ud800' <= c <= '\udfff' else c 
-                for c in cleaned_content
-            )
-            content_hash = md5(cleaned_content.encode('utf-8')).hexdigest()
+        content_hash = safe_content_hash(document.content)
         return self._record_exists(self.table.c.content_hash, content_hash)
 
     async def async_doc_exists(self, document: Document) -> bool:
@@ -320,7 +312,7 @@ class PgVector(VectorDb):
                             try:
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
+                                content_hash = safe_content_hash(doc.content)
                                 _id = doc.id or content_hash
 
                                 meta_data = doc.meta_data or {}
@@ -393,7 +385,7 @@ class PgVector(VectorDb):
                             try:
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
+                                content_hash = safe_content_hash(doc.content)
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
