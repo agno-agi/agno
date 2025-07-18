@@ -26,6 +26,7 @@ from ag_ui.core.types import Message as AGUIMessage
 from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunEvent, TeamRunResponseEvent
+from agno.models.message import Message
 
 
 @dataclass
@@ -65,15 +66,31 @@ class EventBuffer:
 
         return False
 
-
-def get_last_user_message(messages: Optional[List[AGUIMessage]]) -> str:
-    if not messages:
-        return ""
-    for msg in reversed(messages):
-        if msg.role == "user" and msg.content:
-            return msg.content
-    return ""
-
+def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
+    """Convert AG-UI messages to Agno messages."""
+    result = []
+    for msg in messages:
+        if msg.role == "tool":
+            result.append(Message(
+                role="tool",
+                tool_call_id=msg.tool_call_id,
+                content=msg.content
+            ))
+        elif msg.role == "assistant":
+            tool_calls = None
+            if msg.tool_calls:
+                tool_calls = [call.model_dump() for call in msg.tool_calls]
+            result.append(Message(
+                role="assistant",
+                content=msg.content,
+                tool_calls=tool_calls,
+            ))
+        elif msg.role == "user":
+            result.append(Message(
+                role="user",
+                content=msg.content
+            ))
+    return result
 
 def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
@@ -198,7 +215,12 @@ def _create_events_from_chunk(
 
 
 def _create_completion_events(
-    event_buffer: EventBuffer, message_started: bool, message_id: str, thread_id: str, run_id: str
+    chunk: Union[RunResponseEvent, TeamRunResponseEvent],
+    event_buffer: EventBuffer,
+    message_started: bool,
+    message_id: str,
+    thread_id: str,
+    run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit = []
@@ -216,6 +238,30 @@ def _create_completion_events(
     if message_started:
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
         events_to_emit.append(end_message_event)
+    
+    # emit frontend tool calls, i.e. external_execution=True
+    if chunk.event == RunEvent.run_paused and chunk.tools:
+        for tool in chunk.tools:
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool.tool_call_id,
+                tool_call_name=tool.tool_name,
+                parent_message_id=message_id,
+            )
+            events_to_emit.append(start_event)
+
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool.tool_call_id,
+                delta=json.dumps(tool.tool_args),
+            )
+            events_to_emit.append(args_event)
+
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool.tool_call_id,
+            )
+            events_to_emit.append(end_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
@@ -283,8 +329,8 @@ def stream_agno_response_as_agui_events(
 
     for chunk in response_stream:
         # Handle the lifecycle end event
-        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed:
-            completion_events = _create_completion_events(event_buffer, message_started, message_id, thread_id, run_id)
+        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed or chunk.event == RunEvent.run_paused:
+            completion_events = _create_completion_events(chunk, event_buffer, message_started, message_id, thread_id, run_id)
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
@@ -314,8 +360,8 @@ async def async_stream_agno_response_as_agui_events(
 
     async for chunk in response_stream:
         # Handle the lifecycle end event
-        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed:
-            completion_events = _create_completion_events(event_buffer, message_started, message_id, thread_id, run_id)
+        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed or chunk.event == RunEvent.run_paused:
+            completion_events = _create_completion_events(chunk, event_buffer, message_started, message_id, thread_id, run_id)
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
