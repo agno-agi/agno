@@ -79,6 +79,7 @@ meta = ["llama-api-client"]
 mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
+portkey = ["portkey-ai"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
@@ -176,7 +177,8 @@ models = [
   "agno[meta]",
   "agno[mistral]",
   "agno[ollama]",
-  "agno[openai]"
+  "agno[openai]",
+  "agno[portkey]"
 ]
 
 # All tools
@@ -386,6 +388,7 @@ module = [
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
