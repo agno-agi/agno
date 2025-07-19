@@ -73,7 +73,7 @@ class MessageMetrics:
 
     timer: Optional[Timer] = None
 
-    def _to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
         metrics_dict = {
@@ -267,7 +267,7 @@ class Message(BaseModel):
         if self.references:
             message_dict["references"] = self.references.model_dump()
         if self.metrics:
-            message_dict["metrics"] = self.metrics._to_dict()
+            message_dict["metrics"] = self.metrics.to_dict()
             if not message_dict["metrics"]:
                 message_dict.pop("metrics")
 

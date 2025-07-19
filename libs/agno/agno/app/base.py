@@ -30,6 +30,7 @@ class BaseAPIApp(ABC):
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        version: Optional[str] = None,
     ):
         if not agent and not team:
             raise ValueError("Either agent or team must be provided.")
@@ -46,6 +47,7 @@ class BaseAPIApp(ABC):
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.description = description
+        self.version = version
         self.set_app_id()
 
         if self.agent:
@@ -89,11 +91,18 @@ class BaseAPIApp(ABC):
 
     def get_app(self, use_async: bool = True, prefix: str = "") -> FastAPI:
         if not self.api_app:
+            kwargs = {
+                "title": self.settings.title,
+            }
+            if self.version:
+                kwargs["version"] = self.version
+            if self.settings.docs_enabled:
+                kwargs["docs_url"] = "/docs"
+                kwargs["redoc_url"] = "/redoc"
+                kwargs["openapi_url"] = "/openapi.json"
+
             self.api_app = FastAPI(
-                title=self.settings.title,
-                docs_url="/docs" if self.settings.docs_enabled else None,
-                redoc_url="/redoc" if self.settings.docs_enabled else None,
-                openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+                **kwargs,  # type: ignore
             )
 
         if not self.api_app:
@@ -152,11 +161,6 @@ class BaseAPIApp(ABC):
     ):
         self.set_app_id()
         self.register_app_on_platform()
-
-        if self.agent:
-            self.agent.register_agent()
-        if self.team:
-            self.team.register_team()
         log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
@@ -175,23 +179,6 @@ class BaseAPIApp(ABC):
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": [
-                {
-                    **self.agent.get_agent_config_dict(),
-                    "agent_id": self.agent.agent_id,
-                    "team_id": self.agent.team_id,
-                }
-            ]
-            if self.agent
-            else None,
-            "teams": [
-                {
-                    **self.team.to_platform_dict(),
-                    "team_id": self.team.team_id,
-                }
-            ]
-            if self.team
-            else None,
             "type": self.type,
             "description": self.description,
         }

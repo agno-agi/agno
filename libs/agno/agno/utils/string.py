@@ -62,54 +62,129 @@ def hash_string_sha256(input_string):
     return hex_digest
 
 
+def _extract_json_objects(text: str) -> list[str]:
+    objs: list[str] = []
+    brace_depth = 0
+    start_idx: Optional[int] = None
+    for idx, ch in enumerate(text):
+        if ch == "{" and brace_depth == 0:
+            start_idx = idx
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+            if brace_depth == 0 and start_idx is not None:
+                objs.append(text[start_idx : idx + 1])
+                start_idx = None
+    return objs
+
+
+def _clean_json_content(content: str) -> str:
+    """Clean and prepare JSON content for parsing."""
+    # Handle code blocks
+    if "```json" in content:
+        content = content.split("```json")[-1].strip()
+        parts = content.split("```")
+        parts.pop(-1)
+        content = "".join(parts)
+    elif "```" in content:
+        content = content.split("```")[1].strip()
+
+    # Replace markdown formatting like *"name"* or `"name"` with "name"
+    content = re.sub(r'[*`#]?"([A-Za-z0-9_]+)"[*`#]?', r'"\1"', content)
+
+    # Handle newlines and control characters
+    content = content.replace("\n", " ").replace("\r", "")
+    content = re.sub(r"[\x00-\x1F\x7F]", "", content)
+
+    # Escape quotes only in values, not keys
+    def escape_quotes_in_values(match):
+        key = match.group(1)
+        value = match.group(2)
+
+        if '\\"' in value:
+            unescaped_value = value.replace('\\"', '"')
+            escaped_value = unescaped_value.replace('"', '\\"')
+        else:
+            escaped_value = value.replace('"', '\\"')
+
+        return f'"{key}": "{escaped_value}'
+
+    # Find and escape quotes in field values
+    content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
+
+    return content
+
+
+def _parse_individual_json(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+    """Parse individual JSON objects from content and merge them based on response model fields."""
+    candidate_jsons = _extract_json_objects(content)
+    merged_data: dict = {}
+
+    # Get the expected fields from the response model
+    model_fields = response_model.model_fields if hasattr(response_model, "model_fields") else {}
+
+    for candidate in candidate_jsons:
+        try:
+            candidate_obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(candidate_obj, dict):
+            # Merge data based on model fields
+            for field_name, field_info in model_fields.items():
+                if field_name in candidate_obj:
+                    field_value = candidate_obj[field_name]
+                    # If field is a list, extend it; otherwise, use the latest value
+                    if isinstance(field_value, list):
+                        if field_name not in merged_data:
+                            merged_data[field_name] = []
+                        merged_data[field_name].extend(field_value)
+                    else:
+                        merged_data[field_name] = field_value
+
+    if not merged_data:
+        return None
+
+    try:
+        return response_model.model_validate(merged_data)
+    except ValidationError as e:
+        logger.warning("Validation failed on merged data: %s", e)
+        return None
+
+
 def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
+
+    # Clean content first to simplify all parsing attempts
+    cleaned_content = _clean_json_content(content)
+
     try:
-        # First attempt: direct JSON validation
-        structured_output = response_model.model_validate_json(content)
+        # First attempt: direct JSON validation on cleaned content
+        structured_output = response_model.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
-        # Second attempt: Extract JSON from markdown code blocks and clean
-        content = content
-
-        # Handle code blocks
-        if "```json" in content:
-            content = content.split("```json")[-1].strip()
-            parts = content.split("```")
-            parts.pop(-1)
-            content = "".join(parts)
-        elif "```" in content:
-            content = content.split("```")[1].strip()
-
-        # Clean the JSON string
-        # Remove markdown formatting
-        content = re.sub(r"[*`#]", "", content)
-
-        # Handle newlines and control characters
-        content = content.replace("\n", " ").replace("\r", "")
-        content = re.sub(r"[\x00-\x1F\x7F]", "", content)
-
-        # Escape quotes only in values, not keys
-        def escape_quotes_in_values(match):
-            key = match.group(1)
-            value = match.group(2)
-            # Escape quotes in the value portion only
-            escaped_value = value.replace('"', '\\"')
-            return f'"{key.lower()}": "{escaped_value}'
-
-        # Find and escape quotes in field values
-        content = re.sub(r'"(?P<key>[^"]+)"\s*:\s*"(?P<value>.*?)(?="\s*(?:,|\}))', escape_quotes_in_values, content)
-
         try:
-            # Try parsing the cleaned JSON
-            structured_output = response_model.model_validate_json(content)
+            # Second attempt: Parse as Python dict
+            data = json.loads(cleaned_content)
+            structured_output = response_model.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
-            try:
-                # Final attempt: Try parsing as Python dict
-                data = json.loads(content)
-                structured_output = response_model.model_validate(data)
-            except (ValidationError, json.JSONDecodeError) as e:
-                logger.warning(f"Failed to parse as Python dict: {e}")
+            # Third attempt: Extract individual JSON objects
+            candidate_jsons = _extract_json_objects(cleaned_content)
+
+            if len(candidate_jsons) == 1:
+                # Single JSON object - try to parse it directly
+                try:
+                    data = json.loads(candidate_jsons[0])
+                    structured_output = response_model.model_validate(data)
+                except (ValidationError, json.JSONDecodeError):
+                    pass
+
+            if structured_output is None:
+                # Final attempt: Handle concatenated JSON objects with field merging
+                structured_output = _parse_individual_json(cleaned_content, response_model)
+                if structured_output is None:
+                    logger.warning("All parsing attempts failed.")
 
     return structured_output
