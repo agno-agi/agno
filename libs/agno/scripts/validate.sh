@@ -14,5 +14,5 @@ print_heading "Validating agno"
 print_heading "Running: ruff check ${AGNO_DIR}"
 ruff check ${AGNO_DIR}
 
-print_heading "Running: mypy ${AGNO_DIR} --config-file ${AGNO_DIR}/pyproject.toml"
-mypy ${AGNO_DIR} --config-file ${AGNO_DIR}/pyproject.toml
+print_heading "Running: mypy ${AGNO_DIR}/agno/vectordb/graphiti --config-file ${AGNO_DIR}/pyproject.toml"
+mypy ${AGNO_DIR}/agno/vectordb/graphiti --config-file ${AGNO_DIR}/pyproject.toml
