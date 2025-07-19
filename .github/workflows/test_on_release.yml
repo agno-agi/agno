@@ -252,6 +252,7 @@ jobs:
 
   # Run tests for Mistral
   test-mistral:
+    if: false # Disable mistral tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -428,6 +429,7 @@ jobs:
 
   # Run tests for v0
   test-v0:
+    if: false # We don't have credits
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -628,6 +630,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -647,6 +650,34 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
+
+  test-workflows:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run workflows integration tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/workflow
 
   test-embedder:
     runs-on: ubuntu-latest

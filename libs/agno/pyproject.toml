@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.2"
+version = "1.7.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -102,11 +102,14 @@ matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+opencv = ["opencv-python"]
 todoist = ["todoist-api-python"]
+valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
+oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -129,6 +132,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+surrealdb = ["surrealdb>=1.0.4"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -198,8 +202,11 @@ tools = [
   "agno[mcp]",
   "agno[browserbase]",
   "agno[agentql]",
+  "agno[opencv]",
+  "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
@@ -228,7 +235,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[surrealdb]"
 ]
 
 # All knowledge
@@ -287,6 +295,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
+target-version = "py39"
 # Ignore `F401` (import violations) in all `__init__.py` files
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -327,6 +336,7 @@ module = [
   "cohere.*",
   "crawl4ai.*",
   "daytona_sdk.*",
+  "discord.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
@@ -369,6 +379,7 @@ module = [
   "numpy.*",
   "ollama.*",
   "openai.*",
+  "cv2.*",
   "openbb.*",
   "pandas.*",
   "pgvector.*",
@@ -411,6 +422,7 @@ module = [
   "upstash_vector.*",
   "urllib3.*",
   "uvicorn.*",
+  "valyu.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
@@ -421,6 +433,8 @@ module = [
   "youtube_transcript_api.*",
   "couchbase.*",
   "acouchbase.*",
-  "zep_cloud.*"
+  "zep_cloud.*",
+  "oxylabs.*",
+  "surrealdb.*"
 ]
 ignore_missing_imports = true

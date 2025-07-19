@@ -14,6 +14,8 @@ class TeamSession:
     session_id: str
     # ID of the team session this team session is associated with (so for sub-teams)
     team_session_id: Optional[str] = None
+    # ID of the workflow session this team session is associated with
+    workflow_session_id: Optional[str] = None
     # ID of the team that this session is associated with
     team_id: Optional[str] = None
     # ID of the user interacting with this team
@@ -44,12 +46,13 @@ class TeamSession:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[TeamSession]:
         if data is None or data.get("session_id") is None:
-            logger.warning("AgentSession is missing session_id")
+            logger.warning("TeamSession is missing session_id")
             return None
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             team_id=data.get("team_id"),
             team_session_id=data.get("team_session_id"),
+            workflow_session_id=data.get("workflow_session_id"),
             user_id=data.get("user_id"),
             memory=data.get("memory"),
             team_data=data.get("team_data"),
