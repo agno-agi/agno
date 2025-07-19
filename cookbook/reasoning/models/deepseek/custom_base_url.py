@@ -1,5 +1,6 @@
 import os
 
+## get api_key in https://www.alibabacloud.com/help/en/model-studio/first-api-call-to-qwen
 ## or set api key in bash shell
 os.environ["ALIYUN_API_KEY"] = "sk-**"
 
