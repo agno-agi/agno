@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.fastapi.app import FastAPIApp
+from agno.app.fastapi import FastAPIApp
 from agno.models.openai import OpenAIChat
 
 basic_agent = Agent(
@@ -12,7 +12,7 @@ basic_agent = Agent(
 )
 
 fastapi_app = FastAPIApp(
-    agent=basic_agent,
+    agents=[basic_agent],
     name="Basic Agent",
     app_id="basic_agent",
     description="A basic agent that can answer questions and help with tasks.",

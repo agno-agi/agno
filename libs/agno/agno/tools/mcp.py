@@ -1,7 +1,6 @@
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import timedelta
-from os import environ
 from types import TracebackType
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -13,7 +12,7 @@ from agno.utils.mcp import get_entrypoint_for_tool
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
-    from mcp.client.stdio import stdio_client
+    from mcp.client.stdio import get_default_environment, stdio_client
     from mcp.client.streamable_http import streamablehttp_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
@@ -84,7 +83,7 @@ class MCPTools(Toolkit):
         super().__init__(name="MCPTools", **kwargs)
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
-        # beacuse tools are not available until `initialize()` is called.
+        # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
 
@@ -129,11 +128,11 @@ class MCPTools(Toolkit):
         # Merge provided env with system env
         if env is not None:
             env = {
-                **environ,
+                **get_default_environment(),
                 **env,
             }
         else:
-            env = {**environ}
+            env = get_default_environment()
 
         if command is not None and transport not in ["sse", "streamable-http"]:
             from shlex import split
@@ -330,11 +329,11 @@ class MultiMCPTools(Toolkit):
         # Merge provided env with system env
         if env is not None:
             env = {
-                **environ,
+                **get_default_environment(),
                 **env,
             }
         else:
-            env = {**environ}
+            env = get_default_environment()
 
         if commands is not None:
             from shlex import split

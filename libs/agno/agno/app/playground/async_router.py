@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from io import BytesIO
 from typing import Any, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
@@ -37,13 +36,15 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponseErrorEvent, RunResponseEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
+from agno.workflow.v2.workflow import Workflow as WorkflowV2
 from agno.workflow.workflow import Workflow
 
 
@@ -70,15 +71,43 @@ async def chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
+async def agent_acontinue_run_streamer(
+    agent: Agent,
+    run_id: Optional[str] = None,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> AsyncGenerator:
+    try:
+        continue_response = await agent.acontinue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in continue_response:
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunResponseErrorEvent(
+            content=str(e),
         )
         yield error_response.to_json()
         return
@@ -107,15 +136,38 @@ async def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = TeamRunResponseErrorEvent(
+            content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
+async def workflow_response_streamer(
+    workflow: WorkflowV2,
+    body: WorkflowRunRequest,
+) -> AsyncGenerator:
+    try:
+        run_response = await workflow.arun(
+            **body.input,
+            user_id=body.user_id,
+            session_id=body.session_id or str(uuid4()),
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        async for run_response_chunk in run_response:
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = TeamRunResponse(
-            content=str(e),
-            event=RunEvent.run_error,
+        error_response = WorkflowErrorEvent(
+            error=str(e),
         )
         yield error_response.to_json()
         return
@@ -363,7 +415,7 @@ def get_async_playground_router(
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 chat_response_streamer(
                     agent,
@@ -392,6 +444,69 @@ def get_async_playground_router(
                 ),
             )
             return run_response.to_dict()
+
+    @playground_router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    async def continue_agent_run(
+        agent_id: str,
+        run_id: str,
+        tools: str = Form(...),  # JSON string of tools
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        logger.debug(
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
+        )
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is None or session_id == "":
+            logger.warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+        else:
+            logger.debug(f"Continuing run within session: {session_id}")
+
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if tools_data:
+            try:
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if stream:
+            return StreamingResponse(
+                agent_acontinue_run_streamer(
+                    agent,
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response_obj = cast(
+                RunResponse,
+                await agent.acontinue_run(
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                ),
+            )
+            return run_response_obj.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     async def get_all_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -436,8 +551,8 @@ def get_async_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     agent_session_dict["runs"] = []
 
                     for run in runs:
@@ -528,13 +643,22 @@ def get_async_playground_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowGetResponse(
-            workflow_id=workflow.workflow_id,
-            name=workflow.name,
-            description=workflow.description,
-            parameters=workflow._run_parameters or {},
-            storage=workflow.storage.__class__.__name__ if workflow.storage else None,
-        )
+        if isinstance(workflow, Workflow):
+            return WorkflowGetResponse(
+                workflow_id=workflow.workflow_id,
+                name=workflow.name,
+                description=workflow.description,
+                parameters=workflow._run_parameters or {},
+                storage=workflow.storage.__class__.__name__ if workflow.storage else None,
+            )
+        else:
+            return WorkflowGetResponse(
+                workflow_id=workflow.workflow_id,
+                name=workflow.name,
+                description=workflow.description,
+                parameters=workflow.run_parameters,
+                storage=workflow.storage.__class__.__name__ if workflow.storage else None,
+            )
 
     @playground_router.post("/workflows/{workflow_id}/runs")
     async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
@@ -549,24 +673,54 @@ def get_async_playground_router(
             logger.debug("Creating new session")
 
         # Create a new instance of this workflow
-        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
-        new_workflow_instance.user_id = body.user_id
-        new_workflow_instance.session_name = None
+        if isinstance(workflow, Workflow):
+            new_workflow_instance = workflow.deep_copy(
+                update={"workflow_id": workflow_id, "session_id": body.session_id}
+            )
+            new_workflow_instance.user_id = body.user_id
+            new_workflow_instance.session_name = None
 
-        # Return based on the response type
-        try:
-            if new_workflow_instance._run_return_type == "RunResponse":
-                # Return as a normal response
-                return new_workflow_instance.run(**body.input)
-            else:
-                # Return as a streaming response
-                return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
-                    media_type="text/event-stream",
-                )
-        except Exception as e:
-            # Handle unexpected runtime errors
-            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+            # Return based on the response type
+            try:
+                if new_workflow_instance._run_return_type == "RunResponse":
+                    # Return as a normal response
+                    return new_workflow_instance.run(**body.input)
+                else:
+                    # Return as a streaming response
+                    return StreamingResponse(
+                        (result.to_json() for result in new_workflow_instance.run(**body.input)),
+                        media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
+                    )
+            except Exception as e:
+                # Handle unexpected runtime errors
+                raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+        else:
+            # Return based on the response type
+            try:
+                if body.stream:
+                    # Return as a streaming response
+                    return StreamingResponse(
+                        workflow_response_streamer(workflow, body),
+                        media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
+                    )
+                else:
+                    # Return as a normal response
+                    return await workflow.arun(
+                        **body.input, session_id=body.session_id or str(uuid4()), user_id=body.user_id
+                    )
+            except Exception as e:
+                # Handle unexpected runtime errors
+                raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
     @playground_router.get("/workflows/{workflow_id}/sessions")
     async def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -601,7 +755,7 @@ def get_async_playground_router(
             )
         return workflow_sessions
 
-    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
+    @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}")
     async def get_workflow_session(
         workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)
     ):
@@ -616,15 +770,18 @@ def get_async_playground_router(
 
         # Retrieve the specific session
         try:
-            workflow_session: Optional[WorkflowSession] = workflow.storage.read(session_id, user_id)  # type: ignore
+            workflow_session = workflow.storage.read(session_id, user_id)  # type: ignore
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
 
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Return the session
-        return workflow_session
+        workflow_session_dict = workflow_session.to_dict()
+        if "memory" not in workflow_session_dict:
+            workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}
+
+        return JSONResponse(content=workflow_session_dict)
 
     @playground_router.post("/workflows/{workflow_id}/sessions/{session_id}/rename")
     async def rename_workflow_session(workflow_id: str, session_id: str, body: WorkflowRenameRequest):
@@ -738,7 +895,7 @@ def get_async_playground_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and team.is_streamable:
+        if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
                     team,
@@ -814,10 +971,14 @@ def get_async_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                # This is how we know it is a RunResponse
-                if "content" in first_run or first_run.get("is_paused", False):
+                # This is how we know it is a RunResponse or RunPaused
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     team_session_dict["runs"] = []
                     for run in runs:
+                        # We skip runs that are not from the parent team
+                        if run.get("team_session_id") is not None and run.get("team_session_id") == session_id:
+                            continue
+
                         first_user_message = None
                         for msg in run.get("messages", []):
                             if msg.get("role") == "user" and msg.get("from_history", False) is False:
