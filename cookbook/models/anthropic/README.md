@@ -79,3 +79,19 @@ python cookbook/models/anthropic/memory.py
 ```shell
 python cookbook/models/anthropic/image_agent.py
 ```
+
+### 11. Run Agent with Thinking enabled (basic examples)
+
+```shell
+python cookbook/models/anthropic/thinking.py
+```
+
+```shell
+python cookbook/models/anthropic/thinking_stream.py
+```
+
+### 12. Run Agent with Interleaved Thinking
+
+```shell
+python cookbook/models/anthropic/interleaved_thinking.py
+```
