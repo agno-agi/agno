@@ -9,6 +9,49 @@ F = TypeVar("F", bound=Callable[..., Any])
 ToolConfig = TypeVar("ToolConfig", bound=Dict[str, Any])
 
 
+def _is_async_function(func: Callable) -> bool:
+    """
+    Check if a function is async, even when wrapped by decorators like @staticmethod.
+
+    This function tries to detect async functions by:
+    1. Checking the function directly with inspect functions
+    2. Looking at the original function if it's wrapped
+    3. Checking the function's code object for async indicators
+    """
+    from inspect import iscoroutine, iscoroutinefunction
+
+    # First, try the standard inspect functions
+    if iscoroutinefunction(func) or iscoroutine(func):
+        return True
+
+    # If the function has a __wrapped__ attribute, check the original function
+    if hasattr(func, "__wrapped__"):
+        original_func = func.__wrapped__
+        if iscoroutinefunction(original_func) or iscoroutine(original_func):
+            return True
+
+    # Check if the function has CO_COROUTINE flag in its code object
+    try:
+        if hasattr(func, "__code__") and func.__code__.co_flags & 0x80:  # CO_COROUTINE flag
+            return True
+    except (AttributeError, TypeError):
+        pass
+
+    # For static methods, try to get the original function
+    try:
+        if hasattr(func, "__func__"):
+            original_func = func.__func__
+            if iscoroutinefunction(original_func) or iscoroutine(original_func):
+                return True
+            # Check the code object of the original function
+            if hasattr(original_func, "__code__") and original_func.__code__.co_flags & 0x80:
+                return True
+    except (AttributeError, TypeError):
+        pass
+
+    return False
+
+
 @overload
 def tool() -> Callable[[F], Function]: ...
 
@@ -125,7 +168,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         )
 
     def decorator(func: F) -> Function:
-        from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
+        from inspect import isasyncgenfunction
 
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -163,7 +206,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         # Choose appropriate wrapper based on function type
         if isasyncgenfunction(func):
             wrapper = async_gen_wrapper
-        elif iscoroutinefunction(func) or iscoroutine(func):
+        elif _is_async_function(func):
             wrapper = async_wrapper
         else:
             wrapper = sync_wrapper

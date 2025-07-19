@@ -93,11 +93,24 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
     return audio_messages
 
 
-def _process_bytes_image(image: bytes) -> Dict[str, Any]:
+def _process_bytes_image(image: bytes, image_format: Optional[str] = None) -> Dict[str, Any]:
     """Process bytes image data."""
     base64_image = base64.b64encode(image).decode("utf-8")
-    # Assuming JPEG if type not specified, could attempt detection
-    image_url = f"data:image/jpeg;base64,{base64_image}"
+
+    # Use provided format or attempt detection, defaulting to JPEG
+    if image_format:
+        mime_type = f"image/{image_format.lower()}"
+    else:
+        # Try to detect the image format from the bytes
+        try:
+            import imghdr
+
+            detected_format = imghdr.what(None, h=image)
+            mime_type = f"image/{detected_format}" if detected_format else "image/jpeg"
+        except Exception:
+            mime_type = "image/jpeg"
+
+    image_url = f"data:{mime_type};base64,{base64_image}"
     return {"type": "image_url", "image_url": {"url": image_url}}
 
 
@@ -141,7 +154,8 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
             image_payload = _process_image_path(image.filepath)
 
         elif image.content is not None:
-            image_payload = _process_bytes_image(image.content)
+            # Pass the format from the Image object
+            image_payload = _process_bytes_image(image.content, image.format)
 
         else:
             log_warning(f"Unsupported image format or no data provided: {image}")
@@ -150,7 +164,8 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
         if image_payload and image.detail:  # Check if payload was created before adding detail
             # Ensure image_url key exists before trying to access its sub-dictionary
             if "image_url" not in image_payload:
-                image_payload["image_url"] = {}  # Initialize if missing (though unlikely based on helper funcs)
+                # Initialize if missing (though unlikely based on helper funcs)
+                image_payload["image_url"] = {}
             image_payload["image_url"]["detail"] = image.detail
 
         return image_payload
