@@ -38,10 +38,12 @@ class DynamoDBMemoryDb(MemoryDb):
         # Initialize DynamoDB client
         session_kwargs = {"region_name": region_name}
         if aws_access_key_id and aws_secret_access_key:
-            session_kwargs.update({
-                "aws_access_key_id": aws_access_key_id,
-                "aws_secret_access_key": aws_secret_access_key,
-            })
+            session_kwargs.update(
+                {
+                    "aws_access_key_id": aws_access_key_id,
+                    "aws_secret_access_key": aws_secret_access_key,
+                }
+            )
 
         self.session = boto3.Session(**session_kwargs)
 
@@ -83,9 +85,7 @@ class DynamoDBMemoryDb(MemoryDb):
                 GlobalSecondaryIndexes=[
                     {
                         "IndexName": "user_id-index",
-                        "KeySchema": [
-                            {"AttributeName": "user_id", "KeyType": "HASH"}
-                        ],
+                        "KeySchema": [{"AttributeName": "user_id", "KeyType": "HASH"}],
                         "Projection": {"ProjectionType": "ALL"},
                     }
                 ],
@@ -247,10 +247,7 @@ class DynamoDBMemoryDb(MemoryDb):
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
-                response = self.table.scan(
-                    ProjectionExpression="id",
-                    ExclusiveStartKey=response["LastEvaluatedKey"]
-                )
+                response = self.table.scan(ProjectionExpression="id", ExclusiveStartKey=response["LastEvaluatedKey"])
                 items.extend(response.get("Items", []))
 
             # Delete items in batches

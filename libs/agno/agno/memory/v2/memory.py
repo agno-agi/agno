@@ -5,6 +5,8 @@ from datetime import datetime
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 
+from pydantic import BaseModel, Field
+
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -25,7 +27,6 @@ from agno.utils.log import (
 )
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
-from pydantic import BaseModel, Field
 
 
 class MemorySearchResponse(BaseModel):

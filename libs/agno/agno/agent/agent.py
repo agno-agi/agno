@@ -25,6 +25,8 @@ from typing import (
 )
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 from agno.agent.metrics import SessionMetrics
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.agent import AgentKnowledge
@@ -99,7 +101,6 @@ from agno.utils.response import (
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.timer import Timer
-from pydantic import BaseModel
 
 
 @dataclass(init=False)
