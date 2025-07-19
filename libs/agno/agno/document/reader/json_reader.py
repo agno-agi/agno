@@ -3,6 +3,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from typing import IO, Any, List, Union
+from uuid import uuid4
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
@@ -38,7 +39,7 @@ class JSONReader(Reader):
             documents = [
                 Document(
                     name=json_name,
-                    id=f"{json_name}_{page_number}",
+                    id=str(uuid4()),
                     meta_data={"page": page_number},
                     content=json.dumps(content),
                 )

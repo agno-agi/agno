@@ -5,6 +5,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, log_warning, logger
 
@@ -30,7 +31,7 @@ class SingleStoreStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides Agent storage using a singlestore table.
@@ -46,7 +47,7 @@ class SingleStoreStorage(Storage):
             db_engine (Optional[Engine], optional): The database engine. Defaults to None.
             schema_version (int, optional): The schema version. Defaults to 1.
             auto_upgrade_schema (bool, optional): Automatically upgrade the schema. Defaults to False.
-            mode (Optional[Literal["agent", "team", "workflow"]], optional): The mode of the storage. Defaults to "agent".
+            mode (Optional[Literal["agent", "team", "workflow", "workflow_v2"]], optional): The mode of the storage. Defaults to "agent".
         """
         super().__init__(mode)
         _engine: Optional[Engine] = db_engine
@@ -75,12 +76,12 @@ class SingleStoreStorage(Storage):
         self.table: Table = self.get_table()
 
     @property
-    def mode(self) -> Literal["agent", "team", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow", "workflow_v2"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow", "workflow_v2"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(SingleStoreStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -111,6 +112,11 @@ class SingleStoreStorage(Storage):
                 Column("team_data", mysql.JSON),
             ]
         elif self.mode == "workflow":
+            specific_columns = [
+                Column("workflow_id", mysql.TEXT),
+                Column("workflow_data", mysql.JSON),
+            ]
+        elif self.mode == "workflow_v2":
             specific_columns = [
                 Column("workflow_id", mysql.TEXT),
                 Column("workflow_data", mysql.JSON),
@@ -171,6 +177,8 @@ class SingleStoreStorage(Storage):
                     return TeamSession.from_dict(existing_row._mapping)  # type: ignore
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(existing_row._mapping)  # type: ignore
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(existing_row._mapping)  # type: ignore
             return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
@@ -187,6 +195,8 @@ class SingleStoreStorage(Storage):
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                    elif self.mode == "workflow_v2":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -214,6 +224,8 @@ class SingleStoreStorage(Storage):
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                    elif self.mode == "workflow_v2":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
                 # execute query
@@ -232,8 +244,80 @@ class SingleStoreStorage(Storage):
                             _workflow_session = WorkflowSession.from_dict(row._mapping)  # type: ignore
                             if _workflow_session is not None:
                                 sessions.append(_workflow_session)
+                        elif self.mode == "workflow_v2":
+                            _workflow_session = WorkflowSessionV2.from_dict(row._mapping)  # type: ignore
+                            if _workflow_session is not None:
+                                sessions.append(_workflow_session)
         except Exception:
             log_debug(f"Table does not exist: {self.table.name}")
+        return sessions
+
+    def get_recent_sessions(
+        self,
+        user_id: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        limit: Optional[int] = 2,
+    ) -> List[Session]:
+        """Get the last N sessions, ordered by created_at descending.
+
+        Args:
+            num_history_sessions: Number of most recent sessions to return
+            user_id: Filter by user ID
+            entity_id: Filter by entity ID (agent_id, team_id, or workflow_id)
+
+        Returns:
+            List[Session]: List of most recent sessions
+        """
+        sessions: List[Session] = []
+        try:
+            with self.SqlSession.begin() as sess:
+                # Build base query
+                stmt = select(self.table)
+
+                # Add filters
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
+                if entity_id is not None:
+                    if self.mode == "agent":
+                        stmt = stmt.where(self.table.c.agent_id == entity_id)
+                    elif self.mode == "team":
+                        stmt = stmt.where(self.table.c.team_id == entity_id)
+                    elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                    elif self.mode == "workflow_v2":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                # Order by created_at desc and limit results
+                stmt = stmt.order_by(self.table.c.created_at.desc())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                # Execute query
+                rows = sess.execute(stmt).fetchall()
+                for row in rows:
+                    if row.session_id is not None:
+                        if self.mode == "agent":
+                            session = AgentSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+                        elif self.mode == "team":
+                            session = TeamSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+                        elif self.mode == "workflow":
+                            session = WorkflowSession.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+                        elif self.mode == "workflow_v2":
+                            session = WorkflowSessionV2.from_dict(row._mapping)  # type: ignore
+                            if session is not None:
+                                sessions.append(session)
+        except Exception as e:
+            if "doesn't exist" in str(e):
+                log_debug(f"Table does not exist: {self.table.name}")
+                self.create()
+            else:
+                logger.error(f"Error getting last {limit} sessions: {e}")
+
         return sessions
 
     def upgrade_schema(self) -> None:
@@ -337,6 +421,25 @@ class SingleStoreStorage(Storage):
                         updated_at = UNIX_TIMESTAMP();
                     """
                 )
+            elif self.mode == "workflow_v2":
+                # Convert session to dict to ensure proper serialization
+                upsert_sql = text(
+                    f"""
+                    INSERT INTO {self.schema}.{self.table_name}
+                    (session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at)
+                    VALUES      
+                    (:session_id, :workflow_id, :user_id, :workflow_name, :runs, :workflow_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
+                    ON DUPLICATE KEY UPDATE
+                        workflow_id = VALUES(workflow_id),
+                        user_id = VALUES(user_id),
+                        workflow_name = VALUES(workflow_name),
+                        runs = VALUES(runs),
+                        workflow_data = VALUES(workflow_data),  
+                        session_data = VALUES(session_data),
+                        extra_data = VALUES(extra_data),
+                        updated_at = UNIX_TIMESTAMP();
+                    """
+                )
 
             try:
                 if self.mode == "agent":
@@ -347,8 +450,8 @@ class SingleStoreStorage(Storage):
                             "agent_id": session.agent_id,  # type: ignore
                             "team_session_id": session.team_session_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
                             "agent_data": json.dumps(session.agent_data, ensure_ascii=False)  # type: ignore
                             if session.agent_data is not None  # type: ignore
@@ -369,8 +472,8 @@ class SingleStoreStorage(Storage):
                             "team_id": session.team_id,  # type: ignore
                             "user_id": session.user_id,
                             "team_session_id": session.team_session_id,  # type: ignore
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
                             "team_data": json.dumps(session.team_data, ensure_ascii=False)  # type: ignore
                             if session.team_data is not None  # type: ignore
@@ -390,9 +493,32 @@ class SingleStoreStorage(Storage):
                             "session_id": session.session_id,
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
-                            "memory": json.dumps(session.memory, ensure_ascii=False)
-                            if session.memory is not None
+                            "memory": json.dumps(getattr(session, "memory", None), ensure_ascii=False)
+                            if getattr(session, "memory", None) is not None
                             else None,
+                            "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
+                            if session.workflow_data is not None  # type: ignore
+                            else None,
+                            "session_data": json.dumps(session.session_data, ensure_ascii=False)
+                            if session.session_data is not None
+                            else None,
+                            "extra_data": json.dumps(session.extra_data, ensure_ascii=False)
+                            if session.extra_data is not None
+                            else None,
+                        },
+                    )
+                elif self.mode == "workflow_v2":
+                    # Convert session to dict to ensure proper serialization
+                    session_dict = session.to_dict()
+
+                    sess.execute(
+                        upsert_sql,
+                        {
+                            "session_id": session.session_id,
+                            "workflow_id": session.workflow_id,  # type: ignore
+                            "user_id": session.user_id,
+                            "workflow_name": session.workflow_name,  # type: ignore
+                            "runs": session_dict.get("runs"),
                             "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
                             if session.workflow_data is not None  # type: ignore
                             else None,

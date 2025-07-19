@@ -132,20 +132,20 @@ class TeamMemory:
 
     def get_team_context_str(self) -> str:
         if self.team_context and self.team_context.text:
-            return f"<team context>\n{self.team_context.text}\n</team context>\n"
+            return f"<team_context>\n{self.team_context.text}\n</team_context>"
         return ""
 
     def get_team_member_interactions_str(self) -> str:
         team_member_interactions_str = ""
         if self.team_context and self.team_context.member_interactions:
-            team_member_interactions_str += "<member interactions>\n"
+            team_member_interactions_str += "<member_interactions>\n"
 
             for interaction in self.team_context.member_interactions:
                 team_member_interactions_str += f"Member: {interaction.member_name}\n"
                 team_member_interactions_str += f"Task: {interaction.task}\n"
                 team_member_interactions_str += f"Response: {interaction.response.to_dict().get('content', '')}\n"
                 team_member_interactions_str += "\n"
-            team_member_interactions_str += "</member interactions>\n"
+            team_member_interactions_str += "</member_interactions>\n"
         return team_member_interactions_str
 
     def get_team_context_images(self) -> List[ImageArtifact]:

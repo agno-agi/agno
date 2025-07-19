@@ -17,21 +17,27 @@ class SlackTools(Toolkit):
         self,
         token: Optional[str] = None,
         send_message: bool = True,
+        send_message_thread: bool = True,
         list_channels: bool = True,
         get_channel_history: bool = True,
         **kwargs,
     ):
-        super().__init__(name="slack", **kwargs)
         self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
+
+        tools: List[Any] = []
         if send_message:
-            self.register(self.send_message)
+            tools.append(self.send_message)
+        if send_message_thread:
+            tools.append(self.send_message_thread)
         if list_channels:
-            self.register(self.list_channels)
+            tools.append(self.list_channels)
         if get_channel_history:
-            self.register(self.get_channel_history)
+            tools.append(self.get_channel_history)
+
+        super().__init__(name="slack", tools=tools, **kwargs)
 
     def send_message(self, channel: str, text: str) -> str:
         """
@@ -46,6 +52,25 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.chat_postMessage(channel=channel, text=text)
+            return json.dumps(response.data)
+        except SlackApiError as e:
+            logger.error(f"Error sending message: {e}")
+            return json.dumps({"error": str(e)})
+
+    def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
+        """
+        Send a message to a Slack channel.
+
+        Args:
+            channel (str): The channel ID or name to send the message to.
+            text (str): The text of the message to send.
+            thread_ts (ts): The thread to reply to
+
+        Returns:
+            str: A JSON string containing the response from the Slack API.
+        """
+        try:
+            response = self.client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
             return json.dumps(response.data)
         except SlackApiError as e:
             logger.error(f"Error sending message: {e}")

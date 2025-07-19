@@ -26,8 +26,8 @@ from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
 from agno.tools.mcp import MCPTools
+from agno.tools.reasoning import ReasoningTools
 from mcp import StdioServerParameters
 from pydantic import BaseModel
 
@@ -146,14 +146,11 @@ async def run_team():
                 weather_search_agent,
             ],
             instructions=[
-                "First, find the best Airbnb listings for the given location.",
-                "Then, find the best attractions for the given location.",
-                "Use the Google Maps agent to identify key neighborhoods and attractions.",
-                "Use the Attractions agent to find highly-rated places to visit and restaurants.",
-                "Get weather information to help with packing and planning outdoor activities.",
-                "Finally, plan an itinerary for the trip.",
+                "Plan a full itinerary for the trip.",
                 "Continue asking individual team members until you have ALL the information you need.",
+                "Think about the best way to tackle the task.",
             ],
+            tools=[ReasoningTools(add_instructions=True)],
             response_model=TravelPlan,
             show_tool_calls=True,
             markdown=True,

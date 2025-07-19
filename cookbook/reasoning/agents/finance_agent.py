@@ -12,7 +12,8 @@ reasoning_agent = Agent(
             company_news=True,
         )
     ],
-    instructions=["Use tables where possible"],
+    instructions="Use tables to display data",
+    use_json_mode=True,
     show_tool_calls=True,
     reasoning=True,
     markdown=True,

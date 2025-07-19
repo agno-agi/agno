@@ -8,7 +8,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
+    model=Gemini(id="gemini-2.0-flash-001"),
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
     add_history_to_messages=True,

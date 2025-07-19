@@ -40,5 +40,5 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Load the knowledge base, comment after first run
-    agent.knowledge.load(recreate=True)
+    agno_docs.load(recreate=True)
     agent.print_response("How do I build multi-agent teams with Agno?", stream=True)

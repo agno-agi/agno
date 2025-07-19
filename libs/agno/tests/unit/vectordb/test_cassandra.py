@@ -188,3 +188,119 @@ def test_exists(vector_db, mock_session):
 
     mock_session.execute.return_value.one.return_value = None
     assert vector_db.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_async_create(vector_db, mock_session):
+    """Test async table creation."""
+    # Set up mock session return values
+    mock_session.execute.return_value.one.return_value = None  # Table doesn't exist
+
+    # Mock the initialize_table method to track if it was called
+    with patch.object(vector_db, "initialize_table") as mock_initialize:
+        # Test async create
+        await vector_db.async_create()
+        assert mock_initialize.called
+
+
+@pytest.mark.asyncio
+async def test_async_doc_exists(vector_db, mock_session):
+    """Test async document existence checking."""
+    doc = create_test_documents(1)[0]
+
+    # Configure mock for existing document
+    mock_session.execute.return_value.one.return_value = [1]  # Document exists
+    exists = await vector_db.async_doc_exists(doc)
+    assert exists is True
+
+    # Configure mock for non-existent document
+    mock_session.execute.return_value.one.return_value = [0]  # Document doesn't exist
+    exists = await vector_db.async_doc_exists(doc)
+    assert exists is False
+
+
+@pytest.mark.asyncio
+async def test_async_name_exists(vector_db, mock_session):
+    """Test async name existence checking."""
+    # Configure mock for existing name
+    mock_session.execute.return_value.one.return_value = [1]  # Name exists
+    exists = await vector_db.async_name_exists("test_doc_0")
+    assert exists is True
+
+    # Configure mock for non-existent name
+    mock_session.execute.return_value.one.return_value = [0]  # Name doesn't exist
+    exists = await vector_db.async_name_exists("nonexistent")
+    assert exists is False
+
+
+@pytest.mark.asyncio
+async def test_async_insert_and_search(vector_db, mock_table):
+    """Test async document insertion and search."""
+    docs = create_test_documents(2)
+
+    # Configure mock for search results
+    mock_hit = {
+        "row_id": "doc_0",
+        "body_blob": "This is test document 0",
+        "metadata": {"type": "test", "index": "0"},
+        "vector": [0.1] * 1024,
+        "document_name": "test_doc_0",
+    }
+    mock_table.metric_ann_search.return_value = [mock_hit]
+
+    # Test async insert
+    await vector_db.async_insert(docs)
+    assert mock_table.put_async.called
+
+    # Test async search
+    results = await vector_db.async_search("test document", limit=1)
+    assert len(results) == 1
+    assert all(isinstance(doc, Document) for doc in results)
+    assert mock_table.metric_ann_search.called
+
+
+@pytest.mark.asyncio
+async def test_async_upsert(vector_db, mock_table):
+    """Test async upsert functionality."""
+    docs = create_test_documents(1)
+
+    # Configure mock for search result
+    mock_hit = {
+        "row_id": "doc_0",
+        "body_blob": "Updated content",
+        "metadata": {"type": "updated"},
+        "vector": [0.1] * 1024,
+        "document_name": "test_doc_0",
+    }
+    mock_table.metric_ann_search.return_value = [mock_hit]
+
+    # Test async upsert
+    await vector_db.async_upsert(docs)
+    assert mock_table.put_async.called
+
+    # Check results with async search
+    results = await vector_db.async_search("test", limit=1)
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
+async def test_async_drop(vector_db, mock_session):
+    """Test async drop functionality."""
+    await vector_db.async_drop()
+    mock_session.execute.assert_called_with(
+        "DROP TABLE IF EXISTS test_vectordb.test_vectors_" + vector_db.table_name.split("_")[-1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_exists(vector_db, mock_session):
+    """Test async exists functionality."""
+    # Configure mock for existing table
+    mock_session.execute.return_value.one.return_value = True
+    exists = await vector_db.async_exists()
+    assert exists is True
+
+    # Configure mock for non-existent table
+    mock_session.execute.return_value.one.return_value = None
+    exists = await vector_db.async_exists()
+    assert exists is False

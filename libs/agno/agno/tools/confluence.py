@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -18,6 +18,7 @@ class ConfluenceTools(Toolkit):
         password: Optional[str] = None,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
+        verify_ssl: bool = True,
         **kwargs,
     ):
         """Initialize Confluence Tools with authentication credentials.
@@ -27,6 +28,7 @@ class ConfluenceTools(Toolkit):
             password (str, optional): Confluence password. Defaults to None.
             url (str, optional): Confluence instance URL. Defaults to None.
             api_key (str, optional): Confluence API key. Defaults to None.
+            verify_ssl (bool, optional): Whether to verify SSL certificates. Defaults to True.
 
         Notes:
             Credentials can be provided either through method arguments or environment variables:
@@ -41,26 +43,35 @@ class ConfluenceTools(Toolkit):
         self.password = api_key or getenv("CONFLUENCE_API_KEY") or password or getenv("CONFLUENCE_PASSWORD")
 
         if not self.url:
-            logger.error(
+            raise ValueError(
                 "Confluence URL not provided. Pass it in the constructor or set CONFLUENCE_URL in environment variable"
             )
 
         if not self.username:
-            logger.error(
+            raise ValueError(
                 "Confluence username not provided. Pass it in the constructor or set CONFLUENCE_USERNAME in environment variable"
             )
 
         if not self.password:
-            logger.error("Confluence API KEY or password not provided")
+            raise ValueError("Confluence API KEY or password not provided")
 
-        self.confluence = Confluence(url=self.url, username=self.username, password=self.password)
+        self.confluence = Confluence(
+            url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl
+        )
+        if not verify_ssl:
+            import urllib3
 
-        self.register(self.get_page_content)
-        self.register(self.get_space_key)
-        self.register(self.create_page)
-        self.register(self.update_page)
-        self.register(self.get_all_space_detail)
-        self.register(self.get_all_page_from_space)
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        tools: List[Any] = []
+        tools.append(self.get_page_content)
+        tools.append(self.get_space_key)
+        tools.append(self.create_page)
+        tools.append(self.update_page)
+        tools.append(self.get_all_space_detail)
+        tools.append(self.get_all_page_from_space)
+
+        super().__init__(name="confluence_tools", tools=tools, **kwargs)
 
     def get_page_content(self, space_name: str, page_title: str, expand: Optional[str] = "body.storage"):
         """Retrieve the content of a specific page in a Confluence space.
