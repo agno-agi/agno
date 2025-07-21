@@ -277,7 +277,7 @@ class AgentSessionDetailSchema(BaseModel):
             if session.session_data
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
-            chat_history=[message.to_dict() for message in session.chat_history] if session.chat_history else None,
+            chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
