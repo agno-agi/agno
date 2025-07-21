@@ -1,49 +1,37 @@
-import os
-from unittest.mock import Mock, patch, mock_open
-import pytest
+from unittest.mock import Mock, mock_open, patch
+
 import psycopg2
+import pytest
 
 from agno.tools.postgres import PostgresTools
 
-
 # --- Mock Data for Tests ---
-MOCK_TABLES_RESULT = [
-    ('employees',),
-    ('departments',),
-    ('projects',)
-]
+MOCK_TABLES_RESULT = [("employees",), ("departments",), ("projects",)]
 
 MOCK_DESCRIBE_RESULT = [
-    ('id', 'integer', 'NO'),
-    ('name', 'character varying', 'YES'),
-    ('salary', 'numeric', 'YES'),
-    ('department_id', 'integer', 'YES')
+    ("id", "integer", "NO"),
+    ("name", "character varying", "YES"),
+    ("salary", "numeric", "YES"),
+    ("department_id", "integer", "YES"),
 ]
 
 MOCK_COUNT_RESULT = [(3,)]
 
-MOCK_EXPORT_DATA = [
-    (1, 'Alice', 75000, 1),
-    (2, 'Bob', 80000, 2),
-    (3, 'Charlie', 65000, 1)
-]
+MOCK_EXPORT_DATA = [(1, "Alice", 75000, 1), (2, "Bob", 80000, 2), (3, "Charlie", 65000, 1)]
 
-MOCK_EXPLAIN_RESULT = [
-    ('Seq Scan on employees  (cost=0.00..35.50 rows=10 width=32)',),
-    ('  Filter: (salary > 10000)',)
-]
+MOCK_EXPLAIN_RESULT = [("Seq Scan on employees  (cost=0.00..35.50 rows=10 width=32)",), ("  Filter: (salary > 10000)",)]
 
 
 class TestPostgresTools:
     """Unit tests for PostgresTools using mocking."""
-    
+
     @pytest.fixture
     def mock_connection(self):
         """Create a mock connection that behaves like psycopg2 connection."""
         conn = Mock()
         conn.closed = 0  # 0 means open connection
         return conn
-    
+
     @pytest.fixture
     def mock_cursor(self):
         """Create a mock cursor that behaves like psycopg2 cursor."""
@@ -56,21 +44,21 @@ class TestPostgresTools:
         cursor.__exit__ = Mock(return_value=False)
         cursor.__iter__ = Mock(return_value=iter([]))
         return cursor
-    
+
     @pytest.fixture
     def postgres_tools(self, mock_connection, mock_cursor):
         """Create PostgresTools instance with mocked connection."""
         # Setup the connection to return our mock cursor
         mock_connection.cursor.return_value = mock_cursor
-        
-        with patch('psycopg2.connect', return_value=mock_connection):
+
+        with patch("psycopg2.connect", return_value=mock_connection):
             tools = PostgresTools(
                 host="localhost",
                 port=5433,
                 db_name="testdb",
                 user="testuser",
                 password="testpassword",
-                table_schema="company_data"
+                table_schema="company_data",
             )
             # Override the connection property to return our mock
             tools._connection = mock_connection
@@ -88,17 +76,16 @@ class TestPostgresTools:
     def test_show_tables_success(self, postgres_tools, mock_connection, mock_cursor):
         """Test show_tables returns expected table list."""
         # Setup mock responses
-        mock_cursor.description = [('table_name',)]
+        mock_cursor.description = [("table_name",)]
         mock_cursor.fetchall.return_value = MOCK_TABLES_RESULT
-        
+
         result = postgres_tools.show_tables()
-        
+
         # Verify parameterized query was used
         mock_cursor.execute.assert_called_with(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;",
-            ("company_data",)
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;", ("company_data",)
         )
-        
+
         # Verify result format
         assert "table_name" in result
         assert "employees" in result
@@ -108,17 +95,17 @@ class TestPostgresTools:
     def test_describe_table_success(self, postgres_tools, mock_connection, mock_cursor):
         """Test describe_table returns expected schema information."""
         # Setup mock responses
-        mock_cursor.description = [('column_name',), ('data_type',), ('is_nullable',)]
+        mock_cursor.description = [("column_name",), ("data_type",), ("is_nullable",)]
         mock_cursor.fetchall.return_value = MOCK_DESCRIBE_RESULT
-        
+
         result = postgres_tools.describe_table("employees")
-        
+
         # Verify parameterized query was used (check if call contains expected parameters)
         mock_cursor.execute.assert_called()
         call_args = mock_cursor.execute.call_args
         assert "table_schema = %s AND table_name = %s" in call_args[0][0]
         assert call_args[0][1] == ("company_data", "employees")
-        
+
         # Verify result format
         assert "column_name,data_type,is_nullable" in result
         assert "salary,numeric,YES" in result
@@ -126,57 +113,53 @@ class TestPostgresTools:
     def test_run_query_success(self, postgres_tools, mock_connection, mock_cursor):
         """Test run_query executes SQL and returns formatted results."""
         # Setup mock responses
-        mock_cursor.description = [('count',)]
+        mock_cursor.description = [("count",)]
         mock_cursor.fetchall.return_value = MOCK_COUNT_RESULT
-        
+
         result = postgres_tools.run_query("SELECT COUNT(*) FROM employees;")
-        
+
         # Verify query was executed
         mock_cursor.execute.assert_called_with("SELECT COUNT(*) FROM employees;", None)
-        
+
         # Verify result format
-        lines = result.strip().split('\n')
+        lines = result.strip().split("\n")
         assert lines[0] == "count"  # Header
-        assert lines[1] == "3"      # Data
+        assert lines[1] == "3"  # Data
 
     def test_export_table_to_path_success(self, postgres_tools, mock_connection, mock_cursor):
         """Test export_table_to_path creates CSV file safely."""
         # Setup mock responses
-        mock_cursor.description = [
-            ('id',), ('name',), ('salary',), ('department_id',)
-        ]
+        mock_cursor.description = [("id",), ("name",), ("salary",), ("department_id",)]
         # Override the __iter__ method to return our mock data
         mock_cursor.__iter__ = Mock(return_value=iter(MOCK_EXPORT_DATA))
-        
+
         # Mock file operations
         mock_file = mock_open()
         export_path = "/tmp/test_export.csv"
-        
-        with patch('builtins.open', mock_file):
+
+        with patch("builtins.open", mock_file):
             result = postgres_tools.export_table_to_path("employees", export_path)
-        
+
         # Verify safe query construction (using sql.Identifier)
         mock_cursor.execute.assert_called_once()
-        
+
         # Verify file was opened for writing
-        mock_file.assert_called_once_with(export_path, 'w', newline='', encoding='utf-8')
-        
+        mock_file.assert_called_once_with(export_path, "w", newline="", encoding="utf-8")
+
         # Verify success message
         assert "Successfully exported table 'employees' to '/tmp/test_export.csv'" in result
 
     def test_inspect_query_success(self, postgres_tools, mock_connection, mock_cursor):
         """Test inspect_query returns execution plan."""
         # Setup mock responses
-        mock_cursor.description = [('QUERY PLAN',)]
+        mock_cursor.description = [("QUERY PLAN",)]
         mock_cursor.fetchall.return_value = MOCK_EXPLAIN_RESULT
-        
+
         result = postgres_tools.inspect_query("SELECT name FROM employees WHERE salary > 10000;")
-        
+
         # Verify EXPLAIN query was executed
-        mock_cursor.execute.assert_called_with(
-            "EXPLAIN SELECT name FROM employees WHERE salary > 10000;", None
-        )
-        
+        mock_cursor.execute.assert_called_with("EXPLAIN SELECT name FROM employees WHERE salary > 10000;", None)
+
         # Verify result contains query plan
         assert "Seq Scan on employees" in result
         assert "Filter: (salary > 10000)" in result
@@ -186,9 +169,9 @@ class TestPostgresTools:
         # Setup mock to raise psycopg2 error
         mock_cursor.execute.side_effect = psycopg2.DatabaseError("Table does not exist")
         mock_connection.rollback = Mock()
-        
+
         result = postgres_tools.show_tables()
-        
+
         # Verify error is caught and returned as string
         assert "Error executing query: Table does not exist" in result
         # Verify rollback was called
@@ -197,22 +180,22 @@ class TestPostgresTools:
     def test_export_file_error_handling(self, postgres_tools, mock_connection, mock_cursor):
         """Test error handling when file operations fail."""
         # Setup mock responses
-        mock_cursor.description = [('id',), ('name',)]
-        
+        mock_cursor.description = [("id",), ("name",)]
+
         # Mock file operations to raise IOError
-        with patch('builtins.open', side_effect=IOError("Permission denied")):
+        with patch("builtins.open", side_effect=IOError("Permission denied")):
             result = postgres_tools.export_table_to_path("employees", "/invalid/path/file.csv")
-        
+
         # Verify error is caught and returned
         assert "Error exporting table: Permission denied" in result
 
     def test_context_manager_support(self, mock_connection):
         """Test that PostgresTools works as a context manager."""
-        with patch('psycopg2.connect', return_value=mock_connection):
+        with patch("psycopg2.connect", return_value=mock_connection):
             with PostgresTools(host="localhost", db_name="testdb") as tools:
                 assert tools is not None
-                assert hasattr(tools, 'close')
-        
+                assert hasattr(tools, "close")
+
         # Verify close was called (though mocked)
         # In real implementation, this would close the connection
 
@@ -220,25 +203,25 @@ class TestPostgresTools:
         """Test that connection is re-established if closed."""
         # Simulate closed connection
         mock_connection.closed = 1  # 1 means closed
-        
-        with patch('psycopg2.connect', return_value=mock_connection) as mock_connect:
+
+        with patch("psycopg2.connect", return_value=mock_connection) as mock_connect:
             tools = PostgresTools(host="localhost", db_name="testdb")
             # Access connection property to trigger reconnection
             _ = tools.connection
-            
+
             # Verify connect was called
             mock_connect.assert_called()
 
     def test_sql_injection_prevention(self, postgres_tools, mock_connection, mock_cursor):
         """Test that SQL injection attempts are safely handled."""
         # Setup mock
-        mock_cursor.description = [('column_name',), ('data_type',), ('is_nullable',)]
+        mock_cursor.description = [("column_name",), ("data_type",), ("is_nullable",)]
         mock_cursor.fetchall.return_value = []
-        
+
         # Attempt SQL injection
         malicious_table = "users'; DROP TABLE employees; --"
         postgres_tools.describe_table(malicious_table)
-        
+
         # Verify the malicious input was passed as a parameter, not concatenated
         call_args = mock_cursor.execute.call_args
         assert call_args[0][1] == ("company_data", malicious_table)  # Parameters tuple
@@ -246,9 +229,9 @@ class TestPostgresTools:
 
     def test_readonly_session_configuration(self, mock_connection):
         """Test that connection is configured as read-only."""
-        with patch('psycopg2.connect', return_value=mock_connection):
+        with patch("psycopg2.connect", return_value=mock_connection):
             tools = PostgresTools(host="localhost", db_name="testdb")
             _ = tools.connection  # Trigger connection establishment
-            
+
             # Verify readonly session was set
             mock_connection.set_session.assert_called_with(readonly=True)
