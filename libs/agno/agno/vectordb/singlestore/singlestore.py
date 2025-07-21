@@ -425,7 +425,9 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_id == content_id)
                 result = sess.execute(stmt)
-                log_info(f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'.")
+                log_info(
+                    f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'."
+                )
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting document with content_id {content_id}: {e}")
