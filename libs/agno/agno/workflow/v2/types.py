@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
@@ -7,9 +7,9 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 
-
 if TYPE_CHECKING:
     from agno.workflow.v2.workflow import WorkflowRunResponse
+
 
 @dataclass
 class WorkflowExecutionInput:
@@ -349,24 +349,26 @@ class WorkflowMetrics:
             steps=steps,
         )
 
+
 @dataclass
 class BackgroundWorkflowRun:
     """Track background workflow execution using asyncio tasks or threads"""
+
     run_id: str
     workflow_id: str
     session_id: str
     task: Any  # asyncio.Task or threading.Thread
     started_at: float  # timestamp
     workflow_run_response: "WorkflowRunResponse"
-    
+
     def is_alive(self) -> bool:
         """Check if the background task/thread is still running"""
-        if hasattr(self.task, 'done'):  # asyncio.Task
+        if hasattr(self.task, "done"):  # asyncio.Task
             return not self.task.done()
-        elif hasattr(self.task, 'is_alive'):  # threading.Thread
+        elif hasattr(self.task, "is_alive"):  # threading.Thread
             return self.task.is_alive()
         return False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -374,6 +376,6 @@ class BackgroundWorkflowRun:
             "session_id": self.session_id,
             "started_at": self.started_at,
             "is_alive": self.is_alive(),
-            "task_type": "asyncio_task" if hasattr(self.task, 'done') else "thread",
-            "workflow_run_response": self.workflow_run_response.to_dict() if self.workflow_run_response else None
+            "task_type": "asyncio_task" if hasattr(self.task, "done") else "thread",
+            "workflow_run_response": self.workflow_run_response.to_dict() if self.workflow_run_response else None,
         }

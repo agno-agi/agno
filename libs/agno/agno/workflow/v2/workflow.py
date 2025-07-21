@@ -1,11 +1,24 @@
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Literal, Optional, Union, overload, ClassVar
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Union,
+    overload,
+)
 from uuid import uuid4
-from concurrent.futures import ThreadPoolExecutor
-import time
 
 from pydantic import BaseModel
 
@@ -112,8 +125,10 @@ class Workflow:
     store_events: bool = False
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
 
-    _background_runs: ClassVar[Dict[str, 'BackgroundWorkflowRun']] = {}
-    _background_executor: ClassVar[ThreadPoolExecutor] = ThreadPoolExecutor(max_workers=10, thread_name_prefix="workflow-bg")
+    _background_runs: ClassVar[Dict[str, "BackgroundWorkflowRun"]] = {}
+    _background_executor: ClassVar[ThreadPoolExecutor] = ThreadPoolExecutor(
+        max_workers=10, thread_name_prefix="workflow-bg"
+    )
 
     def __init__(
         self,
@@ -1123,14 +1138,12 @@ class Workflow:
             self.workflow_session_state["workflow_name"] = self.name
 
         return self.workflow_session_state
-    
+
     def update_background_status(self, run_id: str, status: RunStatus):
         """Fast status update for background execution using separate status columns"""
         if self.storage is not None and self.session_id is not None:
             success = self.storage.update_workflow_run_status(
-                session_id=self.session_id,
-                run_id=run_id,
-                status=status.value
+                session_id=self.session_id, run_id=run_id, status=status.value
             )
             log_debug(f"📊 Background status update: {status.value} (Success: {success})")
         else:
@@ -1147,7 +1160,7 @@ class Workflow:
         videos: Optional[List[VideoArtifact]] = None,
         **kwargs: Any,
     ) -> WorkflowRunResponse:
-        """Execute workflow in background using asyncio.create_task()"""
+        """Execute workflow in background using asyncio.create_task() - DIRECT EXECUTION"""
         
         # Set up session identifiers (same as regular run method)
         if user_id is not None:
@@ -1161,152 +1174,150 @@ class Workflow:
         self.run_id = str(uuid4())
 
         self.initialize_workflow()
-
-        # Load or create session (this sets up self.workflow_session)
         self.load_session()
-
-        # Prepare steps
         self._prepare_steps()
         
-        # Create PENDING workflow run response immediately
-        background_workflow_response = WorkflowRunResponse(
+        # Create workflow run response that will be updated by _execute
+        workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
             workflow_id=self.workflow_id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
-            content="Workflow execution started in background"
-        )
-        
-        # Create a SEPARATE response object to return to the user immediately
-        user_response = WorkflowRunResponse(
-            run_id=self.run_id,
-            session_id=self.session_id,
-            workflow_id=self.workflow_id,
-            workflow_name=self.name,
-            created_at=int(datetime.now().timestamp()),
-            status=RunStatus.pending,
-            content="Workflow execution started in background"
+            content="Workflow execution started in background",
         )
         
         # Store PENDING response immediately 
         if self.workflow_session:
-            self.workflow_session.add_run(background_workflow_response)
+            self.workflow_session.add_run(workflow_run_response)
         self.write_to_storage()
         
-        async def background_execution():
-            """Async background execution function"""
+        # Prepare execution input
+        inputs = WorkflowExecutionInput(
+            message=message,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore  
+            videos=videos,  # type: ignore
+        )
+        
+        self.update_agents_and_teams_session_info()
+
+        async def execute_workflow_directly():
+            """Direct execution wrapper with minimal overhead"""
             try:
                 # Quick status update to RUNNING
                 self.update_background_status(self.run_id, RunStatus.running)
                 
-                # Execute the workflow 
-                inputs = WorkflowExecutionInput(
-                    message=message,
-                    additional_data=additional_data,
-                    audio=audio,  # type: ignore
-                    images=images,  # type: ignore  
-                    videos=videos,  # type: ignore
-                )
-                
-                self.update_agents_and_teams_session_info()
-                
-                # For sync execution, run it in thread pool to avoid blocking event loop
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
                     lambda: self._execute(
                         execution_input=inputs, 
-                        workflow_run_response=background_workflow_response,
+                        workflow_run_response=workflow_run_response,
                         **kwargs
-                    )
+                    ),
                 )
                 
-                # Quick status update to COMPLETED
-                self.update_background_status(self.run_id, result.status)
+                # result IS workflow_run_response (same object, modified by _execute)
+                # Quick status update to database
+                self.update_background_status(self.run_id, workflow_run_response.status)
+                
+                log_debug(f"Background execution completed with status: {workflow_run_response.status}")
+                log_debug(f"Content length: {len(str(workflow_run_response.content)) if workflow_run_response.content else 0}")
                 
             except Exception as e:
                 logger.error(f"Background workflow execution failed: {e}")
-                # Quick status update to ERROR
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Background execution failed: {str(e)}"
                 self.update_background_status(self.run_id, RunStatus.error)
-                background_workflow_response.status = RunStatus.error
-                background_workflow_response.content = f"Background execution failed: {str(e)}"
             
             finally:
-                # Save full response to runs JSON for historical data
+                # Save the updated response to storage
                 if self.workflow_session:
-                    self.workflow_session.add_run(background_workflow_response)
-                self.write_to_storage()
+                    # Update the existing run (it was already added as PENDING)
+                    for i, run in enumerate(self.workflow_session.runs):
+                        if run.run_id == self.run_id:
+                            self.workflow_session.runs[i] = workflow_run_response
+                            break
                 
-                # Remove from background registry when complete
+                self.write_to_storage()
+                log_debug("Background execution storage write completed")
+                
+                # Remove from background registry
                 if self.run_id in Workflow._background_runs:
                     del Workflow._background_runs[self.run_id]
 
+        # Create and start asyncio task
         try:
-            # Try to get existing event loop
             loop = asyncio.get_running_loop()
-            task = loop.create_task(background_execution())
+            task = loop.create_task(execute_workflow_directly())
         except RuntimeError:
-            # No event loop running, create a new one for sync contexts
-            # We'll use threading for this case since we can't run asyncio in sync context easily
+            # No event loop, use threading fallback
             import threading
             
-            def run_background_in_thread():
+            def run_in_thread():
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
-                    new_loop.run_until_complete(background_execution())
+                    new_loop.run_until_complete(execute_workflow_directly())
                 finally:
                     new_loop.close()
             
-            thread = threading.Thread(target=run_background_in_thread, daemon=True)
+            thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
-            task = thread  # We'll store the thread for tracking
+            task = thread
         
-        # Track the background run
+        # Track background run
         from agno.workflow.v2.types import BackgroundWorkflowRun
         background_run = BackgroundWorkflowRun(
             run_id=self.run_id,
             workflow_id=self.workflow_id or "unknown",
             session_id=self.session_id or "unknown", 
-            task=task,  # Store async task or thread
+            task=task,
             started_at=time.time(),
-            workflow_run_response=background_workflow_response
+            workflow_run_response=workflow_run_response,  # This will be updated by _execute!
         )
         
         Workflow._background_runs[self.run_id] = background_run
         
-        # Return the user response immediately (PENDING)
-        return user_response
+        # Return SAME object that will be updated by background execution
+        return workflow_run_response
 
     def poll(self, run_id: str) -> Optional[WorkflowRunResponse]:
         """Poll the status of a background workflow run - DATABASE IS SOURCE OF TRUTH"""
-        
+
         # ALWAYS read status from database first (source of truth)
         if self.storage is not None and self.session_id is not None:
-            status_info = self.storage.get_workflow_run_status(
-                session_id=self.session_id,
-                run_id=run_id
-            )
-            
+            status_info = self.storage.get_workflow_run_status(session_id=self.session_id, run_id=run_id)
+
             if status_info:
                 status_value = status_info["status"]
                 log_debug(f"📊 Database status (source of truth): {status_value}")
-                
-                # For COMPLETED/ERROR, try to get full data from JSON blob first
+
+                # For COMPLETED/ERROR, ALWAYS return the full response from JSON blob
                 if status_value in [RunStatus.completed.value, RunStatus.error.value]:
                     session = self.storage.read(session_id=self.session_id)
                     if session and isinstance(session, WorkflowSessionV2) and session.runs:
+                        log_debug(f"🗂️ Found session with {len(session.runs)} total runs")
                         for run in session.runs:
                             if run.run_id == run_id:
-                                log_debug("📄 Found full response in JSON blob")
-                                # Update the status from database (source of truth)
+                                log_debug(
+                                    f"📄 Found full response! Content length: {len(str(run.content)) if run.content else 0}"
+                                )
+                                log_debug(f"📊 Step responses: {len(run.step_responses) if run.step_responses else 0}")
+                                # Update the status from database (source of truth) to handle any edge cases
                                 run.status = RunStatus(status_value)
+                                # This is the EXACT SAME response as normal run() would return!
                                 return run
-                        log_debug("⚠️ No full response found in JSON blob")
-                
-                # Create response based on database status (fallback or for pending/running)
+                        log_debug(f"⚠️ Run with ID {run_id} not found in {len(session.runs)} runs")
+                        for run in session.runs:
+                            log_debug(f"   - Run ID: {run.run_id}")
+                    else:
+                        log_debug("❌ No session or runs found")
+
+                # For PENDING/RUNNING, return a minimal status response
                 response = WorkflowRunResponse(
                     run_id=run_id,
                     session_id=self.session_id,
@@ -1314,13 +1325,15 @@ class Workflow:
                     workflow_name=self.name,
                     created_at=status_info["updated_at"],
                     status=RunStatus(status_value),
-                    content=f"Workflow status: {status_value}"  # Simple status message
+                    content=f"Workflow is {status_value.lower()}..."
+                    if status_value == "RUNNING"
+                    else "Workflow queued for execution",
                 )
-                
+
                 return response
             else:
                 log_debug("❌ No status found in database")
-        
+
         return None
 
     @classmethod
@@ -1328,17 +1341,14 @@ class Workflow:
         """Get information about all active background runs"""
         return {run_id: bg_run.to_dict() for run_id, bg_run in cls._background_runs.items()}
 
-    @classmethod  
+    @classmethod
     def cleanup_background_runs(cls) -> int:
         """Clean up completed background runs and return count of removed runs"""
-        completed_runs = [
-            run_id for run_id, bg_run in cls._background_runs.items() 
-            if not bg_run.is_alive()
-        ]
-        
+        completed_runs = [run_id for run_id, bg_run in cls._background_runs.items() if not bg_run.is_alive()]
+
         for run_id in completed_runs:
             del cls._background_runs[run_id]
-            
+
         return len(completed_runs)
 
     @overload
@@ -1353,7 +1363,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
-        background: Optional[bool] = False, 
+        background: Optional[bool] = False,
     ) -> WorkflowRunResponse: ...
 
     @overload
@@ -1396,7 +1406,7 @@ class Workflow:
                 audio=audio,
                 images=images,
                 videos=videos,
-                **kwargs
+                **kwargs,
             )
 
         self._set_debug()
