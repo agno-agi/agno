@@ -27,8 +27,7 @@ DEFAULT_INSTRUCTIONS = dedent(
     You have access to a persistent Daytona sandbox for code execution. The sandbox maintains state across interactions.
     
     Available tools:
-    - `run_python_code`: Execute Python code in the sandbox
-    - `run_code`: Execute code in other languages (JavaScript, TypeScript, etc.)
+    - `run_code`: Execute code in the sandbox
     - `run_shell_command`: Execute shell commands (bash)
     - `create_file`: Create or update files
     - `read_file`: Read file contents
@@ -104,7 +103,6 @@ class DaytonaTools(Toolkit):
         super().__init__(
             name="daytona_tools",
             tools=[
-                self.run_python_code,
                 self.run_code,
                 self.run_shell_command,
                 self.create_file,
@@ -227,44 +225,11 @@ class DaytonaTools(Toolkit):
             raise e
 
     # Tools
-    def run_python_code(self, agent: Union[Agent, Team], code: str) -> str:
-        """Prepare and run Python code in the contextual Daytona sandbox.
-
-        Args:
-            code: Python code to execute
-            working_directory: Directory to run the code in (defaults to current working directory)
-
-        Returns:
-            Execution output as a string
-        """
-        try:
-            current_sandbox = self._get_or_create_sandbox(agent)
-
-            cwd = self._get_working_directory(agent)
-
-            executable_code = prepare_python_code(code)
-
-            if cwd != "/":
-                # Change to the working directory and execute
-                execution = current_sandbox.process.exec(f"cd {cwd} && python3 -c {repr(executable_code)}", cwd="/")
-            else:
-                # For simple code, use code_run if available, otherwise use exec
-                if hasattr(current_sandbox.process, "code_run") and len(executable_code) < 1000:
-                    execution = current_sandbox.process.code_run(executable_code)
-                else:
-                    execution = current_sandbox.process.exec(f"python3 -c {repr(executable_code)}", cwd="/")
-
-            self.result = execution.result
-            return self.result
-        except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
-
     def run_code(self, agent: Union[Agent, Team], code: str) -> str:
-        """General function to run non-Python code in the contextual Daytona sandbox.
+        """Execute code in the Daytona sandbox.
 
         Args:
             code: Code to execute
-            working_directory: Directory to run the code in (defaults to current working directory)
 
         Returns:
             Execution output as a string
@@ -273,18 +238,9 @@ class DaytonaTools(Toolkit):
             current_sandbox = self._get_or_create_sandbox(agent)
 
             if self.sandbox_language == CodeLanguage.PYTHON:
-                return self.run_python_code(agent, code)
+                code = prepare_python_code(code)
 
-            # Use persistent working directory if not specified
-            cwd = self._get_working_directory(agent)
-
-            # The SDK doesn't support cwd in code_run, so use exec with appropriate wrapper
-            if self.sandbox_language == CodeLanguage.JAVASCRIPT:
-                response = current_sandbox.process.exec(f"cd {cwd} && node -e {repr(code)}", cwd="/")
-            elif self.sandbox_language == CodeLanguage.TYPESCRIPT:
-                response = current_sandbox.process.exec(f"cd {cwd} && ts-node -e {repr(code)}", cwd="/")
-            else:
-                response = current_sandbox.process.code_run(code)
+            response = current_sandbox.process.code_run(code)
 
             self.result = response.result
             return self.result
@@ -341,7 +297,6 @@ class DaytonaTools(Toolkit):
         """Create or update a file in the sandbox.
 
         Args:
-            agent: Agent or Team instance for session state management
             file_path: Path to the file (relative to current directory or absolute)
             content: Content to write to the file
 
@@ -385,7 +340,6 @@ class DaytonaTools(Toolkit):
         """Read a file from the sandbox.
 
         Args:
-            agent: Agent or Team instance for session state management
             file_path: Path to the file (relative to current directory or absolute)
 
         Returns:
@@ -417,7 +371,6 @@ class DaytonaTools(Toolkit):
         """List files in a directory.
 
         Args:
-            agent: Agent or Team instance for session state management
             directory: Directory to list (defaults to current working directory)
 
         Returns:
@@ -451,7 +404,6 @@ class DaytonaTools(Toolkit):
         """Delete a file or directory from the sandbox.
 
         Args:
-            agent: Agent or Team instance for session state management
             file_path: Path to the file or directory (relative to current directory or absolute)
 
         Returns:
@@ -490,7 +442,6 @@ class DaytonaTools(Toolkit):
         """Change the current working directory.
 
         Args:
-            agent: Agent or Team instance for session state management
             directory: Directory to change to (relative to current directory or absolute)
 
         Returns:
