@@ -409,6 +409,7 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.id == id)
                 result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with ID {id} from table '{self.table.name}'.")
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting document with ID {id}: {e}")
@@ -424,6 +425,7 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_id == content_id)
                 result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'.")
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting document with content_id {content_id}: {e}")
@@ -439,6 +441,7 @@ class SingleStore(VectorDb):
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.name == name)
                 result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with name '{name}' from table '{self.table.name}'.")
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting document with name {name}: {e}")
@@ -456,6 +459,7 @@ class SingleStore(VectorDb):
                 metadata_json = json.dumps(metadata, sort_keys=True)
                 stmt = delete(self.table).where(self.table.c.meta_data == metadata_json)
                 result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with metadata {metadata} from table '{self.table.name}'.")
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"Error deleting documents with metadata {metadata}: {e}")
