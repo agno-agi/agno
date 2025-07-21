@@ -1179,13 +1179,15 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             result = collection.delete_one({"_id": id})
-            
+
             if result.deleted_count > 0:
-                log_info(f"Deleted {result.deleted_count} document(s) with ID '{id}' from collection '{self.collection_name}'.")
+                log_info(
+                    f"Deleted {result.deleted_count} document(s) with ID '{id}' from collection '{self.collection_name}'."
+                )
                 return True
             else:
                 log_info(f"No documents found with ID '{id}' to delete.")
-                return True 
+                return True
         except Exception as e:
             logger.error(f"Error deleting document with ID '{id}': {e}")
             return False
@@ -1195,8 +1197,10 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             result = collection.delete_many({"name": name})
-            
-            log_info(f"Deleted {result.deleted_count} document(s) with name '{name}' from collection '{self.collection_name}'.")
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with name '{name}' from collection '{self.collection_name}'."
+            )
             return True
         except Exception as e:
             logger.error(f"Error deleting documents with name '{name}': {e}")
@@ -1206,16 +1210,18 @@ class MongoDb(VectorDb):
         """Delete documents by metadata."""
         try:
             collection = self._get_collection()
-            
+
             # Build MongoDB query for metadata matching
             mongo_filters = {}
             for key, value in metadata.items():
                 # Use dot notation for nested metadata fields
                 mongo_filters[f"meta_data.{key}"] = value
-            
+
             result = collection.delete_many(mongo_filters)
-            
-            log_info(f"Deleted {result.deleted_count} document(s) with metadata '{metadata}' from collection '{self.collection_name}'.")
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with metadata '{metadata}' from collection '{self.collection_name}'."
+            )
             return True
         except Exception as e:
             logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
@@ -1232,8 +1238,10 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             result = collection.delete_many({"content_id": content_id})
-            
-            log_info(f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'.")
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'."
+            )
             return True
         except Exception as e:
             logger.error(f"Error deleting documents with content_id '{content_id}': {e}")

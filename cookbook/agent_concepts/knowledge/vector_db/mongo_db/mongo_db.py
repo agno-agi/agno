@@ -1,4 +1,5 @@
 import urllib.parse
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb
@@ -21,7 +22,7 @@ vector_db = MongoDb(
 
 # Create Knowledge Instance with MongoDB
 knowledge = Knowledge(
-    name="Basic SDK Knowledge Base", 
+    name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation with MongoDB",
     vector_store=vector_db,
 )
@@ -39,4 +40,3 @@ agent.print_response("List down the ingredients to make Massaman Gai", markdown=
 vector_db.delete_by_name("Recipes")
 # # or
 # vector_db.delete_by_metadata({"doc_type": "recipe_book"})
-
