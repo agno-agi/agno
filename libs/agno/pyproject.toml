@@ -314,6 +314,7 @@ exclude = ["tests*"]
 module = [
   "ag_ui.*",
   "agentql.*",
+  "aioboto3.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
