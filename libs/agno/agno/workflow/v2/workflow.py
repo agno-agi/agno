@@ -63,7 +63,14 @@ from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
-from agno.workflow.v2.types import StepInput, StepMetrics, StepOutput, WorkflowExecutionInput, WorkflowMetrics
+from agno.workflow.v2.types import (
+    BackgroundWorkflowRun,
+    StepInput,
+    StepMetrics,
+    StepOutput,
+    WorkflowExecutionInput,
+    WorkflowMetrics,
+)
 
 WorkflowSteps = Union[
     Callable[
@@ -1211,7 +1218,7 @@ class Workflow:
                 self.update_background_status(self.run_id, RunStatus.running)
 
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
+                await loop.run_in_executor(
                     None,
                     lambda: self._execute(
                         execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs
@@ -1257,9 +1264,6 @@ class Workflow:
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
             task = thread
-
-        # Track background run
-        from agno.workflow.v2.types import BackgroundWorkflowRun
 
         background_run = BackgroundWorkflowRun(
             run_id=self.run_id,
