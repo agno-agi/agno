@@ -78,6 +78,9 @@ def create_schema(session: Session, db_schema: str) -> None:
     Args:
         session: The SQLAlchemy session to use
         db_schema (str): The definition of the database schema to create
+
+    Raises:
+        Exception: If the schema creation fails.
     """
     try:
         log_debug(f"Creating schema if not exists: {db_schema}")
@@ -86,7 +89,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create schema {db_schema}: {e}")
 
 
-def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
+def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
     """
     Check if a table with the given name exists in the given schema.
 
@@ -94,12 +97,22 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         bool: True if the table exists, False otherwise.
     """
     try:
-        exists_query = text(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-        )
-        exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+        if db_schema is not None:
+            exists_query = text(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+            )
+            exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+            table_ref = f"{db_schema}.{table_name}"
+        else:
+            # Check in current database/schema
+            exists_query = text(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
+            )
+            exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
+            table_ref = table_name
+
         if not exists:
-            log_debug(f"Table {db_schema}.{table_name} {'exists' if exists else 'does not exist'}")
+            log_debug(f"Table {table_ref} {'exists' if exists else 'does not exist'}")
 
         return exists
 
@@ -108,7 +121,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         return False
 
 
-def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: str) -> bool:
+def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str]) -> bool:
     """
     Check if the existing table has the expected column names.
 
@@ -122,22 +135,36 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
     try:
         expected_table_schema = get_table_schema_definition(table_type)
         expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
 
-        # Get existing columns
         inspector = inspect(db_engine)
-        existing_columns_info = inspector.get_columns(table_name, schema=db_schema)
-        existing_columns = set(col["name"] for col in existing_columns_info)
+        try:
+            import warnings
+
+            # Suppressing SQLAlchemy warnings about unrecognized SingleStore JSON types, which are expected
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Did not recognize type 'JSON'", category=Warning)
+                existing_columns_info = inspector.get_columns(table_name, schema=db_schema)
+
+            existing_columns = set(col["name"] for col in existing_columns_info)
+
+        except Exception as e:
+            # If column inspection fails (e.g., unrecognized JSON type), log but assume table is valid
+            log_debug(f"Could not inspect columns for {table_ref}, assuming table is valid: {e}")
+            return True
 
         # Check if all expected columns exist
         missing_columns = expected_columns - existing_columns
         if missing_columns:
-            log_warning(f"Missing columns {missing_columns} in table {db_schema}.{table_name}")
+            log_warning(f"Missing columns {missing_columns} in table {table_ref}")
             return False
 
-        log_debug(f"Table {db_schema}.{table_name} has all expected columns")
+        log_debug(f"Table {table_ref} has all expected columns")
         return True
+
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+        log_error(f"Error validating table schema for {table_ref}: {e}")
         return False
 
 

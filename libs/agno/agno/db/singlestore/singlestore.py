@@ -78,22 +78,18 @@ class SingleStoreDb(BaseDb):
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
             _engine = create_engine(
-                db_url, 
+                db_url,
                 connect_args={
                     "charset": "utf8mb4",
-                    "ssl": {
-                        "ssl_disabled": False,
-                        "ssl_ca": None,
-                        "ssl_check_hostname": False
-                    }
-                }
+                    "ssl": {"ssl_disabled": False, "ssl_ca": None, "ssl_check_hostname": False},
+                },
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = _engine
-        self.db_schema: str = db_schema if db_schema is not None else "ai"
+        self.db_schema: Optional[str] = db_schema
         self.metadata: MetaData = MetaData()
 
         # Initialize database session
@@ -101,7 +97,50 @@ class SingleStoreDb(BaseDb):
 
     # -- DB methods --
 
-    def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    def _create_table_structure_only(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+        """
+        Create a table structure definition without actually creating the table in the database.
+        Used to avoid autoload issues with SingleStore JSON types.
+        
+        Args:
+            table_name (str): Name of the table
+            table_type (str): Type of table (used to get schema definition) 
+            db_schema (Optional[str]): Database schema name
+            
+        Returns:
+            Table: SQLAlchemy Table object with column definitions
+        """
+        try:
+            table_schema = get_table_schema_definition(table_type)
+            
+            columns = []
+            # Get the columns from the table schema (exclude constraints)
+            for col_name, col_config in table_schema.items():
+                if col_name.startswith("_"):  # Skip constraint definitions
+                    continue
+                    
+                column_args = [col_name, col_config["type"]()]
+                column_kwargs = {}
+                if col_config.get("primary_key", False):
+                    column_kwargs["primary_key"] = True
+                if "nullable" in col_config:
+                    column_kwargs["nullable"] = col_config["nullable"]
+                if col_config.get("unique", False):
+                    column_kwargs["unique"] = True
+                columns.append(Column(*column_args, **column_kwargs))
+            
+            # Create the table object without constraints to avoid autoload issues
+            table_metadata = MetaData(schema=db_schema)
+            table = Table(table_name, table_metadata, *columns, schema=db_schema)
+            
+            return table
+            
+        except Exception as e:
+            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            log_error(f"Could not create table structure for {table_ref}: {e}")
+            raise
+
+    def _create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
 
@@ -116,7 +155,8 @@ class SingleStoreDb(BaseDb):
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
+            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
             columns, indexes, unique_constraints = [], [], []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
@@ -151,8 +191,10 @@ class SingleStoreDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
-            with self.Session() as sess, sess.begin():
-                create_schema(session=sess, db_schema=db_schema)
+            # Create schema if one is specified
+            if db_schema is not None:
+                with self.Session() as sess, sess.begin():
+                    create_schema(session=sess, db_schema=db_schema)
 
             # Create table
             table_without_indexes = Table(
@@ -162,7 +204,32 @@ class SingleStoreDb(BaseDb):
                 *[c for c in table.constraints if not isinstance(c, Index)],
                 schema=db_schema,
             )
-            table_without_indexes.create(self.db_engine, checkfirst=True)
+
+            # For sessions table, try using just one unique constraint to see if that works
+            if table_type == "sessions":
+                # Try creating with just one unique constraint instead of three
+                with self.Session() as sess, sess.begin():
+                    # Build column definitions
+                    columns_sql = []
+                    for col in table.columns:
+                        col_sql = f"{col.name} {col.type.compile(self.db_engine.dialect)}"
+                        if not col.nullable:
+                            col_sql += " NOT NULL"
+                        columns_sql.append(col_sql)
+
+                    columns_def = ", ".join(columns_sql)
+
+                    # Add shard key and single unique constraint
+                    # This is a work around for SingleStore multiple constraint limitation
+                    table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
+                        {columns_def},
+                        SHARD KEY (session_id),
+                        UNIQUE KEY uq_session_type (session_id, session_type)
+                    )"""
+
+                    sess.execute(text(table_sql))
+            else:
+                table_without_indexes.create(self.db_engine, checkfirst=True)
 
             # Create indexes
             for idx in table.indexes:
@@ -171,15 +238,21 @@ class SingleStoreDb(BaseDb):
 
                     # Check if index already exists (SingleStore/MySQL specific)
                     with self.Session() as sess:
-                        exists_query = text(
-                            "SELECT 1 FROM information_schema.statistics WHERE table_schema = :schema AND index_name = :index_name"
-                        )
-                        exists = (
-                            sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
-                            is not None
-                        )
+                        if db_schema is not None:
+                            exists_query = text(
+                                "SELECT 1 FROM information_schema.statistics WHERE table_schema = :schema AND index_name = :index_name"
+                            )
+                            exists = (
+                                sess.execute(exists_query, {"schema": db_schema, "index_name": idx.name}).scalar()
+                                is not None
+                            )
+                        else:
+                            exists_query = text(
+                                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND index_name = :index_name"
+                            )
+                            exists = sess.execute(exists_query, {"index_name": idx.name}).scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {db_schema}.{table_name}, skipping creation")
+                            log_debug(f"Index {idx.name} already exists in {table_ref}, skipping creation")
                             continue
 
                     idx.create(self.db_engine)
@@ -187,11 +260,11 @@ class SingleStoreDb(BaseDb):
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
-            log_info(f"Successfully created table {db_schema}.{table_name}")
+            log_info(f"Successfully created table {table_ref}")
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {table_ref}: {e}")
             raise
 
     def _get_table(self, table_type: str) -> Table:
@@ -247,7 +320,7 @@ class SingleStoreDb(BaseDb):
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
         """
         Check if the table exists and is valid, else create it.
 
@@ -272,15 +345,18 @@ class SingleStoreDb(BaseDb):
             table_type=table_type,
             db_schema=db_schema,
         ):
-            raise ValueError(f"Table {db_schema}.{table_name} has an invalid schema")
+            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            raise ValueError(f"Table {table_ref} has an invalid schema")
 
         try:
-            table = Table(table_name, self.metadata, schema=db_schema, autoload_with=self.db_engine)
-            log_debug(f"Loaded existing table {db_schema}.{table_name}")
-            return table
+            # Avoid autoload for all tables due to SingleStore JSON type issues
+            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            log_debug(f"Creating predefined table structure for {table_ref} to avoid JSON type issues")
+            return self._create_table_structure_only(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         except Exception as e:
-            log_error(f"Error loading existing table {db_schema}.{table_name}: {e}")
+            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+            log_error(f"Error loading existing table {table_ref}: {e}")
             raise
 
     # -- Session methods --
