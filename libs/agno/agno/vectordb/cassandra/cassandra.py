@@ -98,6 +98,7 @@ class Cassandra(VectorDb):
         for doc in documents:
             doc.embed(embedder=self.embedder)
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
+            metadata.update(filters or {})
             metadata["content_id"] = doc.content_id
             futures.append(
                 self.table.put_async(
@@ -203,7 +204,7 @@ class Cassandra(VectorDb):
             self.session.execute(query, (id,))
             return True
         except Exception as e:
-            log_debug(f"Error deleting document with ID {id}: {e}")
+            log_info(f"Error deleting document with ID {id}: {e}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -222,11 +223,24 @@ class Cassandra(VectorDb):
             if not self.name_exists(name):
                 return False
 
-            query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE document_name = %s ALLOW FILTERING"
-            self.session.execute(query, (name,))
-            return True
+            # Query to find documents with matching name
+            query = f"SELECT row_id, document_name FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
+            result = self.session.execute(query)
+
+            deleted_count = 0
+            for row in result:
+                # Check if the row's document_name matches our criteria
+                # Use attribute access for Row objects
+                row_name = getattr(row, "document_name", None)
+                if row_name == name:
+                    # Delete this specific document
+                    delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+                    self.session.execute(delete_query, (getattr(row, "row_id"),))
+                    deleted_count += 1
+
+            return deleted_count > 0
         except Exception as e:
-            log_debug(f"Error deleting documents with name {name}: {e}")
+            log_info(f"Error deleting documents with name {name}: {e}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -243,17 +257,18 @@ class Cassandra(VectorDb):
             log_debug(f"Cassandra VectorDB : Deleting documents with metadata {metadata}")
             # For metadata deletion, we need to query first to find matching documents
             # Then delete them by their IDs
-            query = f"SELECT row_id FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
+            query = f"SELECT row_id, metadata_s FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
             result = self.session.execute(query)
 
             deleted_count = 0
             for row in result:
                 # Check if the row's metadata matches our criteria
-                row_metadata = row.get("metadata", {})
+                # Use attribute access for Row objects
+                row_metadata = getattr(row, "metadata_s", {})
                 if self._metadata_matches(row_metadata, metadata):
                     # Delete this specific document
                     delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
-                    self.session.execute(delete_query, (row["row_id"],))
+                    self.session.execute(delete_query, (getattr(row, "row_id"),))
                     deleted_count += 1
 
             return deleted_count > 0
@@ -274,22 +289,22 @@ class Cassandra(VectorDb):
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_id {content_id}")
             # Query to find documents with matching content_id in metadata
-            query = f"SELECT row_id FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
+            query = f"SELECT row_id, metadata_s FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
             result = self.session.execute(query)
-
             deleted_count = 0
             for row in result:
                 # Check if the row's metadata contains the content_id
-                row_metadata = row.get("metadata", {})
+                # Use attribute access for Row objects
+                row_metadata = getattr(row, "metadata_s", {})
                 if row_metadata.get("content_id") == content_id:
                     # Delete this specific document
                     delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
-                    self.session.execute(delete_query, (row["row_id"],))
+                    self.session.execute(delete_query, (getattr(row, "row_id"),))
                     deleted_count += 1
 
             return deleted_count > 0
         except Exception as e:
-            log_debug(f"Error deleting documents with content_id {content_id}: {e}")
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
     def _metadata_matches(self, row_metadata: Dict[str, Any], target_metadata: Dict[str, Any]) -> bool:

@@ -350,19 +350,27 @@ def test_delete_by_id(vector_db, mock_session, sample_documents):
 
 def test_delete_by_name(vector_db, mock_session, sample_documents):
     """Test deleting documents by name."""
-    # Mock name_exists method directly
+    # Mock name_exists to return True (document exists)
     with patch.object(vector_db, "name_exists") as mock_name_exists:
-        # Name exists, so deletion should succeed
         mock_name_exists.return_value = True
+
+        # Mock session.execute to return rows with matching names
+        mock_rows = [
+            MagicMock(row_id="doc_1", document_name="tom_kha"),
+            MagicMock(row_id="doc_2", document_name="pad_thai"),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.__iter__ = MagicMock(return_value=iter(mock_rows))
+        mock_session.execute.return_value = mock_result
 
         # Test successful deletion
         result = vector_db.delete_by_name("tom_kha")
         assert result is True
 
-        # Verify the delete query was executed
-        mock_session.execute.assert_called_with(
-            f"DELETE FROM {vector_db.keyspace}.{vector_db.table_name} WHERE document_name = %s ALLOW FILTERING",
-            ("tom_kha",),
+        # Verify the SELECT query was executed to find matching documents
+        mock_session.execute.assert_any_call(
+            f"SELECT row_id, document_name FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
         )
 
         # Test deletion of non-existent name
@@ -376,9 +384,9 @@ def test_delete_by_metadata(vector_db, mock_session, sample_documents):
     """Test deleting documents by metadata."""
     # Mock session.execute to return rows with metadata
     mock_rows = [
-        {"row_id": "doc_1", "metadata": {"cuisine": "Thai", "type": "soup"}},
-        {"row_id": "doc_2", "metadata": {"cuisine": "Thai", "type": "noodles"}},
-        {"row_id": "doc_3", "metadata": {"cuisine": "Thai", "type": "curry", "spicy": True}},
+        MagicMock(row_id="doc_1", metadata_s={"cuisine": "Thai", "type": "soup"}),
+        MagicMock(row_id="doc_2", metadata_s={"cuisine": "Thai", "type": "noodles"}),
+        MagicMock(row_id="doc_3", metadata_s={"cuisine": "Thai", "type": "curry", "spicy": True}),
     ]
 
     # Configure mock to return different results for different calls
@@ -393,7 +401,7 @@ def test_delete_by_metadata(vector_db, mock_session, sample_documents):
     # Verify the query was executed to find matching documents
     # The first call should be the SELECT query
     mock_session.execute.assert_any_call(
-        f"SELECT row_id FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
+        f"SELECT row_id, metadata_s FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
     )
 
     # Test deletion with non-matching metadata
@@ -406,8 +414,8 @@ def test_delete_by_content_id(vector_db, mock_session, sample_documents):
     """Test deleting documents by content ID."""
     # Mock session.execute to return rows with content_id in metadata
     mock_rows = [
-        {"row_id": "doc_1", "metadata": {"content_id": "recipe_1"}},
-        {"row_id": "doc_2", "metadata": {"content_id": "recipe_2"}},
+        MagicMock(row_id="doc_1", metadata_s={"content_id": "recipe_1"}),
+        MagicMock(row_id="doc_2", metadata_s={"content_id": "recipe_2"}),
     ]
 
     # Configure mock to return different results for different calls
@@ -422,7 +430,7 @@ def test_delete_by_content_id(vector_db, mock_session, sample_documents):
     # Verify the query was executed to find matching documents
     # The first call should be the SELECT query
     mock_session.execute.assert_any_call(
-        f"SELECT row_id FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
+        f"SELECT row_id, metadata_s FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
     )
 
     # Test deletion with non-existent content_id
@@ -455,18 +463,28 @@ def test_delete_by_name_multiple_documents(vector_db, mock_session):
         ),
     ]
 
-    # Mock name_exists to return True initially, then False after deletion
+    # Mock name_exists to return True (documents exist)
     with patch.object(vector_db, "name_exists") as mock_name_exists:
-        mock_name_exists.side_effect = [True, False]  # Exists before, doesn't exist after
+        mock_name_exists.return_value = True
+
+        # Mock session.execute to return rows with matching names
+        mock_rows = [
+            MagicMock(row_id="doc_1", document_name="tom_kha"),
+            MagicMock(row_id="doc_2", document_name="tom_kha"),
+            MagicMock(row_id="doc_3", document_name="pad_thai"),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.__iter__ = MagicMock(return_value=iter(mock_rows))
+        mock_session.execute.return_value = mock_result
 
         # Test delete all documents with name "tom_kha"
         result = vector_db.delete_by_name("tom_kha")
         assert result is True
 
-        # Verify the delete query was executed
-        mock_session.execute.assert_called_with(
-            f"DELETE FROM {vector_db.keyspace}.{vector_db.table_name} WHERE document_name = %s ALLOW FILTERING",
-            ("tom_kha",),
+        # Verify the SELECT query was executed to find matching documents
+        mock_session.execute.assert_any_call(
+            f"SELECT row_id, document_name FROM {vector_db.keyspace}.{vector_db.table_name} ALLOW FILTERING"
         )
 
 
@@ -474,9 +492,9 @@ def test_delete_by_metadata_complex(vector_db, mock_session):
     """Test deleting documents with complex metadata matching."""
     # Mock session.execute to return rows with complex metadata
     mock_rows = [
-        {"row_id": "doc_1", "metadata": {"cuisine": "Thai", "type": "soup", "spicy": True}},
-        {"row_id": "doc_2", "metadata": {"cuisine": "Thai", "type": "noodles", "spicy": False}},
-        {"row_id": "doc_3", "metadata": {"cuisine": "Italian", "type": "pasta", "spicy": False}},
+        MagicMock(row_id="doc_1", metadata_s={"cuisine": "Thai", "type": "soup", "spicy": True}),
+        MagicMock(row_id="doc_2", metadata_s={"cuisine": "Thai", "type": "noodles", "spicy": False}),
+        MagicMock(row_id="doc_3", metadata_s={"cuisine": "Italian", "type": "pasta", "spicy": False}),
     ]
 
     # First call returns rows for query, subsequent calls are for deletion

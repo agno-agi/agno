@@ -1,9 +1,6 @@
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-
-# from agno.knowledge.embedder.mistral import MistralEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.mistral import MistralChat
 from agno.vectordb.cassandra import Cassandra
 
 try:
@@ -37,14 +34,13 @@ knowledge = Knowledge(
 )
 
 
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
-)
+# knowledge.add_content(
+#     name="Recipes",
+#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+#     metadata={"doc_type": "recipe_book"},
+# )
 
 # agent = Agent(
-#     model=MistralChat(),
 #     knowledge=knowledge,
 #     show_tool_calls=True,
 # )
@@ -54,3 +50,7 @@ knowledge.add_content(
 #     markdown=True,
 #     show_full_reasoning=True,
 # )
+
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+# or
+# vector_db.delete_by_name("Recipes")
