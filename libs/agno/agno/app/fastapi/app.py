@@ -77,7 +77,7 @@ class FastAPIApp(BaseAPIApp):
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.app_id:
+                if hasattr(workflow, "app_id") and not workflow.app_id:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)

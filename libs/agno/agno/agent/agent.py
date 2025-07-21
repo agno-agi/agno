@@ -1001,10 +1001,10 @@ class Agent:
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
-        
+
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
@@ -1377,16 +1377,15 @@ class Agent:
     ) -> Any:
         """Async Run the Agent and return the response."""
 
-
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
         log_debug(f"Session ID: {session_id}", center=True)
-        
+
         # Initialize the Agent
         self.initialize_agent()
-        
+
         # Read existing session from storage
         self.read_from_storage(session_id=session_id)
 
