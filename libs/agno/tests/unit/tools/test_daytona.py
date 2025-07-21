@@ -115,7 +115,7 @@ class TestDaytonaTools:
             assert mock_client.create.call_count == 2  # Called twice
 
     def test_run_python_code(self, mock_daytona, mock_agent):
-        """Test run_python_code method."""
+        """Test run_code method with Python code."""
         mock_client, mock_sandbox, mock_process, _ = mock_daytona
 
         with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
@@ -124,10 +124,10 @@ class TestDaytonaTools:
             # Mock execution result
             mock_execution = MagicMock()
             mock_execution.result = "Hello, World!"
-            mock_process.exec.return_value = mock_execution
+            mock_process.code_run.return_value = mock_execution
 
             # Test execution
-            result = tools.run_python_code(mock_agent, "print('Hello, World!')")
+            result = tools.run_code(mock_agent, "print('Hello, World!')")
             assert result == "Hello, World!"
 
     def test_run_shell_command(self, mock_daytona, mock_agent):
@@ -277,8 +277,8 @@ class TestDaytonaTools:
         with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
             tools = DaytonaTools()
 
-            # Test error in run_python_code
-            mock_process.exec.side_effect = Exception("Execution error")
-            result = tools.run_python_code(mock_agent, "print('test')")
+            # Test error in run_code
+            mock_process.code_run.side_effect = Exception("Execution error")
+            result = tools.run_code(mock_agent, "print('test')")
             assert "error" in result
             assert "Execution error" in result
