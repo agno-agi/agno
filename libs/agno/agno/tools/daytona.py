@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_error, log_info, log_warning, log_debug
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from daytona import (
@@ -21,11 +21,10 @@ try:
 except ImportError:
     raise ImportError("`daytona` not installed. Please install using `pip install daytona`")
 
-
 DEFAULT_INSTRUCTIONS = dedent(
     """\
     You have access to a persistent Daytona sandbox for code execution. The sandbox maintains state across interactions.
-
+    
     Available tools:
     - `run_code`: Execute code in the sandbox
     - `run_shell_command`: Execute shell commands (bash)
@@ -34,14 +33,22 @@ DEFAULT_INSTRUCTIONS = dedent(
     - `list_files`: List directory contents
     - `delete_file`: Delete files or directories
     - `change_directory`: Change the working directory
-
+    
+    MANDATORY: When users ask for code (Python, JavaScript, TypeScript, etc.), you MUST:
+    1. Write the code
+    2. Execute it using run_code tool
+    3. Show the actual output/results
+    4. Never just provide code without executing it
+    
     CRITICAL WORKFLOW:
     1. Before running Python scripts, check if required packages are installed
     2. Install missing packages with: run_shell_command("pip install package1 package2")
     3. When running scripts, capture both output AND errors
     4. If a script produces no output, check for errors or add print statements
-
+    
     IMPORTANT: Always use single quotes for the content parameter when creating files
+    
+    Remember: Your job is to provide working, executed code examples, not just code snippets!
     """
 )
 
@@ -66,7 +73,7 @@ class DaytonaTools(Toolkit):
         verify_ssl: Optional[bool] = False,
         persistent: bool = True,
         instructions: Optional[str] = None,
-        add_instructions: bool = True,
+        add_instructions: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DAYTONA_API_KEY")
@@ -74,10 +81,12 @@ class DaytonaTools(Toolkit):
             raise ValueError("DAYTONA_API_KEY not set. Please set the DAYTONA_API_KEY environment variable.")
 
         self.api_url = api_url or getenv("DAYTONA_API_URL")
+        self.sandbox_id = sandbox_id
         self.sandbox_target = sandbox_target
         self.organization_id = organization_id
         self.sandbox_language = sandbox_language or CodeLanguage.PYTHON
         self.sandbox_os = sandbox_os
+        self.auto_stop_interval = auto_stop_interval
         self.sandbox_os_user = sandbox_os_user
         self.sandbox_env_vars = sandbox_env_vars
         self.sandbox_labels = sandbox_labels or {}
@@ -85,8 +94,10 @@ class DaytonaTools(Toolkit):
         self.timeout = timeout
         self.auto_create_sandbox = auto_create_sandbox
         self.persistent = persistent
-        self.instructions = instructions or DEFAULT_INSTRUCTIONS
         self.verify_ssl = verify_ssl
+
+        # Set instructions - use default if none provided
+        self.instructions = instructions or DEFAULT_INSTRUCTIONS
 
         if not self.verify_ssl:
             self._disable_ssl_verification()
@@ -120,7 +131,6 @@ class DaytonaTools(Toolkit):
         try:
             from daytona_api_client import Configuration
 
-            # Store the original __init__ method
             original_init = Configuration.__init__
 
             # Create a wrapper that sets verify_ssl = False
@@ -128,7 +138,6 @@ class DaytonaTools(Toolkit):
                 original_init(self, *args, **kwargs)
                 self.verify_ssl = False
 
-            # Apply the monkey patch
             setattr(Configuration, "__init__", patched_init)
             import urllib3
 
@@ -156,12 +165,21 @@ class DaytonaTools(Toolkit):
             log_info(f"Updated working directory to: {directory}")
 
     def _get_or_create_sandbox(self, agent: Union[Agent, Team]) -> Sandbox:
-        """Get existing sandbox or create new one if not found."""
+        """Get existing sandbox or create new one"""
         try:
             sandbox = None
-            sandbox_id = None
 
-            if self.persistent and agent and hasattr(agent, "session_state"):
+            # Use explicit sandbox
+            if self.sandbox_id:
+                try:
+                    sandbox = self.daytona.get(self.sandbox_id)
+                    log_debug(f"Using explicit sandbox: {self.sandbox_id}")
+                except Exception as e:
+                    log_debug(f"Failed to get sandbox {self.sandbox_id}: {e}")
+                    sandbox = None
+
+            # Use persistent sandbox
+            elif self.persistent and hasattr(agent, "session_state"):
                 if agent.session_state is None:
                     agent.session_state = {}
 
@@ -169,15 +187,19 @@ class DaytonaTools(Toolkit):
                 if sandbox_id:
                     try:
                         sandbox = self.daytona.get(sandbox_id)
+                        log_debug(f"Using persistent sandbox: {sandbox_id}")
                     except Exception as e:
-                        log_warning(f"Failed to get sandbox {sandbox_id}: {e}. Creating new one.")
+                        log_debug(f"Failed to get sandbox {sandbox_id}: {e}")
                         sandbox = None
 
-                if not sandbox:
-                    sandbox = self._create_new_sandbox(agent)
-                    agent.session_state["sandbox_id"] = sandbox.id
-            else:
+            # Create new sandbox if none found
+            if sandbox is None:
                 sandbox = self._create_new_sandbox(agent)
+                # Store sandbox ID for persistent sandboxes
+                if self.persistent and hasattr(agent, "session_state"):
+                    if agent.session_state is None:
+                        agent.session_state = {}
+                    agent.session_state["sandbox_id"] = sandbox.id
 
             # Ensure sandbox is started
             if sandbox.state != "started":
@@ -206,7 +228,7 @@ class DaytonaTools(Toolkit):
                 language=self.sandbox_language,
                 os_user=self.sandbox_os_user,
                 env_vars=self.sandbox_env_vars,
-                auto_stop_interval=60,  # Stop after 1 hour
+                auto_stop_interval=self.auto_stop_interval,
                 labels=labels,
                 public=self.sandbox_public,
             )
