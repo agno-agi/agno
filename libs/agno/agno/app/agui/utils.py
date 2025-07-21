@@ -24,7 +24,7 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 
 from agno.models.message import Message
-from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent
+from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunEvent, TeamRunResponseEvent
 
@@ -237,8 +237,11 @@ def _create_completion_events(
         events_to_emit.append(end_message_event)
 
     # emit frontend tool calls, i.e. external_execution=True
-    if chunk.event == RunEvent.run_paused and chunk.tools:
+    if isinstance(chunk, RunResponsePausedEvent) and chunk.tools is not None:
         for tool in chunk.tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool.tool_call_id,
