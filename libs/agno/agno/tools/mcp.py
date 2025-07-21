@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -83,7 +83,7 @@ class MCPTools(Toolkit):
         super().__init__(name="MCPTools", **kwargs)
 
         if transport == "sse":
-            log_warning("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # because tools are not available until `initialize()` is called.
@@ -308,7 +308,7 @@ class MultiMCPTools(Toolkit):
 
         if urls_transports is not None:
             if "sse" in urls_transports:
-                log_warning("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+                log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
 
         if urls is not None:
             if urls_transports is None:
