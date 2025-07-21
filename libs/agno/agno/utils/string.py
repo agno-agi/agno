@@ -28,6 +28,9 @@ def is_valid_uuid(uuid_str: str) -> bool:
 
 
 def safe_content_hash(content: str) -> str:
+    """
+    Return an MD5 hash of the input string, replacing null bytes and invalid surrogates for safe hashing.
+    """
     cleaned_content = content.replace("\x00", "\ufffd")
     try:
         content_hash = hashlib.md5(cleaned_content.encode("utf-8")).hexdigest()
