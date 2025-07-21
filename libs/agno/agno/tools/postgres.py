@@ -16,12 +16,6 @@ from agno.utils.log import log_debug, log_info
 
 
 class PostgresTools(Toolkit):
-    """
-    A tool to securely connect to a PostgreSQL database and perform read-only operations.
-    This tool is designed to be used by an LLM and includes safeguards against SQL injection
-    and other common vulnerabilities.
-    """
-
     def __init__(
         self,
         connection: Optional[PgConnection] = None,
@@ -63,14 +57,12 @@ class PostgresTools(Toolkit):
     @property
     def connection(self) -> PgConnection:
         """
-        Returns the Postgres psycopg2 connection, establishing it if necessary.
-        The connection is set to read-only.
+        Returns the Postgres psycopg2 connection.
+        :return psycopg2.extensions.connection: psycopg2 connection
         """
         if self._connection is None or self._connection.closed:
             log_info("Establishing new PostgreSQL connection.")
-            connection_kwargs: Dict[str, Any] = {
-                "cursor_factory": DictCursor
-            }
+            connection_kwargs: Dict[str, Any] = {"cursor_factory": DictCursor}
             if self.db_name:
                 connection_kwargs["database"] = self.db_name
             if self.user:
@@ -81,7 +73,7 @@ class PostgresTools(Toolkit):
                 connection_kwargs["host"] = self.host
             if self.port:
                 connection_kwargs["port"] = self.port
-            
+
             connection_kwargs["options"] = f"-c search_path={self.table_schema}"
 
             self._connection = psycopg2.connect(**connection_kwargs)
@@ -101,17 +93,13 @@ class PostgresTools(Toolkit):
             log_info("Closing PostgreSQL connection.")
             self._connection.close()
             self._connection = None
-            
-    def _run_query_internal(self, query: str, params: Optional[tuple] = None) -> str:
-        """
-        Internal, secure method for running a query and formatting the result.
-        Uses parameterized queries where applicable.
-        """
+
+    def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
             with self.connection.cursor() as cursor:
                 log_info(f"Running Query: {query} with Params: {params}")
                 cursor.execute(query, params)
-                
+
                 if cursor.description is None:
                     return cursor.statusmessage or "Query executed successfully with no output."
 
@@ -137,7 +125,7 @@ class PostgresTools(Toolkit):
     def show_tables(self) -> str:
         """Lists all tables in the configured schema."""
         stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
-        return self._run_query_internal(stmt, (self.table_schema,))
+        return self._execute_query(stmt, (self.table_schema,))
 
     def describe_table(self, table: str) -> str:
         """
@@ -151,7 +139,7 @@ class PostgresTools(Toolkit):
             FROM information_schema.columns
             WHERE table_schema = %s AND table_name = %s;
         """
-        return self._run_query_internal(stmt, (self.table_schema, table))
+        return self._execute_query(stmt, (self.table_schema, table))
 
     def summarize_table(self, table: str) -> str:
         """
@@ -179,11 +167,13 @@ class PostgresTools(Toolkit):
                 table_identifier = sql.Identifier(self.table_schema, table)
 
                 for col in columns:
-                    col_name, data_type = col['column_name'], col['data_type']
+                    col_name, data_type = col["column_name"], col["data_type"]
                     col_identifier = sql.Identifier(col_name)
 
                     query = None
-                    if any(t in data_type for t in ['integer', 'numeric', 'real', 'double precision', 'bigint', 'smallint']):
+                    if any(
+                        t in data_type for t in ["integer", "numeric", "real", "double precision", "bigint", "smallint"]
+                    ):
                         query = sql.SQL("""
                             SELECT
                                 COUNT(*) AS total_rows,
@@ -194,7 +184,7 @@ class PostgresTools(Toolkit):
                                 STDDEV({col}) AS std_deviation
                             FROM {tbl};
                         """).format(col=col_identifier, tbl=table_identifier)
-                    elif any(t in data_type for t in ['char', 'text', 'uuid']):
+                    elif any(t in data_type for t in ["char", "text", "uuid"]):
                         query = sql.SQL("""
                             SELECT
                                 COUNT(*) AS total_rows,
@@ -203,15 +193,17 @@ class PostgresTools(Toolkit):
                                 AVG(LENGTH({col}::text)) as avg_length
                             FROM {tbl};
                         """).format(col=col_identifier, tbl=table_identifier)
-                    
+
                     if query:
                         cursor.execute(query)
                         stats = cursor.fetchone()
                         summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
                         for key, value in stats.items():
-                            val_str = f"{value:.2f}" if isinstance(value, (float, int)) and value is not None else str(value)
+                            val_str = (
+                                f"{value:.2f}" if isinstance(value, (float, int)) and value is not None else str(value)
+                            )
                             summary_parts.append(f"  {key}: {val_str}")
-                
+
                 return "\n".join(summary_parts)
 
         except psycopg2.Error as e:
@@ -220,26 +212,22 @@ class PostgresTools(Toolkit):
     def inspect_query(self, query: str) -> str:
         """
         Shows the execution plan for a SQL query (using EXPLAIN).
-        This is useful for understanding query performance without running it.
 
         :param query: The SQL query to inspect.
         :return: The query's execution plan.
         """
-        # EXPLAIN is a read-only command, so the risk of direct f-string usage is low.
-        # However, it's wrapped in the internal runner for consistency.
-        return self._run_query_internal(f"EXPLAIN {query}")
+        return self._execute_query(f"EXPLAIN {query}")
 
     def export_table_to_path(self, table: str, path: str) -> str:
         """
-        Exports a table's data to a local CSV file. This is a safe, client-side export.
+        Exports a table's data to a local CSV file.
 
         :param table: The name of the table to export.
-        :param path: The local file path (e.g., '/tmp/my_data.csv') to save the file.
+        :param path: The local file path to save the file.
         :return: A confirmation message with the file path.
         """
         log_debug(f"Exporting Table {table} as CSV to local path {path}")
 
-        # Use psycopg2.sql to safely quote the table identifier
         table_identifier = sql.Identifier(self.table_schema, table)
         stmt = sql.SQL("SELECT * FROM {tbl};").format(tbl=table_identifier)
 
@@ -247,8 +235,8 @@ class PostgresTools(Toolkit):
             with self.connection.cursor() as cursor:
                 cursor.execute(stmt)
                 columns = [desc[0] for desc in cursor.description]
-                
-                with open(path, 'w', newline='', encoding='utf-8') as f:
+
+                with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(columns)
                     writer.writerows(cursor)
@@ -260,11 +248,8 @@ class PostgresTools(Toolkit):
     def run_query(self, query: str) -> str:
         """
         Runs a read-only SQL query and returns the result.
-        WARNING: While the connection is read-only, complex queries can still
-        consume significant database resources. Use `inspect_query` first for
-        any non-trivial query.
 
         :param query: The SQL query to run.
         :return: The query result as a formatted string.
         """
-        return self._run_query_internal(query)
+        return self._execute_query(query)
