@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning, log_debug
 
 try:
     from daytona import (
@@ -25,7 +25,7 @@ except ImportError:
 DEFAULT_INSTRUCTIONS = dedent(
     """\
     You have access to a persistent Daytona sandbox for code execution. The sandbox maintains state across interactions.
-    
+
     Available tools:
     - `run_code`: Execute code in the sandbox
     - `run_shell_command`: Execute shell commands (bash)
@@ -34,13 +34,13 @@ DEFAULT_INSTRUCTIONS = dedent(
     - `list_files`: List directory contents
     - `delete_file`: Delete files or directories
     - `change_directory`: Change the working directory
-    
+
     CRITICAL WORKFLOW:
     1. Before running Python scripts, check if required packages are installed
     2. Install missing packages with: run_shell_command("pip install package1 package2")
     3. When running scripts, capture both output AND errors
     4. If a script produces no output, check for errors or add print statements
-    
+
     IMPORTANT: Always use single quotes for the content parameter when creating files
     """
 )
@@ -133,7 +133,7 @@ class DaytonaTools(Toolkit):
             import urllib3
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            log_warning(
+            log_debug(
                 "SSL certificate verification is disabled",
             )
         except ImportError:
@@ -226,7 +226,7 @@ class DaytonaTools(Toolkit):
 
     # Tools
     def run_code(self, agent: Union[Agent, Team], code: str) -> str:
-        """Execute code in the Daytona sandbox.
+        """Execute Python code in the Daytona sandbox.
 
         Args:
             code: Code to execute
@@ -249,6 +249,7 @@ class DaytonaTools(Toolkit):
 
     def run_shell_command(self, agent: Union[Agent, Team], command: str) -> str:
         """Execute a shell command in the sandbox.
+
         Args:
             command: Shell command to execute
 

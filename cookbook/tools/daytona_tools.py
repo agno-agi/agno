@@ -6,12 +6,10 @@ This example shows how to use Agno's Daytona integration to run Agent-generated 
 1. Get your Daytona API key and API URL: https://app.daytona.io/dashboard/keys
 2. Set the API key and API URL as environment variables:
     export DAYTONA_API_KEY=<your_api_key>
-    export DAYTONA_API_URL=<your_api_url>
+    export DAYTONA_API_URL=<your_api_url> (optional)
 3. Install the dependencies:
     pip install agno anthropic daytona
 """
-
-from textwrap import dedent
 
 from agno.agent import Agent
 from agno.tools.daytona import DaytonaTools
