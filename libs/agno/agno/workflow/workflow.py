@@ -19,7 +19,6 @@ from agno.run.team import TeamRunResponseEvent
 from agno.run.workflow import WorkflowRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
-from agno.team.team import Team
 from agno.utils.common import nested_model_dump
 from agno.utils.log import log_debug, log_warning, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.merge_dict import merge_dictionaries
@@ -155,19 +154,6 @@ class Workflow:
         self.set_session_id()
         self.initialize_memory()
 
-        # Update workflow_id for all agents before registration
-        for field_name, value in self.__class__.__dict__.items():
-            if isinstance(value, Agent):
-                value.initialize_agent()
-                value.workflow_id = self.workflow_id
-
-            if isinstance(value, Team):
-                value.initialize_team()
-                value.workflow_id = self.workflow_id
-
-        # Register the workflow, which will also register agents and teams
-        self.register_workflow()
-
         # Create a run_id
         self.run_id = str(uuid4())
 
@@ -207,6 +193,7 @@ class Workflow:
                         isinstance(item, tuple(get_args(RunResponseEvent)))
                         or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                        or isinstance(item, RunResponse)
                     ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
@@ -267,19 +254,6 @@ class Workflow:
         self.set_session_id()
         self.initialize_memory()
 
-        # Update workflow_id for all agents before registration
-        for field_name, value in self.__class__.__dict__.items():
-            if isinstance(value, Agent):
-                value.initialize_agent()
-                value.workflow_id = self.workflow_id
-
-            if isinstance(value, Team):
-                value.initialize_team()
-                value.workflow_id = self.workflow_id
-
-        # Register the workflow, which will also register agents and teams
-        await self.aregister_workflow()
-
         # Create a run_id
         self.run_id = str(uuid4())
 
@@ -295,8 +269,13 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.run_id}", center=True)
         try:
+            from inspect import isasyncgen, isasyncgenfunction
+
             self._subclass_run = cast(Callable, self._subclass_run)
-            result = await self._subclass_run(**kwargs)
+            if isasyncgenfunction(self._subclass_run) or isasyncgen(self._subclass_run):
+                result = self._subclass_run(**kwargs)
+            else:
+                result = await self._subclass_run(**kwargs)
         except Exception as e:
             logger.error(f"Workflow.arun() failed: {e}")
             raise e
@@ -318,6 +297,7 @@ class Workflow:
                         isinstance(item, tuple(get_args(RunResponseEvent)))
                         or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                        or isinstance(item, RunResponse)
                     ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
@@ -416,6 +396,7 @@ class Workflow:
         # First, check if the subclass has a run method
         #   If the run() method has been overridden by the subclass,
         #   then self.__class__.run is not Workflow.run will be True
+        run_type = "sync"
         if self.__class__.run is not Workflow.run or self.__class__.arun is not Workflow.arun:
             # Store the original run methods bound to the instance
             if self.__class__.run is not Workflow.run:
@@ -426,6 +407,7 @@ class Workflow:
                 self._subclass_run = self.__class__.arun.__get__(self)
                 # Get the parameters of the async run method
                 sig = inspect.signature(self.__class__.arun)
+                run_type = "async"
 
             # Convert parameters to a serializable format
             self._run_parameters = {
@@ -461,11 +443,15 @@ class Workflow:
             )
             # Important: Replace the instance's run method with run_workflow
             # This is so we call run_workflow() instead of the subclass's run()
-            object.__setattr__(self, "run", self.run_workflow.__get__(self))
+            if run_type == "sync":
+                object.__setattr__(self, "run", self.run_workflow.__get__(self))
+            elif run_type == "async":
+                object.__setattr__(self, "arun", self.arun_workflow.__get__(self))
         else:
             # If the subclass does not override the run method,
             # the Workflow.run() method will be called and will log an error
             self._subclass_run = self.run
+
             self._run_parameters = {}
             self._run_return_type = None
 
@@ -789,121 +775,3 @@ class Workflow:
 
         # For other types, return as is
         return field_value
-
-    async def aregister_workflow(self, force: bool = False) -> None:
-        """Async version of register_workflow"""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        if not self.workflow_id:
-            self.set_workflow_id()
-
-        try:
-            from agno.api.schemas.workflows import WorkflowCreate
-            from agno.api.workflows import acreate_workflow
-
-            workflow_config = self.to_config_dict()
-            # Register the workflow as an app
-            await acreate_workflow(
-                workflow=WorkflowCreate(
-                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
-                )
-            )
-
-            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
-        except Exception as e:
-            log_warning(f"Failed to register workflow: {e}")
-
-    def register_workflow(self, force: bool = False) -> None:
-        """Register this workflow with Agno's platform.
-
-        Args:
-            force: If True, register the workflow even if monitoring is disabled
-        """
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        if not self.workflow_id:
-            self.set_workflow_id()
-
-        try:
-            from agno.api.schemas.workflows import WorkflowCreate
-            from agno.api.workflows import create_workflow
-
-            workflow_config = self.to_config_dict()
-            # Register the workflow as an app
-            create_workflow(
-                workflow=WorkflowCreate(
-                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
-                )
-            )
-
-            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
-        except Exception as e:
-            log_warning(f"Failed to register workflow: {e}")
-
-    def to_config_dict(self) -> Dict[str, Any]:
-        """Convert the workflow to a config dictionary including all agents and teams.
-
-        Returns:
-            Dict[str, Any]: Dictionary representation of the workflow config.
-        """
-        # Basic workflow information
-        config: Dict[str, Any] = {
-            "name": self.name,
-            "description": self.description,
-            "type": "workflow",
-            "app_id": self.app_id,
-            "storage": {
-                "name": self.storage.__class__.__name__ if self.storage is not None else None,
-            },
-        }
-
-        agents: List[Dict[str, Any]] = []
-        teams: List[Dict[str, Any]] = []
-
-        for attr_name in dir(self.__class__):
-            # Skip private/special attributes and methods
-            if attr_name.startswith("_") or callable(getattr(self.__class__, attr_name)):
-                continue
-
-            # Get the class attribute
-            attr_value = getattr(self.__class__, attr_name)
-
-            if isinstance(attr_value, Agent):
-                # Skip agents already in the list
-                if any(a.get("name") == (attr_value.name or attr_name) for a in agents):
-                    continue
-
-                agent_config = attr_value.get_agent_config_dict()
-                agent_config.update(
-                    {
-                        "agent_id": attr_value.agent_id if hasattr(attr_value, "agent_id") else None,
-                        "name": attr_value.name or attr_name,
-                        "workflow_id": self.workflow_id,
-                    }
-                )
-                agents.append(agent_config)
-
-            elif isinstance(attr_value, Team):
-                if any(t.get("name") == (attr_value.name or attr_name) for t in teams):
-                    continue
-
-                team_config = attr_value.to_platform_dict()
-                team_config.update(
-                    {
-                        "team_id": attr_value.team_id if hasattr(attr_value, "team_id") else None,
-                        "name": attr_value.name or attr_name,
-                        "workflow_id": self.workflow_id,
-                    }
-                )
-                teams.append(team_config)
-
-        if agents:
-            config["agents"] = agents
-        if teams:
-            config["teams"] = teams
-
-        return config
