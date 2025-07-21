@@ -13,7 +13,7 @@
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.singlestore import SingleStore
 from sqlalchemy.engine import create_engine
 
@@ -32,25 +32,26 @@ if SSL_CERT:
 
 db_engine = create_engine(db_url)
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=SingleStore(
+vector_db = SingleStore(
         collection="recipes",
         db_engine=db_engine,
         schema=DATABASE,
-    ),
+    )
+
+knowledge_base = Knowledge(
+    name="My SingleStore Knowledge Base",
+    vector_store=vector_db
 )
 
-# Comment out after first run
-knowledge_base.load(recreate=False)
+knowledge_base.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
+)
 
 agent = Agent(
     knowledge=knowledge_base,
-    # Show tool calls in the response
-    show_tool_calls=True,
-    # Enable the agent to search the knowledge base
     search_knowledge=True,
-    # Enable the agent to read the chat history
     read_chat_history=True,
 )
 
