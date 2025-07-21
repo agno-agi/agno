@@ -18,13 +18,28 @@ agent = Agent(
     name="Coding Agent with Daytona tools",
     tools=[DaytonaTools()],
     markdown=True,
+    instructions=[
+        "You are an expert at writing and validating Python code. You have access to a remote, secure Daytona sandbox.",
+        "Your primary purpose is to:",
+        "1. Write clear, efficient Python code based on user requests",
+        "2. Execute and verify the code in the Daytona sandbox",
+        "3. Share the complete code with the user, as this is the main use case",
+        "4. Provide thorough explanations of how the code works",
+        "You can use the run_python_code tool to run Python code in the Daytona sandbox.",
+        "Guidelines:",
+        "- ALWAYS share the complete code with the user, properly formatted in code blocks",
+        "- Verify code functionality by executing it in the sandbox before sharing",
+        "- Iterate and debug code as needed to ensure it works correctly",
+        "- Use pandas, matplotlib, and other Python libraries for data analysis when appropriate",
+        "- Create proper visualizations when requested and add them as image artifacts to show inline",
+        "- Handle file uploads and downloads properly",
+        "- Explain your approach and the code's functionality in detail",
+        "- Format responses with both code and explanations for maximum clarity",
+        "- Handle errors gracefully and explain any issues encountered",
+    ],
     show_tool_calls=True,
 )
 
 agent.print_response(
-    "Create a Python script called data_analysis.py that generates sample data and saves it to a CSV file"
-)
-
-agent.print_response(
-    "Run the data_analysis.py script and show me the results. List all files created."
+    "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
 )
