@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union, AsyncIterator
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -137,10 +137,11 @@ class AwsBedrock(Model):
         else:
             if not self.aws_access_key_id or not self.aws_secret_access_key:
                 import os
+
                 env_access_key = os.environ.get("AWS_ACCESS_KEY_ID")
                 env_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
                 env_region = os.environ.get("AWS_REGION")
-                
+
                 if env_access_key and env_secret_key:
                     self.aws_access_key_id = env_access_key
                     self.aws_secret_access_key = env_secret_key
@@ -155,7 +156,7 @@ class AwsBedrock(Model):
                         "aws_secret_access_key": self.aws_secret_access_key,
                     }
                 )
-        
+
         return self.async_session.client(**client_kwargs)
 
     def _format_tools_for_request(self, tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
