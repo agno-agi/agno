@@ -405,42 +405,62 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
-        with self.Session.begin() as sess:
-            stmt = delete(self.table).where(self.table.c.id == id)
-            sess.execute(stmt)
-            return True
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.id == id)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with ID {id}: {e}")
+            return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
         """
         Delete a document by its content ID.
         """
         from sqlalchemy import delete
-        
-        with self.Session.begin() as sess:
-            stmt = delete(self.table).where(self.table.c.content_id == content_id)
-            sess.execute(stmt)
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.content_id == content_id)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with content_id {content_id}: {e}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
         """
         Delete a document by its name.
         """
         from sqlalchemy import delete
-        
-        with self.Session.begin() as sess:
-            stmt = delete(self.table).where(self.table.c.name == name)
-            sess.execute(stmt)
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.name == name)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with name {name}: {e}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """
-        Delete a document by its metadata.
+        Delete documents by metadata.
         """
         from sqlalchemy import delete
-        
-        with self.Session.begin() as sess:
-            stmt = delete(self.table).where(self.table.c.meta_data == metadata)
-            sess.execute(stmt)
 
-            
+        try:
+            with self.Session.begin() as sess:
+                # Convert metadata to JSON string for comparison
+                metadata_json = json.dumps(metadata, sort_keys=True)
+                stmt = delete(self.table).where(self.table.c.meta_data == metadata_json)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 

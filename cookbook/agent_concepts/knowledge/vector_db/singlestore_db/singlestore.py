@@ -33,26 +33,27 @@ if SSL_CERT:
 db_engine = create_engine(db_url)
 
 vector_db = SingleStore(
-        collection="recipes",
-        db_engine=db_engine,
-        schema=DATABASE,
-    )
-
-knowledge_base = Knowledge(
-    name="My SingleStore Knowledge Base",
-    vector_store=vector_db
+    collection="recipes",
+    db_engine=db_engine,
+    schema=DATABASE,
 )
 
-knowledge_base.add_content(
+knowledge = Knowledge(name="My SingleStore Knowledge Base", vector_store=vector_db)
+
+knowledge.add_content(
     name="Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"doc_type": "recipe_book"},
 )
 
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
     read_chat_history=True,
 )
 
 agent.print_response("How do I make pad thai?", markdown=True)
+
+vector_db.delete_by_name("Recipes")
+# or
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
