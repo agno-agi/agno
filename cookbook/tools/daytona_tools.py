@@ -20,8 +20,7 @@ agent = Agent(
     name="Coding Agent with Daytona tools",
     tools=[DaytonaTools()],
     markdown=True,
-    # show_tool_calls=True,
-    debug_mode=True,
+    show_tool_calls=True,
 )
 
 agent.print_response(
