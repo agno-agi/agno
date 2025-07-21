@@ -9,8 +9,8 @@ from agno.vectordb.mongodb import MongoDb
 # Atlas: "mongodb+srv://<username>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority"
 
 # Example with MongoDB Atlas (replace with your credentials)
-username = "kaus"
-password = "agno123"
+username = ""
+password = ""
 encoded_password = urllib.parse.quote_plus(password)
 connection_string = f"mongodb+srv://{username}:{encoded_password}@agno-mdb.xrv6kn1.mongodb.net/?retryWrites=true&w=majority&appName=agno-mdb"
 
