@@ -128,7 +128,7 @@ def test_delete_by_id(chroma_db, sample_documents):
     # Delete by ID - may not work with current implementation
     result = chroma_db.delete_by_id(doc_id)
     # ChromaDB might not support deletion by MD5 hash ID, so we'll check if method exists
-    if hasattr(chroma_db, 'delete_by_id'):
+    if hasattr(chroma_db, "delete_by_id"):
         # If deletion worked, count should be 2
         if result:
             assert chroma_db.get_count() == 2
@@ -172,7 +172,7 @@ def test_delete_by_metadata(chroma_db, sample_documents):
     chroma_db.insert(sample_documents)
     assert chroma_db.get_count() == 3
 
-    # Delete by single metadata condition  
+    # Delete by single metadata condition
     result = chroma_db.delete_by_metadata({"type": "soup"})
     assert result is True
     assert chroma_db.get_count() == 2  # Should only delete tom_kha
@@ -361,6 +361,7 @@ def test_multiple_document_operations(chroma_db, sample_documents):
     assert len(curry_results) == 1
     assert "curry" in curry_results[0].content.lower()
 
+
 @pytest.mark.asyncio
 async def test_async_create_collection(chroma_db):
     """Test creating a collection asynchronously"""
@@ -426,7 +427,7 @@ async def test_async_name_exists(chroma_db, sample_documents):
     await chroma_db.async_insert([sample_documents[0]])
     exists = await chroma_db.async_name_exists("tom_kha")
     assert exists is True
-    
+
     exists = await chroma_db.async_name_exists("nonexistent")
     assert exists is False
 
