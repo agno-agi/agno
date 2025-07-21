@@ -34,23 +34,23 @@ knowledge = Knowledge(
 )
 
 
-# knowledge.add_content(
-#     name="Recipes",
-#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-#     metadata={"doc_type": "recipe_book"},
-# )
+knowledge.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
+)
 
-# agent = Agent(
-#     knowledge=knowledge,
-#     show_tool_calls=True,
-# )
+agent = Agent(
+    knowledge=knowledge,
+    show_tool_calls=True,
+)
 
-# agent.print_response(
-#     "What are the health benefits of Khao Niew Dam Piek Maphrao Awn?",
-#     markdown=True,
-#     show_full_reasoning=True,
-# )
+agent.print_response(
+    "What are the health benefits of Khao Niew Dam Piek Maphrao Awn?",
+    markdown=True,
+    show_full_reasoning=True,
+)
 
-vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+vector_db.delete_by_name("Recipes")
 # or
-# vector_db.delete_by_name("Recipes")
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
