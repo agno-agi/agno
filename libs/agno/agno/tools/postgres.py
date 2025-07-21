@@ -144,8 +144,6 @@ class PostgresTools(Toolkit):
     def summarize_table(self, table: str) -> str:
         """
         Computes and returns key summary statistics for a table's columns.
-        It automatically detects column types (numeric, text, date) and provides
-        relevant statistics for each.
 
         :param table: The name of the table to summarize.
         :return: A string containing a summary of the table.
