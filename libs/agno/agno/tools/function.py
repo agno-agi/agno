@@ -151,7 +151,7 @@ class Function(BaseModel):
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "self"]
             }
 
             # Parse docstring for parameters
@@ -177,7 +177,9 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
@@ -235,7 +237,7 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team"]
+            excluded_params = ["return", "agent", "team", "self"]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -337,7 +339,9 @@ class Function(BaseModel):
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
+        self.parameters["required"] = [
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+        ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
