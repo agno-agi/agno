@@ -736,14 +736,12 @@ class Weaviate(VectorDb):
         """Delete content by name using direct filter deletion."""
         try:
             collection = self.get_client().collections.get(self.collection)
-            
-            result = collection.data.delete_many(
-                where=Filter.by_property("name").equal(name)
-            )
-            
+
+            result = collection.data.delete_many(where=Filter.by_property("name").equal(name))
+
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error deleting documents by name '{name}': {e}")
             return False
@@ -752,18 +750,18 @@ class Weaviate(VectorDb):
         """Delete content by metadata using direct filter deletion."""
         try:
             collection = self.get_client().collections.get(self.collection)
-            
+
             # Build filter for metadata search
             filter_expr = self._build_filter_expression(metadata)
             if filter_expr is None:
                 log_info(f"No valid filter could be built for metadata: {metadata}")
                 return False
-            
+
             result = collection.data.delete_many(where=filter_expr)
-            
+
             log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error deleting documents by metadata '{metadata}': {e}")
             return False
@@ -772,14 +770,12 @@ class Weaviate(VectorDb):
         """Delete content by content ID using direct filter deletion."""
         try:
             collection = self.get_client().collections.get(self.collection)
-            
-            result = collection.data.delete_many(
-                where=Filter.by_property("content_id").equal(content_id)
-            )
-            
+
+            result = collection.data.delete_many(where=Filter.by_property("content_id").equal(content_id))
+
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
             return False
