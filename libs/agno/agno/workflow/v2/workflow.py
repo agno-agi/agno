@@ -1161,7 +1161,7 @@ class Workflow:
         **kwargs: Any,
     ) -> WorkflowRunResponse:
         """Execute workflow in background using asyncio.create_task() - DIRECT EXECUTION"""
-        
+
         # Set up session identifiers (same as regular run method)
         if user_id is not None:
             self.user_id = user_id
@@ -1176,7 +1176,7 @@ class Workflow:
         self.initialize_workflow()
         self.load_session()
         self._prepare_steps()
-        
+
         # Create workflow run response that will be updated by _execute
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
@@ -1187,64 +1187,53 @@ class Workflow:
             status=RunStatus.pending,
             content="Workflow execution started in background",
         )
-        
-        # Store PENDING response immediately 
+
+        # Store PENDING response immediately
         if self.workflow_session:
             self.workflow_session.add_run(workflow_run_response)
         self.write_to_storage()
-        
+
         # Prepare execution input
         inputs = WorkflowExecutionInput(
             message=message,
             additional_data=additional_data,
             audio=audio,  # type: ignore
-            images=images,  # type: ignore  
+            images=images,  # type: ignore
             videos=videos,  # type: ignore
         )
-        
+
         self.update_agents_and_teams_session_info()
 
-        async def execute_workflow_directly():
+        async def execute_workflow_background():
             """Direct execution wrapper with minimal overhead"""
             try:
                 # Quick status update to RUNNING
                 self.update_background_status(self.run_id, RunStatus.running)
-                
+
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
                     lambda: self._execute(
-                        execution_input=inputs, 
-                        workflow_run_response=workflow_run_response,
-                        **kwargs
+                        execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs
                     ),
                 )
-                
+
                 # result IS workflow_run_response (same object, modified by _execute)
                 # Quick status update to database
                 self.update_background_status(self.run_id, workflow_run_response.status)
-                
+
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
-                log_debug(f"Content length: {len(str(workflow_run_response.content)) if workflow_run_response.content else 0}")
-                
+                log_debug(
+                    f"Content length: {len(str(workflow_run_response.content)) if workflow_run_response.content else 0}"
+                )
+
             except Exception as e:
                 logger.error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 self.update_background_status(self.run_id, RunStatus.error)
-            
+
             finally:
-                # Save the updated response to storage
-                if self.workflow_session:
-                    # Update the existing run (it was already added as PENDING)
-                    for i, run in enumerate(self.workflow_session.runs):
-                        if run.run_id == self.run_id:
-                            self.workflow_session.runs[i] = workflow_run_response
-                            break
-                
-                self.write_to_storage()
-                log_debug("Background execution storage write completed")
-                
                 # Remove from background registry
                 if self.run_id in Workflow._background_runs:
                     del Workflow._background_runs[self.run_id]
@@ -1252,36 +1241,37 @@ class Workflow:
         # Create and start asyncio task
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(execute_workflow_directly())
+            task = loop.create_task(execute_workflow_background())
         except RuntimeError:
             # No event loop, use threading fallback
             import threading
-            
+
             def run_in_thread():
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
-                    new_loop.run_until_complete(execute_workflow_directly())
+                    new_loop.run_until_complete(execute_workflow_background())
                 finally:
                     new_loop.close()
-            
+
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
             task = thread
-        
+
         # Track background run
         from agno.workflow.v2.types import BackgroundWorkflowRun
+
         background_run = BackgroundWorkflowRun(
             run_id=self.run_id,
             workflow_id=self.workflow_id or "unknown",
-            session_id=self.session_id or "unknown", 
+            session_id=self.session_id or "unknown",
             task=task,
             started_at=time.time(),
             workflow_run_response=workflow_run_response,  # This will be updated by _execute!
         )
-        
+
         Workflow._background_runs[self.run_id] = background_run
-        
+
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
@@ -1301,19 +1291,25 @@ class Workflow:
                     session = self.storage.read(session_id=self.session_id)
                     if session and isinstance(session, WorkflowSessionV2) and session.runs:
                         log_debug(f"🗂️ Found session with {len(session.runs)} total runs")
+
+                        matching_run = None
                         for run in session.runs:
                             if run.run_id == run_id:
-                                log_debug(
-                                    f"📄 Found full response! Content length: {len(str(run.content)) if run.content else 0}"
-                                )
-                                log_debug(f"📊 Step responses: {len(run.step_responses) if run.step_responses else 0}")
-                                # Update the status from database (source of truth) to handle any edge cases
-                                run.status = RunStatus(status_value)
-                                # This is the EXACT SAME response as normal run() would return!
-                                return run
-                        log_debug(f"⚠️ Run with ID {run_id} not found in {len(session.runs)} runs")
-                        for run in session.runs:
-                            log_debug(f"   - Run ID: {run.run_id}")
+                                matching_run = run
+
+                        if matching_run:
+                            log_debug(
+                                f"📄 Found full response! Content length: {len(str(matching_run.content)) if matching_run.content else 0}"
+                            )
+                            log_debug(
+                                f"📊 Step responses: {len(matching_run.step_responses) if matching_run.step_responses else 0}"
+                            )
+                            # Update the status from database (source of truth) to handle any edge cases
+                            matching_run.status = RunStatus(status_value)
+                            # This is the EXACT SAME response as normal run() would return!
+                            return matching_run
+
+                        log_debug(f"⚠️ No runs found with ID {run_id}")
                     else:
                         log_debug("❌ No session or runs found")
 

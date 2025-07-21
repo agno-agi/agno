@@ -83,50 +83,50 @@ def is_terminal_status(status_value: str) -> bool:
 
 # Create and use workflow in background
 if __name__ == "__main__":
-    print("🚀 Starting Background Workflow Execution")
-    
-    # Start background execution - returns immediately
-    start_time = time.time()
+    print("🚀 Starting Background Workflow Test")
+
+    # Start background execution
     bg_response = content_creation_workflow.run(
-        message="AI trends in 2024", 
-        background=True
+        message="AI trends in 2024", background=True
     )
-    
-    print(f"⚡ Background execution started in {time.time() - start_time:.2f}s")
-    print(f"📝 Run ID: {bg_response.run_id}")
-    print(f"📊 Status: {get_status_value(bg_response.status)}")
-    
-    # Poll until completion
-    print(f"\n🔄 Polling every 10 seconds until completion...")
-    
+    print(f"📋 Initial Response: {bg_response.status} - {bg_response.content}")
+    print(f"🔍 Run ID: {bg_response.run_id}")
+
+    # Poll every 10 seconds until completion
     poll_count = 0
+    final_response = None
+
     while True:
         poll_count += 1
-        time.sleep(10)  # Poll every 10 seconds
-        
-        # Get current status from database
-        response = content_creation_workflow.poll(bg_response.run_id)
-        
-        if response:
-            current_status = get_status_value(response.status)
-            print(f"   Poll #{poll_count}: {current_status}")
-            
-            # Check if completed
-            if is_terminal_status(current_status):
-                print(f"\n✅ Workflow completed with status: {current_status}")
+        print(f"\n📊 Poll #{poll_count} (every 10s)")
+
+        polled_response = content_creation_workflow.poll(bg_response.run_id)
+
+        if polled_response:
+            status_value = get_status_value(polled_response.status)
+            print(f"   Status: {status_value}")
+            print(f"   Content preview: {str(polled_response.content)[:100]}...")
+
+            if is_terminal_status(status_value):
+                print(f"\n✅ Workflow completed with status: {status_value}")
+                final_response = polled_response  # Save the final response
                 break
         else:
-            print(f"   Poll #{poll_count}: No response")
-        
+            print("   No response from poll")
+
         # Safety limit
         if poll_count > 50:
             print(f"⏰ Timeout after {poll_count} attempts")
             break
-    
+
+        time.sleep(10)
+
     # Print final response using pprint
-    if response and is_terminal_status(get_status_value(response.status)):
-        print(f"\n📄 Final Response:")
+    if final_response:
+        print(f"\n🎉 Final Result:")
         print("=" * 50)
-        pprint_run_response(response, markdown=True)
+        pprint_run_response(
+            final_response, markdown=True
+        )  # ← Fixed: Use final_response instead of bg_response
     else:
         print(f"\n❌ Failed to get final response")
