@@ -32,5 +32,5 @@ class CombinedKnowledgeBase(AgentKnowledge):
 
         for kb in self.sources:
             log_debug(f"Loading documents from {kb.__class__.__name__}")
-            async for document in await kb.async_document_lists:
+            async for document in kb.async_document_lists:  # type: ignore
                 yield document

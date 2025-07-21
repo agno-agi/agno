@@ -252,6 +252,7 @@ jobs:
 
   # Run tests for Mistral
   test-mistral:
+    if: false # Disable mistral tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
