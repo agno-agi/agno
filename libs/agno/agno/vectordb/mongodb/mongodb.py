@@ -602,6 +602,7 @@ class MongoDb(VectorDb):
                         name=doc.get("name"),
                         content=doc["content"],
                         meta_data={**doc.get("meta_data", {}), "score": doc.get("similarityScore", 0.0)},
+                        content_id=doc.get("content_id"),
                     )
                     for doc in results
                 ]
@@ -662,6 +663,7 @@ class MongoDb(VectorDb):
                         name=clean_doc.get("name"),
                         content=clean_doc["content"],
                         meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
+                        content_id=clean_doc.get("content_id"),
                     )
                     docs.append(document)
 
@@ -683,7 +685,7 @@ class MongoDb(VectorDb):
             collection = self._get_collection()
             cursor = collection.find(
                 {"content": {"$regex": query, "$options": "i"}},
-                {"_id": 1, "name": 1, "content": 1, "meta_data": 1},
+                {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [
                 Document(
@@ -691,6 +693,7 @@ class MongoDb(VectorDb):
                     name=doc.get("name"),
                     content=doc["content"],
                     meta_data=doc.get("meta_data", {}),
+                    content_id=doc.get("content_id"),
                 )
                 for doc in cursor
             ]
@@ -758,6 +761,7 @@ class MongoDb(VectorDb):
                     "name": "$docs.name",
                     "content": "$docs.content",
                     "meta_data": "$docs.meta_data",
+                    "content_id": "$docs.content_id",
                     "vs_score": {
                         "$divide": [
                             self.hybrid_vector_weight,
@@ -773,6 +777,7 @@ class MongoDb(VectorDb):
                     "name": 1,
                     "content": 1,
                     "meta_data": 1,
+                    "content_id": 1,
                     "vs_score": 1,
                     # Now fts_score is included with its value (0.0 here)
                     "fts_score": 1,
@@ -798,6 +803,7 @@ class MongoDb(VectorDb):
                                 "name": "$docs.name",
                                 "content": "$docs.content",
                                 "meta_data": "$docs.meta_data",
+                                "content_id": "$docs.content_id",
                                 "vs_score": 0.0,
                                 "fts_score": {
                                     "$divide": [
@@ -813,6 +819,7 @@ class MongoDb(VectorDb):
                                 "name": 1,
                                 "content": 1,
                                 "meta_data": 1,
+                                "content_id": 1,
                                 "vs_score": 1,
                                 "fts_score": 1,
                             }
@@ -827,6 +834,7 @@ class MongoDb(VectorDb):
                     "name": {"$first": "$name"},
                     "content": {"$first": "$content"},
                     "meta_data": {"$first": "$meta_data"},
+                    "content_id": {"$first": "$content_id"},
                     "vs_score": {"$sum": "$vs_score"},
                     "fts_score": {"$sum": "$fts_score"},
                 }
@@ -837,6 +845,7 @@ class MongoDb(VectorDb):
                     "name": 1,
                     "content": 1,
                     "meta_data": 1,
+                    "content_id": 1,
                     "score": {"$add": ["$vs_score", "$fts_score"]},
                 }
             },
@@ -860,6 +869,7 @@ class MongoDb(VectorDb):
                     name=clean_doc.get("name"),
                     content=clean_doc["content"],
                     meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
+                    content_id=clean_doc.get("content_id"),
                 )
                 docs.append(document)
 
@@ -961,6 +971,7 @@ class MongoDb(VectorDb):
             "content": cleaned_content,
             "meta_data": document.meta_data,
             "embedding": document.embedding,
+            "content_id": document.content_id,
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
@@ -1086,6 +1097,7 @@ class MongoDb(VectorDb):
                     name=doc.get("name"),
                     content=doc["content"],
                     meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    content_id=doc.get("content_id"),
                 )
                 for doc in results
             ]
@@ -1161,3 +1173,68 @@ class MongoDb(VectorDb):
             return tuple(self._convert_objectids_to_strings(item) for item in obj)
         else:
             return obj
+
+    def delete_by_id(self, id: str) -> bool:
+        """Delete document by ID."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_one({"_id": id})
+            
+            if result.deleted_count > 0:
+                log_info(f"Deleted {result.deleted_count} document(s) with ID '{id}' from collection '{self.collection_name}'.")
+                return True
+            else:
+                log_info(f"No documents found with ID '{id}' to delete.")
+                return True 
+        except Exception as e:
+            logger.error(f"Error deleting document with ID '{id}': {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete documents by name."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_many({"name": name})
+            
+            log_info(f"Deleted {result.deleted_count} document(s) with name '{name}' from collection '{self.collection_name}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with name '{name}': {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete documents by metadata."""
+        try:
+            collection = self._get_collection()
+            
+            # Build MongoDB query for metadata matching
+            mongo_filters = {}
+            for key, value in metadata.items():
+                # Use dot notation for nested metadata fields
+                mongo_filters[f"meta_data.{key}"] = value
+            
+            result = collection.delete_many(mongo_filters)
+            
+            log_info(f"Deleted {result.deleted_count} document(s) with metadata '{metadata}' from collection '{self.collection_name}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
+            return False
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError
+    def delete_by_content_id(self, content_id: str) -> bool:
+        pass
+        """Delete documents by content ID."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_many({"content_id": content_id})
+            
+            log_info(f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with content_id '{content_id}': {e}")
+            return False
