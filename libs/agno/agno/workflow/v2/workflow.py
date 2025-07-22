@@ -1162,9 +1162,9 @@ class Workflow:
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        audio: Optional[List[AudioArtifact]] = None,
-        images: Optional[List[ImageArtifact]] = None,
-        videos: Optional[List[VideoArtifact]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
         **kwargs: Any,
     ) -> WorkflowRunResponse:
         """Execute workflow in background using asyncio.create_task() - DIRECT EXECUTION"""
@@ -1263,7 +1263,7 @@ class Workflow:
 
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
-            task = thread
+            task = thread  # type: ignore
 
         background_run = BackgroundWorkflowRun(
             run_id=self.run_id,

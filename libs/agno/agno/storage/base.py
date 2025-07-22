@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.storage.session import Session
 
@@ -57,4 +57,12 @@ class Storage(ABC):
 
     @abstractmethod
     def upgrade_schema(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
         raise NotImplementedError
