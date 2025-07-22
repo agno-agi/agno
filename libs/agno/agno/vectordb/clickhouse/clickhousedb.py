@@ -140,7 +140,8 @@ class Clickhouse(VectorDb):
 
             if isinstance(self.index, HNSW):
                 index = (
-                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.dimensions})"
+                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.index.quantization}, "
+                    f"{self.index.hnsw_max_connections_per_layer}, {self.index.hnsw_candidate_list_size_for_construction})"
                 )
                 self.client.command("SET allow_experimental_vector_similarity_index = 1")
             else:
@@ -184,7 +185,8 @@ class Clickhouse(VectorDb):
 
             if isinstance(self.index, HNSW):
                 index = (
-                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.dimensions})"
+                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.index.quantization}, "
+                    f"{self.index.hnsw_max_connections_per_layer}, {self.index.hnsw_candidate_list_size_for_construction})"
                 )
                 await async_client.command("SET allow_experimental_vector_similarity_index = 1")
             else:
@@ -582,6 +584,7 @@ class Clickhouse(VectorDb):
 
     def delete_by_id(self, id: str) -> bool:
         """
+
         Delete a document by its ID.
 
         Args:
