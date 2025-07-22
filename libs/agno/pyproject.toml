@@ -105,6 +105,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
+psycopg2 = ["psycopg2-binary"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -215,6 +216,7 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
+  "agno[psycopg2]",
 ]
 
 # All storage
