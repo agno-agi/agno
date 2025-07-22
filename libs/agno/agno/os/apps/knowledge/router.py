@@ -77,13 +77,19 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         else:
             file_data = None
 
+        name = None
+        if file and file.filename:
+            name = file.filename
+        elif url:
+            name = parsed_urls
+
         content = Content(
-            name=name if name else file.filename,
+            name=name,
             description=description,
             url=parsed_urls,
             metadata=parsed_metadata,
             file_data=file_data,
-            size=file.size if file else None if text_content else len(content_bytes),
+            size=file.size if file else None if text_content else None,
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
