@@ -1,6 +1,5 @@
 import asyncio
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -9,7 +8,6 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
-    ClassVar,
     Dict,
     Iterator,
     List,
@@ -1256,15 +1254,6 @@ class Workflow:
             thread.start()
             task = thread  # type: ignore
 
-        background_run = BackgroundWorkflowRun(
-            run_id=self.run_id,
-            workflow_id=self.workflow_id or "unknown",
-            session_id=self.session_id or "unknown",
-            task=task,
-            started_at=time.time(),
-            workflow_run_response=workflow_run_response,  # This will be updated by _execute!
-        )
-
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
@@ -1366,15 +1355,6 @@ class Workflow:
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
             task = thread  # type: ignore
-
-        background_run = BackgroundWorkflowRun(
-            run_id=self.run_id,
-            workflow_id=self.workflow_id or "unknown",
-            session_id=self.session_id or "unknown",
-            task=task,
-            started_at=time.time(),
-            workflow_run_response=workflow_run_response,  # This will be updated by _execute!
-        )
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
