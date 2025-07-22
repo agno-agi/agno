@@ -214,6 +214,7 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
+  "agno[psycopg2]",
 ]
 
 # All storage
