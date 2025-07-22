@@ -20,7 +20,6 @@ Environment variables needed:
 """
 
 import asyncio
-import os
 from textwrap import dedent
 
 from agno.agent import Agent

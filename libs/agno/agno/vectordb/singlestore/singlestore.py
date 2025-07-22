@@ -81,6 +81,7 @@ class SingleStore(VectorDb):
             Column("created_at", DateTime(timezone=True), server_default=text("now()")),
             Column("updated_at", DateTime(timezone=True), onupdate=text("now()")),
             Column("content_hash", mysql.TEXT),
+            Column("content_id", mysql.TEXT),
             extend_existing=True,
         )
 
@@ -102,7 +103,8 @@ class SingleStore(VectorDb):
                         `usage` TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        content_hash TEXT
+                        content_hash TEXT,
+                        content_id TEXT
                     );
                     """)
                 )
@@ -192,6 +194,7 @@ class SingleStore(VectorDb):
                     embedding=embeddings,
                     usage=usage_json,
                     content_hash=content_hash,
+                    content_id=document.content_id,
                 )
                 sess.execute(stmt)
                 counter += 1
@@ -236,6 +239,7 @@ class SingleStore(VectorDb):
                         embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
+                        content_id=document.content_id,
                     )
                     .on_duplicate_key_update(
                         name=document.name,
@@ -244,6 +248,7 @@ class SingleStore(VectorDb):
                         embedding=embeddings,
                         usage=usage_json,
                         content_hash=content_hash,
+                        content_id=document.content_id,
                     )
                 )
                 sess.execute(stmt)
@@ -276,6 +281,7 @@ class SingleStore(VectorDb):
             self.table.c.content,
             self.table.c.embedding,
             self.table.c.usage,
+            self.table.c.content_id,
         ]
 
         stmt = select(*columns)
@@ -392,6 +398,74 @@ class SingleStore(VectorDb):
             stmt = delete(self.table)
             sess.execute(stmt)
             return True
+
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete a document by its ID.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.id == id)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with ID {id} from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete a document by its content ID.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.content_id == content_id)
+                result = sess.execute(stmt)
+                log_info(
+                    f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'."
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with content_id {content_id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete a document by its name.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.name == name)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with name '{name}' from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting document with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                # Convert metadata to JSON string for comparison
+                metadata_json = json.dumps(metadata, sort_keys=True)
+                stmt = delete(self.table).where(self.table.c.meta_data == metadata_json)
+                result = sess.execute(stmt)
+                log_info(f"Deleted {result.rowcount} records with metadata {metadata} from table '{self.table.name}'.")
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
 
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

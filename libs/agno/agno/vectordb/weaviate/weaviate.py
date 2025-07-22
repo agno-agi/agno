@@ -132,6 +132,7 @@ class Weaviate(VectorDb):
                     Property(name="name", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
+                    Property(name="content_id", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -147,6 +148,7 @@ class Weaviate(VectorDb):
                     Property(name="name", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
+                    Property(name="content_id", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -273,6 +275,7 @@ class Weaviate(VectorDb):
                     "name": document.name,
                     "content": cleaned_content,
                     "meta_data": meta_data_str,
+                    "content_id": document.content_id,
                 },
                 vector=document.embedding,
                 uuid=doc_uuid,
@@ -317,6 +320,7 @@ class Weaviate(VectorDb):
                         "name": document.name,
                         "content": cleaned_content,
                         "meta_data": meta_data_str,
+                        "content_id": document.content_id,
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
@@ -338,7 +342,7 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        self.insert(documents)
+        self.insert(documents, filters)
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -376,6 +380,7 @@ class Weaviate(VectorDb):
                     "name": document.name,
                     "content": cleaned_content,
                     "meta_data": meta_data_str,
+                    "content_id": document.content_id,
                 }
 
                 await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
@@ -443,7 +448,7 @@ class Weaviate(VectorDb):
             response = collection.query.near_vector(
                 near_vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 filters=filter_expr,
             )
@@ -491,7 +496,7 @@ class Weaviate(VectorDb):
             response = await collection.query.near_vector(
                 near_vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 filters=filter_expr,
             )
@@ -519,7 +524,7 @@ class Weaviate(VectorDb):
                 query=query,
                 query_properties=["content"],
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 filters=filter_expr,
             )
@@ -563,7 +568,7 @@ class Weaviate(VectorDb):
                 query=query,
                 query_properties=["content"],
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 filters=filter_expr,
             )
@@ -596,7 +601,7 @@ class Weaviate(VectorDb):
                 query=query,
                 vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 query_properties=["content"],
                 alpha=self.hybrid_search_alpha,
@@ -647,7 +652,7 @@ class Weaviate(VectorDb):
                 query=query,
                 vector=query_embedding,
                 limit=limit,
-                return_properties=["name", "content", "meta_data"],
+                return_properties=["name", "content", "meta_data", "content_id"],
                 include_vector=True,
                 query_properties=["content"],
                 alpha=self.hybrid_search_alpha,
@@ -705,6 +710,80 @@ class Weaviate(VectorDb):
         self.drop()
         return True
 
+    def delete_by_id(self, id: str) -> bool:
+        """Delete document by ID."""
+        try:
+            try:
+                doc_uuid = uuid.UUID(hex=id[:32]) if len(id) == 32 else uuid.UUID(id)
+            except ValueError:
+                log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
+                return True
+
+            collection = self.get_client().collections.get(self.collection)
+
+            if not collection.data.exists(doc_uuid):
+                log_info(f"Document with ID {id} does not exist")
+                return True
+
+            collection.data.delete_by_id(doc_uuid)
+            log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting document by ID '{id}': {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete content by name using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            
+            result = collection.data.delete_many(
+                where=Filter.by_property("name").equal(name)
+            )
+            
+            log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting documents by name '{name}': {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete content by metadata using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            
+            # Build filter for metadata search
+            filter_expr = self._build_filter_expression(metadata)
+            if filter_expr is None:
+                log_info(f"No valid filter could be built for metadata: {metadata}")
+                return False
+            
+            result = collection.data.delete_many(where=filter_expr)
+            
+            log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting documents by metadata '{metadata}': {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete content by content ID using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            
+            result = collection.data.delete_many(
+                where=Filter.by_property("content_id").equal(content_id)
+            )
+            
+            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
+            return False
+
     def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
         """
         Returns the appropriate vector index configuration with the specified distance metric.
@@ -746,12 +825,12 @@ class Weaviate(VectorDb):
 
             search_results.append(
                 Document(
-                    name=properties["name"],
-                    meta_data=meta_data if meta_data else {},
-                    content=properties["content"],
+                    name=properties.get("name"),
+                    meta_data=meta_data,
+                    content=properties.get("content", ""),
                     embedder=self.embedder,
                     embedding=embedding,
-                    usage=None,
+                    content_id=properties.get("content_id"),
                 )
             )
 
