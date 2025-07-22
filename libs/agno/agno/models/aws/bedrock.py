@@ -19,6 +19,20 @@ except ImportError:
     raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
+# AWS Bedrock supported media formats
+class BedrockSupportedFormats:
+    """Supported media formats for AWS Bedrock models."""
+
+    # Supported image formats
+    IMAGES = ["png", "jpeg", "webp", "gif"]
+
+    # Supported video formats
+    VIDEOS = ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]
+
+    # Supported document/file formats
+    FILES = ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]
+
+
 @dataclass
 class AwsBedrock(Model):
     """
@@ -187,11 +201,16 @@ class AwsBedrock(Model):
 
                 if message.images:
                     for image in message.images:
-                        if not image.content or not image.format:
-                            raise ValueError("Image content and format are required.")
+                        if not image.content:
+                            raise ValueError("Image content is required for AWS Bedrock.")
+                        if not image.format:
+                            raise ValueError("Image format is required for AWS Bedrock.")
 
-                        if image.format not in ["png", "jpeg", "webp", "gif"]:
-                            raise ValueError(f"Unsupported image format: {image.format}")
+                        if image.format not in BedrockSupportedFormats.IMAGES:
+                            raise ValueError(
+                                f"Unsupported image format: {image.format}. "
+                                f"Supported formats: {BedrockSupportedFormats.IMAGES}"
+                            )
 
                         formatted_message["content"].append(
                             {
@@ -208,21 +227,16 @@ class AwsBedrock(Model):
 
                 if message.videos:
                     for video in message.videos:
-                        if not video.content or not video.format:
-                            raise ValueError("Video content and format are required.")
+                        if not video.content:
+                            raise ValueError("Video content is required for AWS Bedrock.")
+                        if not video.format:
+                            raise ValueError("Video format is required for AWS Bedrock.")
 
-                        if video.format not in [
-                            "mp4",
-                            "mov",
-                            "mkv",
-                            "webm",
-                            "flv",
-                            "mpeg",
-                            "mpg",
-                            "wmv",
-                            "three_gp",
-                        ]:
-                            raise ValueError(f"Unsupported video format: {video.format}")
+                        if video.format not in BedrockSupportedFormats.VIDEOS:
+                            raise ValueError(
+                                f"Unsupported video format: {video.format}. "
+                                f"Supported formats: {BedrockSupportedFormats.VIDEOS}"
+                            )
 
                         formatted_message["content"].append(
                             {
@@ -237,11 +251,18 @@ class AwsBedrock(Model):
 
                 if message.files:
                     for file in message.files:
-                        if not file.content or not file.format:
-                            raise ValueError("File content and format are required.")
+                        if not file.content:
+                            raise ValueError("File content is required for AWS Bedrock document input.")
+                        if not file.format:
+                            raise ValueError("File format is required for AWS Bedrock document input.")
+                        if not file.name:
+                            raise ValueError("File name is required for AWS Bedrock document input.")
 
-                        if file.format not in ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]:
-                            raise ValueError(f"Unsupported file format: {file.format}")
+                        if file.format not in BedrockSupportedFormats.FILES:
+                            raise ValueError(
+                                f"Unsupported file format: {file.format}. "
+                                f"Supported formats: {BedrockSupportedFormats.FILES}"
+                            )
 
                         formatted_message["content"].append(
                             {
