@@ -1147,112 +1147,6 @@ class Workflow:
         else:
             log_debug("No storage or session_id for background status update")
 
-    def _run_background(
-        self,
-        message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
-        additional_data: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        audio: Optional[List[Audio]] = None,
-        images: Optional[List[Image]] = None,
-        videos: Optional[List[Video]] = None,
-        **kwargs: Any,
-    ) -> WorkflowRunResponse:
-        """Execute workflow in background using asyncio.create_task() - DIRECT EXECUTION"""
-
-        # Set up session identifiers (same as regular run method)
-        if user_id is not None:
-            self.user_id = user_id
-        if session_id is not None:
-            self.session_id = session_id
-
-        if self.session_id is None:
-            self.session_id = str(uuid4())
-
-        if self.run_id is None:
-            self.run_id = str(uuid4())
-
-        self.initialize_workflow()
-        self.load_session()
-        self._prepare_steps()
-
-        # Create workflow run response that will be updated by _execute
-        workflow_run_response = WorkflowRunResponse(
-            run_id=self.run_id,
-            session_id=self.session_id,
-            workflow_id=self.workflow_id,
-            workflow_name=self.name,
-            created_at=int(datetime.now().timestamp()),
-            status=RunStatus.pending,
-        )
-
-        # Store PENDING response immediately
-        if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
-        self.write_to_storage()
-
-        # Prepare execution input
-        inputs = WorkflowExecutionInput(
-            message=message,
-            additional_data=additional_data,
-            audio=audio,  # type: ignore
-            images=images,  # type: ignore
-            videos=videos,  # type: ignore
-        )
-
-        self.update_agents_and_teams_session_info()
-
-        async def execute_workflow_background():
-            """Direct execution wrapper with minimal overhead"""
-            try:
-                # Quick status update to RUNNING
-                self.update_background_status(self.run_id or "", RunStatus.running)
-
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._execute(
-                        execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs
-                    ),
-                )
-
-                # result IS workflow_run_response (same object, modified by _execute)
-                # Quick status update to database
-                self.update_background_status(self.run_id or "", workflow_run_response.status)
-
-                log_debug(f"Background execution completed with status: {workflow_run_response.status}")
-                log_debug(
-                    f"Content length: {len(str(workflow_run_response.content)) if workflow_run_response.content else 0}"
-                )
-
-            except Exception as e:
-                logger.error(f"Background workflow execution failed: {e}")
-                workflow_run_response.status = RunStatus.error
-                workflow_run_response.content = f"Background execution failed: {str(e)}"
-                self.update_background_status(self.run_id or "", RunStatus.error)
-
-        # Create and start asyncio task
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(execute_workflow_background())
-        except RuntimeError:
-            # No event loop, use threading fallback
-            import threading
-
-            def run_in_thread():
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                try:
-                    new_loop.run_until_complete(execute_workflow_background())
-                finally:
-                    new_loop.close()
-
-            thread = threading.Thread(target=run_in_thread, daemon=True)
-            thread.start()
-
-        # Return SAME object that will be updated by background execution
-        return workflow_run_response
-
     async def _arun_background(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
@@ -1426,16 +1320,7 @@ class Workflow:
         """Execute the workflow synchronously with optional streaming"""
 
         if background:
-            return self._run_background(
-                message=message,
-                additional_data=additional_data,
-                user_id=user_id,
-                session_id=session_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                **kwargs,
-            )
+            raise RuntimeError("Background execution is not supported for sync run()")
 
         self._set_debug()
 
