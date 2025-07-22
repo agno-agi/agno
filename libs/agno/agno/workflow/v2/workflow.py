@@ -1235,7 +1235,7 @@ class Workflow:
         # Create and start asyncio task
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(execute_workflow_background())
+            loop.create_task(execute_workflow_background())
         except RuntimeError:
             # No event loop, use threading fallback
             import threading
@@ -1336,7 +1336,7 @@ class Workflow:
         # Create and start asyncio task
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(execute_workflow_background())
+            loop.create_task(execute_workflow_background())
         except RuntimeError:
             # No event loop, use threading fallback
             import threading
