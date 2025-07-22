@@ -67,34 +67,33 @@ content_creation_workflow = Workflow(
 
 
 async def main():
-    print("🚀 Starting Async Background Workflow Test")
+    print(" Starting Async Background Workflow Test")
 
     # Start background execution (async)
     bg_response = await content_creation_workflow.arun(
         message="AI trends in 2024", background=True
     )
-    print(f"📋 Initial Response: {bg_response.status} - {bg_response.content}")
-    print(f"🔍 Run ID: {bg_response.run_id}")
+    print(f" Initial Response: {bg_response.status} - {bg_response.content}")
+    print(f" Run ID: {bg_response.run_id}")
 
     # Poll every 10 seconds until completion
     poll_count = 0
 
     while True:
         poll_count += 1
-        print(f"\n📊 Poll #{poll_count} (every 10s)")
+        print(f"\n Poll #{poll_count} (every 10s)")
 
-        # If poll is not async, you can wrap it: result = await asyncio.to_thread(content_creation_workflow.poll, bg_response.run_id)
-        result = content_creation_workflow.poll(bg_response.run_id)
+        result = content_creation_workflow.get_run(bg_response.run_id)
 
         if result is None:
-            print("⏳ Workflow not found yet, still waiting...")
+            print(" Workflow not found yet, still waiting...")
             if poll_count > 50:
                 print(f"⏰ Timeout after {poll_count} attempts")
                 break
             await asyncio.sleep(10)
             continue
 
-        if result.status in [RunStatus.completed, RunStatus.error]:
+        if result.is_completed():
             break
 
         if poll_count > 50:
@@ -103,7 +102,7 @@ async def main():
 
         await asyncio.sleep(10)
 
-    print(f"\n🎉 Final Result:")
+    print(f"\n Final Result:")
     print("=" * 50)
     pprint_run_response(result, markdown=True)
 

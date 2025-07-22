@@ -84,10 +84,10 @@ if __name__ == "__main__":
         poll_count += 1
         print(f"\n Poll #{poll_count} (every 10s)")
 
-        result = content_creation_workflow.poll(bg_response.run_id)
+        result = content_creation_workflow.get_run(bg_response.run_id)
 
         if result is None:
-            print("⏳ Workflow not found yet, still waiting...")
+            print(" Workflow not found yet, still waiting...")
             if poll_count > 50:
                 print(f"⏰ Timeout after {poll_count} attempts")
                 break

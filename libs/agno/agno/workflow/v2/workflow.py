@@ -1398,8 +1398,8 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
-    def poll(self, run_id: str) -> Optional[WorkflowRunResponse]:
-        """Poll the status of a background workflow run - DATABASE IS SOURCE OF TRUTH"""
+    def get_run(self, run_id: str) -> Optional[WorkflowRunResponse]:
+        """Get the status and details of a background workflow run"""
 
         # ALWAYS read status from database first (source of truth)
         if self.storage is not None and self.session_id is not None:
@@ -1407,13 +1407,13 @@ class Workflow:
 
             if status_info:
                 status_value = status_info["status"]
-                log_debug(f"📊 Database status (source of truth): {status_value}")
+                log_debug(f"Database status (source of truth): {status_value}")
 
                 # For COMPLETED/ERROR, ALWAYS return the full response from JSON blob
                 if status_value in [RunStatus.completed.value, RunStatus.error.value]:
                     session = self.storage.read(session_id=self.session_id)
                     if session and isinstance(session, WorkflowSessionV2) and session.runs:
-                        log_debug(f"🗂️ Found session with {len(session.runs)} total runs")
+                        log_debug(f"Found session with {len(session.runs)} total runs")
 
                         matching_run = None
                         for run in session.runs:
@@ -1422,19 +1422,19 @@ class Workflow:
 
                         if matching_run:
                             log_debug(
-                                f"📄 Found full response! Content length: {len(str(matching_run.content)) if matching_run.content else 0}"
+                                f"Found full response! Content length: {len(str(matching_run.content)) if matching_run.content else 0}"
                             )
                             log_debug(
-                                f"📊 Step responses: {len(matching_run.step_responses) if matching_run.step_responses else 0}"
+                                f"Step responses: {len(matching_run.step_responses) if matching_run.step_responses else 0}"
                             )
                             # Update the status from database (source of truth) to handle any edge cases
                             matching_run.status = RunStatus(status_value)
                             # This is the EXACT SAME response as normal run() would return!
                             return matching_run
 
-                        log_debug(f"⚠️ No runs found with ID {run_id}")
+                        log_debug(f"No runs found with ID {run_id}")
                     else:
-                        log_debug("❌ No session or runs found")
+                        log_debug("No session or runs found")
 
                 # For PENDING/RUNNING, return a minimal status response
                 response = WorkflowRunResponse(
