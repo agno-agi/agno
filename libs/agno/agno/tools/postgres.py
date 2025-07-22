@@ -12,7 +12,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_info, log_warning, log_error
 
 
 class PostgresTools(Toolkit):
@@ -61,7 +61,7 @@ class PostgresTools(Toolkit):
         :return psycopg2.extensions.connection: psycopg2 connection
         """
         if self._connection is None or self._connection.closed:
-            log_info("Establishing new PostgreSQL connection.")
+            log_debug("Establishing new PostgreSQL connection.")
             connection_kwargs: Dict[str, Any] = {"cursor_factory": DictCursor}
             if self.db_name:
                 connection_kwargs["database"] = self.db_name
@@ -90,14 +90,14 @@ class PostgresTools(Toolkit):
     def close(self):
         """Closes the database connection if it's open."""
         if self._connection and not self._connection.closed:
-            log_info("Closing PostgreSQL connection.")
+            log_debug("Closing PostgreSQL connection.")
             self._connection.close()
             self._connection = None
 
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
             with self.connection.cursor() as cursor:
-                log_info(f"Running Query: {query} with Params: {params}")
+                log_debug(f"Running PostgreSQL Query: {query} with Params: {params}")
                 cursor.execute(query, params)
 
                 if cursor.description is None:
@@ -114,25 +114,29 @@ class PostgresTools(Toolkit):
                 return f"{header}\n" + "\n".join(data_rows)
 
         except psycopg2.Error as e:
-            log_debug(f"Database error: {e}")
+            log_error(f"Database error: {e}")
             if self.connection and not self.connection.closed:
                 self.connection.rollback()
             return f"Error executing query: {e}"
         except Exception as e:
-            log_debug(f"An unexpected error occurred: {e}")
+            log_error(f"An unexpected error occurred: {e}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:
         """Lists all tables in the configured schema."""
+        
         stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
         return self._execute_query(stmt, (self.table_schema,))
 
     def describe_table(self, table: str) -> str:
         """
-        Provides the schema (column names, data types) for a given table.
+        Provides the schema (column name, data type, is nullable) for a given table.
 
-        :param table: The name of the table to describe.
-        :return: A string describing the table's columns and data types.
+        Args:
+            table: The name of the table to describe.
+        
+        Returns:
+            A string describing the table's columns and data types.
         """
         stmt = """
             SELECT column_name, data_type, is_nullable
@@ -145,8 +149,11 @@ class PostgresTools(Toolkit):
         """
         Computes and returns key summary statistics for a table's columns.
 
-        :param table: The name of the table to summarize.
-        :return: A string containing a summary of the table.
+        Args:
+            table: The name of the table to summarize.
+        
+        Returns:
+            A string containing a summary of the table.
         """
         try:
             with self.connection.cursor() as cursor:
