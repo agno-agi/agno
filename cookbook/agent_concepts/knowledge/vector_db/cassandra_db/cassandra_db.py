@@ -1,7 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.embedder.mistral import MistralEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.models.mistral import MistralChat
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.cassandra import Cassandra
 
 try:
@@ -20,23 +19,29 @@ session.execute(
     WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 }
     """
 )
-
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-    vector_db=Cassandra(
-        table_name="recipes",
-        keyspace="testkeyspace",
-        session=session,
-        embedder=MistralEmbedder(),
+vector_db = Cassandra(
+    table_name="recipes",
+    keyspace="testkeyspace",
+    session=session,
+    embedder=OpenAIEmbedder(
+        dimensions=1024,
     ),
 )
 
+knowledge = Knowledge(
+    name="My Cassandra Knowledge Base",
+    vector_store=vector_db,
+)
 
-knowledge_base.load(recreate=True)  # Comment out after first run
+
+knowledge.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
+)
 
 agent = Agent(
-    model=MistralChat(),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     show_tool_calls=True,
 )
 
@@ -45,3 +50,7 @@ agent.print_response(
     markdown=True,
     show_full_reasoning=True,
 )
+
+vector_db.delete_by_name("Recipes")
+# or
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})
