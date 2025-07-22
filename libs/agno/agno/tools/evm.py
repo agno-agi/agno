@@ -2,7 +2,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from eth_account.account import LocalAccount
@@ -35,10 +35,10 @@ class EvmTools(Toolkit):
         self.rpc_url = rpc_url or getenv("EVM_RPC_URL")
 
         if not self.private_key:
-            logger.error("Private Key is required")
+            log_error("Private Key is required")
             raise ValueError("Private Key is required")
         if not self.rpc_url:
-            logger.error("RPC Url is needed to interact with EVM blockchain")
+            log_error("RPC Url is needed to interact with EVM blockchain")
             raise ValueError("RPC Url is needed to interact with EVM blockchain")
 
         # Ensure private key has 0x prefix
@@ -48,7 +48,7 @@ class EvmTools(Toolkit):
         # Initialize Web3 client and account
         self.web3_client: "Web3Type" = Web3(HTTPProvider(self.rpc_url))
         self.account: "LocalAccount" = self.web3_client.eth.account.from_key(self.private_key)
-        logger.info(f"Your wallet address is: {self.account.address}")
+        log_debug(f"Your wallet address is: {self.account.address}")
 
         super().__init__(name="evm_tools", tools=[self.send_transaction], **kwargs)
 
@@ -73,7 +73,7 @@ class EvmTools(Toolkit):
         latest_block = self.web3_client.eth.get_block("latest")
         base_fee_per_gas = latest_block.get("baseFeePerGas")
         if base_fee_per_gas is None:
-            logger.error("Base fee per gas not found in the latest block.")
+            log_error("Base fee per gas not found in the latest block.")
             raise ValueError("Base fee per gas not found in the latest block.")
         max_fee_per_gas = (2 * base_fee_per_gas) + max_priority_fee_per_gas
         return max_fee_per_gas
@@ -108,16 +108,16 @@ class EvmTools(Toolkit):
                 transaction_params, self.private_key
             )
             transaction_hash: "HexBytes" = self.web3_client.eth.send_raw_transaction(signed_transaction.raw_transaction)
-            logger.info(f"Ongoing Transaction hash: 0x{transaction_hash.hex()}")
+            log_debug(f"Ongoing Transaction hash: 0x{transaction_hash.hex()}")
 
             transaction_receipt: "TxReceipt" = self.web3_client.eth.wait_for_transaction_receipt(transaction_hash)
             if transaction_receipt.get("status") == 1:
-                logger.info(f"Transaction successful! Transaction hash: 0x{transaction_hash.hex()}")
+                log_debug(f"Transaction successful! Transaction hash: 0x{transaction_hash.hex()}")
                 return f"0x{transaction_hash.hex()}"
             else:
-                logger.error("Transaction failed!")
+                log_error("Transaction failed!")
                 raise Exception("Transaction failed!")
 
         except Exception as e:
-            logger.error(f"Error sending transaction: {e}")
+            log_error(f"Error sending transaction: {e}")
             return f"error: {e}"
