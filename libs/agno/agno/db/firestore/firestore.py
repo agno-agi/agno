@@ -693,6 +693,9 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("team_id", "==", team_id))
             if workflow_id is not None:
                 query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
+            if topics is not None and len(topics) > 0:
+                # Server-side filtering: check if any of the provided topics exists in the document's topics array
+                query = query.where(filter=FieldFilter("topics", "array_contains_any", topics))
 
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
@@ -705,12 +708,7 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 data = doc.to_dict()
 
-                # Client-side filtering for topics and search_content
-                if topics is not None:
-                    doc_topics = data.get("topics", [])
-                    if not any(topic in doc_topics for topic in topics):
-                        continue
-
+                # TODO:
                 if search_content is not None:
                     memory_content = data.get("memory", "")
                     if search_content.lower() not in str(memory_content).lower():
@@ -718,8 +716,8 @@ class FirestoreDb(BaseDb):
 
                 records.append(data)
 
-            total_count = len(records)  # Simplified count
-
+            # TODO: wrong
+            total_count = len(records)
             if not deserialize:
                 return records, total_count
 
@@ -811,7 +809,6 @@ class FirestoreDb(BaseDb):
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
-            # Convert UserMemory to dict and add timestamp
             update_doc = memory.to_dict()
             update_doc["last_updated"] = int(time.time())
 

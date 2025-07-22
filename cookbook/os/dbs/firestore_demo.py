@@ -41,6 +41,7 @@ basic_team = Team(
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
+    enable_user_memories=True,
     members=[basic_agent],
     debug_mode=True,
 )
@@ -66,5 +67,5 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    basic_agent.run("What is the capital of France?")
+    basic_agent.run("Please remember I really like French food")
     agent_os.serve(app="firestore_demo:app", reload=True)
