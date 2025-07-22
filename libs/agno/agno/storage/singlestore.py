@@ -1,6 +1,6 @@
 import json
-from typing import Any, Dict, List, Literal, Optional
 import time
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
@@ -18,7 +18,7 @@ try:
     from sqlalchemy.orm import Session as SqlSession
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text, and_
+    from sqlalchemy.sql.expression import and_, select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
@@ -522,7 +522,9 @@ class SingleStoreStorage(Storage):
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
                             "workflow_name": session.workflow_name,  # type: ignore
-                            "runs": json.dumps(session_dict.get("runs"), ensure_ascii=False) if session_dict.get("runs") else None,
+                            "runs": json.dumps(session_dict.get("runs"), ensure_ascii=False)
+                            if session_dict.get("runs")
+                            else None,
                             "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
                             if session.workflow_data is not None  # type: ignore
                             else None,

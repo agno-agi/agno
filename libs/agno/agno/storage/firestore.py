@@ -1,6 +1,6 @@
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, Union
-import time
 from uuid import UUID
 
 from agno.storage.base import Storage
@@ -303,37 +303,35 @@ class FirestoreStorage(Storage):
             # Query the document by session_id
             query = self.collection.where(filter=FieldFilter("session_id", "==", session_id))
             docs = list(query.get())
-            
+
             if not docs:
                 return None
-                
+
             doc_data = docs[0].to_dict()
             if not doc_data:
                 return None
-                
-            # Check if this is the current run
+
             current_run_id = doc_data.get("current_run_id")
             current_run_status = doc_data.get("current_run_status")
-            
+
             if current_run_id == run_id and current_run_status:
                 return {
                     "run_id": run_id,
                     "status": current_run_status,
-                    "updated_at": int(time.time())
+                    "updated_at": doc_data.get("updated_at", int(time.time())),
                 }
-            
-            # Fall back to searching in runs array
+
             runs = doc_data.get("runs", [])
             for run in runs:
                 if isinstance(run, dict) and run.get("run_id") == run_id:
                     return {
                         "run_id": run_id,
                         "status": run.get("status", "unknown"),
-                        "updated_at": run.get("updated_at", int(time.time()))
+                        "updated_at": doc_data.get("updated_at", int(time.time())),
                     }
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting workflow run status: {e}")
             return None
@@ -341,52 +339,49 @@ class FirestoreStorage(Storage):
     def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
         """Update workflow run status in Firestore with atomic operations"""
         try:
+            if self._client is None:
+                logger.error("Firestore client is not initialized")
+                return False
+
             # Query to find the document
             query = self.collection.where(filter=FieldFilter("session_id", "==", session_id))
             docs = list(query.get())
-            
+
             if not docs:
                 return False
-                
+
             doc_ref = docs[0].reference
             current_time = int(time.time())
-            
-            # Use transaction for atomic update
+
             @self._client.transactional
             def update_in_transaction(transaction):
-                # Get current document
                 doc_snapshot = doc_ref.get(transaction=transaction)
                 if not doc_snapshot.exists:
                     return False
-                    
+
                 doc_data = doc_snapshot.to_dict()
-                
-                # Update the fast-access fields
-                updates = {
-                    "current_run_id": run_id,
-                    "current_run_status": status,
-                    "updated_at": current_time
-                }
-                
+                if not doc_data:
+                    return False
+
+                updates = {"current_run_id": run_id, "current_run_status": status, "updated_at": current_time}
+
                 runs = doc_data.get("runs", [])
                 run_updated = False
-                
+
                 for i, run in enumerate(runs):
                     if isinstance(run, dict) and run.get("run_id") == run_id:
-                        runs[i] = {**run, "status": status, "updated_at": current_time}
+                        runs[i] = {**run, "status": status}
                         run_updated = True
                         break
-                
+
                 if run_updated:
                     updates["runs"] = runs
-                
-                # Perform atomic update
+
                 transaction.update(doc_ref, updates)
                 return True
-            
-            # Execute transaction
+
             return update_in_transaction(self._client.transaction())
-            
+
         except Exception as e:
             logger.error(f"Error updating workflow run status: {e}")
             return False

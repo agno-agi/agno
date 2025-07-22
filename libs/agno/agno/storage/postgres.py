@@ -15,7 +15,7 @@ try:
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import scoped_session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text, and_
+    from sqlalchemy.sql.expression import and_, select, text
     from sqlalchemy.types import BigInteger, String
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
