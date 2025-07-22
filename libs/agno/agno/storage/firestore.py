@@ -295,3 +295,9 @@ class FirestoreStorage(Storage):
         For Firestore, this is a no-op as it's schema-less.
         """
         pass
+
+    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
+        raise NotImplementedError

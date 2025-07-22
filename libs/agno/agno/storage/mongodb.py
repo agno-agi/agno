@@ -326,3 +326,9 @@ class MongoDbStorage(Storage):
                 setattr(copied_obj, k, deepcopy(v, memo))
 
         return copied_obj
+
+    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
+        raise NotImplementedError

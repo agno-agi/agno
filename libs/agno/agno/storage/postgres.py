@@ -678,3 +678,9 @@ class PostgresStorage(Storage):
         copied_obj.table = copied_obj.get_table()
 
         return copied_obj
+
+    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
+        raise NotImplementedError
