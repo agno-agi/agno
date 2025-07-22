@@ -57,11 +57,11 @@ class AgentKnowledge(BaseModel):
                 f"Vector db '{self.vector_db.__class__.__module__}' does not support upsert. Falling back to insert."
             )
 
-    def _load_init(self, recreate: bool, upsert: bool) -> bool:
+    def _load_init(self, recreate: bool, upsert: bool) -> None:
         """Initial setup for loading knowledge base"""
         if self.vector_db is None:
             logger.warning("No vector db provided")
-            return False
+            return
 
         if recreate:
             log_info("Dropping collection")
@@ -73,13 +73,11 @@ class AgentKnowledge(BaseModel):
 
         self._upsert_warning(upsert)
 
-        return True
-
-    async def _aload_init(self, recreate: bool, upsert: bool) -> bool:
+    async def _aload_init(self, recreate: bool, upsert: bool) -> None:
         """Initial async setup for loading knowledge base"""
         if self.vector_db is None:
             logger.warning("No vector db provided")
-            return False
+            return
 
         if recreate:
             log_info("Dropping collection")
@@ -98,8 +96,6 @@ class AgentKnowledge(BaseModel):
                 self.vector_db.create()
 
         self._upsert_warning(upsert)
-
-        return True
 
     def search(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
@@ -150,7 +146,8 @@ class AgentKnowledge(BaseModel):
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
         """
-        if not self._load_init(recreate, upsert):
+        self._load_init(recreate, upsert)
+        if self.vector_db is None:
             return
 
         log_info("Loading knowledge base")
@@ -192,8 +189,8 @@ class AgentKnowledge(BaseModel):
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
         """
-
-        if not self._aload_init(recreate, upsert):
+        self._aload_init(recreate, upsert)
+        if self.vector_db is None:
             return
 
         log_info("Loading knowledge base")
@@ -237,11 +234,11 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-
-        log_info("Loading knowledge base")
-        if not self._load_init(recreate=False, upsert=upsert):
+        self._load_init(recreate=False, upsert=upsert)
+        if self.vector_db is None:
             return
-
+        
+        log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
             self.vector_db.upsert(documents=documents, filters=filters)
@@ -276,9 +273,11 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-        log_info("Loading knowledge base")
-        if not self._aload_init(recreate=False, upsert=upsert):
+        self._aload_init(recreate=False, upsert=upsert)
+        if self.vector_db is None:
             return
+
+        log_info("Loading knowledge base")
 
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
@@ -571,7 +570,8 @@ class AgentKnowledge(BaseModel):
             self._track_metadata_structure(metadata)
 
         # 3. Prepare vector DB
-        if not self._load_init(recreate, upsert=False):
+        self._load_init(recreate, upsert=False)
+        if self.vector_db is None:
             return False
         return True
 
@@ -607,7 +607,8 @@ class AgentKnowledge(BaseModel):
             self._track_metadata_structure(metadata)
 
         # 3. Prepare vector DB
-        if not self._aload_init(recreate, upsert=False):
+        self._aload_init(recreate, upsert=False)
+        if self.vector_db is None:
             return False
         return True
 
