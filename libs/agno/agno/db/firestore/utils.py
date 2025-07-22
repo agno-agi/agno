@@ -47,16 +47,14 @@ def create_collection_indexes(client: Client, collection_name: str, collection_t
 def _create_composite_indexes(client: Client, collection_name: str, composite_indexes: List[Dict[str, Any]]) -> None:
     """Create composite indexes using Firestore Admin API."""
     try:
-        # Get project ID from client
         project_id = client.project
         if not project_id:
             log_warning("Cannot create composite indexes: project_id not available from client")
             return
 
         admin_client = FirestoreAdminClient()
-        created_count = 0
-        existing_count = 0
 
+        created_count = 0
         for idx_spec in composite_indexes:
             try:
                 # Build index fields
@@ -89,9 +87,8 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
                 created_count += 1
 
             except Exception as e:
-                # Don't fail if index already exists
                 if "already exists" in str(e).lower():
-                    existing_count += 1
+                    continue
                 else:
                     log_error(f"Error creating composite index: {e}")
 

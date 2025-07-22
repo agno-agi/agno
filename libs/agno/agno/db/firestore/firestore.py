@@ -170,17 +170,13 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="sessions")
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
 
-            deleted_count = 0
             for doc in docs:
                 doc.reference.delete()
-                deleted_count += 1
-
-            if deleted_count == 0:
-                log_debug(f"No session found to delete with session_id: {session_id}")
-                return False
-            else:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
+
+            log_debug(f"No session found to delete with session_id: {session_id}")
+            return False
 
         except Exception as e:
             log_error(f"Error deleting session: {e}")
@@ -194,12 +190,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-
-            # Firestore doesn't support direct IN queries for large lists
-            # We'll batch delete them
             batch = self.db_client.batch()
-            deleted_count = 0
 
+            deleted_count = 0
             for session_id in session_ids:
                 docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
                 for doc in docs:
@@ -207,6 +200,7 @@ class FirestoreDb(BaseDb):
                     deleted_count += 1
 
             batch.commit()
+
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
         except Exception as e:
@@ -237,8 +231,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if session_type is not None:
@@ -308,9 +302,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
-
-            # Build query
             query = collection_ref
+
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if session_type is not None:
@@ -332,32 +325,39 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # Get all documents for counting before pagination
+            all_docs = query.stream()
+            all_records = [doc.to_dict() for doc in all_docs]
 
-            response = query.stream()
-            records = [doc.to_dict() for doc in response]
-
-            if records is None:
+            if not all_records:
                 return [] if deserialize else ([], 0)
 
-            sessions_raw = [deserialize_session_json_fields(record) for record in records]
+            all_sessions_raw = [deserialize_session_json_fields(record) for record in all_records]
 
-            # For total count, we'd need a separate query since Firestore doesn't have count()
-            # This is now accurate since we removed client-side filtering
-            total_count = len(sessions_raw)
+            # Get total count before pagination
+            total_count = len(all_sessions_raw)
+
+            # Apply pagination to the results
+            if limit is not None and page is not None:
+                start_index = (page - 1) * limit
+                end_index = start_index + limit
+                sessions_raw = all_sessions_raw[start_index:end_index]
+            elif limit is not None:
+                sessions_raw = all_sessions_raw[:limit]
+            else:
+                sessions_raw = all_sessions_raw
 
             if not deserialize:
                 return sessions_raw, total_count
 
             sessions = []
-            for record in sessions_raw:
-                if session_type == SessionType.AGENT:
-                    sessions.append(AgentSession.from_dict(record))
-                elif session_type == SessionType.TEAM:
-                    sessions.append(TeamSession.from_dict(record))
-                elif session_type == SessionType.WORKFLOW:
-                    sessions.append(WorkflowSession.from_dict(record))
+            for session in sessions_raw:
+                if session["session_type"] == SessionType.AGENT.value:
+                    sessions.append(AgentSession.from_dict(session))
+                elif session["session_type"] == SessionType.TEAM.value:
+                    sessions.append(TeamSession.from_dict(session))
+                elif session["session_type"] == SessionType.WORKFLOW.value:
+                    sessions.append(WorkflowSession.from_dict(session))
 
             return sessions
 
@@ -387,12 +387,8 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="sessions")
 
-            # TODO: improve
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", session_id)).stream()
-            doc_ref = None
-            for doc in docs:
-                doc_ref = doc.reference
-                break
+            doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
                 return None
@@ -489,10 +485,7 @@ class FirestoreDb(BaseDb):
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
-            doc_ref = None
-            for doc in docs:
-                doc_ref = doc.reference
-                break
+            doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
                 # Create new document
@@ -683,8 +676,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="user_memories")
-
             query = collection_ref
+
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
             if agent_id is not None:
@@ -694,30 +687,28 @@ class FirestoreDb(BaseDb):
             if workflow_id is not None:
                 query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
             if topics is not None and len(topics) > 0:
-                # Server-side filtering: check if any of the provided topics exists in the document's topics array
                 query = query.where(filter=FieldFilter("topics", "array_contains_any", topics))
+            if search_content is not None:
+                query = query.where(filter=FieldFilter("memory", "==", search_content))
 
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
-
+            # Get all documents
             docs = query.stream()
-            records = []
-            for doc in docs:
-                data = doc.to_dict()
+            all_records = [doc.to_dict() for doc in docs]
 
-                # TODO:
-                if search_content is not None:
-                    memory_content = data.get("memory", "")
-                    if search_content.lower() not in str(memory_content).lower():
-                        continue
+            total_count = len(all_records)
 
-                records.append(data)
-
-            # TODO: wrong
-            total_count = len(records)
+            # Apply pagination to the filtered results
+            if limit is not None and page is not None:
+                start_index = (page - 1) * limit
+                end_index = start_index + limit
+                records = all_records[start_index:end_index]
+            elif limit is not None:
+                records = all_records[:limit]
+            else:
+                records = all_records
             if not deserialize:
                 return records, total_count
 
@@ -746,9 +737,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="user_memories")
-
-            # Since Firestore doesn't have aggregation pipelines like MongoDB,
-            # we need to implement this client-side
             docs = collection_ref.where(filter=FieldFilter("user_id", "!=", None)).stream()
 
             user_stats = {}
@@ -814,10 +802,7 @@ class FirestoreDb(BaseDb):
 
             # Find existing document or create new one
             docs = collection_ref.where("memory_id", "==", memory.memory_id).stream()
-            doc_ref = None
-            for doc in docs:
-                doc_ref = doc.reference
-                break
+            doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
                 doc_ref = collection_ref.document()
@@ -871,7 +856,6 @@ class FirestoreDb(BaseDb):
     def _get_metrics_calculation_starting_date(self, collection_ref) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
         try:
-            # Get the latest metrics record
             query = collection_ref.order_by("date", direction="DESCENDING").limit(1)
             docs = query.stream()
 
@@ -1052,15 +1036,11 @@ class FirestoreDb(BaseDb):
         """Upsert a knowledge document in the database."""
         try:
             collection_ref = self._get_collection(table_type="knowledge")
-
             update_doc = knowledge_row.model_dump()
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("id", "==", knowledge_row.id)).stream()
-            doc_ref = None
-            for doc in docs:
-                doc_ref = doc.reference
-                break
+            doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
                 doc_ref = collection_ref.document()
@@ -1115,7 +1095,14 @@ class FirestoreDb(BaseDb):
             raise
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
-        """Delete multiple eval runs from the database."""
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): The IDs of the eval runs to delete.
+
+        Raises:
+            Exception: If there is an error deleting the eval runs.
+        """
         try:
             collection_ref = self._get_collection(table_type="evals")
             batch = self.db_client.batch()
@@ -1215,8 +1202,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="evals")
-
             query = collection_ref
+
             if agent_id is not None:
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
             if team_id is not None:
@@ -1225,6 +1212,16 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
             if model_id is not None:
                 query = query.where(filter=FieldFilter("model_id", "==", model_id))
+            if eval_type is not None and len(eval_type) > 0:
+                eval_values = [et.value for et in eval_type]
+                query = query.where(filter=FieldFilter("eval_type", "in", eval_values))
+            if filter_type is not None:
+                if filter_type == EvalFilterType.AGENT:
+                    query = query.where(filter=FieldFilter("agent_id", "!=", None))
+                elif filter_type == EvalFilterType.TEAM:
+                    query = query.where(filter=FieldFilter("team_id", "!=", None))
+                elif filter_type == EvalFilterType.WORKFLOW:
+                    query = query.where(filter=FieldFilter("workflow_id", "!=", None))
 
             # Apply default sorting by created_at desc if no sort parameters provided
             if sort_by is None:
@@ -1234,33 +1231,25 @@ class FirestoreDb(BaseDb):
             else:
                 query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # Get all documents for counting before pagination
+            all_docs = query.stream()
+            all_records = [doc.to_dict() for doc in all_docs]
 
-            docs = query.stream()
-            records = []
-            for doc in docs:
-                data = doc.to_dict()
-
-                # Client-side filtering for complex conditions
-                if eval_type is not None and len(eval_type) > 0:
-                    if data.get("eval_type") not in [et.value for et in eval_type]:
-                        continue
-
-                if filter_type is not None:
-                    if filter_type == EvalFilterType.AGENT and not data.get("agent_id"):
-                        continue
-                    elif filter_type == EvalFilterType.TEAM and not data.get("team_id"):
-                        continue
-                    elif filter_type == EvalFilterType.WORKFLOW and not data.get("workflow_id"):
-                        continue
-
-                records.append(data)
-
-            if not records:
+            if not all_records:
                 return [] if deserialize else ([], 0)
 
-            total_count = len(records)  # Simplified count
+            # Get total count before pagination
+            total_count = len(all_records)
+
+            # Apply pagination to the results
+            if limit is not None and page is not None:
+                start_index = (page - 1) * limit
+                end_index = start_index + limit
+                records = all_records[start_index:end_index]
+            elif limit is not None:
+                records = all_records[:limit]
+            else:
+                records = all_records
 
             if not deserialize:
                 return records, total_count
@@ -1293,10 +1282,7 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="evals")
 
             docs = collection_ref.where(filter=FieldFilter("run_id", "==", eval_run_id)).stream()
-            doc_ref = None
-            for doc in docs:
-                doc_ref = doc.reference
-                break
+            doc_ref = next((doc.reference for doc in docs), None)
 
             if doc_ref is None:
                 return None
