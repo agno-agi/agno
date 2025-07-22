@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.calculator import CalculatorTools
 from agno.tools.yfinance import YFinanceTools
