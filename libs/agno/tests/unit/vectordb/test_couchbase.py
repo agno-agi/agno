@@ -1190,16 +1190,248 @@ def test_delete_by_id(couchbase_fts, mock_collection):
         assert result is False
 
 
-def test_delete_methods_exist(couchbase_fts):
-    """Test that all delete methods exist and are callable."""
-    # Test that all delete methods exist
-    assert hasattr(couchbase_fts, "delete_by_id")
-    assert hasattr(couchbase_fts, "delete_by_name")
-    assert hasattr(couchbase_fts, "delete_by_metadata")
-    assert hasattr(couchbase_fts, "delete_by_content_id")
+def test_delete_by_name(couchbase_fts, mock_scope, mock_collection):
+    """Test delete_by_name method."""
+    # Mock query result with existing documents
+    mock_result = Mock()
+    mock_row1 = Mock()
+    mock_row1.get.return_value = "doc_1"
+    mock_row2 = Mock()
+    mock_row2.get.return_value = "doc_2"
+    mock_result.rows.return_value = [mock_row1, mock_row2]
+    mock_scope.query.return_value = mock_result
 
-    # Test that they are callable
-    assert callable(couchbase_fts.delete_by_id)
-    assert callable(couchbase_fts.delete_by_name)
-    assert callable(couchbase_fts.delete_by_metadata)
-    assert callable(couchbase_fts.delete_by_content_id)
+    # Test successful deletion
+    result = couchbase_fts.delete_by_name("test_document")
+    assert result is True
+
+    # Verify the query was called with correct parameters
+    mock_scope.query.assert_called_once()
+    call_args = mock_scope.query.call_args
+    assert "SELECT META().id as doc_id, * FROM" in call_args[0][0]
+    assert "WHERE name = $name" in call_args[0][0]
+
+    # Check that QueryOptions was passed as second argument
+    assert len(call_args[0]) == 2
+    assert "QueryOptions" in str(type(call_args[0][1]))
+
+    # Verify that remove was called for each document
+    assert mock_collection.remove.call_count == 2
+    mock_collection.remove.assert_any_call("doc_1")
+    mock_collection.remove.assert_any_call("doc_2")
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion when no documents exist
+    mock_result.rows.return_value = []
+    result = couchbase_fts.delete_by_name("nonexistent_document")
+    assert result is True  # Returns True even if no documents found
+    assert mock_collection.remove.call_count == 0  # No remove calls
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+
+    # Test exception handling
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_name("test_document")
+    assert result is False
+
+
+def test_delete_by_metadata(couchbase_fts, mock_scope, mock_collection):
+    """Test delete_by_metadata method."""
+    # Mock query result with existing documents
+    mock_result = Mock()
+    mock_row1 = Mock()
+    mock_row1.get.return_value = "doc_1"
+    mock_row2 = Mock()
+    mock_row2.get.return_value = "doc_2"
+    mock_result.rows.return_value = [mock_row1, mock_row2]
+    mock_scope.query.return_value = mock_result
+
+    # Test successful deletion with string metadata
+    metadata = {"category": "test", "priority": "high"}
+    result = couchbase_fts.delete_by_metadata(metadata)
+    assert result is True
+
+    # Verify the query was called with correct parameters
+    mock_scope.query.assert_called_once()
+    call_args = mock_scope.query.call_args
+    assert "SELECT META().id as doc_id, * FROM" in call_args[0][0]
+    assert "filters.category = $value_category OR recipes.filters.category = $value_category" in call_args[0][0]
+    assert "filters.priority = $value_priority OR recipes.filters.priority = $value_priority" in call_args[0][0]
+
+    # Check that QueryOptions was passed as second argument
+    assert len(call_args[0]) == 2
+    assert "QueryOptions" in str(type(call_args[0][1]))
+
+    # Verify that remove was called for each document
+    assert mock_collection.remove.call_count == 2
+    mock_collection.remove.assert_any_call("doc_1")
+    mock_collection.remove.assert_any_call("doc_2")
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion with array metadata
+    metadata_array = {"tags": ["tag1", "tag2"]}
+    mock_result.rows.return_value = [mock_row1]
+    result = couchbase_fts.delete_by_metadata(metadata_array)
+    assert result is True
+
+    call_args = mock_scope.query.call_args
+    assert (
+        "ARRAY_CONTAINS(filters.tags, $value_tags) OR ARRAY_CONTAINS(recipes.filters.tags, $value_tags)"
+        in call_args[0][0]
+    )
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion with numeric metadata
+    metadata_numeric = {"count": 42, "score": 0.95}
+    result = couchbase_fts.delete_by_metadata(metadata_numeric)
+    assert result is True
+
+    call_args = mock_scope.query.call_args
+    assert "filters.count = $value_count OR recipes.filters.count = $value_count" in call_args[0][0]
+    assert "filters.score = $value_score OR recipes.filters.score = $value_score" in call_args[0][0]
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion with boolean metadata
+    metadata_bool = {"active": True}
+    result = couchbase_fts.delete_by_metadata(metadata_bool)
+    assert result is True
+
+    call_args = mock_scope.query.call_args
+    assert "filters.active = $value_active OR recipes.filters.active = $value_active" in call_args[0][0]
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion with None metadata
+    metadata_none = {"nullable_field": None}
+    result = couchbase_fts.delete_by_metadata(metadata_none)
+    assert result is True
+
+    call_args = mock_scope.query.call_args
+    assert "filters.nullable_field IS NULL OR recipes.filters.nullable_field IS NULL" in call_args[0][0]
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion when no documents exist
+    mock_result.rows.return_value = []
+    result = couchbase_fts.delete_by_metadata({"category": "nonexistent"})
+    assert result is True  # Returns True even if no documents found
+    assert mock_collection.remove.call_count == 0  # No remove calls
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+
+    # Test with empty metadata
+    result = couchbase_fts.delete_by_metadata({})
+    assert result is False
+
+    # Test exception handling
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_metadata({"category": "test"})
+    assert result is False
+
+
+def test_delete_by_content_id(couchbase_fts, mock_scope, mock_collection):
+    """Test delete_by_content_id method."""
+    # Mock query result with existing documents
+    mock_result = Mock()
+    mock_row1 = Mock()
+    mock_row1.get.return_value = "doc_1"
+    mock_row2 = Mock()
+    mock_row2.get.return_value = "doc_2"
+    mock_result.rows.return_value = [mock_row1, mock_row2]
+    mock_scope.query.return_value = mock_result
+
+    # Test successful deletion
+    result = couchbase_fts.delete_by_content_id("content_123")
+    assert result is True
+
+    # Verify the query was called with correct parameters
+    mock_scope.query.assert_called_once()
+    call_args = mock_scope.query.call_args
+    assert "SELECT META().id as doc_id, * FROM" in call_args[0][0]
+    assert "WHERE content_id = $content_id OR recipes.content_id = $content_id" in call_args[0][0]
+
+    # Check that QueryOptions was passed as second argument
+    assert len(call_args[0]) == 2
+    assert "QueryOptions" in str(type(call_args[0][1]))
+
+    # Verify that remove was called for each document
+    assert mock_collection.remove.call_count == 2
+    mock_collection.remove.assert_any_call("doc_1")
+    mock_collection.remove.assert_any_call("doc_2")
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+    mock_collection.remove.reset_mock()
+
+    # Test deletion when no documents exist
+    mock_result.rows.return_value = []
+    result = couchbase_fts.delete_by_content_id("nonexistent_content")
+    assert result is True  # Returns True even if no documents found
+    assert mock_collection.remove.call_count == 0  # No remove calls
+
+    # Reset mocks for next test
+    mock_scope.query.reset_mock()
+
+    # Test exception handling
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_content_id("content_123")
+    assert result is False
+
+
+def test_delete_by_id_exception_handling(couchbase_fts, mock_collection):
+    """Test delete_by_id method exception handling."""
+    # Mock id_exists to return True
+    with patch.object(couchbase_fts, "id_exists") as mock_id_exists:
+        mock_id_exists.return_value = True
+
+        # Test exception during removal
+        mock_collection.remove.side_effect = Exception("Remove error")
+        result = couchbase_fts.delete_by_id("doc_1")
+        assert result is False
+
+        # Test exception during id_exists check
+        mock_id_exists.side_effect = Exception("Exists check error")
+        result = couchbase_fts.delete_by_id("doc_1")
+        assert result is False
+
+
+def test_delete_by_name_exception_handling(couchbase_fts, mock_scope):
+    """Test delete_by_name method exception handling."""
+    # Test exception during query
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_name("test_document")
+    assert result is False
+
+
+def test_delete_by_metadata_exception_handling(couchbase_fts, mock_scope):
+    """Test delete_by_metadata method exception handling."""
+    # Test exception during query
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_metadata({"category": "test"})
+    assert result is False
+
+
+def test_delete_by_content_id_exception_handling(couchbase_fts, mock_scope):
+    """Test delete_by_content_id method exception handling."""
+    # Test exception during query
+    mock_scope.query.side_effect = Exception("Query error")
+    result = couchbase_fts.delete_by_content_id("content_123")
+    assert result is False

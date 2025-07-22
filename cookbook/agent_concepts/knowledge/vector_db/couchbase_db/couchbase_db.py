@@ -180,6 +180,6 @@ agent = Agent(
 
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
-# vector_store.delete_by_name("Recipes")
-# # or
-# vector_store.delete_by_metadata({"doc_type": "recipe_book"})
+vector_store.delete_by_name("Recipes")
+# or
+vector_store.delete_by_metadata({"doc_type": "recipe_book"})
