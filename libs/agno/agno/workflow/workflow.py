@@ -5,7 +5,7 @@ import inspect
 from dataclasses import dataclass, field, fields
 from os import getenv
 from types import GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional, Union, cast, get_args
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union, cast, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -345,7 +345,7 @@ class Workflow:
                 else:
                     logger.warning(f"Workflow.run() should only yield RunResponseEvent objects, got: {type(item)}")
                 yield item
-            
+
             # Add the run to the memory
             if isinstance(self.memory, WorkflowMemory):
                 self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
@@ -357,7 +357,6 @@ class Workflow:
         except Exception as e:
             logger.error(f"Workflow.arun() failed: {e}")
             raise e
-
 
     async def arun(self, **kwargs: Any):
         """Async version of run() that calls arun_workflow()"""
@@ -422,9 +421,10 @@ class Workflow:
                 # Get the parameters of the async run method
                 sig = inspect.signature(self.__class__.arun)
                 run_type = "async"
-                
+
                 # Check if the async method is a coroutine or async generator
                 from inspect import isasyncgenfunction
+
                 if isasyncgenfunction(self.__class__.arun):
                     run_type = "async_generator"
 
