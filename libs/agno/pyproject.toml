@@ -112,6 +112,7 @@ youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
+psycopg2 = ["psycopg2-binary]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
