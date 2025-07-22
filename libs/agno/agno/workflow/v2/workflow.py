@@ -132,11 +132,6 @@ class Workflow:
     store_events: bool = False
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
 
-    _background_runs: ClassVar[Dict[str, "BackgroundWorkflowRun"]] = {}
-    _background_executor: ClassVar[ThreadPoolExecutor] = ThreadPoolExecutor(
-        max_workers=10, thread_name_prefix="workflow-bg"
-    )
-
     def __init__(
         self,
         workflow_id: Optional[str] = None,
@@ -1241,11 +1236,6 @@ class Workflow:
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 self.update_background_status(self.run_id or "", RunStatus.error)
 
-            finally:
-                # Remove from background registry
-                if self.run_id in Workflow._background_runs:
-                    del Workflow._background_runs[self.run_id]
-
         # Create and start asyncio task
         try:
             loop = asyncio.get_running_loop()
@@ -1274,8 +1264,6 @@ class Workflow:
             started_at=time.time(),
             workflow_run_response=workflow_run_response,  # This will be updated by _execute!
         )
-
-        Workflow._background_runs[self.run_id] = background_run
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -1359,11 +1347,6 @@ class Workflow:
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 self.update_background_status(self.run_id or "", RunStatus.error)
 
-            finally:
-                # Remove from background registry
-                if self.run_id in Workflow._background_runs:
-                    del Workflow._background_runs[self.run_id]
-
         # Create and start asyncio task
         try:
             loop = asyncio.get_running_loop()
@@ -1392,8 +1375,6 @@ class Workflow:
             started_at=time.time(),
             workflow_run_response=workflow_run_response,  # This will be updated by _execute!
         )
-
-        Workflow._background_runs[self.run_id] = background_run
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -1451,24 +1432,9 @@ class Workflow:
 
                 return response
             else:
-                log_debug("❌ No status found in database")
+                log_debug("No status found in database")
 
         return None
-
-    @classmethod
-    def get_background_runs(cls) -> Dict[str, Dict[str, Any]]:
-        """Get information about all active background runs"""
-        return {run_id: bg_run.to_dict() for run_id, bg_run in cls._background_runs.items()}
-
-    @classmethod
-    def cleanup_background_runs(cls) -> int:
-        """Clean up completed background runs and return count of removed runs"""
-        completed_runs = [run_id for run_id, bg_run in cls._background_runs.items() if not bg_run.is_alive()]
-
-        for run_id in completed_runs:
-            del cls._background_runs[run_id]
-
-        return len(completed_runs)
 
     @overload
     def run(
