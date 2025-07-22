@@ -2,7 +2,7 @@ import json
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
@@ -234,7 +234,7 @@ class JsonStorage(Storage):
     def upgrade_schema(self) -> None:
         """Upgrade the schema of the storage."""
         pass
-    
+
     def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 

@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.storage.base import Storage
 from agno.storage.session import Session

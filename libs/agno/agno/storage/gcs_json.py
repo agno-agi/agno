@@ -1,6 +1,6 @@
 import json
 import time
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.storage.json import JsonStorage, Storage
 from agno.storage.session import Session
