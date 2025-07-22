@@ -14,8 +14,10 @@ postgres_tools = PostgresTools(
 # Create an agent with the PostgresTools
 agent = Agent(tools=[postgres_tools])
 
-agent.print_response("List the tables in the database", markdown=True)
+agent.print_response(
+    "List the tables in the database and summarize one of the tables", markdown=True
+)
 
 agent.print_response("""
-Please run a SQL query to get all sessions in `agent_sessions` created in the last 24 hours.
+Please run a SQL query to get all sessions in `agent_sessions` or `team_sessions` created in the last 24 hours and summarize the table.
 """)
