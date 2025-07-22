@@ -17,8 +17,9 @@ from agno.tools.github import GithubTools
 @pytest.fixture
 def mock_github():
     """Create a mock GitHub client."""
-    with patch("agno.tools.github.Github") as mock_github, patch.dict(
-        "os.environ", {"GITHUB_ACCESS_TOKEN": "dummy_token"}
+    with (
+        patch("agno.tools.github.Github") as mock_github,
+        patch.dict("os.environ", {"GITHUB_ACCESS_TOKEN": "dummy_token"}),
     ):
         mock_client = MagicMock(spec=Github)
         mock_github.return_value = mock_client

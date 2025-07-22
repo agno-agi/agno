@@ -15,6 +15,7 @@ from agno.agent.agent import Agent
 from agno.api.playground import PlaygroundEndpointCreate
 from agno.app.playground.async_router import get_async_playground_router
 from agno.app.playground.sync_router import get_sync_playground_router
+from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.cli.settings import agno_cli_settings
 from agno.playground.settings import PlaygroundSettings
@@ -43,10 +44,13 @@ class Playground:
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
+
         self.settings: PlaygroundSettings = settings or PlaygroundSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
+
         self.endpoints_created: Optional[PlaygroundEndpointCreate] = None
+
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.monitoring = monitoring
@@ -57,12 +61,16 @@ class Playground:
                 if not agent.app_id:
                     agent.app_id = self.app_id
                 agent.initialize_agent()
+                # Required for playground to work
+                agent.store_events = True
 
         if self.teams:
             for team in self.teams:
                 if not team.app_id:
                     team.app_id = self.app_id
                 team.initialize_team()
+                # Required for playground to work
+                team.store_events = True
                 for member in team.members:
                     if isinstance(member, Agent):
                         if not member.app_id:
@@ -75,7 +83,7 @@ class Playground:
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.app_id:
+                if hasattr(workflow, "app_id") and not workflow.app_id:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
@@ -170,7 +178,7 @@ class Playground:
 
         logger.info(f"Starting playground on {scheme}://{host}:{port}")
         # Encode the full endpoint (host:port)
-        encoded_endpoint = quote(f"{host}:{port}")
+        encoded_endpoint = quote(f"{host}:{port}{prefix}")
         self.endpoints_created = PlaygroundEndpointCreate(
             endpoint=f"{scheme}://{host}:{port}", playground_data={"prefix": prefix}
         )
@@ -189,16 +197,9 @@ class Playground:
         # Print the panel
         console.print(panel)
         self.set_app_id()
+
         self.register_app_on_platform()
-        if self.agents:
-            for agent in self.agents:
-                agent.register_agent()
-        if self.teams:
-            for team in self.teams:
-                team.register_team()
-        if self.workflows:
-            for workflow in self.workflows:
-                workflow.register_workflow()
+
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
@@ -217,30 +218,9 @@ class Playground:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": [
-                {**agent.get_agent_config_dict(), "agent_id": agent.agent_id, "team_id": agent.team_id}
-                for agent in self.agents
-            ]
-            if self.agents
-            else [],
-            "teams": [{**team.to_platform_dict(), "team_id": team.team_id} for team in self.teams]
-            if self.teams
-            else [],
-            "workflows": [
-                {**workflow.to_config_dict(), "workflow_id": workflow.workflow_id} for workflow in self.workflows
-            ]
-            if self.workflows
-            else [],
             "endpointData": self.endpoints_created.model_dump(exclude_none=True) if self.endpoints_created else {},
             "type": "playground",
             "description": self.description,
         }
         payload = {k: v for k, v in payload.items() if v is not None}
         return payload
-
-
-def generate_id(name: Optional[str] = None) -> str:
-    if name:
-        return name.lower().replace(" ", "-").replace("_", "-")
-    else:
-        return str(uuid4())

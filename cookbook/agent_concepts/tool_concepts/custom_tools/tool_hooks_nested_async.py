@@ -47,41 +47,37 @@ class CustomerDBTools(Toolkit):
         return f"Customer profile for {customer_id}"
 
 
-async def validation_hook(
-    function_name: str, call_func: Callable, arguments: Dict[str, Any]
-):
-    if function_name == "retrieve_customer_profile":
+async def validation_hook(name: str, func: Callable, arguments: Dict[str, Any]):
+    if name == "retrieve_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot retrieve customer profile for ID 123")
 
-    if function_name == "delete_customer_profile":
+    if name == "delete_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot delete customer profile for ID 123")
 
     logger.info("Before Validation Hook")
-    if iscoroutinefunction(call_func):
-        result = await call_func(**arguments)
+    if iscoroutinefunction(func):
+        result = await func(**arguments)
     else:
-        result = call_func(**arguments)
+        result = func(**arguments)
     logger.info("After Validation Hook")
     # Remove name from result to sanitize the output
-    if function_name == "retrieve_customer_profile":
+    if name == "retrieve_customer_profile":
         result = json.loads(result)
         result.pop("name")
         return json.dumps(result)
     return result
 
 
-async def logger_hook(
-    function_name: str, call_func: Callable, arguments: Dict[str, Any]
-):
+async def logger_hook(name: str, func: Callable, arguments: Dict[str, Any]):
     logger.info("Before Logger Hook")
-    if iscoroutinefunction(call_func):
-        result = await call_func(**arguments)
+    if iscoroutinefunction(func):
+        result = await func(**arguments)
     else:
-        result = call_func(**arguments)
+        result = func(**arguments)
     logger.info("After Logger Hook")
     return result
 

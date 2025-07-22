@@ -6,6 +6,8 @@ from agno.app.whatsapp.sync_router import get_sync_router
 
 
 class WhatsappAPI(BaseAPIApp):
+    type = "whatsapp"
+
     def get_router(self) -> APIRouter:
         return get_sync_router(agent=self.agent, team=self.team)
 

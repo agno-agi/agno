@@ -1,16 +1,24 @@
 import json
-from typing import AsyncIterable, Iterable, Union
+from typing import AsyncIterable, Iterable, Union, get_args
 
 from pydantic import BaseModel
 
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponse, RunResponseEvent
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
+from agno.run.v2.workflow import WorkflowRunResponse, WorkflowRunResponseEvent
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 
 
 def pprint_run_response(
-    run_response: Union[RunResponse, Iterable[RunResponse], TeamRunResponse, Iterable[TeamRunResponse]],
+    run_response: Union[
+        RunResponse,
+        Iterable[RunResponseEvent],
+        TeamRunResponse,
+        Iterable[TeamRunResponseEvent],
+        WorkflowRunResponse,
+        Iterable[WorkflowRunResponseEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
@@ -24,7 +32,11 @@ def pprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
+    if (
+        isinstance(run_response, RunResponse)
+        or isinstance(run_response, TeamRunResponse)
+        or isinstance(run_response, WorkflowRunResponse)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -52,10 +64,24 @@ def pprint_run_response(
             response_timer = Timer()
             response_timer.start()
             for resp in run_response:
-                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(
-                    resp.content, str
+                if (
+                    (
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                    )
+                    and hasattr(resp, "content")
+                    and resp.content is not None
                 ):
-                    streaming_response_content += resp.content
+                    if isinstance(resp.content, BaseModel):
+                        try:
+                            JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                    else:
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
+                        streaming_response_content += resp.content  # type: ignore
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
@@ -68,7 +94,14 @@ def pprint_run_response(
 
 
 async def apprint_run_response(
-    run_response: Union[RunResponse, AsyncIterable[RunResponse], TeamRunResponse, AsyncIterable[TeamRunResponse]],
+    run_response: Union[
+        RunResponse,
+        AsyncIterable[RunResponse],
+        TeamRunResponse,
+        AsyncIterable[TeamRunResponse],
+        WorkflowRunResponse,
+        AsyncIterable[WorkflowRunResponseEvent],
+    ],
     markdown: bool = False,
     show_time: bool = False,
 ) -> None:
@@ -82,7 +115,11 @@ async def apprint_run_response(
     from agno.cli.console import console
 
     # If run_response is a single RunResponse, wrap it in a list to make it iterable
-    if isinstance(run_response, RunResponse) or isinstance(run_response, TeamRunResponse):
+    if (
+        isinstance(run_response, RunResponse)
+        or isinstance(run_response, TeamRunResponse)
+        or isinstance(run_response, WorkflowRunResponse)
+    ):
         single_response_content: Union[str, JSON, Markdown] = ""
         if isinstance(run_response.content, str):
             single_response_content = (
@@ -111,10 +148,24 @@ async def apprint_run_response(
             response_timer.start()
 
             async for resp in run_response:
-                if (isinstance(resp, RunResponse) or isinstance(resp, TeamRunResponse)) and isinstance(
-                    resp.content, str
+                if (
+                    (
+                        isinstance(resp, tuple(get_args(RunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(TeamRunResponseEvent)))
+                        or isinstance(resp, tuple(get_args(WorkflowRunResponseEvent)))
+                    )
+                    and hasattr(resp, "content")
+                    and resp.content is not None
                 ):
-                    streaming_response_content += resp.content
+                    if isinstance(resp.content, BaseModel):
+                        try:
+                            streaming_response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
+                        except Exception as e:
+                            logger.warning(f"Failed to convert response to Markdown: {e}")
+                    else:
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
+                        streaming_response_content += resp.content  # type: ignore
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore
                 table = Table(box=ROUNDED, border_style="blue", show_header=False)
