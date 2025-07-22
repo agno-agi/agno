@@ -13,7 +13,7 @@ def test_image_input_bytes():
     """
     Only bytes input is supported for multimodal models
     """
-    agent = Agent(model=AwsBedrock(id="us.amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AwsBedrock(id="amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
 
@@ -27,13 +27,14 @@ def test_image_input_bytes():
 
     assert "bridge" in response.content.lower()
 
+
 @pytest.mark.asyncio
 async def test_async_image_input_bytes():
     """Test async image input using bytes with Amazon Nova Pro model.
 
     Only bytes input is supported for multimodal models.
     """
-    agent = Agent(model=AwsBedrock(id="us.amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AwsBedrock(id="amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
 
@@ -50,7 +51,7 @@ async def test_async_image_input_bytes():
 @pytest.mark.asyncio
 async def test_async_image_input_stream():
     """Test async image input with streaming using Amazon Nova Pro model."""
-    agent = Agent(model=AwsBedrock(id="us.amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AwsBedrock(id="amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
     image_bytes = image_path.read_bytes()
@@ -76,7 +77,7 @@ async def test_async_image_input_stream():
 @pytest.mark.asyncio
 async def test_async_multiple_images():
     """Test async processing of multiple images."""
-    agent = Agent(model=AwsBedrock(id="us.amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=AwsBedrock(id="amazon.nova-pro-v1:0"), markdown=True, telemetry=False, monitoring=False)
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
     image_bytes = image_path.read_bytes()
@@ -89,7 +90,8 @@ async def test_async_multiple_images():
     assert response.content is not None
     assert len(response.content) > 0
 
- def test_pdf_file_input_from_url():
+
+def test_pdf_file_input_from_url():
     """
     Test PDF file input by downloading from URL
     """
