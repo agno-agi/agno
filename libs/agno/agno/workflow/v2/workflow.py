@@ -1178,7 +1178,8 @@ class Workflow:
         if self.session_id is None:
             self.session_id = str(uuid4())
 
-        self.run_id = str(uuid4())
+        if self.run_id is None:
+            self.run_id = str(uuid4())
 
         self.initialize_workflow()
         self.load_session()
@@ -1215,7 +1216,7 @@ class Workflow:
             """Direct execution wrapper with minimal overhead"""
             try:
                 # Quick status update to RUNNING
-                self.update_background_status(self.run_id, RunStatus.running)
+                self.update_background_status(self.run_id or "", RunStatus.running)
 
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
@@ -1227,7 +1228,7 @@ class Workflow:
 
                 # result IS workflow_run_response (same object, modified by _execute)
                 # Quick status update to database
-                self.update_background_status(self.run_id, workflow_run_response.status)
+                self.update_background_status(self.run_id or "", workflow_run_response.status)
 
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
                 log_debug(
@@ -1238,7 +1239,7 @@ class Workflow:
                 logger.error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                self.update_background_status(self.run_id, RunStatus.error)
+                self.update_background_status(self.run_id or "", RunStatus.error)
 
             finally:
                 # Remove from background registry
