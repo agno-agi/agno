@@ -15,10 +15,7 @@ class LinkupTools(Toolkit):
     def __init__(
         self,
         search: bool = True,
-        answer: bool = True,
-        research: bool = False,
         api_key: Optional[str] = None,
-        get_content: bool = False,
         depth: str = "standard",
         output_type: str = "searchResults",
         **kwargs
@@ -26,19 +23,6 @@ class LinkupTools(Toolkit):
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
             logger.error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
-
-        if not LINKUP_AVAILABLE:
-            import click
-
-            if click.confirm(
-                "You are missing the 'linkup-sdk' package. Would you like to install it?"
-            ):
-                import subprocess
-
-                try:
-                    subprocess.run(["uv", "add", "linkup-sdk"], check=True)
-                except subprocess.CalledProcessError:
-                    raise ImportError("Failed to install 'linkup-sdk' package")
 
         from linkup import LinkupClient
 
@@ -48,12 +32,6 @@ class LinkupTools(Toolkit):
 
         tools: List[Any] = []
         if search:
-            tools.append(self.web_search_with_linkup)
-        if research:
-            tools.append(self.web_search_with_linkup)
-        if get_content:
-            tools.append(self.web_search_with_linkup)
-        if answer:
             tools.append(self.web_search_with_linkup)
 
         super().__init__(name="linkup_tools", tools=tools, **kwargs)
