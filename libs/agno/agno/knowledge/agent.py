@@ -52,7 +52,7 @@ class AgentKnowledge(BaseModel):
 
     def _upsert_warning(self, upsert) -> None:
         """Log a warning if upsert is not available"""
-        if upsert and not self.vector_db.upsert_available():
+        if upsert and self.vector_db is not None and not self.vector_db.upsert_available():
             log_info(
                 f"Vector db '{self.vector_db.__class__.__module__}' does not support upsert. Falling back to insert."
             )
@@ -239,7 +239,8 @@ class AgentKnowledge(BaseModel):
         """
 
         log_info("Loading knowledge base")
-        self._load_init(recreate=False, upsert=upsert)
+        if not self._load_init(recreate=False, upsert=upsert):
+            return
 
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
@@ -275,10 +276,10 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
+        log_info("Loading knowledge base")
         if not self._aload_init(recreate=False, upsert=upsert):
             return
 
-        log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
             try:
@@ -571,7 +572,6 @@ class AgentKnowledge(BaseModel):
 
         # 3. Prepare vector DB
         if not self._load_init(recreate, upsert=False):
-            logger.warning("Cannot load file: No vector db provided.")
             return False
         return True
 
@@ -608,7 +608,6 @@ class AgentKnowledge(BaseModel):
 
         # 3. Prepare vector DB
         if not self._aload_init(recreate, upsert=False):
-            logger.warning("Cannot load file: No vector db provided.")
             return False
         return True
 
