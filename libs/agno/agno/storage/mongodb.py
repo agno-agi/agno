@@ -383,7 +383,7 @@ class MongoDbStorage(Storage):
                 logger.error(f"Session not found in MongoDB: {session_id}")
                 return False
 
-            array_result = self.collection.update_one(
+            self.collection.update_one(
                 {
                     "session_id": session_id,
                     "runs.run_id": run_id
