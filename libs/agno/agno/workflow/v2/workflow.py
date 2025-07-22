@@ -1,5 +1,4 @@
 import asyncio
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -62,7 +61,6 @@ from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
 from agno.workflow.v2.types import (
-    BackgroundWorkflowRun,
     StepInput,
     StepMetrics,
     StepOutput,
@@ -1252,7 +1250,6 @@ class Workflow:
 
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
-            task = thread  # type: ignore
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -1354,7 +1351,6 @@ class Workflow:
 
             thread = threading.Thread(target=run_in_thread, daemon=True)
             thread.start()
-            task = thread  # type: ignore
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
