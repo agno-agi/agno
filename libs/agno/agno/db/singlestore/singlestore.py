@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -54,9 +55,9 @@ class SingleStoreDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
-            db_url (Optional[str]): The database URL to connect to.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
+            db_url (Optional[str]): The database URL to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             user_memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
@@ -101,24 +102,25 @@ class SingleStoreDb(BaseDb):
         """
         Create a table structure definition without actually creating the table in the database.
         Used to avoid autoload issues with SingleStore JSON types.
-        
+
         Args:
             table_name (str): Name of the table
-            table_type (str): Type of table (used to get schema definition) 
+            table_type (str): Type of table (used to get schema definition)
             db_schema (Optional[str]): Database schema name
-            
+
         Returns:
             Table: SQLAlchemy Table object with column definitions
         """
         try:
             table_schema = get_table_schema_definition(table_type)
-            
+
             columns = []
-            # Get the columns from the table schema (exclude constraints)
+            # Get the columns from the table schema
             for col_name, col_config in table_schema.items():
-                if col_name.startswith("_"):  # Skip constraint definitions
+                # Skip constraint definitions
+                if col_name.startswith("_"):
                     continue
-                    
+
                 column_args = [col_name, col_config["type"]()]
                 column_kwargs = {}
                 if col_config.get("primary_key", False):
@@ -128,13 +130,13 @@ class SingleStoreDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                 columns.append(Column(*column_args, **column_kwargs))
-            
+
             # Create the table object without constraints to avoid autoload issues
             table_metadata = MetaData(schema=db_schema)
             table = Table(table_name, table_metadata, *columns, schema=db_schema)
-            
+
             return table
-            
+
         except Exception as e:
             table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
             log_error(f"Could not create table structure for {table_ref}: {e}")
@@ -147,7 +149,7 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table to create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
+            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object
@@ -205,9 +207,9 @@ class SingleStoreDb(BaseDb):
                 schema=db_schema,
             )
 
-            # For sessions table, try using just one unique constraint to see if that works
+            # SingleStore has a limitation on the number of unique multi-field constraints per table.
+            # We need to work around that limitation for the sessions table.
             if table_type == "sessions":
-                # Try creating with just one unique constraint instead of three
                 with self.Session() as sess, sess.begin():
                     # Build column definitions
                     columns_sql = []
@@ -220,7 +222,6 @@ class SingleStoreDb(BaseDb):
                     columns_def = ", ".join(columns_sql)
 
                     # Add shard key and single unique constraint
-                    # This is a work around for SingleStore multiple constraint limitation
                     table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
                         {columns_def},
                         SHARD KEY (session_id),
@@ -236,7 +237,7 @@ class SingleStoreDb(BaseDb):
                 try:
                     log_debug(f"Creating index: {idx.name}")
 
-                    # Check if index already exists (SingleStore/MySQL specific)
+                    # Check if index already exists
                     with self.Session() as sess:
                         if db_schema is not None:
                             exists_query = text(
@@ -327,7 +328,7 @@ class SingleStoreDb(BaseDb):
         Args:
             table_name (str): Name of the table to get or create
             table_type (str): Type of table (used to get schema definition)
-            db_schema (str): Database schema name
+            db_schema (Optional[str]): Database schema name
 
         Returns:
             Table: SQLAlchemy Table object representing the schema.
@@ -349,9 +350,6 @@ class SingleStoreDb(BaseDb):
             raise ValueError(f"Table {table_ref} has an invalid schema")
 
         try:
-            # Avoid autoload for all tables due to SingleStore JSON type issues
-            table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
-            log_debug(f"Creating predefined table structure for {table_ref} to avoid JSON type issues")
             return self._create_table_structure_only(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         except Exception as e:
@@ -485,16 +483,18 @@ class SingleStoreDb(BaseDb):
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
         Args:
+            session_type (Optional[SessionType]): The type of session to filter by. Defaults to None.
             user_id (Optional[str]): The ID of the user to filter by.
-            entity_id (Optional[str]): The ID of the agent / workflow to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
+            session_name (Optional[str]): The name of the session to filter by.
             start_timestamp (Optional[int]): The start timestamp to filter by.
             end_timestamp (Optional[int]): The end timestamp to filter by.
-            session_name (Optional[str]): The name of the session to filter by.
             limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
             page (Optional[int]): The page number to return. Defaults to None.
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -525,9 +525,9 @@ class SingleStoreDb(BaseDb):
                 if end_timestamp is not None:
                     stmt = stmt.where(table.c.created_at <= end_timestamp)
                 if session_name is not None:
-                    # Use MySQL/SingleStore JSON extraction syntax
+                    # SingleStore JSON extraction syntax
                     stmt = stmt.where(
-                        func.coalesce(func.json_extract(table.c.session_data, "$.session_name"), "").like(
+                        func.coalesce(func.JSON_EXTRACT_STRING(table.c.session_data, "session_name"), "").like(
                             f"%{session_name}%"
                         )
                     )
@@ -592,12 +592,11 @@ class SingleStoreDb(BaseDb):
             table = self._get_table(table_type="sessions")
 
             with self.Session() as sess, sess.begin():
-                # Use MySQL/SingleStore JSON_SET function
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
                     .where(table.c.session_type == session_type.value)
-                    .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
+                    .values(session_data=func.JSON_SET_STRING(table.c.session_data, "session_name", session_name))
                 )
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
@@ -613,7 +612,6 @@ class SingleStoreDb(BaseDb):
             if not deserialize:
                 return session
 
-            # Return the appropriate session type
             if session_type == SessionType.AGENT:
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
@@ -768,6 +766,9 @@ class SingleStoreDb(BaseDb):
     def delete_user_memory(self, memory_id: str) -> bool:
         """Delete a user memory from the database.
 
+        Args:
+            memory_id (str): The ID of the memory to delete.
+
         Returns:
             bool: True if deletion was successful, False otherwise.
 
@@ -824,17 +825,16 @@ class SingleStoreDb(BaseDb):
             table = self._get_table(table_type="user_memories")
 
             with self.Session() as sess, sess.begin():
-                # MySQL/SingleStore JSON array handling
-                stmt = select(func.json_extract(table.c.topics, "$[*]"))
+                stmt = select(table.c.topics)
                 result = sess.execute(stmt).fetchall()
+
                 topics = []
                 for record in result:
-                    if record[0]:  # Check if not null
-                        import json
-
+                    if record is not None and record[0] is not None:
                         topic_list = json.loads(record[0]) if isinstance(record[0], str) else record[0]
                         if isinstance(topic_list, list):
                             topics.extend(topic_list)
+
                 return topics
 
         except Exception as e:
@@ -927,11 +927,7 @@ class SingleStoreDb(BaseDb):
                 if workflow_id is not None:
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
-                    # MySQL/SingleStore JSON search - check if any of the provided topics exist in the JSON array
-                    topic_conditions = [
-                        func.json_search(table.c.topics, "one", topic).is_not(None)
-                        for topic in topics  # noqa
-                    ]
+                    topic_conditions = [func.JSON_ARRAY_CONTAINS_STRING(table.c.topics, topic) for topic in topics]
                     if topic_conditions:
                         stmt = stmt.where(and_(*topic_conditions))
                 if search_content is not None:
@@ -1162,7 +1158,7 @@ class SingleStoreDb(BaseDb):
             first_session, _ = sessions_result
         else:
             first_session = sessions_result
-        first_session_date = first_session[0]["created_at"] if first_session and len(first_session) > 0 else None
+        first_session_date = first_session[0]["created_at"] if first_session and len(first_session) > 0 else None  # type: ignore
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -1207,9 +1203,7 @@ class SingleStoreDb(BaseDb):
                 log_info("No new session data found. Won't calculate metrics.")
                 return None
 
-            results = []
             metrics_records = []
-
             for date_to_process in dates_to_process:
                 date_key = date_to_process.isoformat()
                 sessions_for_date = all_sessions_data.get(date_key, {})
@@ -1223,9 +1217,9 @@ class SingleStoreDb(BaseDb):
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
-                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+                    bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
 
-            return results
+            return metrics_records
 
         except Exception as e:
             log_error(f"Exception refreshing metrics: {e}")
@@ -1289,6 +1283,11 @@ class SingleStoreDb(BaseDb):
         return self.knowledge_table
 
     def delete_knowledge_content(self, id: str):
+        """Delete knowledge content from the database.
+
+        Args:
+            id (str): The ID of the knowledge content to delete.
+        """
         table = self._get_knowledge_table()
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == id)
@@ -1297,6 +1296,14 @@ class SingleStoreDb(BaseDb):
         return
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get knowledge content from the database.
+
+        Args:
+            id (str): The ID of the knowledge content to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge content, or None if not found.
+        """
         table = self._get_knowledge_table()
         print(f"Getting knowledge content: {id}, {table}")
         with self.Session() as sess, sess.begin():

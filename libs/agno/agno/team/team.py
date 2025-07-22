@@ -4052,11 +4052,13 @@ class Team:
         current_session_metrics = replace(current_session_metrics)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
+        # TODO: member.memory has no runs anymore
+
         # Get metrics of the team-agent's messages
         for member in self.members:
             # Only members with memory
             if member.memory is not None:
-                if member.memory.runs is not None:
+                if hasattr(member.memory, "runs") and member.memory.runs is not None:
                     for runs in member.memory.runs.values():
                         for run in runs:
                             if run is not None and run.messages is not None:

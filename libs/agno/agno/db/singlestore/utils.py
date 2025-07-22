@@ -16,7 +16,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from sqlalchemy import Table
-    from sqlalchemy.dialects import mysql
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -148,9 +147,8 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
             existing_columns = set(col["name"] for col in existing_columns_info)
 
-        except Exception as e:
-            # If column inspection fails (e.g., unrecognized JSON type), log but assume table is valid
-            log_debug(f"Could not inspect columns for {table_ref}, assuming table is valid: {e}")
+        except Exception:
+            # If column inspection fails (e.g., unrecognized JSON type), assume table is valid
             return True
 
         # Check if all expected columns exist
@@ -170,7 +168,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
 # -- Metrics util methods --
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
-    """Bulk upsert metrics into the database using MySQL/SingleStore syntax.
+    """Bulk upsert metrics into the database with proper duplicate handling.
 
     Args:
         table (Table): The table to upsert into.
@@ -183,21 +181,41 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         return []
 
     results = []
-    stmt = mysql.insert(table)
+    
+    for record in metrics_records:
+        date_val = record.get("date")
+        period_val = record.get("aggregation_period")
+        
+        # Check if record already exists based on date + aggregation_period
+        existing_record = session.query(table).filter(
+            table.c.date == date_val,
+            table.c.aggregation_period == period_val
+        ).first()
+        
+        if existing_record:
+            # Update existing record
+            update_data = {k: v for k, v in record.items() if k not in ["id", "date", "aggregation_period", "created_at"]}
+            update_data["updated_at"] = record.get("updated_at")
+            
+            session.query(table).filter(
+                table.c.date == date_val,
+                table.c.aggregation_period == period_val
+            ).update(update_data)
+            
+            # Get the updated record for return
+            updated_record = session.query(table).filter(
+                table.c.date == date_val,
+                table.c.aggregation_period == period_val
+            ).first()
+            if updated_record:
+                results.append(dict(updated_record._mapping))
+        else:
+            # Insert new record
+            stmt = table.insert().values(**record)
+            session.execute(stmt)
+            results.append(record)
 
-    # Columns to update in case of conflict
-    update_columns = {
-        col.name: stmt.inserted[col.name]
-        for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
-    }
-
-    stmt = stmt.on_duplicate_key_update(**update_columns)
-    result = session.execute(stmt, metrics_records)
-    # For MySQL/SingleStore, we need to fetch the results differently
-    results = [dict(zip([col.name for col in table.columns], record)) for record in metrics_records]
     session.commit()
-
     return results
 
 
