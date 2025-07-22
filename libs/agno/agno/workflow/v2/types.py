@@ -7,10 +7,6 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 
-if TYPE_CHECKING:
-    from agno.workflow.v2.workflow import WorkflowRunResponse
-
-
 @dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
