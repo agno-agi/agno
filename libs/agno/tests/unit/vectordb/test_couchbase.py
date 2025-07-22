@@ -1167,3 +1167,39 @@ async def test_async_collection_property_caching(couchbase_fts):
         mock_get_async_scope.assert_not_called()
         mock_scope_inst.collection.assert_not_called()
         assert collection2 is collection1
+
+
+# Delete method tests
+def test_delete_by_id(couchbase_fts, mock_collection):
+    """Test delete_by_id method."""
+    # Mock id_exists to return True (document exists)
+    with patch.object(couchbase_fts, "id_exists") as mock_id_exists:
+        mock_id_exists.return_value = True
+
+        # Test successful deletion
+        result = couchbase_fts.delete_by_id("doc_1")
+        assert result is True
+
+        # Verify the remove command was executed
+        mock_collection.remove.assert_called_with("doc_1")
+
+        # Test deletion of non-existent document
+        mock_id_exists.reset_mock()
+        mock_id_exists.return_value = False  # Document doesn't exist
+        result = couchbase_fts.delete_by_id("nonexistent_id")
+        assert result is False
+
+
+def test_delete_methods_exist(couchbase_fts):
+    """Test that all delete methods exist and are callable."""
+    # Test that all delete methods exist
+    assert hasattr(couchbase_fts, "delete_by_id")
+    assert hasattr(couchbase_fts, "delete_by_name")
+    assert hasattr(couchbase_fts, "delete_by_metadata")
+    assert hasattr(couchbase_fts, "delete_by_content_id")
+
+    # Test that they are callable
+    assert callable(couchbase_fts.delete_by_id)
+    assert callable(couchbase_fts.delete_by_name)
+    assert callable(couchbase_fts.delete_by_metadata)
+    assert callable(couchbase_fts.delete_by_content_id)
