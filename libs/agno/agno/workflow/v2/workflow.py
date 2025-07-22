@@ -1152,9 +1152,9 @@ class Workflow:
             success = self.storage.update_workflow_run_status(
                 session_id=self.session_id, run_id=run_id, status=status.value
             )
-            log_debug(f"📊 Background status update: {status.value} (Success: {success})")
+            log_debug(f"Background status update: {status.value} (Success: {success})")
         else:
-            log_debug("⚠️ No storage or session_id for background status update")
+            log_debug("No storage or session_id for background status update")
 
     def _run_background(
         self,
