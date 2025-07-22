@@ -6,47 +6,37 @@ This example shows how to use Agno's Daytona integration to run Agent-generated 
 1. Get your Daytona API key and API URL: https://app.daytona.io/dashboard/keys
 2. Set the API key and API URL as environment variables:
     export DAYTONA_API_KEY=<your_api_key>
-    export DAYTONA_API_URL=<your_api_url>
+    export DAYTONA_API_URL=<your_api_url> (optional)
 3. Install the dependencies:
-    pip install agno anthropic daytona_sdk
+    pip install agno anthropic daytona
 """
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.tools.daytona import DaytonaTools
 
-daytona_tools = DaytonaTools()
-
-# Setup an Agent focused on coding tasks, with access to the Daytona tools
 agent = Agent(
     name="Coding Agent with Daytona tools",
-    agent_id="coding-agent",
-    model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[daytona_tools],
+    tools=[DaytonaTools()],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
-        "You are an expert at writing and validating Python code. You have access to a remote, secure Daytona sandbox.",
+        "You are an expert at writing and executing code. You have access to a remote, secure Daytona sandbox.",
         "Your primary purpose is to:",
-        "1. Write clear, efficient Python code based on user requests",
-        "2. Execute and verify the code in the Daytona sandbox",
-        "3. Share the complete code with the user, as this is the main use case",
-        "4. Provide thorough explanations of how the code works",
-        "You can use the run_python_code tool to run Python code in the Daytona sandbox.",
+        "1. Write clear, efficient code based on user requests",
+        "2. ALWAYS execute the code in the Daytona sandbox using run_code",
+        "3. Show the actual execution results to the user",
+        "4. Provide explanations of how the code works and what the output means",
         "Guidelines:",
-        "- ALWAYS share the complete code with the user, properly formatted in code blocks",
-        "- Verify code functionality by executing it in the sandbox before sharing",
-        "- Iterate and debug code as needed to ensure it works correctly",
-        "- Use pandas, matplotlib, and other Python libraries for data analysis when appropriate",
-        "- Create proper visualizations when requested and add them as image artifacts to show inline",
-        "- Handle file uploads and downloads properly",
-        "- Explain your approach and the code's functionality in detail",
-        "- Format responses with both code and explanations for maximum clarity",
+        "- NEVER just provide code without executing it",
+        "- Execute all code using the run_code tool to show real results",
+        "- Support Python, JavaScript, and TypeScript execution",
+        "- Use file operations (create_file, read_file) when working with scripts",
+        "- Install missing packages when needed using run_shell_command",
+        "- Always show both the code AND the execution output",
         "- Handle errors gracefully and explain any issues encountered",
     ],
+    show_tool_calls=True,
 )
 
-
 agent.print_response(
-    "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
+    "Write JavaScript code to generate 10 random numbers between 1 and 100, sort them in ascending order, and print each number"
 )
