@@ -761,6 +761,7 @@ class Milvus(VectorDb):
 
             # Delete by ID using Milvus delete operation
             self.client.delete(collection_name=self.collection, ids=[id])
+            log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
             return True
         except Exception as e:
             log_info(f"Error deleting document with ID {id}: {e}")
@@ -784,6 +785,7 @@ class Milvus(VectorDb):
             # Delete by name using Milvus delete operation with filter
             expr = f'name == "{name}"'
             self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
         except Exception as e:
             log_info(f"Error deleting documents with name {name}: {e}")
@@ -809,6 +811,7 @@ class Milvus(VectorDb):
 
             # Delete by metadata using Milvus delete operation with filter
             self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
         except Exception as e:
             log_info(f"Error deleting documents with metadata {metadata}: {e}")
@@ -830,6 +833,7 @@ class Milvus(VectorDb):
             # Delete by content_id using Milvus delete operation with filter
             expr = f'content_id == "{content_id}"'
             self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
