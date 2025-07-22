@@ -236,7 +236,69 @@ class JsonStorage(Storage):
         pass
 
     def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
+        """Fast retrieval of workflow run status from JSON file"""
+        try:
+            file_path = self.dir_path / f"{session_id}.json"
+            if not file_path.exists():
+                return None
+                
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = self.deserialize(f.read())
+                
+            # Check fast-access fields first
+            current_run_id = data.get("current_run_id")
+            current_run_status = data.get("current_run_status")
+            
+            if current_run_id == run_id and current_run_status:
+                return {
+                    "run_id": run_id,
+                    "status": current_run_status,
+                    "updated_at": data.get("updated_at", int(time.time()))
+                }
+                
+            # Fall back to searching in runs array
+            runs = data.get("runs", [])
+            for run in runs:
+                if isinstance(run, dict) and run.get("run_id") == run_id:
+                    return {
+                        "run_id": run_id,
+                        "status": run.get("status", "unknown"),
+                        "updated_at": data.get("updated_at", int(time.time()))  # Use session's updated_at
+                    }
+                    
+        except Exception as e:
+            logger.error(f"Failed to get workflow run status: {e}")
+        return None
 
     def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        raise NotImplementedError
+        """Fast update of workflow run status in JSON file"""
+        try:
+            file_path = self.dir_path / f"{session_id}.json"
+            if not file_path.exists():
+                logger.error(f"Session file not found: {session_id}")
+                return False
+                
+            # Read current data
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = self.deserialize(f.read())
+                
+            # Update the current run tracking fields
+            data["current_run_id"] = run_id
+            data["current_run_status"] = status
+            data["updated_at"] = int(time.time())
+            
+            runs = data.get("runs", [])
+            for run in runs:
+                if isinstance(run, dict) and run.get("run_id") == run_id:
+                    run["status"] = status
+                    break
+                    
+            # Write back to file
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(self.serialize(data))
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update workflow run status: {e}")
+            return False

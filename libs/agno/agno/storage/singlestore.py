@@ -1,5 +1,6 @@
 import json
 from typing import Any, Dict, List, Literal, Optional
+import time
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
@@ -17,7 +18,7 @@ try:
     from sqlalchemy.orm import Session as SqlSession
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql.expression import select, text
+    from sqlalchemy.sql.expression import select, text, and_
 except ImportError:
     raise ImportError("`sqlalchemy` not installed")
 
@@ -120,6 +121,9 @@ class SingleStoreStorage(Storage):
             specific_columns = [
                 Column("workflow_id", mysql.TEXT),
                 Column("workflow_data", mysql.JSON),
+                Column("runs", mysql.JSON),
+                Column("current_run_id", mysql.TEXT, nullable=True),
+                Column("current_run_status", mysql.TEXT, nullable=True),
             ]
 
         # Create table with all columns
@@ -426,9 +430,9 @@ class SingleStoreStorage(Storage):
                 upsert_sql = text(
                     f"""
                     INSERT INTO {self.schema}.{self.table_name}
-                    (session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at)
+                    (session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, current_run_id, current_run_status, created_at, updated_at)
                     VALUES      
-                    (:session_id, :workflow_id, :user_id, :workflow_name, :runs, :workflow_data, :session_data, :extra_data, UNIX_TIMESTAMP(), NULL)
+                    (:session_id, :workflow_id, :user_id, :workflow_name, :runs, :workflow_data, :session_data, :extra_data, :current_run_id, :current_run_status, UNIX_TIMESTAMP(), NULL)
                     ON DUPLICATE KEY UPDATE
                         workflow_id = VALUES(workflow_id),
                         user_id = VALUES(user_id),
@@ -518,7 +522,7 @@ class SingleStoreStorage(Storage):
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
                             "workflow_name": session.workflow_name,  # type: ignore
-                            "runs": session_dict.get("runs"),
+                            "runs": json.dumps(session_dict.get("runs"), ensure_ascii=False) if session_dict.get("runs") else None,
                             "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
                             if session.workflow_data is not None  # type: ignore
                             else None,
@@ -528,6 +532,8 @@ class SingleStoreStorage(Storage):
                             "extra_data": json.dumps(session.extra_data, ensure_ascii=False)
                             if session.extra_data is not None
                             else None,
+                            "current_run_id": None,
+                            "current_run_status": None,
                         },
                     )
             except Exception as e:
@@ -602,8 +608,35 @@ class SingleStoreStorage(Storage):
 
         return copied_obj
 
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
     def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        raise NotImplementedError
+        """Fast update of workflow run status without JSON serialization"""
+        try:
+            with self.SqlSession() as sess, sess.begin():
+                update_values = {
+                    "current_run_id": run_id,
+                    "current_run_status": status,
+                    "updated_at": int(time.time()),
+                }
+
+                stmt = self.table.update().where(self.table.c.session_id == session_id).values(**update_values)
+
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to update workflow run status: {e}")
+            return False
+
+    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        """Fast retrieval of workflow run status"""
+        try:
+            with self.SqlSession() as sess:
+                stmt = select(
+                    self.table.c.current_run_id, self.table.c.current_run_status, self.table.c.updated_at
+                ).where(and_(self.table.c.session_id == session_id, self.table.c.current_run_id == run_id))
+                result = sess.execute(stmt).fetchone()
+
+                if result:
+                    return {"run_id": result[0], "status": result[1], "updated_at": result[2]}
+        except Exception as e:
+            logger.error(f"Failed to get workflow run status: {e}")
+        return None

@@ -261,7 +261,74 @@ class GCSJsonStorage(JsonStorage):
         pass
 
     def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
+        """Fast retrieval of workflow run status from GCS blob"""
+        try:
+            blob = self.bucket.blob(self._get_blob_path(session_id))
+            
+            # Check if blob exists
+            if not blob.exists():
+                return None
+                
+            data_str = blob.download_as_bytes().decode("utf-8")
+            data = self.deserialize(data_str)
+            
+            # Check fast-access fields first
+            current_run_id = data.get("current_run_id")
+            current_run_status = data.get("current_run_status")
+            
+            if current_run_id == run_id and current_run_status:
+                return {
+                    "run_id": run_id,
+                    "status": current_run_status,
+                    "updated_at": int(time.time())
+                }
+            
+            # Fall back to searching in runs array
+            runs = data.get("runs", [])
+            for run in runs:
+                if isinstance(run, dict) and run.get("run_id") == run_id:
+                    return {
+                        "run_id": run_id,
+                        "status": run.get("status", "unknown"),
+                        "updated_at": run.get("updated_at", int(time.time()))
+                    }
+            
+            return None
+            
+        except Exception as e:
+            if "404" in str(e):
+                return None
+            logger.error(f"Error getting workflow run status from GCS: {e}")
+            return None
 
     def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        raise NotImplementedError
+        """Update workflow run status in GCS blob"""
+        try:
+            blob = self.bucket.blob(self._get_blob_path(session_id))
+            
+            if not blob.exists():
+                return False
+                
+            data_str = blob.download_as_bytes().decode("utf-8")
+            data = self.deserialize(data_str)
+            
+            current_time = int(time.time())
+            
+            data["current_run_id"] = run_id
+            data["current_run_status"] = status
+            data["updated_at"] = current_time
+            
+            runs = data.get("runs", [])
+            for run in runs:
+                if isinstance(run, dict) and run.get("run_id") == run_id:
+                    run["status"] = status
+                    break
+            
+            updated_json = self.serialize(data)
+            blob.upload_from_string(updated_json, content_type="application/json")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating workflow run status in GCS: {e}")
+            return False
