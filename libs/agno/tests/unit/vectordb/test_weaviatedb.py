@@ -220,17 +220,18 @@ def test_name_exists(weaviate_db, mock_weaviate_client):
 
     assert weaviate_db.name_exists("nonexistent") is False
 
+
 def test_delete_by_id(weaviate_db, mock_weaviate_client):
     """Test deleting documents by ID"""
     collection = mock_weaviate_client.collections.get.return_value
     test_uuid = str(uuid.uuid4())
-    
+
     # Test successful deletion
     collection.data.exists.return_value = True
     result = weaviate_db.delete_by_id(test_uuid)
     assert result is True
     collection.data.delete_by_id.assert_called_once()
-    
+
     # Test deletion of non-existent ID (should still return True)
     collection.data.exists.return_value = False
     collection.data.delete_by_id.reset_mock()
@@ -242,12 +243,12 @@ def test_delete_by_id(weaviate_db, mock_weaviate_client):
 def test_delete_by_name(weaviate_db, mock_weaviate_client):
     """Test deleting documents by name"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     # Test successful deletion
     result = weaviate_db.delete_by_name("tom_kha")
     assert result is True
     collection.data.delete_many.assert_called_once()
-    
+
     # Verify the filter was built correctly
     call_args = collection.data.delete_many.call_args
     assert "where" in call_args.kwargs
@@ -256,7 +257,7 @@ def test_delete_by_name(weaviate_db, mock_weaviate_client):
 def test_delete_by_metadata(weaviate_db, mock_weaviate_client):
     """Test deleting documents by metadata"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     metadata = {"cuisine": "Thai", "type": "soup"}
     result = weaviate_db.delete_by_metadata(metadata)
     assert result is True
@@ -266,7 +267,7 @@ def test_delete_by_metadata(weaviate_db, mock_weaviate_client):
 def test_delete_by_content_id(weaviate_db, mock_weaviate_client):
     """Test deleting documents by content ID"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     result = weaviate_db.delete_by_content_id("recipe_1")
     assert result is True
     collection.data.delete_many.assert_called_once()
@@ -275,7 +276,7 @@ def test_delete_by_content_id(weaviate_db, mock_weaviate_client):
 def test_delete_by_name_multiple_documents(weaviate_db, mock_weaviate_client):
     """Test deleting multiple documents with the same name"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     # This should use delete_many to delete all documents with the same name
     result = weaviate_db.delete_by_name("tom_kha")
     assert result is True
@@ -285,12 +286,13 @@ def test_delete_by_name_multiple_documents(weaviate_db, mock_weaviate_client):
 def test_delete_by_metadata_complex(weaviate_db, mock_weaviate_client):
     """Test deleting documents with complex metadata matching"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     # Test complex metadata deletion
     complex_metadata = {"cuisine": "Thai", "spicy": True, "type": "soup"}
     result = weaviate_db.delete_by_metadata(complex_metadata)
     assert result is True
     collection.data.delete_many.assert_called_once()
+
 
 def test_upsert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     """Test upserting documents"""
@@ -317,20 +319,15 @@ def test_get_search_results(weaviate_db):
 
     mock_obj1 = MagicMock()
     mock_obj1.properties = {
-        "name": "test1", 
-        "content": "Test content 1", 
+        "name": "test1",
+        "content": "Test content 1",
         "meta_data": json.dumps({"key": "value"}),
-        "content_id": "test_id_1"
+        "content_id": "test_id_1",
     }
     mock_obj1.vector = {"default": [0.1] * 768}
 
     mock_obj2 = MagicMock()
-    mock_obj2.properties = {
-        "name": "test2", 
-        "content": "Test content 2", 
-        "meta_data": None,
-        "content_id": "test_id_2"
-    }
+    mock_obj2.properties = {"name": "test2", "content": "Test content 2", "meta_data": None, "content_id": "test_id_2"}
     mock_obj2.vector = [0.2] * 768
 
     mock_response.objects = [mock_obj1, mock_obj2]
@@ -348,12 +345,12 @@ def test_get_search_results(weaviate_db):
 def test_error_handling(weaviate_db, mock_weaviate_client):
     """Test error handling scenarios"""
     collection = mock_weaviate_client.collections.get.return_value
-    
+
     # Test deletion with exception
     collection.data.delete_many.side_effect = Exception("Test error")
     result = weaviate_db.delete_by_name("test")
     assert result is False
-    
+
     # Reset the side effect
     collection.data.delete_many.side_effect = None
 
@@ -363,14 +360,14 @@ def test_build_filter_expression(weaviate_db):
     # Test with no filters
     result = weaviate_db._build_filter_expression(None)
     assert result is None
-    
+
     result = weaviate_db._build_filter_expression({})
     assert result is None
-    
+
     # Test with simple filter (should return a filter object)
     result = weaviate_db._build_filter_expression({"cuisine": "Thai"})
     assert result is not None
-    
+
     # Test with multiple filters
     result = weaviate_db._build_filter_expression({"cuisine": "Thai", "type": "soup"})
     assert result is not None
