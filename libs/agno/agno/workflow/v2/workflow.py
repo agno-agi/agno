@@ -1184,7 +1184,6 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
-            content="Workflow execution started in background",
         )
 
         # Store PENDING response immediately
@@ -1291,7 +1290,6 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
-            content="Workflow execution started in background",
         )
 
         # Store PENDING response immediately
@@ -1334,23 +1332,8 @@ class Workflow:
                 self.update_background_status(self.run_id or "", RunStatus.error)
 
         # Create and start asyncio task
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(execute_workflow_background())
-        except RuntimeError:
-            # No event loop, use threading fallback
-            import threading
-
-            def run_in_thread():
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                try:
-                    new_loop.run_until_complete(execute_workflow_background())
-                finally:
-                    new_loop.close()
-
-            thread = threading.Thread(target=run_in_thread, daemon=True)
-            thread.start()
+        loop = asyncio.get_running_loop()
+        loop.create_task(execute_workflow_background())
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -1366,47 +1349,31 @@ class Workflow:
                 status_value = status_info["status"]
                 log_debug(f"Database status (source of truth): {status_value}")
 
-                # For COMPLETED/ERROR, ALWAYS return the full response from JSON blob
-                if status_value in [RunStatus.completed.value, RunStatus.error.value]:
-                    session = self.storage.read(session_id=self.session_id)
-                    if session and isinstance(session, WorkflowSessionV2) and session.runs:
-                        log_debug(f"Found session with {len(session.runs)} total runs")
+                # ALWAYS return the full response from JSON blob regardless of status
+                session = self.storage.read(session_id=self.session_id)
+                if session and isinstance(session, WorkflowSessionV2) and session.runs:
+                    log_debug(f"Found session with {len(session.runs)} total runs")
 
-                        matching_run = None
-                        for run in session.runs:
-                            if run.run_id == run_id:
-                                matching_run = run
+                    matching_run = None
+                    for run in session.runs:
+                        if run.run_id == run_id:
+                            matching_run = run
 
-                        if matching_run:
-                            log_debug(
-                                f"Found full response! Content length: {len(str(matching_run.content)) if matching_run.content else 0}"
-                            )
-                            log_debug(
-                                f"Step responses: {len(matching_run.step_responses) if matching_run.step_responses else 0}"
-                            )
-                            # Update the status from database (source of truth) to handle any edge cases
-                            matching_run.status = RunStatus(status_value)
-                            # This is the EXACT SAME response as normal run() would return!
-                            return matching_run
+                    if matching_run:
+                        log_debug(
+                            f"Found full response! Content length: {len(str(matching_run.content)) if matching_run.content else 0}"
+                        )
+                        log_debug(
+                            f"Step responses: {len(matching_run.step_responses) if matching_run.step_responses else 0}"
+                        )
+                        # Update the status from database (source of truth) to handle any edge cases
+                        matching_run.status = RunStatus(status_value)
+                        # This is the EXACT SAME response as normal run() would return!
+                        return matching_run
 
-                        log_debug(f"No runs found with ID {run_id}")
-                    else:
-                        log_debug("No session or runs found")
-
-                # For PENDING/RUNNING, return a minimal status response
-                response = WorkflowRunResponse(
-                    run_id=run_id,
-                    session_id=self.session_id,
-                    workflow_id=self.workflow_id,
-                    workflow_name=self.name,
-                    created_at=status_info["updated_at"],
-                    status=RunStatus(status_value),
-                    content=f"Workflow is {status_value.lower()}..."
-                    if status_value == "RUNNING"
-                    else "Workflow queued for execution",
-                )
-
-                return response
+                    log_debug(f"No runs found with ID {run_id}")
+                else:
+                    log_debug("No session or runs found")
             else:
                 log_debug("No status found in database")
 

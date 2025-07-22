@@ -77,12 +77,12 @@ if __name__ == "__main__":
     print(f" Initial Response: {bg_response.status} - {bg_response.content}")
     print(f" Run ID: {bg_response.run_id}")
 
-    # Poll every 10 seconds until completion
+    # Poll every 5 seconds until completion
     poll_count = 0
 
     while True:
         poll_count += 1
-        print(f"\n Poll #{poll_count} (every 10s)")
+        print(f"\n Poll #{poll_count} (every 5s)")
 
         result = content_creation_workflow.get_run(bg_response.run_id)
 
@@ -91,17 +91,17 @@ if __name__ == "__main__":
             if poll_count > 50:
                 print(f"⏰ Timeout after {poll_count} attempts")
                 break
-            time.sleep(10)
+            time.sleep(5)
             continue
 
         if result.status in [RunStatus.completed, RunStatus.error]:
             break
 
-        if poll_count > 50:
+        if poll_count > 200:
             print(f"⏰ Timeout after {poll_count} attempts")
             break
 
-        time.sleep(10)
+        time.sleep(5)
 
     print(f"\n Final Result:")
     print("=" * 50)

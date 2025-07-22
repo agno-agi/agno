@@ -7,6 +7,7 @@ from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 
+
 @dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
