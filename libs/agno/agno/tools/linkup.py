@@ -6,10 +6,9 @@ from agno.utils.log import logger
 
 try:
     from linkup import LinkupClient
-    LINKUP_AVAILABLE = True
 except ImportError as e:
-    LINKUP_AVAILABLE = False
-    LinkupClient = Any
+    raise ImportError(
+        "`linkup-sdk` not installed. Please install using `pip install linkup-sdk`")
 
 class LinkupTools(Toolkit):
     def __init__(
@@ -23,8 +22,6 @@ class LinkupTools(Toolkit):
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
             logger.error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
-
-        from linkup import LinkupClient
 
         self.linkup = LinkupClient(api_key=api_key)
         self.depth = depth
