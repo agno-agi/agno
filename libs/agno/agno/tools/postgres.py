@@ -12,7 +12,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, log_warning, log_error
+from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
@@ -124,7 +124,7 @@ class PostgresTools(Toolkit):
 
     def show_tables(self) -> str:
         """Lists all tables in the configured schema."""
-        
+
         stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
         return self._execute_query(stmt, (self.table_schema,))
 
@@ -134,7 +134,7 @@ class PostgresTools(Toolkit):
 
         Args:
             table: The name of the table to describe.
-        
+
         Returns:
             A string describing the table's columns and data types.
         """
@@ -151,7 +151,7 @@ class PostgresTools(Toolkit):
 
         Args:
             table: The name of the table to summarize.
-        
+
         Returns:
             A string containing a summary of the table.
         """

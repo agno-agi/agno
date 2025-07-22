@@ -249,6 +249,7 @@ async def test_async_json_response_mode():
     assert response.content.genre is not None
     assert response.content.plot is not None
 
+
 @pytest.mark.asyncio
 async def test_async_history():
     """Test async agent with persistent history."""

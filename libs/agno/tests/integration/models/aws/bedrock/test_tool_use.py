@@ -174,6 +174,7 @@ def test_tool_call_list_parameters():
 
 # ==================== ASYNC TESTS ====================
 
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     """Test async tool usage with Claude model."""
