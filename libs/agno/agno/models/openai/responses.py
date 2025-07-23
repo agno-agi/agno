@@ -154,7 +154,7 @@ class OpenAIResponses(Model):
 
     def get_request_params(
         self,
-        messages: List[Message],
+        messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -220,7 +220,7 @@ class OpenAIResponses(Model):
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if self.id.startswith("o3") or self.id.startswith("o4-mini"):
+        if (self.id.startswith("o3") or self.id.startswith("o4-mini") and messages is not None:
             request_params["store"] = True
 
             # Check if the last assistant message has a previous_response_id to continue from

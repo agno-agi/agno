@@ -19,7 +19,7 @@ def setup_vector_db():
 
 def test_website_knowledge_base_directory(setup_vector_db):
     """Test loading multiple websites into the knowledge base."""
-    urls = ["https://docs.agno.com/introduction/agents", "https://docs.agno.com/introduction/playground"]
+    urls = ["https://docs.agno.com/introduction/agents", "https://docs.agno.com/introduction/multi-agent-systems"]
 
     kb = WebsiteKnowledgeBase(urls=urls, max_links=1, vector_db=setup_vector_db)
     kb.load(recreate=True)
