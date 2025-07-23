@@ -17,11 +17,15 @@ async def run_mcp_agent():
         "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt"
     )
 
-    agent = Agent(tools=[mcp_tools])
-    await agent.aprint_response(
-        "What listings are available in San Francisco for 2 people for 3 nights from 1 to 4 August 2025?",
-        stream=True,
-    )
+    try:
+        agent = Agent(tools=[mcp_tools])
+        await agent.aprint_response(
+            "What listings are available in San Francisco for 2 people for 3 nights from 1 to 4 August 2025?",
+            stream=True,
+        )
+
+    finally:
+        await mcp_tools.close()
 
 
 if __name__ == "__main__":

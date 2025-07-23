@@ -249,6 +249,19 @@ class MCPTools(Toolkit):
         # Initialize with the new session
         await self.initialize()
 
+    async def close(self) -> None:
+        """Close the MCP connection and clean up resources"""
+        if self._session_context is not None:
+            await self._session_context.__aexit__(None, None, None)
+            self.session = None
+            self._session_context = None
+
+        if self._context is not None:
+            await self._context.__aexit__(None, None, None)
+            self._context = None
+
+        self._initialized = False
+
     async def __aenter__(self) -> "MCPTools":
         await self._connect()
         return self
