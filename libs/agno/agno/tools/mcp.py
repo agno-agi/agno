@@ -1,3 +1,5 @@
+import asyncio
+import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import timedelta
@@ -151,15 +153,68 @@ class MCPTools(Toolkit):
         self._context = None
         self._session_context = None
         self._initialized = False
+        self._connection_task = None
 
-    async def __aenter__(self) -> "MCPTools":
-        """Enter the async context manager."""
+        def cleanup():
+            """Cancel active connections before exiting"""
+            if self._connection_task and not self._connection_task.done():
+                self._connection_task.cancel()
+
+        # Setup cleanup logic before the instance is garbage collected
+        self._cleanup_finalizer = weakref.finalize(self, cleanup)
+
+    @classmethod
+    async def connect(
+        cls,
+        command: Optional[str] = None,
+        *,
+        url: Optional[str] = None,
+        env: Optional[dict[str, str]] = None,
+        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
+        session: Optional[ClientSession] = None,
+        timeout_seconds: int = 5,
+        client=None,
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
+        **kwargs,
+    ) -> "MCPTools":
+        instance = cls(
+            command=command,
+            url=url,
+            env=env,
+            transport=transport,
+            server_params=server_params,
+            session=session,
+            timeout_seconds=timeout_seconds,
+            client=client,
+            include_tools=include_tools,
+            exclude_tools=exclude_tools,
+            **kwargs,
+        )
+
+        if not session:
+            await instance._connect()
+
+        return instance
+
+    def _start_connection(self):
+        if self._connection_task is None or self._connection_task.done():
+            self._connection_task = asyncio.create_task(self._connect())
+
+    async def _connect(self) -> None:
+        """Connects to the MCP server and initializes the tools"""
+        if self._initialized:
+            return
 
         if self.session is not None:
             # Already has a session, just initialize
-            if not self._initialized:
-                await self.initialize()
-            return self
+            await self.initialize()
+            return
+
+        # TODO: keeping active connections here. Can we keep them alive without this?
+        if not hasattr(self, "_active_contexts"):
+            self._active_contexts = []
 
         # Create a new session using stdio_client, sse_client or streamablehttp_client based on transport
         if self.transport == "sse":
@@ -184,13 +239,18 @@ class MCPTools(Toolkit):
             client_timeout = self.timeout_seconds
 
         session_params = await self._context.__aenter__()  # type: ignore
+        self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
         self.session = await self._session_context.__aenter__()  # type: ignore
+        self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
         await self.initialize()
+
+    async def __aenter__(self) -> "MCPTools":
+        await self._connect()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
