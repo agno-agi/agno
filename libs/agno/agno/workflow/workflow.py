@@ -125,6 +125,8 @@ class Workflow:
         # Private attributes to store the run method and its parameters
         # The run function provided by the subclass
         self._subclass_run: Optional[Callable] = None
+        self._subclass_arun: Optional[Callable] = None
+
         # Parameters of the run function
         self._run_parameters: Optional[Dict[str, Any]] = None
         # Return type of the run function
@@ -268,8 +270,8 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.run_id}", center=True)
         try:
-            self._subclass_run = cast(Callable, self._subclass_run)
-            result = await self._subclass_run(**kwargs)
+            self._subclass_arun = cast(Callable, self._subclass_arun)
+            result = await self._subclass_arun(**kwargs)
         except Exception as e:
             logger.error(f"Workflow.arun() failed: {e}")
             raise e
@@ -326,8 +328,8 @@ class Workflow:
         # Initialize the run_response content
         self.run_response.content = ""
         try:
-            self._subclass_run = cast(Callable, self._subclass_run)
-            async for item in self._subclass_run(**kwargs):
+            self._subclass_arun = cast(Callable, self._subclass_arun)
+            async for item in self._subclass_arun(**kwargs):
                 if (
                     isinstance(item, tuple(get_args(RunResponseEvent)))
                     or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
@@ -405,29 +407,32 @@ class Workflow:
             self.memory = Memory()
 
     def update_run_method(self):
+        run_type = None
         # Update the run() method to call run_workflow() instead of the subclass's run()
         # First, check if the subclass has a run method
         #   If the run() method has been overridden by the subclass,
         #   then self.__class__.run is not Workflow.run will be True
-        run_type = "sync"
-        if self.__class__.run is not Workflow.run or self.__class__.arun is not Workflow.arun:
+        if self.__class__.run is not Workflow.run:
             # Store the original run methods bound to the instance
-            if self.__class__.run is not Workflow.run:
-                self._subclass_run = self.__class__.run.__get__(self)
-                # Get the parameters of the sync run method
-                sig = inspect.signature(self.__class__.run)
-            if self.__class__.arun is not Workflow.arun:
-                self._subclass_run = self.__class__.arun.__get__(self)
-                # Get the parameters of the async run method
-                sig = inspect.signature(self.__class__.arun)
-                run_type = "async"
+            self._subclass_run = self.__class__.run.__get__(self)
+            run_type = "sync"
+            # Get the parameters of the sync run method
+            sig = inspect.signature(self.__class__.run)
 
-                # Check if the async method is a coroutine or async generator
-                from inspect import isasyncgenfunction
+        if self.__class__.arun is not Workflow.arun:
+            self._subclass_arun = self.__class__.arun.__get__(self)
+            run_type = "coroutine"
+            
+            # Get the parameters of the async run method
+            sig = inspect.signature(self.__class__.arun)
 
-                if isasyncgenfunction(self.__class__.arun):
-                    run_type = "async_generator"
+            # Check if the async method is a coroutine or async generator
+            from inspect import isasyncgenfunction
 
+            if isasyncgenfunction(self.__class__.arun):
+                run_type = "async_generator"
+
+        if run_type is not None:
             # Convert parameters to a serializable format
             self._run_parameters = {
                 param_name: {
@@ -464,7 +469,7 @@ class Workflow:
             # This is so we call run_workflow() instead of the subclass's run()
             if run_type == "sync":
                 object.__setattr__(self, "run", self.run_workflow.__get__(self))
-            elif run_type == "async":
+            elif run_type == "coroutine":
                 object.__setattr__(self, "arun", self.arun_workflow.__get__(self))
             elif run_type == "async_generator":
                 object.__setattr__(self, "arun", self.arun_workflow_generator.__get__(self))
@@ -472,7 +477,8 @@ class Workflow:
             # If the subclass does not override the run method,
             # the Workflow.run() method will be called and will log an error
             self._subclass_run = self.run
-
+            self._subclass_arun = self.arun
+            
             self._run_parameters = {}
             self._run_return_type = None
 
