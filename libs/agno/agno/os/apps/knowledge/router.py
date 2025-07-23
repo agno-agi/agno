@@ -76,10 +76,11 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         else:
             file_data = None
 
-        if file and file.filename:
-            name = file.filename
-        elif url and name is None:
-            name = parsed_urls
+        if not name:
+            if file and file.filename:
+                name = file.filename
+            elif url:
+                name = parsed_urls
 
         content = Content(
             name=name,

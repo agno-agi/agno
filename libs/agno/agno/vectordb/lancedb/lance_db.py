@@ -533,7 +533,7 @@ class LanceDb(VectorDb):
                         embedder=self.embedder,
                         embedding=item["vector"],
                         usage=payload["usage"],
-                        content_id=payload["content_id"],
+                        content_id=payload.get("content_id"),
                     )
                 )
 

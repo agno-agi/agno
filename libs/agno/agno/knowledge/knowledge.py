@@ -1,8 +1,9 @@
 import io
 import time
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, overload
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, overload
 from uuid import uuid4
 
 from agno.db.postgres.postgres import PostgresDb
@@ -25,7 +26,7 @@ class Knowledge:
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
     contents_db: Optional[PostgresDb] = None
-    valid_metadata_filters: Optional[List[str]] = None
+    valid_metadata_filters: Optional[Set[str]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
@@ -76,9 +77,7 @@ class Knowledge:
     def add_contents(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             contents = args[0]
-            print("Case 1: List of content dicts")
             for content in contents:
-                print(f"Adding content: {content}")
                 self.add_content(
                     name=content.get("name"),
                     description=content.get("description"),
@@ -97,7 +96,6 @@ class Knowledge:
             paths = kwargs.get("paths", [])
             urls = kwargs.get("urls", [])
 
-            print("Case 2: Structured inputs with kwargs")
             for path in paths:
                 self.add_content(
                     name=name,
@@ -105,7 +103,6 @@ class Knowledge:
                     path=path,
                     metadata=metadata,
                 )
-                print(f"Adding path content: {path} with metadata: {metadata}")
             for url in urls:
                 self.add_content(
                     name=name,
@@ -113,7 +110,6 @@ class Knowledge:
                     url=url,
                     metadata=metadata,
                 )
-                print(f"Adding url content: {url} with metadata: {metadata}")
             if topics:
                 self.add_content(
                     name=name,
@@ -174,7 +170,7 @@ class Knowledge:
                 read_documents = content.reader.read(path, name=content.name or path.name)
             else:
                 reader = ReaderFactory.get_reader_for_extension(path.suffix)
-                print(f"Using Reader: {reader.__class__.__name__}")
+                log_info(f"Using Reader: {reader.__class__.__name__}")
                 if reader:
                     read_documents = reader.read(path, name=content.name or path.name)
 
@@ -354,9 +350,7 @@ class Knowledge:
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
 
-                # Process each document in the list
                 for read_document in read_documents:
-                    # Add the original metadata to each document
                     if content.metadata:
                         read_document.meta_data.update(content.metadata)
                     read_document.content_id = content.id
@@ -435,6 +429,9 @@ class Knowledge:
 
     def _load_content(self, content: Content) -> None:
         log_info(f"Loading content: {content.id}")
+
+        if content.metadata:
+            self.add_filters(content.metadata)
 
         if content.path:
             self._load_from_path(content)
@@ -544,6 +541,7 @@ class Knowledge:
             return []
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        self.valid_metadata_filters.update(self._get_filters_from_db)
         if not filters:
             return {}, []
 
@@ -566,6 +564,24 @@ class Knowledge:
                 log_debug(f"Invalid filter key: {key} - not present in knowledge base")
 
         return valid_filters, invalid_keys
+
+    def add_filters(self, metadata: Dict[str, Any]) -> None:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
+
+        for key in metadata.keys():
+            self.valid_metadata_filters.add(key)
+
+    @cached_property
+    def _get_filters_from_db(self) -> set:
+        if self.contents_db is None:
+            return set()
+        contents, _ = self.get_content()
+        valid_filters = set()
+        for content in contents:
+            if content.metadata:
+                valid_filters.update(content.metadata.keys())
+        return valid_filters
 
     def remove_vector_by_id(self, id: str) -> bool:
         if self.vector_store is None:

@@ -877,20 +877,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # Use stream override value when necessary
         if stream is None:
@@ -1258,20 +1245,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # Use stream override value when necessary
         if stream is None:
@@ -1509,20 +1483,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -1879,20 +1840,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries

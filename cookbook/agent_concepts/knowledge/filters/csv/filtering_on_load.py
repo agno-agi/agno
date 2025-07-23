@@ -1,5 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.csv import CSVKnowledgeBase
+from agno.db.postgres.postgres import PostgresDb
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
@@ -23,12 +24,16 @@ vector_db = LanceDb(
 # When loading the knowledge base, we can attach metadata that will be used for filtering
 
 # Initialize the PDFKnowledgeBase
-knowledge_base = CSVKnowledgeBase(
-    vector_db=vector_db,
-    num_documents=5,
+knowledge = Knowledge(
+    vector_store=vector_db,
+    max_results=5,
+    contents_db=PostgresDb(
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+        knowledge_table="knowledge_contents",
+    ),
 )
 
-knowledge_base.load_document(
+knowledge.add_content(
     path=downloaded_csv_paths[0],
     metadata={
         "data_type": "sales",
@@ -37,10 +42,9 @@ knowledge_base.load_document(
         "region": "north_america",
         "currency": "USD",
     },
-    recreate=True,  # Set to True only for the first run, then set to False
 )
 
-knowledge_base.load_document(
+knowledge.add_content(
     path=downloaded_csv_paths[1],
     metadata={
         "data_type": "sales",
@@ -50,7 +54,7 @@ knowledge_base.load_document(
     },
 )
 
-knowledge_base.load_document(
+knowledge.add_content(
     path=downloaded_csv_paths[2],
     metadata={
         "data_type": "survey",
@@ -60,7 +64,7 @@ knowledge_base.load_document(
     },
 )
 
-knowledge_base.load_document(
+knowledge.add_content(
     path=downloaded_csv_paths[3],
     metadata={
         "data_type": "financial",
@@ -73,9 +77,9 @@ knowledge_base.load_document(
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
-    knowledge_filters={"region": "north_america", "data_type": "sales"},
+    knowledge_filters={"location": "north_america", "data_type": "sales"},
 )
 agent.print_response(
     "Revenue performance and top selling products",
