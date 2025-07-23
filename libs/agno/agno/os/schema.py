@@ -104,14 +104,15 @@ class AgentResponse(BaseModel):
             model_provider = ""
 
         memory_dict: Optional[Dict[str, Any]] = None
-        if agent.memory and agent.memory.db:
-            memory_dict = {"name": "Memory"}
-            if agent.memory.model is not None:
-                memory_dict["model"] = ModelResponse(
-                    name=agent.memory.model.name,
-                    model=agent.memory.model.id,
-                    provider=agent.memory.model.provider,
-                )
+        # TODO:
+        # if agent.memory and agent.memory.db:
+        #     memory_dict = {"name": "Memory"}
+        #     if agent.memory.model is not None:
+        #         memory_dict["model"] = ModelResponse(
+        #             name=agent.memory.model.name,
+        #             model=agent.memory.model.id,
+        #             provider=agent.memory.model.provider,
+        #         )
 
         return AgentResponse(
             agent_id=agent.agent_id,
@@ -170,14 +171,15 @@ class TeamResponse(BaseModel):
             model_provider = ""
 
         memory_dict: Optional[Dict[str, Any]] = None
-        if team.memory and team.memory.db:
-            memory_dict = {"name": "Memory"}
-            if team.memory.model is not None:
-                memory_dict["model"] = ModelResponse(
-                    name=team.memory.model.name,
-                    model=team.memory.model.id,
-                    provider=team.memory.model.provider,
-                )
+        # TODO:
+        # if team.memory and team.memory.db:
+        #     memory_dict = {"name": "Memory"}
+        #     if team.memory.model is not None:
+        #         memory_dict["model"] = ModelResponse(
+        #             name=team.memory.model.name,
+        #             model=team.memory.model.id,
+        #             provider=team.memory.model.provider,
+        #         )
 
         return TeamResponse(
             team_id=team.team_id,
@@ -326,6 +328,7 @@ class WorkflowSessionDetailSchema(BaseModel):
         return cls()
 
 
+# TODO: separate into agent, team and workflow run schemas
 class RunSchema(BaseModel):
     run_id: str
     agent_session_id: Optional[str]
@@ -340,6 +343,7 @@ class RunSchema(BaseModel):
     messages: Optional[List[dict]]
     tools: Optional[List[dict]]
     events: Optional[List[dict]]
+    member_responses: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
@@ -363,6 +367,7 @@ class RunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
+            member_responses=[member_response for member_response in run_dict.get("member_responses", [])],
         )
 
     @classmethod
@@ -386,6 +391,7 @@ class RunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at is not None
             else None,
+            member_responses=[],  # TODO: remove, only for teams
         )
 
     @classmethod
@@ -409,6 +415,7 @@ class RunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
             if run_response.created_at
             else None,
+            member_responses=[member_response.to_dict() for member_response in run_response.member_responses],
         )
 
 

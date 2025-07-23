@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.memory.memory import Memory
 from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.workflow import WorkflowRunResponseEvent
@@ -46,9 +45,6 @@ class Workflow:
     session_name: Optional[str] = None
     # Session state stored in the database
     session_state: Dict[str, Any] = field(default_factory=dict)
-
-    # --- Workflow Memory ---
-    memory: Optional[Memory] = None
 
     # --- Workflow Storage ---
     storage: Optional[BaseDb] = None

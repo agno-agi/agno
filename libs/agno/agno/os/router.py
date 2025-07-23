@@ -667,10 +667,10 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
 
-        sessions, total_count = team.memory.db.get_sessions(
+        sessions, total_count = team.db.get_sessions(
             session_type=SessionType.TEAM,
             component_id=team_id,
             user_id=user_id,
@@ -701,10 +701,10 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
 
-        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
@@ -719,10 +719,10 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Runs are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Runs are unavailable.")
 
-        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 

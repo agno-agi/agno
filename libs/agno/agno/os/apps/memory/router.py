@@ -6,7 +6,6 @@ from fastapi import HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
 from agno.db.schemas import UserMemory
-from agno.memory import Memory
 from agno.os.apps.memory.schemas import (
     DeleteMemoriesRequest,
     UserMemoryCreateSchema,
@@ -16,7 +15,7 @@ from agno.os.apps.memory.schemas import (
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
-def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
+def attach_routes(router: APIRouter, memory) -> APIRouter:
     @router.post("/memories", response_model=UserMemorySchema, status_code=200)
     async def create_memory(payload: UserMemoryCreateSchema) -> UserMemorySchema:
         if memory.db is None:
