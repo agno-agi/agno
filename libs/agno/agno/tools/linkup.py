@@ -1,23 +1,22 @@
+from os import getenv
+from typing import Any, List, Literal, Optional
 
 from agno.tools import Toolkit
-from typing import Any, List, Optional
-from os import getenv
 from agno.utils.log import logger
 
 try:
     from linkup import LinkupClient
-except ImportError as e:
-    raise ImportError(
-        "`linkup-sdk` not installed. Please install using `pip install linkup-sdk`")
+except ImportError:
+    raise ImportError("`linkup-sdk` not installed. Please install using `pip install linkup-sdk`")
+
 
 class LinkupTools(Toolkit):
     def __init__(
         self,
-        search: bool = True,
         api_key: Optional[str] = None,
-        depth: str = "standard",
-        output_type: str = "searchResults",
-        **kwargs
+        depth: Literal["standard", "deep"] = "standard",
+        output_type: Literal["sourcedAnswer", "searchResults"] = "searchResults",
+        **kwargs,
     ):
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
@@ -27,13 +26,11 @@ class LinkupTools(Toolkit):
         self.depth = depth
         self.output_type = output_type
 
-        tools: List[Any] = []
-        if search:
-            tools.append(self.web_search_with_linkup)
+        tools: List[Any] = [self.web_search_with_linkup]
 
         super().__init__(name="linkup_tools", tools=tools, **kwargs)
 
-    def web_search_with_linkup(self, query:str,  depth: str = 'standard', output_type: str='searchResults') -> str:
+    def web_search_with_linkup(self, query: str, depth: Optional[str] = None, output_type: Optional[str] = None) -> str:
         """
         Use this function to search the web for a given query.
         This function uses the Linkup API to provide realtime online information about the query.
@@ -47,7 +44,9 @@ class LinkupTools(Toolkit):
             str: string of results related to the query.
         """
         try:
-            response = self.linkup.search(query=query, depth=depth, output_type=output_type)
+            response = self.linkup.search(
+                query=query, depth=depth or self.depth, output_type=output_type or self.output_type  # type: ignore
+            )
             return response
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            return f"Error: {str(e)}"
