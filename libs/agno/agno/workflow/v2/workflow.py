@@ -556,7 +556,7 @@ class Workflow:
 
             finally:
                 if self.workflow_session:
-                    self.workflow_session.add_run(workflow_run_response)
+                    self.workflow_session.upsert_run(workflow_run_response)
                 self.write_to_storage()
 
         return workflow_run_response
@@ -742,7 +742,7 @@ class Workflow:
 
         # Store the completed workflow response
         if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
+            self.workflow_session.upsert_run(workflow_run_response)
 
         # Save to storage after complete execution
         self.write_to_storage()
@@ -920,7 +920,7 @@ class Workflow:
 
         # Store error response
         if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
+            self.workflow_session.upsert_run(workflow_run_response)
         self.write_to_storage()
 
         return workflow_run_response
@@ -1115,7 +1115,7 @@ class Workflow:
 
         # Store the completed workflow response
         if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
+            self.workflow_session.upsert_run(workflow_run_response)
 
         # Save to storage after complete execution
         self.write_to_storage()
@@ -1177,7 +1177,7 @@ class Workflow:
 
         # Store PENDING response immediately
         if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
+            self.workflow_session.upsert_run(workflow_run_response)
         self.write_to_storage()
 
         # Prepare execution input
@@ -1197,13 +1197,13 @@ class Workflow:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
                 if self.workflow_session:
-                    self.workflow_session.add_run(workflow_run_response)
+                    self.workflow_session.upsert_run(workflow_run_response)
                 self.write_to_storage()
 
                 await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
 
                 if self.workflow_session:
-                    self.workflow_session.add_run(workflow_run_response)  # Final upsert
+                    self.workflow_session.upsert_run(workflow_run_response)  # Final upsert
                 self.write_to_storage()
 
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
@@ -1213,7 +1213,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 if self.workflow_session:
-                    self.workflow_session.add_run(workflow_run_response)
+                    self.workflow_session.upsert_run(workflow_run_response)
                 self.write_to_storage()
 
         # Create and start asyncio task

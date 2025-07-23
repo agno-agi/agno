@@ -40,7 +40,7 @@ class WorkflowSession:
         if self.runs is None:
             self.runs = []
 
-    def add_run(self, run: WorkflowRunResponse) -> None:
+    def upsert_run(self, run: WorkflowRunResponse) -> None:
         """Add or update a workflow run (upsert behavior)"""
         if self.runs is None:
             self.runs = []
