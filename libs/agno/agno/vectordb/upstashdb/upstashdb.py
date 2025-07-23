@@ -189,8 +189,6 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
 
-        logger.info(f"Upserting {len(documents)} documents with filters: {filters}")
-
         for i, document in enumerate(documents):
             if document.id is None:
                 logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
