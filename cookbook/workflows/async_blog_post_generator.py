@@ -485,7 +485,7 @@ if __name__ == "__main__":
         )
     )
     pprint_run_response(blog_post, markdown=True)
-    
+
     # or run it synchronously
     # blog_post: RunResponse = generate_blog_post.run(
     #     topic=topic,
