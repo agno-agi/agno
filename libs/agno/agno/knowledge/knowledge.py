@@ -310,7 +310,6 @@ class Knowledge:
             if content.name is None:
                 content.name = content.file_data[:10] if len(content.file_data) >= 10 else content.file_data
 
-            # FIX: Handle encoding gracefully for binary data stored as strings
             try:
                 content_bytes = content.file_data.encode("utf-8")
             except UnicodeEncodeError:
@@ -337,9 +336,7 @@ class Knowledge:
                 if isinstance(content.file_data.content, bytes):
                     content_io = io.BytesIO(content.file_data.content)
                 elif isinstance(content.file_data.content, str):
-                    # FIX: Use content type to determine proper encoding strategy
                     if self._is_text_mime_type(content.file_data.type):
-                        # Text content - safe to encode as UTF-8
                         try:
                             content_bytes = content.file_data.content.encode("utf-8")
                             log_info(f"Encoded text content as UTF-8 for type {content.file_data.type}")
@@ -347,7 +344,6 @@ class Knowledge:
                             log_info(f"UTF-8 encoding failed for {content.file_data.type}, using latin-1")
                             content_bytes = content.file_data.content.encode("latin-1")
                     else:
-                        # Binary content stored as string - preserve bytes with latin-1
                         content_bytes = content.file_data.content.encode("latin-1")
                         log_info(f"Used latin-1 encoding for binary type {content.file_data.type}")
                     content_io = io.BytesIO(content_bytes)
