@@ -8,7 +8,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-SINGLE_STORE_DB_URL = "mysql+pymysql://manu-e79af:MxmJxn93r8d%40KAjjmi%5B.7np@svc-3482219c-a389-4079-b18b-d50662524e8a-shared-dml.aws-virginia-6.svc.singlestore.com:3333/db_manu_fd070"
+SINGLE_STORE_DB_URL = ""
 
 # Setup the SingleStore database
 db = SingleStoreDb(
