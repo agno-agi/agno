@@ -1,0 +1,30 @@
+Reunião diária - Equipe Projudi
+Data: 18-07-2025
+Hora: 9:30 AM - 9:45 AM
+
+Participantes:
+- Laura Melo (Scrum Master)
+- Wagner Silva (Arquiteto de software)
+- Rodrigo Menescal (Desenvolvedor)
+- Gean Correia (Desenvolvedor)
+- Deise Lobo (Desenvolvedor)
+
+Laura Melo (Scrum Master):
+"Bom dia pessoal! Vamos prosseguir com nossas atualizações e atribuições para hoje. Deise, gostaria de começar?"
+
+Deise Lobo (Desenvolvedor):
+"Claro. Estou trabalhando na tarefa de número 22 e farei a implementação do novo serviço de autenticação conforme discutido durante o planejamento da sprint. A estimativa é concluir em 3 ou 4 dias."
+
+Gean Correia (Desenvolvedor):
+"Estou trabalhando na tarefa de número 23 e iniciarei o redesign do dashboard para usuários hoje. Devo ter uma versão preliminar pronta para revisão na quinta-feira."
+
+Rodrigo Menescal (Desenvolvedor):
+"Estou trabalhando na tarefa de número 24 e estou focado nos ajustes no novo sistema de monitoração. Também vou atualizar a pipeline CI/CD para incluir as novas ferramentas de análise de segurança."
+
+Wagner Silva (Arquiteto de software):
+"Estou trabalhando na tarefa de número 25 e fazendo a avaliação dos requisitos da migração para o sistema e-Proc. Pretendo fazer uma apresentação preliminar da arquitetura até o final da semana."
+
+Laura Melo (Scrum Master):
+"Excelentes atualizações pessoal. Lembrem-se que teremos a reunião de revisão da sprint com a PO amanhã às 14h Preparem e revisem suas documentações. Por favor, me digam logo se alguém tiver qualquer dificuldade ou empecilhos. Desejo um dia muito produtivo para todos!"
+
+Reunião encerrada às 9:45 AM
