@@ -220,7 +220,7 @@ class OpenAIResponses(Model):
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if (self.id.startswith("o3") or self.id.startswith("o4-mini") and messages is not None:
+        if (self.id.startswith("o3") or self.id.startswith("o4-mini")) and messages is not None:
             request_params["store"] = True
 
             # Check if the last assistant message has a previous_response_id to continue from
