@@ -1,7 +1,7 @@
 import json
 import time
 from dataclasses import asdict
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from agno.storage.base import Storage
@@ -334,73 +334,3 @@ class RedisStorage(Storage):
         For Redis, this is a no-op as it's schema-less.
         """
         pass
-
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Fast retrieval of workflow run status from Redis"""
-        try:
-            key = self._get_key(session_id)
-            data = self.redis_client.get(key)
-            if data is None:
-                return None
-
-            session_data = self.deserialize(data)
-
-            # Check if this session has the run_id we're looking for
-            current_run_id = session_data.get("current_run_id")
-            if current_run_id == run_id:
-                return {
-                    "run_id": current_run_id,
-                    "status": session_data.get("current_run_status"),
-                    "updated_at": session_data.get("updated_at", int(time.time())),
-                }
-
-            # If current_run_id doesn't match, check in the runs array
-            runs = session_data.get("runs", [])
-            for run in runs:
-                if isinstance(run, dict) and run.get("run_id") == run_id:
-                    return {
-                        "run_id": run_id,
-                        "status": run.get("status"),
-                        "updated_at": run.get("updated_at", int(time.time())),
-                    }
-
-        except Exception as e:
-            logger.error(f"Failed to get workflow run status: {e}")
-        return None
-
-    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        """Fast update of workflow run status in Redis"""
-        try:
-            key = self._get_key(session_id)
-            data = self.redis_client.get(key)
-            if data is None:
-                logger.error(f"Session not found in Redis: {session_id}")
-                return False
-
-            # Read current data
-            session_data = self.deserialize(data)
-
-            # Update the current run tracking fields
-            session_data["current_run_id"] = run_id
-            session_data["current_run_status"] = status
-            session_data["updated_at"] = int(time.time())
-
-            # Also update the status in the runs array if it exists
-            runs = session_data.get("runs", [])
-            for run in runs:
-                if isinstance(run, dict) and run.get("run_id") == run_id:
-                    run["status"] = status
-                    run["updated_at"] = session_data["updated_at"]
-                    break
-
-            # Write back to Redis
-            if self.expire is not None:
-                self.redis_client.set(key, self.serialize(session_data), ex=self.expire)
-            else:
-                self.redis_client.set(key, self.serialize(session_data))
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to update workflow run status: {e}")
-            return False

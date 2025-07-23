@@ -481,7 +481,7 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="user_id-index",
                         KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at, current_run_id, current_run_status",
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
                         Limit=limit if limit is not None else None,
                     )
@@ -514,7 +514,7 @@ class DynamoDbStorage(Storage):
                     response = self.table.query(
                         IndexName="workflow_id-index",
                         KeyConditionExpression=Key("workflow_id").eq(entity_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at, current_run_id, current_run_status",
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
                         ScanIndexForward=False,
                         Limit=limit if limit is not None else None,
                     )
@@ -537,7 +537,7 @@ class DynamoDbStorage(Storage):
                     )
                 elif self.mode == "workflow_v2":
                     response = self.table.scan(
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at, current_run_id, current_run_status",
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
                         Limit=limit if limit is not None else None,
                     )
             items = response.get("Items", [])
@@ -675,93 +675,3 @@ class DynamoDbStorage(Storage):
                 return value
 
         return {k: deserialize_value(v) for k, v in item.items()}
-
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Fast retrieval of workflow run status from DynamoDB"""
-        try:
-            # Get only the specific fields we need for status checking
-            response = self.table.get_item(
-                Key={"session_id": session_id},
-                ProjectionExpression="current_run_id, current_run_status, updated_at, runs",
-            )
-
-            item = response.get("Item")
-            if item is None:
-                return None
-
-            # Deserialize the item to handle Decimal conversions
-            item = self._deserialize_item(item)
-
-            # Check if this session has the run_id we're looking for
-            current_run_id = item.get("current_run_id")
-            if current_run_id == run_id:
-                return {
-                    "run_id": current_run_id,
-                    "status": item.get("current_run_status"),
-                    "updated_at": item.get("updated_at", int(time.time())),
-                }
-
-            # If current_run_id doesn't match, check in the runs array
-            runs = item.get("runs", [])
-            for run in runs:
-                if isinstance(run, dict) and run.get("run_id") == run_id:
-                    return {
-                        "run_id": run_id,
-                        "status": run.get("status"),
-                        "updated_at": run.get("updated_at", int(time.time())),
-                    }
-
-        except Exception as e:
-            logger.error(f"Failed to get workflow run status: {e}")
-        return None
-
-    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        """Fast update of workflow run status in DynamoDB using atomic operations"""
-        try:
-            current_time = int(time.time())
-
-            # Use update_item with atomic operations for better performance and consistency
-            response = self.table.update_item(
-                Key={"session_id": session_id},
-                UpdateExpression="SET current_run_id = :run_id, current_run_status = :status, updated_at = :updated_at",
-                ExpressionAttributeValues={":run_id": run_id, ":status": status, ":updated_at": current_time},
-                ReturnValues="UPDATED_NEW",
-            )
-
-            # Also update the corresponding run in the runs array if it exists
-            # This requires a separate operation to search and update the runs array
-            try:
-                # First, get the current runs array
-                get_response = self.table.get_item(Key={"session_id": session_id}, ProjectionExpression="runs")
-
-                item = get_response.get("Item")
-                if item and "runs" in item:
-                    runs = self._deserialize_item(item)["runs"]
-
-                    # Find and update the matching run
-                    for i, run in enumerate(runs):
-                        if isinstance(run, dict) and run.get("run_id") == run_id:
-                            # Update the specific run in the array
-                            self.table.update_item(
-                                Key={"session_id": session_id},
-                                UpdateExpression=f"SET runs[{i}].#status = :status, runs[{i}].updated_at = :updated_at",
-                                ExpressionAttributeNames={"#status": "status"},
-                                ExpressionAttributeValues={":status": status, ":updated_at": current_time},
-                            )
-                            break
-
-            except Exception as array_update_error:
-                # Log the error but don't fail the main status update
-                logger.warning(f"Failed to update run status in runs array: {array_update_error}")
-
-            return response is not None
-
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ResourceNotFoundException":
-                logger.error(f"Session not found in DynamoDB: {session_id}")
-            else:
-                logger.error(f"Failed to update workflow run status: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to update workflow run status: {e}")
-            return False

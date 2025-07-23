@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from agno.storage.base import Storage
 from agno.storage.session import Session
@@ -17,7 +17,7 @@ try:
     from sqlalchemy.orm import Session as SqlSession
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
-    from sqlalchemy.sql import and_, text
+    from sqlalchemy.sql import text
     from sqlalchemy.sql.expression import select
     from sqlalchemy.types import String
 except ImportError:
@@ -138,8 +138,6 @@ class SqliteStorage(Storage):
                 Column("workflow_name", String, index=True),
                 Column("workflow_data", sqlite.JSON),
                 Column("runs", sqlite.JSON),
-                Column("current_run_id", String, index=True, nullable=True),
-                Column("current_run_status", String, index=True, nullable=True),
             ]
 
         # Create table with all columns
@@ -153,44 +151,6 @@ class SqliteStorage(Storage):
         )
 
         return table
-
-    def update_workflow_run_status(
-        self,
-        session_id: str,
-        run_id: str,
-        status: str,
-    ) -> bool:
-        """Fast update of workflow run status without JSON serialization"""
-        try:
-            with self.SqlSession() as sess, sess.begin():
-                update_values = {
-                    "current_run_id": run_id,
-                    "current_run_status": status,
-                    "updated_at": int(time.time()),
-                }
-
-                stmt = self.table.update().where(self.table.c.session_id == session_id).values(**update_values)
-
-                result = sess.execute(stmt)
-                return result.rowcount > 0
-        except Exception as e:
-            logger.error(f"Failed to update workflow run status: {e}")
-            return False
-
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Fast retrieval of workflow run status"""
-        try:
-            with self.SqlSession() as sess:
-                stmt = select(
-                    self.table.c.current_run_id, self.table.c.current_run_status, self.table.c.updated_at
-                ).where(and_(self.table.c.session_id == session_id, self.table.c.current_run_id == run_id))
-                result = sess.execute(stmt).fetchone()
-
-                if result:
-                    return {"run_id": result[0], "status": result[1], "updated_at": result[2]}
-        except Exception as e:
-            logger.error(f"Failed to get workflow run status: {e}")
-        return None
 
     def get_table(self) -> Table:
         """

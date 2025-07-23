@@ -58,11 +58,3 @@ class Storage(ABC):
     @abstractmethod
     def upgrade_schema(self) -> None:
         raise NotImplementedError
-
-    @abstractmethod
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        raise NotImplementedError

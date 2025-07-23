@@ -1,6 +1,5 @@
-import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from agno.storage.base import Storage
@@ -327,62 +326,3 @@ class MongoDbStorage(Storage):
                 setattr(copied_obj, k, deepcopy(v, memo))
 
         return copied_obj
-
-    def get_workflow_run_status(self, session_id: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Fast retrieval of workflow run status from MongoDB"""
-        try:
-            # Use projection to only fetch the fields we need for status checking
-            doc = self.collection.find_one(
-                {"session_id": session_id}, {"current_run_id": 1, "current_run_status": 1, "updated_at": 1, "runs": 1}
-            )
-
-            if doc is None:
-                return None
-
-            # Check if this session has the run_id we're looking for
-            current_run_id = doc.get("current_run_id")
-            if current_run_id == run_id:
-                return {
-                    "run_id": current_run_id,
-                    "status": doc.get("current_run_status"),
-                    "updated_at": doc.get("updated_at", int(time.time())),
-                }
-
-            # If current_run_id doesn't match, check in the runs array
-            runs = doc.get("runs", [])
-            for run in runs:
-                if isinstance(run, dict) and run.get("run_id") == run_id:
-                    return {
-                        "run_id": run_id,
-                        "status": run.get("status"),
-                        "updated_at": run.get("updated_at", int(time.time())),
-                    }
-
-        except PyMongoError as e:
-            logger.error(f"Failed to get workflow run status: {e}")
-        return None
-
-    def update_workflow_run_status(self, session_id: str, run_id: str, status: str) -> bool:
-        """Fast update of workflow run status in MongoDB using atomic operations"""
-        try:
-            current_time = int(time.time())
-
-            result = self.collection.update_one(
-                {"session_id": session_id},
-                {"$set": {"current_run_id": run_id, "current_run_status": status, "updated_at": current_time}},
-            )
-
-            if result.matched_count == 0:
-                logger.error(f"Session not found in MongoDB: {session_id}")
-                return False
-
-            self.collection.update_one(
-                {"session_id": session_id, "runs.run_id": run_id},
-                {"$set": {"runs.$.status": status, "runs.$.updated_at": current_time}},
-            )
-
-            return result.modified_count > 0
-
-        except PyMongoError as e:
-            logger.error(f"Failed to update workflow run status: {e}")
-            return False

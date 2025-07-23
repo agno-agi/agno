@@ -102,9 +102,11 @@ async def main():
 
         await asyncio.sleep(5)
 
+    final_result = content_creation_workflow.get_run(bg_response.run_id)
+
     print(f"\n Final Result:")
     print("=" * 50)
-    pprint_run_response(result, markdown=True)
+    pprint_run_response(final_result, markdown=True)
 
 
 if __name__ == "__main__":
