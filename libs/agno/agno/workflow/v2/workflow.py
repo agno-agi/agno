@@ -827,7 +827,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:

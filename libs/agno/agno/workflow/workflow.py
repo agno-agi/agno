@@ -422,7 +422,7 @@ class Workflow:
         if self.__class__.arun is not Workflow.arun:
             self._subclass_arun = self.__class__.arun.__get__(self)
             run_type = "coroutine"
-            
+
             # Get the parameters of the async run method
             sig = inspect.signature(self.__class__.arun)
 
@@ -478,7 +478,7 @@ class Workflow:
             # the Workflow.run() method will be called and will log an error
             self._subclass_run = self.run
             self._subclass_arun = self.arun
-            
+
             self._run_parameters = {}
             self._run_return_type = None
 
