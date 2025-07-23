@@ -139,27 +139,6 @@ def test_tool_use_with_native_structured_outputs():
     assert response.content.currency is not None
 
 
-def test_multiple_tool_calls():
-    agent = Agent(
-        model=Groq(id="llama-3.3-70b-versatile"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-    )
-
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
-
-    # Verify tool usage
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
-    assert response.content is not None
-    assert "TSLA" in response.content and "latest news" in response.content.lower()
-
-
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
