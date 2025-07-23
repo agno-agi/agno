@@ -183,7 +183,7 @@ class PostgresDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {db_schema}.{table_name}: {e}")
+            log_warning(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
 
     def _get_table(self, table_type: str) -> Table:
@@ -303,7 +303,7 @@ class PostgresDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_warning(f"Error deleting session: {e}")
             return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
@@ -326,7 +326,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_warning(f"Error deleting sessions: {e}")
 
     def get_session(
         self,
@@ -380,7 +380,7 @@ class PostgresDb(BaseDb):
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
-            log_debug(f"Exception reading from session table: {e}")
+            log_warning(f"Exception reading from session table: {e}")
             return None
 
     def get_sessions(
@@ -480,8 +480,8 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_debug(f"Exception reading from session table: {e}")
-            return []
+            log_warning(f"Exception reading from session table: {e}")
+            return [] if deserialize else ([], 0)
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
@@ -541,7 +541,7 @@ class PostgresDb(BaseDb):
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_warning(f"Exception renaming session: {e}")
             return None
 
     def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
@@ -700,10 +700,10 @@ class PostgresDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-                return success
+                    return success
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_warning(f"Error deleting user memory: {e}")
             return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
@@ -725,7 +725,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_warning(f"Error deleting user memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -742,7 +742,7 @@ class PostgresDb(BaseDb):
                 return [record[0] for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from memory table: {e}")
+            log_warning(f"Exception reading from memory table: {e}")
             return []
 
     def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
@@ -776,7 +776,7 @@ class PostgresDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_debug(f"Exception reading from memory table: {e}")
+            log_warning(f"Exception reading from memory table: {e}")
             return None
 
     def get_user_memories(
@@ -834,7 +834,7 @@ class PostgresDb(BaseDb):
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))
                 if search_content is not None:
-                    stmt = stmt.where(table.c.memory.ilike(f"%{search_content}%"))
+                    stmt = stmt.where(func.cast(table.c.memory, postgresql.TEXT).ilike(f"%{search_content}%"))
 
                 # Get total count after applying filtering
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -860,8 +860,8 @@ class PostgresDb(BaseDb):
             return [UserMemory.from_dict(record) for record in user_memories_raw]
 
         except Exception as e:
-            log_debug(f"Exception reading from memory table: {e}")
-            return []
+            log_warning(f"Exception reading from memory table: {e}")
+            return [] if deserialize else ([], 0)
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None
@@ -925,7 +925,7 @@ class PostgresDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_debug(f"Exception getting user memory stats: {e}")
+            log_warning(f"Exception getting user memory stats: {e}")
             return [], 0
 
     def upsert_user_memory(
@@ -1028,7 +1028,7 @@ class PostgresDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_debug(f"Exception reading from sessions table: {e}")
+            log_warning(f"Exception reading from sessions table: {e}")
             return []
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1123,8 +1123,8 @@ class PostgresDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
-            raise e
+            log_warning(f"Exception refreshing metrics: {e}")
+            return None
 
     def get_metrics(
         self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
@@ -1161,7 +1161,7 @@ class PostgresDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_warning(f"Exception getting metrics: {e}")
             return [], None
 
     # -- Knowledge methods --
@@ -1311,7 +1311,7 @@ class PostgresDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_warning(f"Error upserting knowledge row: {e}")
             return None
 
     # -- Eval methods --
@@ -1341,7 +1341,7 @@ class PostgresDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_warning(f"Error creating eval run: {e}")
             return None
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1362,8 +1362,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_debug(f"Error deleting eval run {eval_run_id}: {e}")
-            raise
+            log_warning(f"Error deleting eval run {eval_run_id}: {e}")
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1383,8 +1382,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_debug(f"Error deleting eval runs {eval_run_ids}: {e}")
-            raise
+            log_warning(f"Error deleting eval runs {eval_run_ids}: {e}")
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1419,7 +1417,7 @@ class PostgresDb(BaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_debug(f"Exception getting eval run {eval_run_id}: {e}")
+            log_warning(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
     def get_eval_runs(
@@ -1511,7 +1509,7 @@ class PostgresDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_debug(f"Exception getting eval runs: {e}")
+            log_warning(f"Exception getting eval runs: {e}")
             return [] if deserialize else ([], 0)
 
     def rename_eval_run(
@@ -1544,5 +1542,4 @@ class PostgresDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_debug(f"Error upserting eval run name {eval_run_id}: {e}")
-            raise
+            log_warning(f"Error upserting eval run name {eval_run_id}: {e}")
