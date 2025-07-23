@@ -63,7 +63,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         if text_content:
             file_data = FileData(
                 content=content_bytes,
-                type="text/plain",
+                type="manual",
             )
         elif file:
             file_data = (
@@ -77,7 +77,6 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         else:
             file_data = None
 
-        name = None
         if file and file.filename:
             name = file.filename
         elif url:

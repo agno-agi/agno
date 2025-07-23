@@ -460,8 +460,7 @@ class Knowledge:
         if self.contents_db:
             created_at = content.created_at if content.created_at else int(time.time())
             updated_at = content.updated_at if content.updated_at else int(time.time())
-            print(f"content.file_type: {content.file_type}")
-            print(f"content.file_data.type: {content.file_data.type}")
+
             file_type = (
                 content.file_type
                 if content.file_type
@@ -469,7 +468,6 @@ class Knowledge:
                 if content.file_data and content.file_data.type
                 else None
             )
-            print(f"file_type: {file_type}")
             content_row = KnowledgeRow(
                 id=content.id,
                 name=content.name if content.name else "",
