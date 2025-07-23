@@ -27,7 +27,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError, StopAgentRun
-from agno.knowledge.agent import AgentKnowledge
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory, UserMemory
@@ -147,9 +146,9 @@ class Agent:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
-    # --- Agent Knowledge ---
-    knowledge: Optional[Union[AgentKnowledge, Knowledge]] = None
-    # Enable RAG by adding references from AgentKnowledge to the user prompt.
+    # --- Knowledge ---
+    knowledge: Optional[Knowledge] = None
+    # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
@@ -342,7 +341,7 @@ class Agent:
         add_session_summary_references: Optional[bool] = None,
         add_history_to_messages: bool = False,
         num_history_runs: int = 3,
-        knowledge: Optional[AgentKnowledge] = None,
+        knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
@@ -4631,17 +4630,11 @@ class Agent:
                 return None
 
             if num_documents is None:
-                if isinstance(self.knowledge, AgentKnowledge):
-                    num_documents = self.knowledge.num_documents
-                elif isinstance(self.knowledge, Knowledge):
+                if isinstance(self.knowledge, Knowledge):
                     num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            if isinstance(self.knowledge, AgentKnowledge):
-                relevant_docs: List[Document] = self.knowledge.search(
-                    query=query, num_documents=num_documents, filters=filters
-                )
-            elif isinstance(self.knowledge, Knowledge):
+            if isinstance(self.knowledge, Knowledge):
                 relevant_docs: List[Document] = self.knowledge.search(
                     query=query, max_results=num_documents, filters=filters
                 )

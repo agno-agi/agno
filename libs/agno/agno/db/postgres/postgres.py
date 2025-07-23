@@ -1254,15 +1254,15 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
-                
+
                 # Only include fields that exist in the table and are not None
                 insert_data = {}
                 update_fields = {}
-                
+
                 # Map of KnowledgeRow fields to table columns
                 field_mapping = {
                     "id": "id",
-                    "name": "name", 
+                    "name": "name",
                     "description": "description",
                     "metadata": "metadata",
                     "type": "type",
@@ -1274,7 +1274,7 @@ class PostgresDb(BaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                 }
-                
+
                 # Build insert and update data only for fields that exist in the table
                 for model_field, table_column in field_mapping.items():
                     if table_column in table_columns:
@@ -1284,7 +1284,7 @@ class PostgresDb(BaseDb):
                             # Don't include ID in update_fields since it's the primary key
                             if table_column != "id":
                                 update_fields[table_column] = value
-                
+
                 # Ensure id is always included for the insert
                 if "id" in table_columns and knowledge_row.id:
                     insert_data["id"] = knowledge_row.id
