@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.exceptions import ModelProviderError, RunCancelledException
-from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory.memory import Memory
 from agno.models.base import Model
@@ -170,7 +170,7 @@ class Team:
     add_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[AgentKnowledge] = None
+    knowledge: Optional[Knowledge] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
@@ -326,7 +326,7 @@ class Team:
         system_message_role: str = "system",
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
-        knowledge: Optional[AgentKnowledge] = None,
+        knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_references: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,

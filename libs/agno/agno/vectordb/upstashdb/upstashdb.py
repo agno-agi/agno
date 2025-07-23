@@ -189,12 +189,36 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
 
-        for document in documents:
+        for i, document in enumerate(documents):
             if document.id is None:
                 logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
-            document.meta_data["text"] = document.content
+            logger.debug(
+                f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
+                f"content_id={getattr(document, 'content_id', 'N/A')}"
+            )
+
+            # Create a copy of metadata to avoid modifying the original document
+            meta_data = document.meta_data.copy() if document.meta_data else {}
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data.update(filters)
+
+            meta_data["text"] = document.content
+
+            # Add content_id to metadata if it exists
+            if hasattr(document, "content_id") and document.content_id:
+                meta_data["content_id"] = document.content_id
+            else:
+                logger.warning(f"Document {document.id} has no content_id")
+
+            # Add name to metadata if it exists
+            if document.name:
+                meta_data["name"] = document.name
+            else:
+                logger.warning(f"Document {document.id} has no name")
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -206,17 +230,16 @@ class UpstashVectorDb(VectorDb):
                     logger.error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
-                vector = Vector(
-                    id=document.id, vector=document.embedding, metadata=document.meta_data, data=document.content
-                )
+                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
             else:
-                vector = Vector(id=document.id, data=document.content, metadata=document.meta_data)
+                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
             vectors.append(vector)
 
         if not vectors:
             logger.warning("No valid documents to upsert")
             return
 
+        logger.info(f"Upserting {len(vectors)} vectors to Upstash with IDs: {[v.id for v in vectors[:5]]}...")
         self.index.upsert(vectors, namespace=_namespace)
 
     def upsert_available(self) -> bool:
@@ -255,7 +278,7 @@ class UpstashVectorDb(VectorDb):
         """
         _namespace = self.namespace if namespace is None else namespace
 
-        # filter_str = "" if filters is None else str(filters)
+        filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
@@ -268,7 +291,7 @@ class UpstashVectorDb(VectorDb):
                 vector=dense_embedding,
                 namespace=_namespace,
                 top_k=limit,
-                # filter=filter_str,
+                filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
@@ -278,7 +301,7 @@ class UpstashVectorDb(VectorDb):
                 data=query,
                 namespace=_namespace,
                 top_k=limit,
-                # filter=filter_str,
+                filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
@@ -303,6 +326,7 @@ class UpstashVectorDb(VectorDb):
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        log_info(f"Found {len(search_results)} results")
         return search_results
 
     def delete(self, namespace: Optional[str] = None, delete_all: bool = False) -> bool:
@@ -330,5 +354,104 @@ class UpstashVectorDb(VectorDb):
         """
         pass
 
+    def delete_by_id(self, id: str) -> bool:
+        """Delete document by ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            response = self.index.delete(ids=[id], namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) with ID: {id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting document by ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete documents by name using metadata filter.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Use Upstash's delete with metadata filter
+            response = self.index.delete(filter=f'name = "{name}"', namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete documents by metadata filter.
+
+        Args:
+            metadata (Dict[str, Any]): Metadata criteria for deletion
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Build filter string for Upstash metadata filtering
+            filter_parts = []
+            for key, value in metadata.items():
+                if isinstance(value, str):
+                    filter_parts.append(f'{key} = "{value}"')
+                else:
+                    filter_parts.append(f"{key} = {value}")
+
+            filter_str = " AND ".join(filter_parts)
+
+            response = self.index.delete(filter=filter_str, namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) matching metadata: {metadata}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete documents by content_id.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        return self.delete_by_metadata({"content_id": content_id})
+
+    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_doc_exists(self, document: Document) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

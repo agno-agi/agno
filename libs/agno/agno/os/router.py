@@ -18,6 +18,7 @@ from agno.os.schema import (
     ConfigResponse,
     InterfaceResponse,
     ManagerResponse,
+    Model,
     RunSchema,
     SessionSchema,
     TeamResponse,
@@ -217,6 +218,24 @@ def get_base_router(
             if os.workflows
             else [],
         )
+
+    @router.get("/models", response_model=List[Model], response_model_exclude_none=True)
+    async def get_models():
+        """Return the list of all models used by agents and teams in the contextual OS"""
+        all_components = []
+        if os.agents:
+            all_components.extend(os.agents)
+        if os.teams:
+            all_components.extend(os.teams)
+
+        unique_models = {}
+        for item in all_components:
+            if item.model.id is not None and item.model.provider is not None:
+                key = (item.model.id, item.model.provider)
+                if key not in unique_models:
+                    unique_models[key] = Model(id=item.model.id, provider=item.model.provider)
+
+        return list(unique_models.values())
 
     # -- Agent routes ---
 

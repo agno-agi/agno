@@ -9,7 +9,7 @@ from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.os.apps.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
-from agno.utils.log import log_info
+from agno.utils.log import log_debug, log_info
 
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
@@ -44,9 +44,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         parsed_urls = None
         if url and url.strip():
             try:
-                log_info(f"Parsing URL: {url}")
                 parsed_urls = json.loads(url)
-                log_info(f"Parsed URLs: {parsed_urls}")
+                log_debug(f"Parsed URLs: {parsed_urls}")
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a single URL string
                 parsed_urls = url
@@ -63,7 +62,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         if text_content:
             file_data = FileData(
                 content=content_bytes,
-                type="text/plain",
+                type="manual",
             )
         elif file:
             file_data = (
@@ -77,13 +76,18 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         else:
             file_data = None
 
+        if file and file.filename:
+            name = file.filename
+        elif url and name is None:
+            name = parsed_urls
+
         content = Content(
-            name=name if name else file.filename,
+            name=name,
             description=description,
             url=parsed_urls,
             metadata=parsed_metadata,
             file_data=file_data,
-            size=file.size if file else None if text_content else len(content_bytes),
+            size=file.size if file else None if text_content else None,
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
@@ -134,7 +138,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     id=content.id,
                     name=content.name,
                     description=content.description,
-                    type=content.file_data.type if content.file_data else None,
+                    type=content.file_type,
                     size=str(content.size) if content.size else "0",
                     metadata=content.metadata,
                     linked_to=knowledge.name,
@@ -164,7 +168,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             id=content_id,
             name=content.name,
             description=content.description,
-            type=content.file_data.type if content.file_data else None,
+            type=content.file_type,
             size=str(len(content.file_data.content)) if content.file_data else "0",
             linked_to=knowledge.name,
             metadata=content.metadata,

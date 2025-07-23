@@ -1,6 +1,5 @@
 from agno.agent.agent import (
     Agent,
-    AgentKnowledge,
     AgentSession,
     Function,
     Memory,
@@ -29,7 +28,6 @@ from agno.run.response import (
 
 __all__ = [
     "Agent",
-    "AgentKnowledge",
     "AgentSession",
     "Function",
     "Message",

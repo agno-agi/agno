@@ -385,3 +385,97 @@ async def test_async_drop(mock_embedder):
     # Mock async_drop directly
     with patch.object(db, "async_drop", return_value=None):
         await db.async_drop()
+
+
+# Delete method tests
+def test_delete_by_id(milvus_db, mock_milvus_client):
+    """Test delete_by_id method."""
+    # Mock id_exists to return True (document exists)
+    with patch.object(milvus_db, "id_exists") as mock_id_exists:
+        mock_id_exists.return_value = True
+
+        # Test successful deletion
+        result = milvus_db.delete_by_id("doc_1")
+        assert result is True
+
+        # Verify the delete command was executed
+        mock_milvus_client.delete.assert_called_with(collection_name=milvus_db.collection, ids=["doc_1"])
+
+        # Test deletion of non-existent document
+        mock_id_exists.reset_mock()
+        mock_id_exists.return_value = False  # Document doesn't exist
+        result = milvus_db.delete_by_id("nonexistent_id")
+        assert result is False
+
+
+def test_delete_by_name(milvus_db, mock_milvus_client):
+    """Test delete_by_name method."""
+    # Mock name_exists to return True (document exists)
+    with patch.object(milvus_db, "name_exists") as mock_name_exists:
+        mock_name_exists.return_value = True
+
+        # Test successful deletion
+        result = milvus_db.delete_by_name("test_doc")
+        assert result is True
+
+        # Verify the delete command was executed
+        mock_milvus_client.delete.assert_called_with(collection_name=milvus_db.collection, filter='name == "test_doc"')
+
+        # Test deletion of non-existent name
+        mock_name_exists.reset_mock()
+        mock_name_exists.return_value = False  # Name doesn't exist
+        result = milvus_db.delete_by_name("nonexistent")
+        assert result is False
+
+
+def test_delete_by_metadata(milvus_db, mock_milvus_client):
+    """Test delete_by_metadata method."""
+    # Test successful deletion with simple metadata
+    result = milvus_db.delete_by_metadata({"type": "test"})
+    assert result is True
+
+    # Verify the delete command was executed with proper filter
+    mock_milvus_client.delete.assert_called_with(
+        collection_name=milvus_db.collection, filter='meta_data["type"] == "test"'
+    )
+
+    # Test deletion with complex metadata
+    mock_milvus_client.delete.reset_mock()
+    result = milvus_db.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+    assert result is True
+
+    # Verify the delete command was executed with multiple conditions
+    mock_milvus_client.delete.assert_called_with(
+        collection_name=milvus_db.collection, filter='meta_data["cuisine"] == "Thai" and meta_data["spicy"] == true'
+    )
+
+    # Test deletion with empty metadata
+    mock_milvus_client.delete.reset_mock()
+    result = milvus_db.delete_by_metadata({})
+    assert result is False
+    # Should not call delete for empty metadata
+    mock_milvus_client.delete.assert_not_called()
+
+
+def test_delete_by_content_id(milvus_db, mock_milvus_client):
+    """Test delete_by_content_id method."""
+    # Test successful deletion
+    result = milvus_db.delete_by_content_id("content_123")
+    assert result is True
+
+    # Verify the delete command was executed
+    mock_milvus_client.delete.assert_called_with(
+        collection_name=milvus_db.collection, filter='content_id == "content_123"'
+    )
+
+
+def test_delete_methods_error_handling(milvus_db, mock_milvus_client):
+    """Test error handling in delete methods."""
+    # Mock client.delete to raise an exception
+    mock_milvus_client.delete.side_effect = Exception("Database error")
+
+    # Test all delete methods handle exceptions gracefully
+    assert milvus_db.delete_by_id("doc_1") is False
+    assert milvus_db.delete_by_name("test_name") is False
+    assert milvus_db.delete_by_metadata({"type": "test"}) is False
+    assert milvus_db.delete_by_content_id("test_content_id") is False

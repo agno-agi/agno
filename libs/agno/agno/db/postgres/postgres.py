@@ -1252,31 +1252,61 @@ class PostgresDb(BaseDb):
         try:
             table = self._get_knowledge_table()
             with self.Session() as sess, sess.begin():
-                # Only include fields that are not None in the update
-                update_fields = {
-                    k: v
-                    for k, v in {
-                        "name": knowledge_row.name,
-                        "description": knowledge_row.description,
-                        "metadata": knowledge_row.metadata,
-                        "type": knowledge_row.type,
-                        "size": knowledge_row.size,
-                        "linked_to": knowledge_row.linked_to,
-                        "access_count": knowledge_row.access_count,
-                        "status": knowledge_row.status,
-                        "status_message": knowledge_row.status_message,
-                        "created_at": knowledge_row.created_at,
-                        "updated_at": knowledge_row.updated_at,
-                    }.items()
-                    if v is not None
+                # Get the actual table columns to avoid "unconsumed column names" error
+                table_columns = set(table.columns.keys())
+
+                # Only include fields that exist in the table and are not None
+                insert_data = {}
+                update_fields = {}
+
+                # Map of KnowledgeRow fields to table columns
+                field_mapping = {
+                    "id": "id",
+                    "name": "name",
+                    "description": "description",
+                    "metadata": "metadata",
+                    "type": "type",
+                    "size": "size",
+                    "linked_to": "linked_to",
+                    "access_count": "access_count",
+                    "status": "status",
+                    "status_message": "status_message",
+                    "created_at": "created_at",
+                    "updated_at": "updated_at",
                 }
 
-                stmt = (
-                    postgresql.insert(table)
-                    .values(knowledge_row.model_dump())
-                    .on_conflict_do_update(index_elements=["id"], set_=update_fields)
-                )
-                sess.execute(stmt)
+                # Build insert and update data only for fields that exist in the table
+                for model_field, table_column in field_mapping.items():
+                    if table_column in table_columns:
+                        value = getattr(knowledge_row, model_field, None)
+                        if value is not None:
+                            insert_data[table_column] = value
+                            # Don't include ID in update_fields since it's the primary key
+                            if table_column != "id":
+                                update_fields[table_column] = value
+
+                # Ensure id is always included for the insert
+                if "id" in table_columns and knowledge_row.id:
+                    insert_data["id"] = knowledge_row.id
+
+                # Handle case where update_fields is empty (all fields are None or don't exist in table)
+                if not update_fields:
+                    # If we have insert_data, just do an insert without conflict resolution
+                    if insert_data:
+                        stmt = postgresql.insert(table).values(insert_data)
+                        sess.execute(stmt)
+                    else:
+                        # If we have no data at all, this is an error
+                        log_error("No valid fields found for knowledge row upsert")
+                        return None
+                else:
+                    # Normal upsert with conflict resolution
+                    stmt = (
+                        postgresql.insert(table)
+                        .values(insert_data)
+                        .on_conflict_do_update(index_elements=["id"], set_=update_fields)
+                    )
+                    sess.execute(stmt)
 
             return knowledge_row
 

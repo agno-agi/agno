@@ -153,6 +153,7 @@ class Milvus(VectorDb):
             ("id", DataType.VARCHAR, 128, True),  # (name, type, max_length, is_primary)
             ("name", DataType.VARCHAR, 1000, False),
             ("content", DataType.VARCHAR, 65535, False),
+            ("content_id", DataType.VARCHAR, 1000, False),
             ("text", DataType.VARCHAR, 1000, False),
             ("meta_data", DataType.VARCHAR, 65535, False),
             ("usage", DataType.VARCHAR, 65535, False),
@@ -222,6 +223,7 @@ class Milvus(VectorDb):
             "id": doc_id,
             "text": cleaned_content,
             "name": document.name,
+            "content_id": document.content_id,
             "meta_data": meta_data_str,
             "content": cleaned_content,
             "usage": usage_str,
@@ -398,6 +400,7 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
+                    "content_id": document.content_id,
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
@@ -412,7 +415,7 @@ class Milvus(VectorDb):
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously based on search type."""
-        log_debug(f"Inserting {len(documents)} documents asynchronously")
+        log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
@@ -431,6 +434,7 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
+                    "content_id": document.content_id,
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
@@ -468,10 +472,16 @@ class Milvus(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
+
+            meta_data = document.meta_data or {}
+            if filters:
+                meta_data.update(filters)
+
             data = {
                 "id": doc_id,
                 "vector": document.embedding,
                 "name": document.name,
+                "content_id": document.content_id,
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
@@ -493,6 +503,7 @@ class Milvus(VectorDb):
                 "id": doc_id,
                 "vector": document.embedding,
                 "name": document.name,
+                "content_id": document.content_id,
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
@@ -555,6 +566,7 @@ class Milvus(VectorDb):
                     name=result["entity"].get("name", None),
                     meta_data=result["entity"].get("meta_data", {}),
                     content=result["entity"].get("content", ""),
+                    content_id=result["entity"].get("content_id", None),
                     embedder=self.embedder,
                     embedding=result["entity"].get("vector", None),
                     usage=result["entity"].get("usage", None),
@@ -592,6 +604,7 @@ class Milvus(VectorDb):
                     name=result["entity"].get("name", None),
                     meta_data=result["entity"].get("meta_data", {}),
                     content=result["entity"].get("content", ""),
+                    content_id=result["entity"].get("content_id", None),
                     embedder=self.embedder,
                     embedding=result["entity"].get("vector", None),
                     usage=result["entity"].get("usage", None),
@@ -674,6 +687,7 @@ class Milvus(VectorDb):
                             name=entity.get("name", None),
                             meta_data=meta_data,  # Now a dictionary
                             content=entity.get("content", ""),
+                            content_id=entity.get("content_id", None),
                             embedder=self.embedder,
                             embedding=entity.get("dense_vector", None),
                             usage=usage,  # Now a dictionary or None
@@ -729,6 +743,101 @@ class Milvus(VectorDb):
             self.client.drop_collection(self.collection)
             return True
         return False
+
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete a document by its ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if document was deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting document with ID {id}")
+            if not self.id_exists(id):
+                return False
+
+            # Delete by ID using Milvus delete operation
+            self.client.delete(collection_name=self.collection, ids=[id])
+            log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete documents by name.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with name {name}")
+            if not self.name_exists(name):
+                return False
+
+            # Delete by name using Milvus delete operation with filter
+            expr = f'name == "{name}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+
+        Args:
+            metadata (Dict[str, Any]): The metadata to match for deletion
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with metadata {metadata}")
+
+            # Build filter expression for metadata matching
+            expr = self._build_expr(metadata)
+            if not expr:
+                return False
+
+            # Delete by metadata using Milvus delete operation with filter
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id}")
+
+            # Delete by content_id using Milvus delete operation with filter
+            expr = f'content_id == "{content_id}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
 
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
         """Build Milvus expression from filters."""

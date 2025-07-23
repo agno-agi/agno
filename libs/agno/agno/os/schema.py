@@ -64,6 +64,11 @@ class ConfigResponse(BaseModel):
     workflows: List[WorkflowSummaryResponse]
 
 
+class Model(BaseModel):
+    id: Optional[str] = None
+    provider: Optional[str] = None
+
+
 class ModelResponse(BaseModel):
     name: Optional[str] = None
     model: Optional[str] = None

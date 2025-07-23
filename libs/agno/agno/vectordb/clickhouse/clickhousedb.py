@@ -157,6 +157,7 @@ class Clickhouse(VectorDb):
                     meta_data JSON DEFAULT '{{}}',
                     filters JSON DEFAULT '{{}}',
                     content String,
+                    content_id String,
                     embedding Array(Float32),
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
@@ -201,6 +202,7 @@ class Clickhouse(VectorDb):
                     meta_data JSON DEFAULT '{{}}',
                     filters JSON DEFAULT '{{}}',
                     content String,
+                    content_id String,
                     embedding Array(Float32),
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
@@ -305,6 +307,7 @@ class Clickhouse(VectorDb):
                 document.meta_data,
                 filters,
                 cleaned_content,
+                document.content_id,
                 document.embedding,
                 document.usage,
                 content_hash,
@@ -320,6 +323,7 @@ class Clickhouse(VectorDb):
                 "meta_data",
                 "filters",
                 "content",
+                "content_id",
                 "embedding",
                 "usage",
                 "content_hash",
@@ -344,6 +348,7 @@ class Clickhouse(VectorDb):
                 document.meta_data,
                 filters,
                 cleaned_content,
+                document.content_id,
                 document.embedding,
                 document.usage,
                 content_hash,
@@ -359,6 +364,7 @@ class Clickhouse(VectorDb):
                 "meta_data",
                 "filters",
                 "content",
+                "content_id",
                 "embedding",
                 "usage",
                 "content_hash",
@@ -429,7 +435,7 @@ class Clickhouse(VectorDb):
             parameters["query_embedding"] = query_embedding
 
         clickhouse_query = (
-            "SELECT name, meta_data, content, embedding, usage FROM "
+            "SELECT name, meta_data, content, content_id, embedding, usage FROM "
             "{database_name:Identifier}.{table_name:Identifier} "
             f"{where_query} {order_by_query} LIMIT {limit}"
         )
@@ -455,9 +461,10 @@ class Clickhouse(VectorDb):
                     name=result[0],
                     meta_data=result[1],
                     content=result[2],
+                    content_id=result[3],
                     embedder=self.embedder,
-                    embedding=result[3],
-                    usage=result[4],
+                    embedding=result[4],
+                    usage=result[5],
                 )
             )
 
@@ -493,7 +500,7 @@ class Clickhouse(VectorDb):
             parameters["query_embedding"] = query_embedding
 
         clickhouse_query = (
-            "SELECT name, meta_data, content, embedding, usage FROM "
+            "SELECT name, meta_data, content, content_id, embedding, usage FROM "
             "{database_name:Identifier}.{table_name:Identifier} "
             f"{where_query} {order_by_query} LIMIT {limit}"
         )
@@ -519,9 +526,10 @@ class Clickhouse(VectorDb):
                     name=result[0],
                     meta_data=result[1],
                     content=result[2],
+                    content_id=result[3],
                     embedder=self.embedder,
-                    embedding=result[3],
-                    usage=result[4],
+                    embedding=result[4],
+                    usage=result[5],
                 )
             )
 
@@ -575,10 +583,118 @@ class Clickhouse(VectorDb):
         return True
 
     def delete_by_id(self, id: str) -> bool:
-        return NotImplementedError
+        """
+
+        Delete a document by its ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if document was deleted, False otherwise
+        """
+        try:
+            log_debug(f"ClickHouse VectorDB : Deleting document with ID {id}")
+            if not self.id_exists(id):
+                return False
+
+            parameters = self._get_base_parameters()
+            parameters["id"] = id
+
+            self.client.command(
+                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE id = {id:String}",
+                parameters=parameters,
+            )
+            return True
+        except Exception as e:
+            log_info(f"Error deleting document with ID {id}: {e}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
-        return NotImplementedError
+        """
+        Delete documents by name.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"ClickHouse VectorDB : Deleting documents with name {name}")
+            if not self.name_exists(name):
+                return False
+
+            parameters = self._get_base_parameters()
+            parameters["name"] = name
+
+            self.client.command(
+                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE name = {name:String}",
+                parameters=parameters,
+            )
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with name {name}: {e}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        return NotImplementedError
+        """
+        Delete documents by metadata.
+
+        Args:
+            metadata (Dict[str, Any]): The metadata to match for deletion
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
+            parameters = self._get_base_parameters()
+
+            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            where_conditions = []
+            for key, value in metadata.items():
+                if isinstance(value, bool):
+                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                elif isinstance(value, (int, float)):
+                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                else:
+                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
+
+            if not where_conditions:
+                return False
+
+            where_clause = " AND ".join(where_conditions)
+
+            self.client.command(
+                f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} WHERE {where_clause}",
+                parameters=parameters,
+            )
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
+            parameters = self._get_base_parameters()
+            parameters["content_id"] = content_id
+
+            self.client.command(
+                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
+                parameters=parameters,
+            )
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False

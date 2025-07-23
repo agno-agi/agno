@@ -35,6 +35,30 @@ class Knowledge:
 
         self.construct_readers()
 
+    def _is_text_mime_type(self, mime_type: str) -> bool:
+        """
+        Check if a MIME type represents text content that can be safely encoded as UTF-8.
+
+        Args:
+            mime_type: The MIME type to check
+
+        Returns:
+            bool: True if it's a text type, False if binary
+        """
+        if not mime_type:
+            return False
+
+        text_types = [
+            "text/",
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/csv",
+            "application/sql",
+        ]
+
+        return any(mime_type.startswith(t) for t in text_types)
+
     # --- SDK Specific Methods ---
 
     @overload
@@ -208,7 +232,7 @@ class Knowledge:
             log_warning(f"Invalid path: {path}")
 
     def _load_from_url(self, content: Content):
-        log_info("Adding content from URL")
+        log_info(f"Adding content from URL {content.name}")
         from urllib.parse import urlparse
 
         content.file_type = "url"
@@ -285,7 +309,14 @@ class Knowledge:
         if isinstance(content.file_data, str):
             if content.name is None:
                 content.name = content.file_data[:10] if len(content.file_data) >= 10 else content.file_data
-            content_io = io.BytesIO(content.file_data.encode("utf-8"))
+
+            try:
+                content_bytes = content.file_data.encode("utf-8")
+            except UnicodeEncodeError:
+                log_info("String contains binary data, using latin-1 encoding")
+                content_bytes = content.file_data.encode("latin-1")
+            content_io = io.BytesIO(content_bytes)
+
             name = (
                 content.name
                 if content.name
@@ -305,7 +336,17 @@ class Knowledge:
                 if isinstance(content.file_data.content, bytes):
                     content_io = io.BytesIO(content.file_data.content)
                 elif isinstance(content.file_data.content, str):
-                    content_io = io.BytesIO(content.file_data.content.encode("utf-8"))
+                    if self._is_text_mime_type(content.file_data.type):
+                        try:
+                            content_bytes = content.file_data.content.encode("utf-8")
+                            log_info(f"Encoded text content as UTF-8 for type {content.file_data.type}")
+                        except UnicodeEncodeError:
+                            log_info(f"UTF-8 encoding failed for {content.file_data.type}, using latin-1")
+                            content_bytes = content.file_data.content.encode("latin-1")
+                    else:
+                        content_bytes = content.file_data.content.encode("latin-1")
+                        log_info(f"Used latin-1 encoding for binary type {content.file_data.type}")
+                    content_io = io.BytesIO(content_bytes)
                 else:
                     content_io = content.file_data.content
 
@@ -423,7 +464,6 @@ class Knowledge:
                 if content.file_data and content.file_data.type
                 else None
             )
-
             content_row = KnowledgeRow(
                 id=content.id,
                 name=content.name if content.name else "",
@@ -558,7 +598,7 @@ class Knowledge:
     def patch_content(self, content: Content):
         self._update_content(content)
 
-    def get_content_by_id(self, content_id: str):
+    def get_content_by_id(self, content_id: str) -> Optional[Content]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
         content_row = self.contents_db.get_knowledge_content(content_id)
@@ -569,6 +609,7 @@ class Knowledge:
             name=content_row.name,
             description=content_row.description,
             metadata=content_row.metadata,
+            file_type=content_row.type,
             size=content_row.size,
             status=content_row.status,
             status_message=content_row.status_message,
@@ -599,6 +640,7 @@ class Knowledge:
                 description=content_row.description,
                 metadata=content_row.metadata,
                 size=content_row.size,
+                file_type=content_row.type,
                 status=content_row.status,
                 status_message=content_row.status_message,
                 created_at=content_row.created_at,

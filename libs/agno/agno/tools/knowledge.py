@@ -3,8 +3,8 @@ from textwrap import dedent
 from typing import Any, List, Optional, Union
 
 from agno.agent import Agent
-from agno.knowledge.agent import AgentKnowledge
 from agno.knowledge.document import Document
+from agno.knowledge.knowledge import Knowledge
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -13,7 +13,7 @@ from agno.utils.log import log_debug, logger
 class KnowledgeTools(Toolkit):
     def __init__(
         self,
-        knowledge: AgentKnowledge,
+        knowledge: Knowledge,
         think: bool = True,
         search: bool = True,
         analyze: bool = True,
@@ -38,7 +38,7 @@ class KnowledgeTools(Toolkit):
             self.instructions = instructions
 
         # The knowledge to search
-        self.knowledge: AgentKnowledge = knowledge
+        self.knowledge: Knowledge = knowledge
 
         tools: List[Any] = []
         if think:

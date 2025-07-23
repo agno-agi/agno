@@ -216,8 +216,8 @@ def test_search(mock_clickhouse, mock_embedder):
     # Mock query results
     query_result = MagicMock()
     query_result.result_rows = [
-        ["test_name_1", {"type": "test"}, "Test content 1", [0.1] * 1024, {}],
-        ["test_name_2", {"type": "test"}, "Test content 2", [0.2] * 1024, {}],
+        ["test_name_1", {"type": "test"}, "Test content 1", "content_id_1", [0.1] * 1024, {}],
+        ["test_name_2", {"type": "test"}, "Test content 2", "content_id_2", [0.2] * 1024, {}],
     ]
     mock_clickhouse.client.query.return_value = query_result
 
@@ -234,8 +234,10 @@ def test_search(mock_clickhouse, mock_embedder):
     assert len(results) == 2
     assert results[0].name == "test_name_1"
     assert results[0].content == "Test content 1"
+    assert results[0].content_id == "content_id_1"
     assert results[1].name == "test_name_2"
     assert results[1].content == "Test content 2"
+    assert results[1].content_id == "content_id_2"
 
 
 def test_drop(mock_clickhouse):
@@ -435,8 +437,8 @@ async def test_async_search(mock_clickhouse, mock_embedder):
     # Mock query results
     query_result = MagicMock()
     query_result.result_rows = [
-        ["test_name_1", {"type": "test"}, "Test content 1", [0.1] * 1024, {}],
-        ["test_name_2", {"type": "test"}, "Test content 2", [0.2] * 1024, {}],
+        ["test_name_1", {"type": "test"}, "Test content 1", "content_id_1", [0.1] * 1024, {}],
+        ["test_name_2", {"type": "test"}, "Test content 2", "content_id_2", [0.2] * 1024, {}],
     ]
     mock_clickhouse.async_client.query.return_value = query_result
 
@@ -453,8 +455,10 @@ async def test_async_search(mock_clickhouse, mock_embedder):
     assert len(results) == 2
     assert results[0].name == "test_name_1"
     assert results[0].content == "Test content 1"
+    assert results[0].content_id == "content_id_1"
     assert results[1].name == "test_name_2"
     assert results[1].content == "Test content 2"
+    assert results[1].content_id == "content_id_2"
 
 
 @pytest.mark.asyncio
@@ -479,9 +483,128 @@ async def test_async_drop(mock_clickhouse):
 @pytest.mark.asyncio
 async def test_async_exists(mock_clickhouse):
     """Test async_exists method."""
-    # This just calls async_table_exists which we test elsewhere
     with patch.object(mock_clickhouse, "async_table_exists") as mock_async_table_exists:
-        # Configure the mock to return a coroutine
+        # Test when table exists
         mock_async_table_exists.return_value = True
+        result = await mock_clickhouse.async_exists()
+        assert result is True
 
-        assert await mock_clickhouse.async_exists() is True
+        # Test when table doesn't exist
+        mock_async_table_exists.return_value = False
+        result = await mock_clickhouse.async_exists()
+        assert result is False
+
+
+# Delete method tests
+def test_delete_by_id(mock_clickhouse):
+    """Test delete_by_id method."""
+    # Mock id_exists to return True (document exists)
+    with patch.object(mock_clickhouse, "id_exists") as mock_id_exists:
+        mock_id_exists.return_value = True
+
+        # Test successful deletion
+        result = mock_clickhouse.delete_by_id("doc_1")
+        assert result is True
+
+        # Verify the delete command was executed
+        mock_clickhouse.client.command.assert_called_with(
+            "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE id = {id:String}",
+            parameters={
+                "table_name": mock_clickhouse.table_name,
+                "database_name": mock_clickhouse.database_name,
+                "id": "doc_1",
+            },
+        )
+
+        # Test deletion of non-existent document
+        mock_id_exists.reset_mock()
+        mock_id_exists.return_value = False  # Document doesn't exist
+        result = mock_clickhouse.delete_by_id("nonexistent_id")
+        assert result is False
+
+
+def test_delete_by_name(mock_clickhouse):
+    """Test delete_by_name method."""
+    # Mock name_exists to return True (document exists)
+    with patch.object(mock_clickhouse, "name_exists") as mock_name_exists:
+        mock_name_exists.return_value = True
+
+        # Test successful deletion
+        result = mock_clickhouse.delete_by_name("test_doc")
+        assert result is True
+
+        # Verify the delete command was executed
+        mock_clickhouse.client.command.assert_called_with(
+            "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE name = {name:String}",
+            parameters={
+                "table_name": mock_clickhouse.table_name,
+                "database_name": mock_clickhouse.database_name,
+                "name": "test_doc",
+            },
+        )
+
+        # Test deletion of non-existent name
+        mock_name_exists.reset_mock()
+        mock_name_exists.return_value = False  # Name doesn't exist
+        result = mock_clickhouse.delete_by_name("nonexistent")
+        assert result is False
+
+
+def test_delete_by_metadata(mock_clickhouse):
+    """Test delete_by_metadata method."""
+    # Test successful deletion with simple metadata
+    result = mock_clickhouse.delete_by_metadata({"type": "test"})
+    assert result is True
+
+    # Verify the delete command was executed with proper WHERE clause
+    mock_clickhouse.client.command.assert_called_with(
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'type') = 'test'",
+        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+    )
+
+    # Test deletion with complex metadata
+    mock_clickhouse.client.command.reset_mock()
+    result = mock_clickhouse.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+    assert result is True
+
+    # Verify the delete command was executed with multiple conditions
+    mock_clickhouse.client.command.assert_called_with(
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'cuisine') = 'Thai' AND JSONExtractBool(toString(filters), 'spicy') = true",
+        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+    )
+
+    # Test deletion with empty metadata
+    mock_clickhouse.client.command.reset_mock()
+    result = mock_clickhouse.delete_by_metadata({})
+    assert result is False
+    # Should not call command for empty metadata
+    mock_clickhouse.client.command.assert_not_called()
+
+
+def test_delete_by_content_id(mock_clickhouse):
+    """Test delete_by_content_id method."""
+    # Test successful deletion
+    result = mock_clickhouse.delete_by_content_id("content_123")
+    assert result is True
+
+    # Verify the delete command was executed
+    mock_clickhouse.client.command.assert_called_with(
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
+        parameters={
+            "table_name": mock_clickhouse.table_name,
+            "database_name": mock_clickhouse.database_name,
+            "content_id": "content_123",
+        },
+    )
+
+
+def test_delete_methods_error_handling(mock_clickhouse):
+    """Test error handling in delete methods."""
+    # Mock client.command to raise an exception
+    mock_clickhouse.client.command.side_effect = Exception("Database error")
+
+    # Test all delete methods handle exceptions gracefully
+    assert mock_clickhouse.delete_by_id("doc_1") is False
+    assert mock_clickhouse.delete_by_name("test_name") is False
+    assert mock_clickhouse.delete_by_metadata({"type": "test"}) is False
+    assert mock_clickhouse.delete_by_content_id("test_content_id") is False
