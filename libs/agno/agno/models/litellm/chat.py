@@ -160,6 +160,7 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
+        completion_kwargs["stream_options"] = {"include_usage": True}
         return self.get_client().completion(**completion_kwargs)
 
     async def ainvoke(
@@ -185,6 +186,7 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
+        completion_kwargs["stream_options"] = {"include_usage": True}
 
         try:
             # litellm.acompletion returns a coroutine that resolves to an async iterator
@@ -254,6 +256,10 @@ class LiteLLM(Model):
                         processed_tool_calls.append(tool_call_dict)
 
                     model_response.tool_calls = processed_tool_calls
+
+        # Add usage metrics if present in streaming response
+        if hasattr(response_delta, "usage") and response_delta.usage is not None:
+            model_response.response_usage = response_delta.usage
 
         return model_response
 
