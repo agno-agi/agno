@@ -555,9 +555,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
             finally:
-                if self.workflow_session:
-                    self.workflow_session.upsert_run(workflow_run_response)
-                self.write_to_storage()
+                self._save_run_to_storage(workflow_run_response)
 
         return workflow_run_response
 
@@ -741,11 +739,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
-        if self.workflow_session:
-            self.workflow_session.upsert_run(workflow_run_response)
-
-        # Save to storage after complete execution
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
     async def _acall_custom_function(
         self, func: Callable, workflow: "Workflow", execution_input: WorkflowExecutionInput, **kwargs: Any
@@ -919,9 +913,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
         # Store error response
-        if self.workflow_session:
-            self.workflow_session.upsert_run(workflow_run_response)
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
         return workflow_run_response
 
@@ -1114,11 +1106,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
-        if self.workflow_session:
-            self.workflow_session.upsert_run(workflow_run_response)
-
-        # Save to storage after complete execution
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
     def _update_workflow_session_state(self):
         if not self.workflow_session_state:
@@ -1176,9 +1164,7 @@ class Workflow:
         )
 
         # Store PENDING response immediately
-        if self.workflow_session:
-            self.workflow_session.upsert_run(workflow_run_response)
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -1196,15 +1182,11 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
-                if self.workflow_session:
-                    self.workflow_session.upsert_run(workflow_run_response)
-                self.write_to_storage()
+                self._save_run_to_storage(workflow_run_response)
 
                 await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
 
-                if self.workflow_session:
-                    self.workflow_session.upsert_run(workflow_run_response)  # Final upsert
-                self.write_to_storage()
+                self._save_run_to_storage(workflow_run_response)
 
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
@@ -1212,9 +1194,7 @@ class Workflow:
                 logger.error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                if self.workflow_session:
-                    self.workflow_session.upsert_run(workflow_run_response)
-                self.write_to_storage()
+                self._save_run_to_storage(workflow_run_response)
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
@@ -3241,6 +3221,12 @@ class Workflow:
         if self.workflow_session_state is not None:
             # Update session_state with workflow_session_state
             executor.workflow_session_state = self.workflow_session_state
+
+    def _save_run_to_storage(self, workflow_run_response: WorkflowRunResponse) -> None:
+        """Helper method to save workflow run response to storage"""
+        if self.workflow_session:
+            self.workflow_session.upsert_run(workflow_run_response)
+            self.write_to_storage()
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
