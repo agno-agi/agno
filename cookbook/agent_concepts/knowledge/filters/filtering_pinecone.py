@@ -1,7 +1,7 @@
 from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
@@ -15,7 +15,7 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
 
 # Initialize Pinecone
 api_key = getenv("PINECONE_API_KEY")
-index_name = "thai-recipe-index"
+index_name = "filtering-index"
 
 vector_db = PineconeDb(
     name=index_name,
@@ -26,9 +26,15 @@ vector_db = PineconeDb(
 )
 
 
-# Step 1: Initialize knowledge base with documents and metadata
-knowledge_base = PDFKnowledgeBase(
-    path=[
+# Step 1: Initialize knowledge with documents and metadata
+knowledge = Knowledge(
+    name="Pinecone Knowledge Base",
+    description="A knowledge base for Pinecone",
+    vector_store=vector_db,
+)
+
+knowledge.add_contents(
+    [
         {
             "path": downloaded_cv_paths[0],
             "metadata": {
@@ -69,18 +75,14 @@ knowledge_base = PDFKnowledgeBase(
                 "year": 2025,
             },
         },
-    ],
-    vector_db=vector_db,
+    ]
 )
-
-# Load all documents into the vector database
-knowledge_base.load(recreate=True, upsert=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
 )
 

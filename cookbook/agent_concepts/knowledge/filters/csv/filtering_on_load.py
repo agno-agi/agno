@@ -79,7 +79,7 @@ knowledge.add_content(
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
-    knowledge_filters={"location": "north_america", "data_type": "sales"},
+    knowledge_filters={"region": "north_america", "data_type": "sales"},
 )
 agent.print_response(
     "Revenue performance and top selling products",

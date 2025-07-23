@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.knowledge.csv import CSVKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
@@ -18,10 +18,17 @@ vector_db = LanceDb(
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
-# Step 1: Initialize knowledge base with documents and metadata
+# Step 1: Initialize knowledge with documents and metadata
 # -----------------------------------------------------------------------------
-knowledge_base = CSVKnowledgeBase(
-    path=[
+knowledge = Knowledge(
+    name="CSV Knowledge Base",
+    description="A knowledge base for CSV files",
+    vector_store=vector_db,
+)
+
+# Load all documents into the vector database
+knowledge.add_contents(
+    [
         {
             "path": downloaded_csv_paths[0],
             "metadata": {
@@ -60,16 +67,12 @@ knowledge_base = CSVKnowledgeBase(
             },
         },
     ],
-    vector_db=vector_db,
 )
-
-# Load all documents into the vector database
-knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 na_sales = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
 )
 

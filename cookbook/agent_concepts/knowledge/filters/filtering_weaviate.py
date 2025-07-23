@@ -1,10 +1,9 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
 )
-from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 # Download all sample CVs and get their paths
@@ -12,9 +11,9 @@ downloaded_cv_paths = download_knowledge_filters_sample_data(
     num_files=5, file_extension=SampleDataFileExtension.PDF
 )
 
-# Step 1: Initialize knowledge base with documents and metadata
+# Step 1: Initialize knowledge with documents and metadata
 # ------------------------------------------------------------------------------
-# When initializing the knowledge base, we can attach metadata that will be used for filtering
+# When initializing the knowledge, we can attach metadata that will be used for filtering
 # This metadata can include user IDs, document types, dates, or any other attributes
 
 vector_db = Weaviate(
@@ -24,8 +23,14 @@ vector_db = Weaviate(
     local=False,  # Set to False if using Weaviate Cloud and True if using local instance
 )
 
-knowledge_base = PDFKnowledgeBase(
-    path=[
+knowledge = Knowledge(
+    name="Weaviate Knowledge Base",
+    description="A knowledge base for Weaviate",
+    vector_store=vector_db,
+)
+
+knowledge.add_contents(
+    [
         {
             "path": downloaded_cv_paths[0],
             "metadata": {
@@ -66,18 +71,14 @@ knowledge_base = PDFKnowledgeBase(
                 "year": 2025,
             },
         },
-    ],
-    vector_db=vector_db,
+    ]
 )
-
-# Load all documents into the vector database
-knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
 )
 

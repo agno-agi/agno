@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import (
     SampleDataFileExtension,
     download_knowledge_filters_sample_data,
@@ -18,8 +18,19 @@ mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.ne
 # When initializing the knowledge base, we can attach metadata that will be used for filtering
 # This metadata can include user IDs, document types, dates, or any other attributes
 
-knowledge_base = PDFKnowledgeBase(
-    path=[
+knowledge = Knowledge(
+    name="MongoDB Knowledge Base",
+    description="A knowledge base for MongoDB",
+    vector_store=MongoDb(
+        collection_name="filters",
+        db_url=mdb_connection_string,
+        search_index_name="filters",
+    ),
+)
+
+# Load all documents into the vector database
+knowledge.add_contents(
+    [
         {
             "path": downloaded_cv_paths[0],
             "metadata": {
@@ -60,22 +71,14 @@ knowledge_base = PDFKnowledgeBase(
                 "year": 2025,
             },
         },
-    ],
-    vector_db=MongoDb(
-        collection_name="filters",
-        db_url=mdb_connection_string,
-        search_index_name="filters",
-    ),
+    ]
 )
-
-# Load all documents into the vector database
-knowledge_base.load(recreate=True)
 
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
 )
 

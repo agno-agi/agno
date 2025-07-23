@@ -541,6 +541,8 @@ class Knowledge:
             return []
 
     def validate_filters(self, filters: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+        if self.valid_metadata_filters is None:
+            self.valid_metadata_filters = set()
         self.valid_metadata_filters.update(self._get_filters_from_db)
         if not filters:
             return {}, []
