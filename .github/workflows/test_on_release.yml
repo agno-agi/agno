@@ -687,6 +687,7 @@ jobs:
       fail-fast: true # Stop all matrix jobs if one fails
     env:
       HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+      JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
