@@ -232,7 +232,7 @@ class Knowledge:
             log_warning(f"Invalid path: {path}")
 
     def _load_from_url(self, content: Content):
-        log_info("Adding content from URL")
+        log_info(f"Adding content from URL {content.name}")
         from urllib.parse import urlparse
 
         content.file_type = "url"
@@ -637,7 +637,6 @@ class Knowledge:
 
         result = []
         for content_row in contents:
-            print(f"content_row: {content_row.type}")
             # Create Content from database row
             content = Content(
                 id=content_row.id,

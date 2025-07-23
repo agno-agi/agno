@@ -9,7 +9,7 @@ from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.os.apps.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
-from agno.utils.log import log_info
+from agno.utils.log import log_debug, log_info
 
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
@@ -44,9 +44,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         parsed_urls = None
         if url and url.strip():
             try:
-                log_info(f"Parsing URL: {url}")
                 parsed_urls = json.loads(url)
-                log_info(f"Parsed URLs: {parsed_urls}")
+                log_debug(f"Parsed URLs: {parsed_urls}")
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a single URL string
                 parsed_urls = url
@@ -79,7 +78,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         if file and file.filename:
             name = file.filename
-        elif url:
+        elif url and name is None:
             name = parsed_urls
 
         content = Content(
