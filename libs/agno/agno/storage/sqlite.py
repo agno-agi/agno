@@ -137,7 +137,6 @@ class SqliteStorage(Storage):
                 Column("workflow_id", String, index=True),
                 Column("workflow_name", String, index=True),
                 Column("workflow_data", sqlite.JSON),
-                # Store WorkflowRunResponse objects
                 Column("runs", sqlite.JSON),
             ]
 
