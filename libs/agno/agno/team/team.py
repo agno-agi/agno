@@ -7075,7 +7075,7 @@ class Team:
                 log_warning(f"Retriever failed: {e}")
                 raise e
         try:
-            if self.knowledge is None or self.knowledge.vector_store is None:
+            if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
 
             if num_documents is None:
@@ -7134,7 +7134,7 @@ class Team:
                 raise e
 
         try:
-            if self.knowledge is None or self.knowledge.vector_store is None:
+            if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
 
             if num_documents is None:

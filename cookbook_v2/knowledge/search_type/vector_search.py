@@ -7,7 +7,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 vector_db = PgVector(table_name="recipes", db_url=db_url, search_type=SearchType.vector)
 knowledge = Knowledge(
     name="Vector Search Knowledge Base",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_content(

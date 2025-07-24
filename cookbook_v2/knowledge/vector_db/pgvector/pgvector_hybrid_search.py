@@ -8,7 +8,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 knowledge = Knowledge(
     name="My PG Vector Knowledge Base",
     description="This is a knowledge base that uses a PG Vector DB",
-    vector_store=PgVector(
+    vector_db=PgVector(
         table_name="vectors", db_url=db_url, search_type=SearchType.hybrid
     ),
 )

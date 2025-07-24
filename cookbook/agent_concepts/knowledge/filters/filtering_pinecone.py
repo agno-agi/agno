@@ -30,7 +30,7 @@ vector_db = PineconeDb(
 knowledge = Knowledge(
     name="Pinecone Knowledge Base",
     description="A knowledge base for Pinecone",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

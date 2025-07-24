@@ -6,7 +6,7 @@ from agno.vectordb.lancedb import LanceDb, SearchType
 knowledge = Knowledge(
     name="My PG Vector Knowledge Base",
     description="This is a knowledge base that uses a PG Vector DB",
-    vector_store=LanceDb(
+    vector_db=LanceDb(
         table_name="vectors",
         uri="tmp/lancedb",
         search_type=SearchType.hybrid,

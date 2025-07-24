@@ -26,7 +26,7 @@ vector_db = Weaviate(
 knowledge = Knowledge(
     name="Weaviate Knowledge Base",
     description="A knowledge base for Weaviate",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

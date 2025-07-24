@@ -21,7 +21,7 @@ vector_db = UpstashVectorDb(
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation with Upstash Vector DB",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 # Add content with metadata

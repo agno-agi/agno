@@ -25,7 +25,7 @@ vector_db = Milvus(
 knowledge = Knowledge(
     name="Milvus Knowledge Base",
     description="A knowledge base for Milvus",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

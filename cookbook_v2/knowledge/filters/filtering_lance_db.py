@@ -26,7 +26,7 @@ vector_db = LanceDb(
 knowledge = Knowledge(
     name="LanceDB Knowledge Base",
     description="A knowledge base for LanceDB",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

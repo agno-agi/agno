@@ -9,7 +9,7 @@ keyword_db = PgVector(
 )
 knowledge = Knowledge(
     name="Keyword Search Knowledge Base",
-    vector_store=keyword_db,
+    vector_db=keyword_db,
 )
 
 knowledge.add_content(

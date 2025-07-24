@@ -13,7 +13,7 @@ vector_db = Clickhouse(
 knowledge = Knowledge(
     name="My Clickhouse Knowledge Base",
     description="This is a knowledge base that uses a Clickhouse DB",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_content(

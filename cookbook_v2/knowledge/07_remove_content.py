@@ -14,7 +14,7 @@ knowledge = Knowledge(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         knowledge_table="knowledge_contents",
     ),
-    vector_store=PgVector(
+    vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
 )

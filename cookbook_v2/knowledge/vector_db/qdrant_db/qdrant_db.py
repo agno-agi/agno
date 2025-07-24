@@ -15,7 +15,7 @@ contents_db = PostgresDb(
 knowledge = Knowledge(
     name="My Qdrant Vector Knowledge Base",
     description="This is a knowledge base that uses a Qdrant Vector DB",
-    vector_store=vector_db,
+    vector_db=vector_db,
     contents_db=contents_db,
 )
 

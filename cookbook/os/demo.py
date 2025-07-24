@@ -31,7 +31,7 @@ vector_db = PgVector(
 knowledge = Knowledge(
     name="Agno Docs",
     contents_db=memory_db,
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 # Create an Agent

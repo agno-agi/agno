@@ -16,7 +16,7 @@ vector_db = Qdrant(
 )
 # Load the knowledge base
 knowledge = Knowledge(
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_content(

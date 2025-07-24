@@ -16,7 +16,7 @@ vector_db = Weaviate(
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation with Weaviate",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_content(

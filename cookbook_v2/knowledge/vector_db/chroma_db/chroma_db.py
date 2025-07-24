@@ -6,7 +6,7 @@ from agno.vectordb.chroma import ChromaDb
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation with ChromaDB",
-    vector_store=ChromaDb(
+    vector_db=ChromaDb(
         collection="vectors", path="tmp/chromadb", persistent_client=True
     ),
 )
@@ -22,7 +22,7 @@ agent = Agent(knowledge=knowledge)
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
 # Delete operations examples
-vector_db = knowledge.vector_store
+vector_db = knowledge.vector_db
 vector_db.delete_by_name("Recipes")
 # or
 vector_db.delete_by_metadata({"user_tag": "Recipes from website"})

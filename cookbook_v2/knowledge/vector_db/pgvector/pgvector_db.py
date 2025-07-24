@@ -9,7 +9,7 @@ vector_db = PgVector(table_name="vectors", db_url=db_url)
 knowledge = Knowledge(
     name="My PG Vector Knowledge Base",
     description="This is a knowledge base that uses a PG Vector DB",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 knowledge.add_content(
     name="Recipes",

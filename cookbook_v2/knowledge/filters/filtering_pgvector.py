@@ -24,7 +24,7 @@ vector_db = PgVector(table_name="recipes", db_url=db_url)
 knowledge = Knowledge(
     name="PgVector Knowledge Base",
     description="A knowledge base for PgVector",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

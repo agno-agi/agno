@@ -145,7 +145,7 @@ search_index = SearchIndex(
         },
     },
 )
-vector_store = CouchbaseSearch(
+vector_db = CouchbaseSearch(
     bucket_name="recipe_bucket",
     scope_name="recipe_scope",
     collection_name="recipes",
@@ -162,7 +162,7 @@ vector_store = CouchbaseSearch(
 knowledge = Knowledge(
     name="Couchbase Knowledge Base",
     description="This is a knowledge base that uses a Couchbase DB",
-    vector_store=vector_store,
+    vector_db=vector_db,
 )
 
 knowledge.add_content(
@@ -180,6 +180,6 @@ agent = Agent(
 
 agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
-vector_store.delete_by_name("Recipes")
+vector_db.delete_by_name("Recipes")
 # or
-vector_store.delete_by_metadata({"doc_type": "recipe_book"})
+vector_db.delete_by_metadata({"doc_type": "recipe_book"})

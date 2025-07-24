@@ -27,7 +27,7 @@ knowledge = Knowledge(
     name="My Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
     store=document_store,
-    vector_store=PgVector(
+    vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
 )

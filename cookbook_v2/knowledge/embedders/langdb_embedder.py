@@ -10,7 +10,7 @@ print(f"Dimensions: {len(embeddings)}")
 
 # Example usage:
 knowledge = Knowledge(
-    vector_store=PgVector(
+    vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="langdb_embeddings",
         embedder=LangDBEmbedder(),

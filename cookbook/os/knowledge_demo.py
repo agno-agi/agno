@@ -24,7 +24,7 @@ knowledge = Knowledge(
     name="My Knowledge Base",
     description="A simple knowledge base",
     contents_db=contents_db,
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 basic_agent = Agent(

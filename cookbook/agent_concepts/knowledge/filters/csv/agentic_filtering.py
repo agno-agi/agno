@@ -24,7 +24,7 @@ vector_db = LanceDb(
 knowledge = Knowledge(
     name="CSV Knowledge Base",
     description="A knowledge base for CSV files",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 # Load all documents into the vector database

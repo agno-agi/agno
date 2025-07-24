@@ -38,7 +38,7 @@ vector_db = SingleStore(
     schema=DATABASE,
 )
 
-knowledge = Knowledge(name="My SingleStore Knowledge Base", vector_store=vector_db)
+knowledge = Knowledge(name="My SingleStore Knowledge Base", vector_db=vector_db)
 
 knowledge.add_content(
     name="Recipes",

@@ -25,7 +25,7 @@ vector_db = LanceDb(
 
 # Initialize the PDFKnowledgeBase
 knowledge = Knowledge(
-    vector_store=vector_db,
+    vector_db=vector_db,
     max_results=5,
     contents_db=PostgresDb(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",

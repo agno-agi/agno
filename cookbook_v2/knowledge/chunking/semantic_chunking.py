@@ -7,7 +7,7 @@ from agno.vectordb.pgvector import PgVector
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
-    vector_store=PgVector(table_name="recipes_semantic_chunking", db_url=db_url),
+    vector_db=PgVector(table_name="recipes_semantic_chunking", db_url=db_url),
 )
 knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",

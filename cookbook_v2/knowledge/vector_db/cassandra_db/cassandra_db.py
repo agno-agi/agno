@@ -30,7 +30,7 @@ vector_db = Cassandra(
 
 knowledge = Knowledge(
     name="My Cassandra Knowledge Base",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 

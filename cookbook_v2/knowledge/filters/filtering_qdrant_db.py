@@ -22,7 +22,7 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 knowledge = Knowledge(
     name="Qdrant Knowledge Base",
     description="A knowledge base for Qdrant",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

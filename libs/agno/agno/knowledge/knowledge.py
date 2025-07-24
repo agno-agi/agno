@@ -24,14 +24,14 @@ class Knowledge:
 
     name: Optional[str] = None
     description: Optional[str] = None
-    vector_store: Optional[VectorDb] = None
+    vector_db: Optional[VectorDb] = None
     contents_db: Optional[PostgresDb] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
     def __post_init__(self):
-        if self.vector_store and not self.vector_store.exists():
-            self.vector_store.create()
+        if self.vector_db and not self.vector_db.exists():
+            self.vector_db.create()
 
         self.construct_readers()
         self.valid_metadata_filters = set()
@@ -189,9 +189,9 @@ class Knowledge:
             completed = True
             for read_document in read_documents:
                 read_document.content_id = content.id
-                if self.vector_store.upsert_available():
+                if self.vector_db.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
+                        self.vector_db.upsert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
                         content.status = "Failed"
@@ -200,7 +200,7 @@ class Knowledge:
                         self._update_content(content)
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
                         content.status = "Failed"
@@ -276,9 +276,9 @@ class Knowledge:
                 if read_document.size:
                     file_size += read_document.size
                 read_document.content_id = content.id
-                if self.vector_store.upsert_available():
+                if self.vector_db.upsert_available():
                     try:
-                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
+                        self.vector_db.upsert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
                         content.status = "Failed"
@@ -286,7 +286,7 @@ class Knowledge:
                         self._update_content(content)
                 else:
                     try:
-                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
                         content.status = "Failed"
@@ -356,9 +356,9 @@ class Knowledge:
                     read_document.content_id = content.id
 
                     # Add to vector store - pass as a list
-                    if self.vector_store and self.vector_store.upsert_available():
+                    if self.vector_db and self.vector_db.upsert_available():
                         try:
-                            self.vector_store.upsert(documents=[read_document], filters=content.metadata)
+                            self.vector_db.upsert(documents=[read_document], filters=content.metadata)
                         except Exception as e:
                             log_error(f"Error upserting document: {e}")
                             content.status = "Failed"
@@ -367,7 +367,7 @@ class Knowledge:
                             self._update_content(content)
                     else:
                         try:
-                            self.vector_store.insert(documents=[read_document], filters=content.metadata)
+                            self.vector_db.insert(documents=[read_document], filters=content.metadata)
                         except Exception as e:
                             log_error(f"Error inserting document: {e}")
                             content.status = "Failed"
@@ -414,10 +414,10 @@ class Knowledge:
                 for read_document in read_documents:
                     if read_document.content:
                         read_document.size = len(read_document.content.encode("utf-8"))
-                    if self.vector_store.upsert_available():
-                        self.vector_store.upsert(documents=[read_document], filters=content.metadata)
+                    if self.vector_db.upsert_available():
+                        self.vector_db.upsert(documents=[read_document], filters=content.metadata)
                     else:
-                        self.vector_store.insert(documents=[read_document], filters=content.metadata)
+                        self.vector_db.insert(documents=[read_document], filters=content.metadata)
                 content.status = "Completed"
                 self._update_content(content)
             else:
@@ -508,13 +508,13 @@ class Knowledge:
         """Returns relevant documents matching a query"""
 
         try:
-            if self.vector_store is None:
+            if self.vector_db is None:
                 log_warning("No vector db provided")
                 return []
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_store.search(query=query, limit=_max_results, filters=filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=filters)
         except Exception as e:
             log_error(f"Error searching for documents: {e}")
             return []
@@ -525,14 +525,14 @@ class Knowledge:
         """Returns relevant documents matching a query"""
 
         try:
-            if self.vector_store is None:
+            if self.vector_db is None:
                 log_warning("No vector db provided")
                 return []
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_store.async_search(query=query, limit=_max_results, filters=filters)
+                return await self.vector_db.async_search(query=query, limit=_max_results, filters=filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
                 return self.search(query=query, max_results=_max_results, filters=filters)
@@ -586,22 +586,22 @@ class Knowledge:
         return valid_filters
 
     def remove_vector_by_id(self, id: str) -> bool:
-        if self.vector_store is None:
+        if self.vector_db is None:
             log_warning("No vector DB provided")
             return
-        return self.vector_store.delete_by_id(id)
+        return self.vector_db.delete_by_id(id)
 
     def remove_vectors_by_name(self, name: str) -> bool:
-        if self.vector_store is None:
+        if self.vector_db is None:
             log_warning("No vector DB provided")
             return
-        return self.vector_store.delete_by_name(name)
+        return self.vector_db.delete_by_name(name)
 
     def remove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        if self.vector_store is None:
+        if self.vector_db is None:
             log_warning("No vector DB provided")
             return
-        return self.vector_store.delete_by_metadata(metadata)
+        return self.vector_db.delete_by_metadata(metadata)
 
     # --- API Only Methods ---
 
@@ -681,8 +681,8 @@ class Knowledge:
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id)
 
-        if self.vector_store is not None:
-            self.vector_store.delete_by_content_id(content_id)
+        if self.vector_db is not None:
+            self.vector_db.delete_by_content_id(content_id)
 
     def remove_all_content(self):
         contents, _ = self.get_content()

@@ -7,7 +7,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 hybrid_db = PgVector(table_name="recipes", db_url=db_url, search_type=SearchType.hybrid)
 knowledge = Knowledge(
     name="Hybrid Search Knowledge Base",
-    vector_store=hybrid_db,
+    vector_db=hybrid_db,
 )
 
 knowledge.add_content(

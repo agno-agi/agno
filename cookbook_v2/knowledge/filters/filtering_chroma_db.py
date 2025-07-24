@@ -22,7 +22,7 @@ vector_db = ChromaDb(collection="recipes", path="tmp/chromadb", persistent_clien
 knowledge = Knowledge(
     name="ChromaDB Knowledge Base",
     description="A knowledge base for ChromaDB",
-    vector_store=vector_db,
+    vector_db=vector_db,
 )
 
 # Load all documents into the vector database
