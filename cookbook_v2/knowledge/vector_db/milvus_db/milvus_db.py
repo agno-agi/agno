@@ -11,7 +11,7 @@ from agno.vectordb.milvus import Milvus
 
 vector_db = Milvus(
     collection="recipes",
-    uri="docs/milvus.db",
+    uri="tmp/milvus.db",
 )
 # Create knowledge base
 knowledge = Knowledge(

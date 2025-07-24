@@ -1,18 +1,23 @@
 import typer
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.vectordb.mongodb import MongoDb
 from agno.vectordb.search import SearchType
-from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 from rich.prompt import Prompt
 
-vector_db = Weaviate(
-    collection="recipes",
+# MongoDB Atlas connection string
+"""
+Example connection strings:
+"mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+"mongodb://localhost:27017/agno?authSource=admin"
+"""
+mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+
+vector_db = MongoDb(
+    collection_name="recipes",
+    db_url=mdb_connection_string,
+    search_index_name="recipes",
     search_type=SearchType.hybrid,
-    vector_index=VectorIndex.HNSW,
-    distance=Distance.COSINE,
-    local=False,  # Set to True if using Weaviate Cloud and False if using local instance
-    # Adjust alpha for hybrid search (0.0-1.0, default is 0.5), where 0 is pure keyword search, 1 is pure vector search
-    hybrid_search_alpha=0.6,
 )
 
 knowledge_base = PDFUrlKnowledgeBase(
@@ -21,7 +26,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 )
 
 
-def weaviate_agent(user: str = "user"):
+def mongodb_agent(user: str = "user"):
     agent = Agent(
         user_id=user,
         knowledge=knowledge_base,
@@ -40,4 +45,4 @@ if __name__ == "__main__":
     # Comment out after first run
     knowledge_base.load(recreate=True)
 
-    typer.run(weaviate_agent)
+    typer.run(mongodb_agent)
