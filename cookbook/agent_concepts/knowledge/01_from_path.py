@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -31,6 +33,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Which candidates can you recommend for the role of a software engineer?",
+    "Who is the best candidate for the role of a software engineer?",
     markdown=True,
 )
