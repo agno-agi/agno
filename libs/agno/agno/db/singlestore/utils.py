@@ -1,4 +1,4 @@
-"""Utility functions for the Postgres database class."""
+"""Utility functions for the SingleStore database class."""
 
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import Engine
 
 from agno.db.base import SessionType
-from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.singlestore.schemas import get_table_schema_definition
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.session.summary import SessionSummary
@@ -16,7 +16,6 @@ from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from sqlalchemy import Table
-    from sqlalchemy.dialects import postgresql
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -24,7 +23,6 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
-# TODO: This function is redundant and should be removed
 def hydrate_session(session: dict) -> dict:
     """Convert nested dictionaries to their corresponding object types.
 
@@ -79,6 +77,9 @@ def create_schema(session: Session, db_schema: str) -> None:
     Args:
         session: The SQLAlchemy session to use
         db_schema (str): The definition of the database schema to create
+
+    Raises:
+        Exception: If the schema creation fails.
     """
     try:
         log_debug(f"Creating schema if not exists: {db_schema}")
@@ -87,7 +88,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_warning(f"Could not create schema {db_schema}: {e}")
 
 
-def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
+def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
     """
     Check if a table with the given name exists in the given schema.
 
@@ -95,12 +96,22 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         bool: True if the table exists, False otherwise.
     """
     try:
-        exists_query = text(
-            "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
-        )
-        exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+        if db_schema is not None:
+            exists_query = text(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
+            )
+            exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
+            table_ref = f"{db_schema}.{table_name}"
+        else:
+            # Check in current database/schema
+            exists_query = text(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
+            )
+            exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
+            table_ref = table_name
+
         if not exists:
-            log_debug(f"Table {db_schema}.{table_name} {'exists' if exists else 'does not exist'}")
+            log_debug(f"Table {table_ref} {'exists' if exists else 'does not exist'}")
 
         return exists
 
@@ -109,7 +120,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         return False
 
 
-def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: str) -> bool:
+def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schema: Optional[str]) -> bool:
     """
     Check if the existing table has the expected column names.
 
@@ -123,28 +134,41 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
     try:
         expected_table_schema = get_table_schema_definition(table_type)
         expected_columns = {col_name for col_name in expected_table_schema.keys() if not col_name.startswith("_")}
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
 
-        # Get existing columns
         inspector = inspect(db_engine)
-        existing_columns_info = inspector.get_columns(table_name, schema=db_schema)
-        existing_columns = set(col["name"] for col in existing_columns_info)
+        try:
+            import warnings
+
+            # Suppressing SQLAlchemy warnings about unrecognized SingleStore JSON types, which are expected
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Did not recognize type 'JSON'", category=Warning)
+                existing_columns_info = inspector.get_columns(table_name, schema=db_schema)
+
+            existing_columns = set(col["name"] for col in existing_columns_info)
+
+        except Exception:
+            # If column inspection fails (e.g., unrecognized JSON type), assume table is valid
+            return True
 
         # Check if all expected columns exist
         missing_columns = expected_columns - existing_columns
         if missing_columns:
-            log_warning(f"Missing columns {missing_columns} in table {db_schema}.{table_name}")
+            log_warning(f"Missing columns {missing_columns} in table {table_ref}")
             return False
 
-        log_debug(f"Table {db_schema}.{table_name} has all expected columns")
+        log_debug(f"Table {table_ref} has all expected columns")
         return True
+
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
+        log_error(f"Error validating table schema for {table_ref}: {e}")
         return False
 
 
 # -- Metrics util methods --
 def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[dict]) -> list[dict]:
-    """Bulk upsert metrics into the database.
+    """Bulk upsert metrics into the database with proper duplicate handling.
 
     Args:
         table (Table): The table to upsert into.
@@ -157,23 +181,41 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         return []
 
     results = []
-    stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict
-    update_columns = {
-        col.name: stmt.excluded[col.name]
-        for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
-    }
+    for record in metrics_records:
+        date_val = record.get("date")
+        period_val = record.get("aggregation_period")
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(
-        table
-    )
-    result = session.execute(stmt, metrics_records)
-    results = [row._mapping for row in result.fetchall()]
+        # Check if record already exists based on date + aggregation_period
+        existing_record = (
+            session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).first()
+        )
+
+        if existing_record:
+            # Update existing record
+            update_data = {
+                k: v for k, v in record.items() if k not in ["id", "date", "aggregation_period", "created_at"]
+            }
+            update_data["updated_at"] = record.get("updated_at")
+
+            session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).update(
+                update_data
+            )
+
+            # Get the updated record for return
+            updated_record = (
+                session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).first()
+            )
+            if updated_record:
+                results.append(dict(updated_record._mapping))
+        else:
+            # Insert new record
+            stmt = table.insert().values(**record)
+            session.execute(stmt)
+            results.append(record)
+
     session.commit()
-
-    return results  # type: ignore
+    return results
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:

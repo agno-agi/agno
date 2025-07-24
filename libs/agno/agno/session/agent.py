@@ -236,5 +236,4 @@ class AgentSession:
         messages = []
         for run in self.runs:
             messages.extend([msg for msg in run.messages if not msg.from_history])
-        self.chat_history = messages
         return messages

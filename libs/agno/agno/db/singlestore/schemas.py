@@ -1,20 +1,20 @@
-"""Table schemas and related utils used by the PostgresDb class"""
+"""Table schemas and related utils used by the SingleStoreDb class"""
 
 from typing import Any
 
 try:
-    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
+    from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String, Text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": String, "nullable": False},
-    "session_type": {"type": String, "nullable": False, "index": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
-    "user_id": {"type": String, "nullable": True},
-    "team_session_id": {"type": String, "nullable": True},  # TODO: remove this column
+    "session_id": {"type": lambda: String(128), "nullable": False},
+    "session_type": {"type": lambda: String(20), "nullable": False, "index": True},
+    "agent_id": {"type": lambda: String(128), "nullable": True},
+    "team_id": {"type": lambda: String(128), "nullable": True},
+    "workflow_id": {"type": lambda: String(128), "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True},
+    "team_session_id": {"type": lambda: String(128), "nullable": True},  # TODO: remove this column
     "session_data": {"type": JSON, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
@@ -44,49 +44,49 @@ SESSION_TABLE_SCHEMA = {
 }
 
 USER_MEMORY_TABLE_SCHEMA = {
-    "memory_id": {"type": String, "primary_key": True, "nullable": False},
+    "memory_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "memory": {"type": JSON, "nullable": False},
-    "input": {"type": String, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
+    "input": {"type": Text, "nullable": True},
+    "agent_id": {"type": lambda: String(128), "nullable": True},
+    "team_id": {"type": lambda: String(128), "nullable": True},
+    "workflow_id": {"type": lambda: String(128), "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "last_updated": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
-    "run_id": {"type": String, "primary_key": True, "nullable": False},
-    "eval_type": {"type": String, "nullable": False},
+    "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "eval_type": {"type": lambda: String(50), "nullable": False},
     "eval_data": {"type": JSON, "nullable": False},
-    "name": {"type": String, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
-    "model_id": {"type": String, "nullable": True},
-    "model_provider": {"type": String, "nullable": True},
-    "evaluated_component_name": {"type": String, "nullable": True},
+    "name": {"type": lambda: String(255), "nullable": True},
+    "agent_id": {"type": lambda: String(128), "nullable": True},
+    "team_id": {"type": lambda: String(128), "nullable": True},
+    "workflow_id": {"type": lambda: String(128), "nullable": True},
+    "model_id": {"type": lambda: String(128), "nullable": True},
+    "model_provider": {"type": lambda: String(50), "nullable": True},
+    "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False},
-    "description": {"type": String, "nullable": False},
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "name": {"type": lambda: String(255), "nullable": False},
+    "description": {"type": Text, "nullable": False},
     "metadata": {"type": JSON, "nullable": True},
-    "type": {"type": String, "nullable": True},
+    "type": {"type": lambda: String(50), "nullable": True},
     "size": {"type": BigInteger, "nullable": True},
-    "linked_to": {"type": String, "nullable": True},
+    "linked_to": {"type": lambda: String(128), "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "status": {"type": String, "nullable": True},
-    "status_message": {"type": String, "nullable": True},
+    "status": {"type": lambda: String(50), "nullable": True},
+    "status_message": {"type": Text, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "agent_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
     "team_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
     "workflow_runs_count": {"type": BigInteger, "nullable": False, "default": 0},
@@ -97,16 +97,10 @@ METRICS_TABLE_SCHEMA = {
     "token_metrics": {"type": JSON, "nullable": False, "default": {}},
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
-    "aggregation_period": {"type": String, "nullable": False},
+    "aggregation_period": {"type": lambda: String(20), "nullable": False, "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
-    "_unique_constraints": [
-        {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
-        }
-    ],
 }
 
 LEARNING_TABLE_SCHEMA = {}
@@ -115,10 +109,8 @@ LEARNING_TABLE_SCHEMA = {}
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
-
     Args:
         table_type (str): The type of table to get the schema for.
-
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
@@ -130,9 +122,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }
-
     schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-
     return schema

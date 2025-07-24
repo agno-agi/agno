@@ -10,7 +10,7 @@ except ImportError:
 
 SESSION_TABLE_SCHEMA = {
     "session_id": {"type": String, "primary_key": True, "nullable": False},
-    "session_type": {"type": String, "nullable": False},
+    "session_type": {"type": String, "nullable": False, "index": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
@@ -24,7 +24,7 @@ SESSION_TABLE_SCHEMA = {
     "chat_history": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
@@ -34,9 +34,9 @@ USER_MEMORY_TABLE_SCHEMA = {
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
-    "user_id": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
-    "last_updated": {"type": BigInteger, "nullable": True},
+    "last_updated": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
@@ -50,7 +50,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
@@ -80,8 +80,8 @@ METRICS_TABLE_SCHEMA = {
     "users_count": {"type": BigInteger, "nullable": False, "default": 0},
     "token_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "model_metrics": {"type": JSON, "nullable": False, "default": "{}"},
-    "date": {"type": Date, "nullable": False},
-    "aggregation_period": {"type": String, "nullable": False},
+    "date": {"type": Date, "nullable": False, "index": True},
+    "aggregation_period": {"type": String, "nullable": False, "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},

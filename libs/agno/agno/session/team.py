@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from textwrap import dedent
-from typing import Any, Dict, List, Mapping, Optional, Type, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
-from pydantic import BaseModel
-
-from agno.models.base import Model
 from agno.models.message import Message
-from agno.run.response import RunStatus
+from agno.run.response import RunResponse, RunStatus
 from agno.run.team import TeamRunResponse
-from agno.session.summary import SessionSummary, SessionSummaryResponse
+from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
 
@@ -36,10 +32,8 @@ class TeamSession:
     session_data: Optional[Dict[str, Any]] = None
     # Extra Data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # List of all messages in the session
-    chat_history: Optional[list[Message]] = None
     # List of all runs in the session
-    runs: Optional[list[TeamRunResponse]] = None
+    runs: Optional[list[Union[TeamRunResponse, RunResponse]]] = None
     # Summary of the session
     summary: Optional[Dict[str, Any]] = None
 
@@ -51,7 +45,6 @@ class TeamSession:
     def to_dict(self) -> Dict[str, Any]:
         session_dict = asdict(self)
 
-        session_dict["chat_history"] = [msg.to_dict() for msg in self.chat_history] if self.chat_history else None
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if isinstance(self.summary, SessionSummary) else self.summary
 
@@ -70,14 +63,16 @@ class TeamSession:
             log_warning("TeamSession is missing session_id")
             return None
 
-        # TODO: Account for runs inside a team that can be RunResponse
-        runs = data.get("runs")
-        if runs is not None and isinstance(runs[0], dict):
-            runs = [TeamRunResponse.from_dict(run) for run in runs]
+        if data.get("summary") is not None:
+            data["summary"] = SessionSummary.from_dict(data["summary"])
 
-        chat_history = data.get("chat_history")
-        if chat_history is not None and isinstance(chat_history[0], dict):
-            chat_history = [Message.from_dict(msg) for msg in chat_history]
+        runs = data.get("runs")
+        serialized_runs = []
+        for run in runs:
+            if "agent_id" in run:
+                serialized_runs.append(RunResponse.from_dict(run))
+            elif "team_id" in run:
+                serialized_runs.append(TeamRunResponse.from_dict(run))
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
@@ -90,12 +85,11 @@ class TeamSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=chat_history,
-            runs=runs,
+            runs=serialized_runs,
             summary=data.get("summary"),
         )
 
-    def add_run(self, run: TeamRunResponse):
+    def add_run(self, run: Union[TeamRunResponse, RunResponse]):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages
@@ -108,7 +102,7 @@ class TeamSession:
 
         self.runs.append(run)
 
-        log_debug("Added RunResponse to Agent Session")
+        log_debug("Added RunResponse to Team Session")
 
     def get_messages_from_last_n_runs(
         self,
@@ -119,6 +113,7 @@ class TeamSession:
         skip_role: Optional[str] = None,
         skip_status: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        member_runs: bool = False,
     ) -> List[Message]:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
@@ -144,6 +139,10 @@ class TeamSession:
             session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+
+        if not member_runs:
+            # Filter for the main team runs
+            session_runs = [run for run in session_runs if run.team_session_id is None]  # type: ignore
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
@@ -243,5 +242,4 @@ class TeamSession:
         messages = []
         for run in self.runs:
             messages.extend([msg for msg in run.messages if not msg.from_history])
-        self.chat_history = messages
         return messages

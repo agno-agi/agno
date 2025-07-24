@@ -28,7 +28,6 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, StopAgentRun
-from agno.knowledge.agent import AgentKnowledge
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory import MemoryManager
@@ -152,9 +151,9 @@ class Agent:
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
-    # --- Agent Knowledge ---
-    knowledge: Optional[Union[AgentKnowledge, Knowledge]] = None
-    # Enable RAG by adding references from AgentKnowledge to the user prompt.
+    # --- Knowledge ---
+    knowledge: Optional[Knowledge] = None
+    # Enable RAG by adding references from Knowledge to the user prompt.
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
@@ -349,7 +348,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_messages: bool = False,
         num_history_runs: int = 3,
-        knowledge: Optional[AgentKnowledge] = None,
+        knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_references: bool = False,
@@ -909,20 +908,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # Use stream override value when necessary
         if stream is None:
@@ -1286,20 +1272,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # Use stream override value when necessary
         if stream is None:
@@ -1537,20 +1510,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -1907,20 +1867,7 @@ class Agent:
 
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
-            """
-                initialize metadata (specially required in case when load is commented out)
-                when load is not called the reader's document_lists won't be called and metadata filters won't be initialized
-                so we need to call initialize_valid_filters to make sure the filters are initialized
-            """
-            if not self.knowledge.valid_metadata_filters:  # type: ignore
-                self.knowledge.initialize_valid_filters()  # type: ignore
-
             effective_filters = self._get_effective_filters(knowledge_filters)
-
-        # Agentic filters are enabled
-        if self.enable_agentic_knowledge_filters and not self.knowledge.valid_metadata_filters:  # type: ignore
-            # initialize metadata (specially required in case when load is commented out)
-            self.knowledge.initialize_valid_filters()  # type: ignore
 
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
@@ -4658,23 +4605,17 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                (getattr(self.knowledge, "vector_db", None) or getattr(self.knowledge, "vector_store", None)) is None
+                (getattr(self.knowledge, "vector_store", None)) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None
 
             if num_documents is None:
-                if isinstance(self.knowledge, AgentKnowledge):
-                    num_documents = self.knowledge.num_documents
-                elif isinstance(self.knowledge, Knowledge):
+                if isinstance(self.knowledge, Knowledge):
                     num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
-            if isinstance(self.knowledge, AgentKnowledge):
-                relevant_docs: List[Document] = self.knowledge.search(
-                    query=query, num_documents=num_documents, filters=filters
-                )
-            elif isinstance(self.knowledge, Knowledge):
+            if isinstance(self.knowledge, Knowledge):
                 relevant_docs: List[Document] = self.knowledge.search(
                     query=query, max_results=num_documents, filters=filters
                 )
@@ -4732,17 +4673,17 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                getattr(self.knowledge, "vector_db", None) is None
+                getattr(self.knowledge, "vector_store", None) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, num_documents=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:

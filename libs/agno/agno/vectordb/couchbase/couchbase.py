@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -506,6 +506,7 @@ class CouchbaseSearch(VectorDb):
                     content=value["content"],
                     meta_data=value["meta_data"],
                     embedding=value["embedding"],
+                    content_id=value.get("content_id"),
                 )
             )
 
@@ -578,6 +579,7 @@ class CouchbaseSearch(VectorDb):
             "content": cleaned_content,
             "meta_data": document.meta_data,  # Ensure meta_data is never None
             "embedding": document.embedding,
+            "content_id": document.content_id,
         }
 
     def get_count(self) -> int:
@@ -1069,3 +1071,152 @@ class CouchbaseSearch(VectorDb):
                     continue
 
         return documents
+
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete a document by its ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if document was deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting document with ID {id}")
+            if not self.id_exists(id):
+                return False
+
+            # Delete by ID using Couchbase collection.delete()
+            self.collection.remove(id)
+            log_info(f"Successfully deleted document with ID {id}")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete documents by name.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with name {name}")
+
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE name = $name"
+            result = self.scope.query(
+                query, QueryOptions(named_parameters={"name": name}, scan_consistency=QueryScanConsistency.REQUEST_PLUS)
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with name {name}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+
+        Args:
+            metadata (Dict[str, Any]): The metadata to match for deletion
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with metadata {metadata}")
+
+            if not metadata:
+                log_info("No metadata provided for deletion")
+                return False
+
+            # Build WHERE clause for metadata matching
+            where_conditions = []
+            named_parameters = {}
+
+            for key, value in metadata.items():
+                if isinstance(value, (list, tuple)):
+                    # For array values, use ARRAY_CONTAINS
+                    where_conditions.append(
+                        f"(ARRAY_CONTAINS(filters.{key}, $value_{key}) OR ARRAY_CONTAINS(recipes.filters.{key}, $value_{key}))"
+                    )
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, str):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, bool):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, (int, float)):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif value is None:
+                    where_conditions.append(f"(filters.{key} IS NULL OR recipes.filters.{key} IS NULL)")
+                else:
+                    # For other types, convert to string
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = str(value)
+
+            if not where_conditions:
+                log_info("No valid metadata conditions for deletion")
+                return False
+
+            where_clause = " AND ".join(where_conditions)
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause}"
+
+            result = self.scope.query(
+                query,
+                QueryOptions(named_parameters=named_parameters, scan_consistency=QueryScanConsistency.REQUEST_PLUS),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                print(row)
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with metadata {metadata}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
+
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_id = $content_id OR recipes.content_id = $content_id"
+            result = self.scope.query(
+                query,
+                QueryOptions(
+                    named_parameters={"content_id": content_id}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
+                ),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with content_id {content_id}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False

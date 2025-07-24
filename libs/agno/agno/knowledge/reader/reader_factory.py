@@ -152,7 +152,7 @@ class ReaderFactory:
         """Get the appropriate reader for a file extension."""
         extension = extension.lower()
 
-        if extension == ".pdf":
+        if extension in [".pdf", "application/pdf"]:
             return cls.create_reader("pdf")
         elif extension == ".csv":
             return cls.create_reader("csv")

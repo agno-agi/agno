@@ -29,7 +29,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException
-from agno.knowledge.agent import AgentKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -177,7 +177,7 @@ class Team:
     add_context: bool = False
 
     # --- Agent Knowledge ---
-    knowledge: Optional[AgentKnowledge] = None
+    knowledge: Optional[Knowledge] = None
     # Add knowledge_filters to the Agent class attributes
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
@@ -255,8 +255,6 @@ class Team:
     add_session_summary_references: Optional[bool] = None
 
     # --- Team History ---
-    # If True, enable the team history (Deprecated in favor of add_history_to_messages)
-    enable_team_history: bool = False
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_messages: bool = False
     # Number of historical runs to include in the messages
@@ -328,7 +326,7 @@ class Team:
         system_message_role: str = "system",
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
-        knowledge: Optional[AgentKnowledge] = None,
+        knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_references: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
@@ -356,7 +354,6 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_references: Optional[bool] = None,
-        enable_team_history: bool = False,
         add_history_to_messages: bool = False,
         num_history_runs: int = 3,
         extra_data: Optional[Dict[str, Any]] = None,
@@ -441,7 +438,6 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_references = add_session_summary_references
-        self.enable_team_history = enable_team_history
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
 
@@ -566,6 +562,10 @@ class Team:
             else:
                 merge_dictionaries(member.workflow_session_state, self.workflow_session_state)
 
+        if member.db is not None:
+            member.db = None
+            log_debug(f"Database for Team members is not required, setting to None")
+
         if isinstance(member, Agent):
             member.team_id = self.team_id
             member.set_agent_id()
@@ -593,9 +593,6 @@ class Team:
             self.model = OpenAIChat(id="gpt-4o")
 
     def set_memory_manager(self) -> None:
-        if not self.enable_user_memories:
-            return
-
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
 
@@ -658,8 +655,10 @@ class Team:
         self._set_team_id()
 
         # Set the memory manager and session summary manager
-        self.set_memory_manager()
-        self.set_session_summary_manager()
+        if self.enable_user_memories or self.memory_manager is not None:
+            self.set_memory_manager()
+        if self.enable_session_summaries or self.session_summary_manager is not None:
+            self.set_session_summary_manager()
 
         log_debug(f"Team ID: {self.team_id}", center=True)
 
@@ -2025,8 +2024,8 @@ class Team:
         if user_message_str is not None and self.memory_manager is not None:
             tasks.append(self.memory_manager.acreate_user_memories(message=user_message_str, user_id=user_id))
 
-            if self.session_summary_manager is not None:
-                tasks.append(self.session_summary_manager.acreate_session_summary(session=self.team_session))
+        if self.session_summary_manager is not None:
+            tasks.append(self.session_summary_manager.acreate_session_summary(session=self.team_session))
 
         if tasks:
             if self.stream_intermediate_steps:
@@ -4062,17 +4061,11 @@ class Team:
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
         # Get metrics of the team-agent's messages
-        for member in self.members:
-            # Only members with agent_session
-            if member.agent_session is not None:
-                if member.agent_session.runs is not None:
-                    for run in member.agent_session.runs:
-                        if run is not None and run.messages is not None:
-                            for m in run.messages:
-                                if m.role == assistant_message_role and m.metrics is not None:
-                                    current_session_metrics += m.metrics
-
-        # TODO: Get metrics when members are teams
+        for run in self.team_session.runs:  # type: ignore
+            if run.messages is not None:
+                for m in run.messages:
+                    if m.role == assistant_message_role and m.metrics is not None:
+                        current_session_metrics += m.metrics
 
         return current_session_metrics
 
@@ -4612,7 +4605,6 @@ class Team:
         from_run_response: Optional[TeamRunResponse] = None,
     ) -> TeamRunResponse:
         extra_data = None
-        member_responses = None
         formatted_tool_calls = None
         if from_run_response:
             content = from_run_response.content
@@ -4624,7 +4616,6 @@ class Team:
             model = from_run_response.model
             messages = from_run_response.messages
             extra_data = from_run_response.extra_data
-            member_responses = from_run_response.member_responses
             citations = from_run_response.citations
             tools = from_run_response.tools
             formatted_tool_calls = from_run_response.formatted_tool_calls
@@ -4652,8 +4643,6 @@ class Team:
         )
         if formatted_tool_calls:
             rr.formatted_tool_calls = formatted_tool_calls
-        if member_responses:
-            rr.member_responses = member_responses
         if content_type is not None:
             rr.content_type = content_type
         if created_at is not None:
@@ -5206,7 +5195,7 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.enable_team_history or self.add_history_to_messages:
+        if self.add_history_to_messages:
             from copy import deepcopy
 
             history = self.team_session.get_messages_from_last_n_runs(
@@ -5684,6 +5673,32 @@ class Team:
 
                 merge_dictionaries(self.workflow_session_state, member_state)
 
+    def _get_history_for_member_agent(self, member_agent: Union[Agent, "Team"], session_id: str) -> List[Message]:
+        if not member_agent.add_history_to_messages:
+            return []
+
+        log_info(f"Adding messages from history for {member_agent.name}")
+        from copy import deepcopy
+
+        history = self.team_session.get_messages_from_last_n_runs(
+            session_id=session_id,
+            last_n=member_agent.num_history_runs or self.num_history_runs,
+            skip_role=self.system_message_role,
+            agent_id=member_agent.agent_id,
+            team_id=member_agent.team_id if member_agent.agent_id is None else None,
+            member_runs=True,
+        )
+
+        if len(history) > 0:
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
+
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
+
+            return history_copy
+
     def get_run_member_agents_function(
         self,
         session_id: str,
@@ -5787,6 +5802,9 @@ class Team:
                     except Exception as e:
                         yield f"Agent {member_agent.name}: Error - {str(e)}"
 
+                # Add team run id to the member run
+                member_agent.run_response.parent_run_id = self.run_id  # type: ignore
+
                 # Update the memory
                 member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
                 self.add_interaction_to_team_context(
@@ -5798,7 +5816,8 @@ class Team:
 
                 # Add the member run to the team run response
                 self.run_response = cast(TeamRunResponse, self.run_response)
-                self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+                # Add the member run to the team session
+                self.team_session.add_run(member_agent.run_response)
 
                 # Update team session state
                 self._update_team_session_state(member_agent)
@@ -5859,6 +5878,9 @@ class Team:
                     )
                     check_if_run_cancelled(response)
 
+                    # Add team run id to the member run
+                    agent.run_response.parent_run_id = self.run_id  # type: ignore
+
                     member_name = agent.name if agent.name else f"agent_{idx}"
                     self.add_interaction_to_team_context(
                         session_id=session_id,
@@ -5869,7 +5891,8 @@ class Team:
 
                     # Add the member run to the team run response
                     self.run_response = cast(TeamRunResponse, self.run_response)
-                    self.run_response.add_member_run(agent.run_response)
+                    # Add the member run to the team session
+                    self.team_session.add_run(agent.run_response)
 
                     # Update team session state
                     self._update_team_session_state(current_agent)
@@ -6069,9 +6092,11 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
+            # Add team run id to the member run
+            member_agent.run_response.parent_run_id = self.run_id  # type: ignore
+
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-
             self.add_interaction_to_team_context(
                 session_id=session_id,
                 member_name=member_name,
@@ -6081,7 +6106,8 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
-            self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+            # Add the member run to the team session
+            self.team_session.add_run(member_agent.run_response)
 
             # Update team session state
             self._update_team_session_state(member_agent)
@@ -6191,6 +6217,9 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
+            # Add team run id to the member run
+            member_agent.run_response.parent_run_id = self.run_id  # type: ignore
+
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
             self.add_interaction_to_team_context(
@@ -6202,7 +6231,8 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
-            self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+            # Add the member run to the team session
+            self.team_session.add_run(member_agent.run_response)
 
             # Update team session state
             self._update_team_session_state(member_agent)
@@ -6422,6 +6452,9 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
+            # Add team run id to the member run
+            member_agent.run_response.parent_run_id = self.run_id  # type: ignore
+
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
             self.add_interaction_to_team_context(
@@ -6433,7 +6466,8 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
-            self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+            # Add the member run to the team session
+            self.team_session.add_run(member_agent.run_response)
 
             # Update team session state
             self._update_team_session_state(member_agent)
@@ -6542,6 +6576,9 @@ class Team:
             # Afterward, switch back to the team logger
             use_team_logger()
 
+            # Add team run id to the member run
+            member_agent.run_response.parent_run_id = self.run_id  # type: ignore
+
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
             self.add_interaction_to_team_context(
@@ -6553,7 +6590,8 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunResponse, self.run_response)
-            self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+            # Add the member run to the team session
+            self.team_session.add_run(member_agent.run_response)
 
             # Update team session state
             self._update_team_session_state(member_agent)
@@ -6769,7 +6807,7 @@ class Team:
                 return self.team_session.session_id
 
         # Load an existing session or create a new session
-        if self.storage is not None:
+        if self.db is not None:
             # Load existing session if session_id is provided
             log_debug(f"Reading TeamSession: {self.session_id}")
             self.get_team_session(session_id=self.session_id)  # type: ignore
@@ -6842,8 +6880,7 @@ class Team:
     def add_interaction_to_team_context(
         self, session_id: str, member_name: str, task: str, run_response: Union[RunResponse, TeamRunResponse]
     ) -> None:
-        if self._team_context is None:
-            self._team_context = {}
+        self._team_context = {}
         if session_id not in self._team_context:
             self._team_context[session_id] = {}
         self._team_context[session_id] = {
@@ -7146,15 +7183,15 @@ class Team:
                 log_warning(f"Retriever failed: {e}")
                 raise e
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or self.knowledge.vector_store is None:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
@@ -7205,15 +7242,15 @@ class Team:
                 raise e
 
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or self.knowledge.vector_store is None:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, num_documents=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
