@@ -18,10 +18,13 @@ from agno.os.schema import (
     ConfigResponse,
     InterfaceResponse,
     ManagerResponse,
+    MemberRunSchema,
     Model,
     RunSchema,
     SessionSchema,
+    TeamAndMemberRunsSchema,
     TeamResponse,
+    TeamRunSchema,
     TeamSessionDetailSchema,
     TeamSummaryResponse,
     WorkflowResponse,
@@ -406,10 +409,10 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        agent.memory.db.delete_session(session_id=session_id, session_type=SessionType.AGENT)
+        agent.db.delete_session(session_id=session_id, session_type=SessionType.AGENT)
 
     @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
     async def get_agents():
@@ -434,10 +437,10 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        sessions, total_count = agent.memory.db.get_sessions(
+        sessions, total_count = agent.db.get_sessions(
             session_type=SessionType.AGENT,
             component_id=agent_id,
             user_id=user_id,
@@ -467,10 +470,10 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
 
-        if agent.memory is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
+        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
@@ -489,10 +492,10 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
 
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Runs are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Runs are unavailable.")
 
-        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)
+        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
@@ -515,8 +518,8 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
         session = agent.rename_session(session_id=session_id, session_name=session_name)
         if not session:
@@ -637,10 +640,10 @@ def get_base_router(
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
 
-        team.memory.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
+        team.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
 
     @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
     async def get_teams():
@@ -710,11 +713,11 @@ def get_base_router(
 
         return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
-    @router.get("/teams/{team_id}/sessions/{session_id}/runs", response_model=List[RunSchema], status_code=200)
+    @router.get("/teams/{team_id}/sessions/{session_id}/runs", response_model=TeamAndMemberRunsSchema, status_code=200)
     async def get_team_session_runs(
         team_id: str,
         session_id: str,
-    ) -> List[RunSchema]:
+    ) -> TeamAndMemberRunsSchema:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -722,11 +725,22 @@ def get_base_router(
         if team.db is None:
             raise HTTPException(status_code=404, detail="Team has no associated database. Runs are unavailable.")
 
-        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_team_run_response(run) for run in session.runs]  # type: ignore
+        runs = session.get("runs")  # type: ignore
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} has no runs")
+
+        team_runs, member_runs = [], []
+        for run in runs:
+            if hasattr(run, "parent_run_id"):
+                member_runs.append(MemberRunSchema.from_dict(run))
+            else:
+                team_runs.append(TeamRunSchema.from_dict(run))
+
+        return TeamAndMemberRunsSchema(runs=team_runs, member_runs=member_runs)
 
     @router.get("/teams/{team_id}", response_model=TeamResponse)
     async def get_team(team_id: str):
@@ -745,8 +759,8 @@ def get_base_router(
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
 
         session = team.rename_session(session_id=session_id, session_name=session_name)
         if not session:

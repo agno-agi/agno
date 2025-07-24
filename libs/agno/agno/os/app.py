@@ -128,7 +128,7 @@ class AgentOS:
 
                     # Memory app
                     if add_unique_component("memory", str(db_id)):
-                        discovered_apps.append(MemoryApp(memory=agent.db))
+                        discovered_apps.append(MemoryApp(db=agent.db))
 
                     # Session app
                     if agent.db.session_table_name:
@@ -159,7 +159,7 @@ class AgentOS:
 
                     # Memory app
                     if add_unique_component("memory", str(db_id)):
-                        discovered_apps.append(MemoryApp(memory=team.db))
+                        discovered_apps.append(MemoryApp(db=team.db))
 
                     # Session app
                     if team.db.session_table_name:

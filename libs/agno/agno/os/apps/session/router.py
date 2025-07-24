@@ -7,8 +7,10 @@ from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.schema import (
     AgentSessionDetailSchema,
     DeleteSessionRequest,
+    MemberRunSchema,
     RunSchema,
     SessionSchema,
+    TeamAndMemberRunsSchema,
     TeamRunSchema,
     TeamSessionDetailSchema,
     WorkflowSessionDetailSchema,
@@ -70,12 +72,12 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     @router.get(
-        "/sessions/{session_id}/runs", response_model=Union[List[RunSchema], List[TeamRunSchema]], status_code=200
+        "/sessions/{session_id}/runs", response_model=Union[List[RunSchema], TeamAndMemberRunsSchema], status_code=200
     )
     async def get_session_runs(
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
-    ) -> Union[List[RunSchema], List[TeamRunSchema]]:
+    ) -> Union[List[RunSchema], TeamAndMemberRunsSchema]:
         session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
@@ -86,8 +88,16 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         if session_type == SessionType.AGENT:
             return [RunSchema.from_run_response(run) for run in runs]
+
         elif session_type == SessionType.TEAM:
-            return [RunSchema.from_team_run_response(run) for run in runs]
+            team_runs, member_runs = [], []
+            for run in runs:
+                if run.get("parent_run_id") is not None:
+                    member_runs.append(MemberRunSchema.from_dict(run))
+                else:
+                    team_runs.append(TeamRunSchema.from_dict(run))
+            return TeamAndMemberRunsSchema(runs=team_runs, member_runs=member_runs)
+
         elif session_type == SessionType.WORKFLOW:
             return [RunSchema.from_run_response(run) for run in runs]
 

@@ -104,15 +104,14 @@ class AgentResponse(BaseModel):
             model_provider = ""
 
         memory_dict: Optional[Dict[str, Any]] = None
-        # TODO:
-        # if agent.memory and agent.memory.db:
-        #     memory_dict = {"name": "Memory"}
-        #     if agent.memory.model is not None:
-        #         memory_dict["model"] = ModelResponse(
-        #             name=agent.memory.model.name,
-        #             model=agent.memory.model.id,
-        #             provider=agent.memory.model.provider,
-        #         )
+        if agent.memory_manager is not None:
+            memory_dict = {"name": "Memory"}
+            if agent.memory_manager.model is not None:
+                memory_dict["model"] = ModelResponse(
+                    name=agent.memory_manager.model.name,
+                    model=agent.memory_manager.model.id,
+                    provider=agent.memory_manager.model.provider,
+                )
 
         return AgentResponse(
             agent_id=agent.agent_id,
@@ -171,15 +170,14 @@ class TeamResponse(BaseModel):
             model_provider = ""
 
         memory_dict: Optional[Dict[str, Any]] = None
-        # TODO:
-        # if team.memory and team.memory.db:
-        #     memory_dict = {"name": "Memory"}
-        #     if team.memory.model is not None:
-        #         memory_dict["model"] = ModelResponse(
-        #             name=team.memory.model.name,
-        #             model=team.memory.model.id,
-        #             provider=team.memory.model.provider,
-        #         )
+        if team.memory_manager is not None:
+            memory_dict = {"name": "Memory"}
+            if team.memory_manager.model is not None:
+                memory_dict["model"] = ModelResponse(
+                    name=team.memory_manager.model.name,
+                    model=team.memory_manager.model.id,
+                    provider=team.memory_manager.model.provider,
+                )
 
         return TeamResponse(
             team_id=team.team_id,
@@ -343,7 +341,6 @@ class RunSchema(BaseModel):
     messages: Optional[List[dict]]
     tools: Optional[List[dict]]
     events: Optional[List[dict]]
-    member_responses: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
@@ -367,7 +364,6 @@ class RunSchema(BaseModel):
             created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
             if run_dict.get("created_at") is not None
             else None,
-            member_responses=[member_response for member_response in run_dict.get("member_responses", [])],
         )
 
     @classmethod
@@ -421,48 +417,81 @@ class RunSchema(BaseModel):
 
 class TeamRunSchema(BaseModel):
     run_id: str
-    team_session_id: str
-    workspace_id: Optional[str]
-    user_id: Optional[str]
     content: Optional[str]
     reasoning_content: Optional[str]
     run_input: Optional[str]
     run_response_format: Optional[str]
-    run_review: Optional[dict]
     metrics: Optional[dict]
     tools: Optional[List[dict]]
     messages: Optional[List[dict]]
     events: Optional[List[dict]]
-    member_responses: Optional[List[dict]]
     created_at: Optional[datetime]
 
     @classmethod
-    def from_dict(cls, run_response: Dict[str, Any]) -> "TeamRunSchema":
-        run_input = get_run_input(run_response)
-        run_response_format = "text" if run_response.get("content_type", "str") == "str" else "json"
+    def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
+        run_input = get_run_input(run_dict)
+        run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
-            run_id=run_response.get("run_id", ""),
-            team_session_id=run_response.get("session_id", ""),
-            workspace_id=None,
-            user_id=None,
-            content=run_response.get("content", ""),
-            reasoning_content=run_response.get("reasoning_content", ""),
+            run_id=run_dict.get("run_id", ""),
             run_input=run_input,
+            content=run_dict.get("content", ""),
             run_response_format=run_response_format,
-            run_review=None,
-            messages=[message for message in run_response.get("messages", [])]
-            if run_response.get("messages")
-            else None,
-            events=[event for event in run_response.get("events", [])] if run_response.get("events") else None,
-            metrics=run_response.get("metrics", {}),
-            tools=[tool for tool in run_response.get("tools", [])] if run_response.get("tools") else None,
-            member_responses=[
-                member_response for member_response in run_response.get("member_responses", []) if member_response
-            ],
-            created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
-            if run_response["created_at"]
+            reasoning_content=run_dict.get("reasoning_content", ""),
+            metrics=run_dict.get("metrics", {}),
+            messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
+            tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
+            events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
+            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
+            if run_dict.get("created_at") is not None
             else None,
         )
+
+
+class MemberRunSchema(BaseModel):
+    run_id: str
+    parent_run_id: Optional[str]
+    team_id: Optional[str]
+    agent_id: Optional[str]
+    team_name: Optional[str]
+    agent_name: Optional[str]
+    content: Optional[str]
+    reasoning_content: Optional[str]
+    run_input: Optional[str]
+    run_response_format: Optional[str]
+    metrics: Optional[dict]
+    tools: Optional[List[dict]]
+    messages: Optional[List[dict]]
+    events: Optional[List[dict]]
+    created_at: Optional[datetime]
+
+    @classmethod
+    def from_dict(cls, run_dict: Dict[str, Any]) -> "MemberRunSchema":
+        run_input = get_run_input(run_dict)
+        run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
+        return cls(
+            run_id=run_dict.get("run_id", ""),
+            parent_run_id=run_dict.get("parent_run_id", ""),
+            team_id=run_dict.get("team_id", ""),
+            agent_id=run_dict.get("agent_id", ""),
+            team_name=run_dict.get("team_name", ""),
+            agent_name=run_dict.get("agent_name", ""),
+            run_input=run_input,
+            content=run_dict.get("content", ""),
+            run_response_format=run_response_format,
+            reasoning_content=run_dict.get("reasoning_content", ""),
+            metrics=run_dict.get("metrics", {}),
+            messages=[message for message in run_dict.get("messages", [])] if run_dict.get("messages") else None,
+            tools=[tool for tool in run_dict.get("tools", [])] if run_dict.get("tools") else None,
+            events=[event for event in run_dict["events"]] if run_dict.get("events") else None,
+            created_at=datetime.fromtimestamp(run_dict.get("created_at", 0), tz=timezone.utc)
+            if run_dict.get("created_at") is not None
+            else None,
+        )
+
+
+class TeamAndMemberRunsSchema(BaseModel):
+    runs: List[TeamRunSchema]
+    member_runs: List[MemberRunSchema]
 
 
 class WorkflowRunSchema(BaseModel):
