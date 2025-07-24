@@ -156,7 +156,7 @@ class MCPTools(Toolkit):
         self._connection_task = None
 
         def cleanup():
-            """Cancel active connections before exiting"""
+            """Cancel active connections"""
             if self._connection_task and not self._connection_task.done():
                 self._connection_task.cancel()
 

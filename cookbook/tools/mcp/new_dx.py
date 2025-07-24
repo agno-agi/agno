@@ -5,14 +5,15 @@ from agno.tools.mcp import MCPTools
 
 
 async def run_mcp_agent(message: str):
+    # Connect to the MCP server
     mcp_tools = await MCPTools.connect("npx -y @openbnb/mcp-server-airbnb")
 
-    try:
-        agent = Agent(tools=[mcp_tools])
-        await agent.aprint_response(message, stream=True)
+    # Use MCP
+    agent = Agent(tools=[mcp_tools])
+    await agent.aprint_response(message, stream=True)
 
-    finally:
-        await mcp_tools.close()
+    # Close the MCP connection
+    await mcp_tools.close()
 
 
 if __name__ == "__main__":
