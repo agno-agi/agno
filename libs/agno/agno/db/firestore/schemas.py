@@ -15,14 +15,50 @@ SESSION_COLLECTION_SCHEMA = [
     # Composite indexes for get_sessions queries with sorting
     # These match the actual query patterns: filters + created_at ordering
     {"key": [("session_type", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("session_type", "ASCENDING"), ("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("session_type", "ASCENDING"), ("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("session_type", "ASCENDING"), ("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {
+        "key": [("session_type", "ASCENDING"), ("agent_id", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_type", "ASCENDING"), ("team_id", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_type", "ASCENDING"), ("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
     # For user-specific queries with sorting
-    {"key": [("user_id", "ASCENDING"), ("session_type", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("user_id", "ASCENDING"), ("session_type", "ASCENDING"), ("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("user_id", "ASCENDING"), ("session_type", "ASCENDING"), ("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-    {"key": [("user_id", "ASCENDING"), ("session_type", "ASCENDING"), ("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("session_type", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [
+            ("user_id", "ASCENDING"),
+            ("session_type", "ASCENDING"),
+            ("agent_id", "ASCENDING"),
+            ("created_at", "DESCENDING"),
+        ],
+        "collection_group": False,
+    },
+    {
+        "key": [
+            ("user_id", "ASCENDING"),
+            ("session_type", "ASCENDING"),
+            ("team_id", "ASCENDING"),
+            ("created_at", "DESCENDING"),
+        ],
+        "collection_group": False,
+    },
+    {
+        "key": [
+            ("user_id", "ASCENDING"),
+            ("session_type", "ASCENDING"),
+            ("workflow_id", "ASCENDING"),
+            ("created_at", "DESCENDING"),
+        ],
+        "collection_group": False,
+    },
 ]
 
 USER_MEMORY_COLLECTION_SCHEMA = [

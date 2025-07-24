@@ -181,32 +181,31 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         return []
 
     results = []
-    
+
     for record in metrics_records:
         date_val = record.get("date")
         period_val = record.get("aggregation_period")
-        
+
         # Check if record already exists based on date + aggregation_period
-        existing_record = session.query(table).filter(
-            table.c.date == date_val,
-            table.c.aggregation_period == period_val
-        ).first()
-        
+        existing_record = (
+            session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).first()
+        )
+
         if existing_record:
             # Update existing record
-            update_data = {k: v for k, v in record.items() if k not in ["id", "date", "aggregation_period", "created_at"]}
+            update_data = {
+                k: v for k, v in record.items() if k not in ["id", "date", "aggregation_period", "created_at"]
+            }
             update_data["updated_at"] = record.get("updated_at")
-            
-            session.query(table).filter(
-                table.c.date == date_val,
-                table.c.aggregation_period == period_val
-            ).update(update_data)
-            
+
+            session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).update(
+                update_data
+            )
+
             # Get the updated record for return
-            updated_record = session.query(table).filter(
-                table.c.date == date_val,
-                table.c.aggregation_period == period_val
-            ).first()
+            updated_record = (
+                session.query(table).filter(table.c.date == date_val, table.c.aggregation_period == period_val).first()
+            )
             if updated_record:
                 results.append(dict(updated_record._mapping))
         else:
