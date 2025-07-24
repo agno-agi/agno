@@ -7,7 +7,7 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
-
+from agno.knowledge.reader.pdf_reader import PDFReader
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -22,6 +22,7 @@ knowledge.add_content(
     name="CV",
     path="cookbook/agent_concepts/knowledge/testing_resources/",
     metadata={"user_tag": "Engineering Candidates"},
+    reader=PDFReader(chunk_size=100)
 )
 
 agent = Agent(
@@ -32,7 +33,7 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response(
-    "Who is the best candidate for the role of a software engineer?",
-    markdown=True,
-)
+# agent.print_response(
+#     "Who is the best candidate for the role of a software engineer?",
+#     markdown=True,
+# )

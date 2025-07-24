@@ -187,26 +187,28 @@ class Knowledge:
                     content.size = 0
 
             completed = True
+
             for read_document in read_documents:
                 read_document.content_id = content.id
-                if self.vector_db.upsert_available():
-                    try:
-                        self.vector_db.upsert(documents=[read_document], filters=content.metadata)
-                    except Exception as e:
-                        log_error(f"Error upserting document: {e}")
-                        content.status = "Failed"
-                        content.status_message = "Could not upsert embedding"
-                        completed = False
-                        self._update_content(content)
-                else:
-                    try:
-                        self.vector_db.insert(documents=[read_document], filters=content.metadata)
-                    except Exception as e:
-                        log_error(f"Error inserting document: {e}")
-                        content.status = "Failed"
-                        content.status_message = "Could not insert embedding"
-                        completed = False
-                        self._update_content(content)
+
+            if self.vector_store.upsert_available():
+                try:
+                    self.vector_store.upsert(documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error upserting document: {e}")
+                    content.status = "Failed"
+                    content.status_message = "Could not upsert embedding"
+                    completed = False
+                    self._update_content(content)
+            else:
+                try:
+                    self.vector_store.insert(documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error inserting document: {e}")
+                    content.status = "Failed"
+                    content.status_message = "Could not insert embedding"
+                    completed = False
+                    self._update_content(content)
 
             if completed:
                 content.status = "Completed"
@@ -276,22 +278,22 @@ class Knowledge:
                 if read_document.size:
                     file_size += read_document.size
                 read_document.content_id = content.id
-                if self.vector_db.upsert_available():
-                    try:
-                        self.vector_db.upsert(documents=[read_document], filters=content.metadata)
-                    except Exception as e:
-                        log_error(f"Error upserting document: {e}")
-                        content.status = "Failed"
-                        content.status_message = "Could not upsert embedding"
-                        self._update_content(content)
-                else:
-                    try:
-                        self.vector_db.insert(documents=[read_document], filters=content.metadata)
-                    except Exception as e:
-                        log_error(f"Error inserting document: {e}")
-                        content.status = "Failed"
-                        content.status_message = "Could not insert embedding"
-                        self._update_content(content)
+            if self.vector_store.upsert_available():
+                try:
+                    self.vector_store.upsert(documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error upserting document: {e}")
+                    content.status = "Failed"
+                    content.status_message = "Could not upsert embedding"
+                    self._update_content(content)
+            else:
+                try:
+                    self.vector_store.insert(documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error inserting document: {e}")
+                    content.status = "Failed"
+                    content.status_message = "Could not insert embedding"
+                    self._update_content(content)
 
         content.size = file_size
         content.status = "Completed"
@@ -309,7 +311,6 @@ class Knowledge:
             try:
                 content_bytes = content.file_data.encode("utf-8")
             except UnicodeEncodeError:
-                log_info("String contains binary data, using latin-1 encoding")
                 content_bytes = content.file_data.encode("latin-1")
             content_io = io.BytesIO(content_bytes)
 
@@ -328,20 +329,17 @@ class Knowledge:
 
         elif isinstance(content.file_data, FileData):
             if content.file_data.type:
-                log_info(f"Content content type: {content.file_data.type}")
                 if isinstance(content.file_data.content, bytes):
                     content_io = io.BytesIO(content.file_data.content)
                 elif isinstance(content.file_data.content, str):
                     if self._is_text_mime_type(content.file_data.type):
                         try:
                             content_bytes = content.file_data.content.encode("utf-8")
-                            log_info(f"Encoded text content as UTF-8 for type {content.file_data.type}")
                         except UnicodeEncodeError:
-                            log_info(f"UTF-8 encoding failed for {content.file_data.type}, using latin-1")
+                            log_debug(f"UTF-8 encoding failed for {content.file_data.type}, using latin-1")
                             content_bytes = content.file_data.content.encode("latin-1")
                     else:
                         content_bytes = content.file_data.content.encode("latin-1")
-                        log_info(f"Used latin-1 encoding for binary type {content.file_data.type}")
                     content_io = io.BytesIO(content_bytes)
                 else:
                     content_io = content.file_data.content
