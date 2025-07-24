@@ -65,3 +65,6 @@ token.json
 # Coverage
 coverage_report
 .coverage
+
+# JSON files used as testing DB
+agno_json_data/
