@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, overload
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
 
 from agno.db.postgres.postgres import PostgresDb
@@ -26,7 +26,6 @@ class Knowledge:
     description: Optional[str] = None
     vector_store: Optional[VectorDb] = None
     contents_db: Optional[PostgresDb] = None
-    valid_metadata_filters: Optional[Set[str]] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
@@ -35,6 +34,7 @@ class Knowledge:
             self.vector_store.create()
 
         self.construct_readers()
+        self.valid_metadata_filters = set()
 
     def _is_text_mime_type(self, mime_type: str) -> bool:
         """
