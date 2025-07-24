@@ -64,3 +64,4 @@ token.json
 # Coverage
 coverage_report
 .coverage
+.aider*
