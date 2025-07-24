@@ -236,9 +236,12 @@ class LiteLLM(Model):
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []
-                    for i, tool_call in enumerate(choice_delta.tool_calls):
-                        # Create a basic structure with index
-                        tool_call_dict = {"index": i, "type": "function"}
+                    for tool_call in choice_delta.tool_calls:
+                        # Get the actual index from the tool call, defaulting to 0 if not available
+                        actual_index = getattr(tool_call, "index", 0) if hasattr(tool_call, "index") else 0
+
+                        # Create a basic structure with the correct index
+                        tool_call_dict = {"index": actual_index, "type": "function"}
 
                         # Extract ID if available
                         if hasattr(tool_call, "id") and tool_call.id is not None:

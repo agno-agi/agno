@@ -378,6 +378,7 @@ module = [
   "langchain.*",
   "llama_index.*",
   "llama_api_client.*",
+  "linkup.*",
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
