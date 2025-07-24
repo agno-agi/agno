@@ -562,6 +562,6 @@ class WorkflowRunResponse:
         else:
             return json.dumps(self.content, **kwargs)
 
-    def is_completed(self) -> bool:
+    def has_completed(self) -> bool:
         """Check if the workflow run is completed (either successfully or with error)"""
         return self.status in [RunStatus.completed, RunStatus.error]

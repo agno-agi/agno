@@ -93,7 +93,7 @@ async def main():
             await asyncio.sleep(5)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             break
 
         if poll_count > 200:

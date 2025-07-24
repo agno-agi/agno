@@ -34,7 +34,7 @@ async def test_basic_background_execution(simple_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.run_id == response.run_id
@@ -75,7 +75,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
         if result.status == RunStatus.running:
             seen_running = True
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert len(result.step_responses) == 2  # Two steps
@@ -111,7 +111,7 @@ async def test_team_background_execution(team_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
@@ -145,7 +145,7 @@ async def test_custom_function_background_execution(custom_function_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert "Custom function processed" in result.content
@@ -186,7 +186,7 @@ async def test_condition_background_execution(condition_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
@@ -222,7 +222,7 @@ async def test_parallel_background_execution(parallel_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
@@ -258,7 +258,7 @@ async def test_router_background_execution(router_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
@@ -292,7 +292,7 @@ async def test_loop_background_execution(loop_workflow):
             await asyncio.sleep(1)
             continue
 
-        if result.is_completed():
+        if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
