@@ -198,15 +198,6 @@ class SingleStoreDb(BaseDb):
                 with self.Session() as sess, sess.begin():
                     create_schema(session=sess, db_schema=db_schema)
 
-            # Create table
-            table_without_indexes = Table(
-                table_name,
-                MetaData(schema=db_schema),
-                *[c.copy() for c in table.columns],
-                *[c for c in table.constraints if not isinstance(c, Index)],
-                schema=db_schema,
-            )
-
             # SingleStore has a limitation on the number of unique multi-field constraints per table.
             # We need to work around that limitation for the sessions table.
             if table_type == "sessions":
@@ -230,7 +221,7 @@ class SingleStoreDb(BaseDb):
 
                     sess.execute(text(table_sql))
             else:
-                table_without_indexes.create(self.db_engine, checkfirst=True)
+                table.create(self.db_engine, checkfirst=True)
 
             # Create indexes
             for idx in table.indexes:
