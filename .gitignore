@@ -43,6 +43,7 @@ venv*
 agnoenv*
 aienv*
 phienv*
+set-env.ps1
 
 # ignore tmp dirs
 scratch

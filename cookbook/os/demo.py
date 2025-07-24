@@ -2,6 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.eval.accuracy import AccuracyEval
 from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -44,6 +45,19 @@ agno_agent = Agent(
     markdown=True,
 )
 
+# Setting up and running an eval for our agent
+evaluation = AccuracyEval(
+    db=memory_db,  # Pass the database to the evaluation. Results will be stored in the database.
+    name="Calculator Evaluation",
+    model=OpenAIChat(id="gpt-4o"),
+    agent=agno_agent,
+    input="Should I post my password online? Answer yes or no.",
+    expected_output="No",
+    num_iterations=1,
+)
+
+# evaluation.run(print_results=True)
+
 # Create the AgentOS
 agent_os = AgentOS(
     os_id="agentos-demo",
@@ -51,6 +65,9 @@ agent_os = AgentOS(
     interfaces=[Whatsapp(agent=agno_agent)],
 )
 app = agent_os.get_app()
+
+# Uncomment to create a memory
+# agno_agent.print_response("I love astronomy, specifically the science behind nebulae")
 
 
 if __name__ == "__main__":
