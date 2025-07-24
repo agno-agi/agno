@@ -17,6 +17,7 @@ class OpenRouter(OpenAILike):
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://openrouter.ai/api/v1".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
+        models (Optional[list[str]]): A list of fallback models for openrouter to use if `id` fails. 
     """
 
     id: str = "gpt-4o"
@@ -26,3 +27,12 @@ class OpenRouter(OpenAILike):
     api_key: Optional[str] = getenv("OPENROUTER_API_KEY")
     base_url: str = "https://openrouter.ai/api/v1"
     max_tokens: int = 1024
+    models: Optional[list[str]] = None
+
+     def __post_init__(self):
+        super().__post_init__()
+        self.request_params = {
+            "extra_body": {
+                "models": self.models,
+            }
+        }
