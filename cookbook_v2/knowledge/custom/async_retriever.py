@@ -73,9 +73,6 @@ async def amain():
         show_tool_calls=True,
     )
 
-    # Load the knowledge base (uncomment for first run)
-    await knowledge.aload(recreate=True)
-
     # Example query
     query = "List down the ingredients to make Massaman Gai"
     await agent.aprint_response(query, markdown=True)
