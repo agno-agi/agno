@@ -147,14 +147,7 @@ class PostgresDb(BaseDb):
                 create_schema(session=sess, db_schema=db_schema)
 
             # Create table
-            table_without_indexes = Table(
-                table_name,
-                MetaData(schema=db_schema),
-                *[c.copy() for c in table.columns],
-                *[c for c in table.constraints if not isinstance(c, Index)],
-                schema=db_schema,
-            )
-            table_without_indexes.create(self.db_engine, checkfirst=True)
+            table.create(self.db_engine, checkfirst=True)
 
             # Create indexes
             for idx in table.indexes:
@@ -1167,25 +1160,8 @@ class PostgresDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def _get_knowledge_table(self) -> Table:
-        """Get or create the knowledge table.
-
-        Returns:
-            Table: The knowledge table.
-        """
-        if not hasattr(self, "knowledge_table"):
-            if self.knowledge_table_name is None:
-                raise ValueError("Knowledge table was not provided on initialization")
-
-            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name, table_type="knowledge_contents", db_schema=self.db_schema
-            )
-
-        return self.knowledge_table
-
     def delete_knowledge_content(self, id: str):
-        table = self._get_knowledge_table()
+        table = self._get_table(table_type="knowledge")
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == id)
             sess.execute(stmt)
@@ -1193,7 +1169,7 @@ class PostgresDb(BaseDb):
         return
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        table = self._get_knowledge_table()
+        table = self._get_table(table_type="knowledge")
         print(f"Getting knowledge content: {id}, {table}")
         with self.Session() as sess, sess.begin():
             stmt = select(table).where(table.c.id == id)
@@ -1220,7 +1196,7 @@ class PostgresDb(BaseDb):
         Returns:
             List[KnowledgeRow]: The knowledge contents.
         """
-        table = self._get_knowledge_table()
+        table = self._get_table(table_type="knowledge")
         with self.Session() as sess, sess.begin():
             stmt = select(table)
 
@@ -1251,7 +1227,7 @@ class PostgresDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_knowledge_table()
+            table = self._get_table(table_type="knowledge")
             with self.Session() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())

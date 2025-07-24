@@ -151,13 +151,7 @@ class SqliteDb(BaseDb):
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Create table
-            table_without_indexes = Table(
-                table_name,
-                MetaData(),
-                *[c.copy() for c in table.columns],
-                *[c for c in table.constraints if not isinstance(c, Index)],
-            )
-            table_without_indexes.create(self.db_engine, checkfirst=True)
+            table.create(self.db_engine, checkfirst=True)
 
             # Create indexes
             for idx in table.indexes:
