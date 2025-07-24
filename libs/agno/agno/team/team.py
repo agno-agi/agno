@@ -7075,15 +7075,15 @@ class Team:
                 log_warning(f"Retriever failed: {e}")
                 raise e
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or self.knowledge.vector_store is None:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
-                query=query, num_documents=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
@@ -7134,15 +7134,15 @@ class Team:
                 raise e
 
         try:
-            if self.knowledge is None or self.knowledge.vector_db is None:
+            if self.knowledge is None or self.knowledge.vector_store is None:
                 return None
 
             if num_documents is None:
-                num_documents = self.knowledge.num_documents
+                num_documents = self.knowledge.max_results
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, num_documents=num_documents, filters=filters
+                query=query, max_results=num_documents, filters=filters
             )
 
             if not relevant_docs or len(relevant_docs) == 0:
