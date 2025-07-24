@@ -132,6 +132,7 @@ class MySQLStorage(Storage):
             specific_columns = [
                 Column("workflow_id", String(255), index=True),
                 Column("workflow_data", JSON),
+                Column("runs", JSON),
             ]
         # Create table with all columns
         table = Table(
