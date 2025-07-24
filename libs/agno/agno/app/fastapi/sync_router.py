@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
-from typing import Any, Dict, Generator, List, Optional, cast
+from typing import Any, Dict, Generator, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
@@ -15,8 +15,10 @@ from agno.run.base import RunStatus
 from agno.run.response import RunResponseEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponseEvent
+from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import logger
+from agno.workflow.v2.workflow import Workflow as WorkflowV2
 from agno.workflow.workflow import Workflow
 
 
@@ -77,6 +79,42 @@ def team_chat_response_streamer(
     except Exception as e:
         error_response = TeamRunResponseErrorEvent(
             content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
+def workflow_response_streamer(
+    workflow: WorkflowV2,
+    body: Union[Dict[str, Any], str],
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Generator:
+    try:
+        if isinstance(body, dict):
+            run_response = workflow.run(
+                **body,
+                user_id=user_id,
+                session_id=session_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        else:
+            run_response = workflow.run(
+                body,
+                user_id=user_id,
+                session_id=session_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
+        for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = WorkflowErrorEvent(
+            error=str(e),
         )
         yield error_response.to_json()
         return
@@ -251,12 +289,12 @@ def get_sync_router(
     @router.post("/runs")
     def run_agent_or_team_or_workflow(
         message: str = Form(None),
-        stream: bool = Form(True),
+        stream: bool = Form(False),
         monitor: bool = Form(False),
         agent_id: Optional[str] = Query(None),
         team_id: Optional[str] = Query(None),
         workflow_id: Optional[str] = Query(None),
-        workflow_input: Optional[Dict[str, Any]] = Form(None),
+        workflow_input: Optional[str] = Form(None),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
@@ -296,6 +334,13 @@ def get_sync_router(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             if not workflow_input:
                 raise HTTPException(status_code=400, detail="Workflow input is required")
+
+            # Parse workflow_input into a dict if it is a valid JSON
+            try:
+                parsed_workflow_input = json.loads(workflow_input)
+                workflow_input = parsed_workflow_input
+            except json.JSONDecodeError:
+                pass
 
         if agent:
             agent.monitoring = bool(monitor)
@@ -339,13 +384,25 @@ def get_sync_router(
                     media_type="text/event-stream",
                 )
             elif workflow:
-                workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
-                workflow_instance.user_id = user_id
-                workflow_instance.session_name = None
-                return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in workflow_instance.run(**(workflow_input or {}))),
-                    media_type="text/event-stream",
-                )
+                if isinstance(workflow, Workflow):
+                    workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
+                    workflow_instance.user_id = user_id
+                    workflow_instance.session_name = None
+                    if isinstance(workflow_input, dict):
+                        return StreamingResponse(
+                            (json.dumps(asdict(result)) for result in workflow_instance.run(**workflow_input)),
+                            media_type="text/event-stream",
+                        )
+                    else:
+                        return StreamingResponse(
+                            (json.dumps(asdict(result)) for result in workflow_instance.run(workflow_input)),  # type: ignore
+                            media_type="text/event-stream",
+                        )
+                else:
+                    return StreamingResponse(
+                        workflow_response_streamer(workflow, workflow_input, session_id=session_id, user_id=user_id),
+                        media_type="text/event-stream",
+                    )
         else:
             if agent:
                 run_response = cast(
@@ -374,9 +431,18 @@ def get_sync_router(
                 )
                 return team_run_response.to_dict()
             elif workflow:
-                workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
-                workflow_instance.user_id = user_id
-                workflow_instance.session_name = None
-                return workflow_instance.run(**(workflow_input or {})).to_dict()
+                if isinstance(workflow, Workflow):
+                    workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
+                    workflow_instance.user_id = user_id
+                    workflow_instance.session_name = None
+                    if isinstance(workflow_input, dict):
+                        return workflow_instance.run(**workflow_input).to_dict()
+                    else:
+                        return workflow_instance.run(workflow_input).to_dict()  # type: ignore
+                else:
+                    if isinstance(workflow_input, dict):
+                        return workflow.run(**workflow_input, session_id=session_id, user_id=user_id).to_dict()
+                    else:
+                        return workflow.run(workflow_input, session_id=session_id, user_id=user_id).to_dict()
 
     return router
