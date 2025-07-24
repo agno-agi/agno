@@ -3,7 +3,7 @@ This example demonstrates how to use the Mem0 toolkit with Agno agents.
 
 To get started, please export your Mem0 API key as an environment variable. You can get your Mem0 API key from https://app.mem0.ai/dashboard/api-keys
 
-export MEM0_API_KEY=<your-mem0-api-key> 
+export MEM0_API_KEY=<your-mem0-api-key>
 export MEM0_ORG_ID=<your-mem0-org-id> (Optional)
 export MEM0_PROJECT_ID=<your-mem0-project-id> (Optional)
 """
