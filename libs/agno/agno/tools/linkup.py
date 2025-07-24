@@ -46,7 +46,7 @@ class LinkupTools(Toolkit):
         try:
             response = self.linkup.search(
                 query=query,
-                depth=depth or self.depth,
+                depth=depth or self.depth,  # type: ignore
                 output_type=output_type or self.output_type,  # type: ignore
             )
             return response
