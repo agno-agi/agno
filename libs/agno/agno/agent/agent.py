@@ -4572,7 +4572,7 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                (getattr(self.knowledge, "vector_store", None)) is None
+                (getattr(self.knowledge, "vector_db", None)) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None
@@ -4640,7 +4640,7 @@ class Agent:
         # Use knowledge base search
         try:
             if self.knowledge is None or (
-                getattr(self.knowledge, "vector_store", None) is None
+                getattr(self.knowledge, "vector_db", None) is None
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None
