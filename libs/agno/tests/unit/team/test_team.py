@@ -84,3 +84,66 @@ def test_get_member_id():
     assert Team(members=[inner_team])._get_member_id(inner_team) == "test-team"
     inner_team = Team(team_id=str(uuid.uuid4()), members=[member])
     assert Team(members=[inner_team])._get_member_id(inner_team) == inner_team.team_id
+
+
+@pytest.mark.asyncio
+async def test_aget_relevant_docs_from_knowledge_with_none_num_documents():
+    """Test that aget_relevant_docs_from_knowledge handles num_documents=None correctly with retriever."""
+
+    # Create a mock knowledge object
+    class MockKnowledge:
+        def __init__(self):
+            self.num_documents = 5
+            self.vector_db = None
+
+        def validate_filters(self, filters):
+            return filters or {}, []
+
+    # Create a mock retriever function
+    def mock_retriever(team, query, num_documents, **kwargs):
+        # Verify that num_documents is correctly set to knowledge.num_documents
+        assert num_documents == 5
+        return [{"content": "test document"}]
+
+    # Create Team instance
+    team = Team(members=[])
+    team.knowledge = MockKnowledge()
+    team.retriever = mock_retriever
+
+    # Call the function with num_documents=None
+    result = await team.aget_relevant_docs_from_knowledge(query="test query", num_documents=None)
+
+    # Verify the result
+    assert result == [{"content": "test document"}]
+
+
+def test_get_relevant_docs_from_knowledge_num_documents():
+    # Create mock knowledge
+    class MockKnowledge:
+        def __init__(self):
+            self.num_documents = 7
+            self.vector_db = None
+
+        def validate_filters(self, filters):
+            return filters or {}, []
+
+    # Create mock retriever
+    called = {}
+
+    def mock_retriever(team, query, num_documents, **kwargs):
+        called["num_documents"] = num_documents
+        return [{"content": "doc"}]
+
+    team = Team(members=[])
+    team.knowledge = MockKnowledge()
+    team.retriever = mock_retriever
+
+    # When num_documents=None, use knowledge.num_documents
+    result = team.get_relevant_docs_from_knowledge("query", num_documents=None)
+    assert called["num_documents"] == 7
+    assert result == [{"content": "doc"}]
+
+    # When num_documents=3, prioritize explicit parameter
+    result = team.get_relevant_docs_from_knowledge("query", num_documents=3)
+    assert called["num_documents"] == 3
+    assert result == [{"content": "doc"}]
