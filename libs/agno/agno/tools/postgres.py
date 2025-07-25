@@ -201,9 +201,14 @@ class PostgresTools(Toolkit):
                         cursor.execute(query)
                         stats = cursor.fetchone()
                         summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
-                        for key, value in stats.items():
-                            val_str = f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
-                            summary_parts.append(f"  {key}: {val_str}")
+                        if stats is not None:
+                            for key, value in stats.items():
+                                val_str = (
+                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                )
+                                summary_parts.append(f"  {key}: {val_str}")
+                        else:
+                            summary_parts.append("  No statistics available")
 
                 return "\n".join(summary_parts)
 
@@ -235,6 +240,10 @@ class PostgresTools(Toolkit):
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(stmt)
+
+                if cursor.description is None:
+                    return f"Error: Query returned no description for table '{table}'."
+
                 columns = [desc[0] for desc in cursor.description]
 
                 with open(path, "w", newline="", encoding="utf-8") as f:
