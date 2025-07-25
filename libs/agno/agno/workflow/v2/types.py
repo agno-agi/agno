@@ -1,11 +1,13 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
+from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
+from agno.utils.log import log_warning
 
 
 @dataclass
@@ -345,3 +347,28 @@ class WorkflowMetrics:
             total_steps=data["total_steps"],
             steps=steps,
         )
+
+
+@dataclass
+class WebSocketBroadcaster:
+    """WebSocket broadcaster for real-time workflow events"""
+
+    websocket: Optional[WebSocket] = None
+
+    async def broadcast_event(self, event: Dict[str, Any]) -> None:
+        """Broadcast an event to the connected WebSocket"""
+        if self.websocket:
+            try:
+                import json
+
+                await self.websocket.send_text(json.dumps(event))
+            except Exception as e:
+                log_warning(f"Failed to broadcast WebSocket event: {e}")
+
+    async def broadcast_json(self, data: Dict[str, Any]) -> None:
+        """Broadcast JSON data to the connected WebSocket"""
+        await self.broadcast_event(data)
+
+    async def broadcast_text(self, message: str) -> None:
+        """Broadcast text message to the connected WebSocket"""
+        await self.broadcast_event({"type": "message", "content": message})
