@@ -5,7 +5,7 @@ try:
     import psycopg
     from psycopg import sql
     from psycopg.connection import Connection as PgConnection
-    from psycopg.rows import dict_row
+    from psycopg.rows import DictRow, dict_row
 except ImportError:
     raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
@@ -16,7 +16,7 @@ from agno.utils.log import log_debug, log_error
 class PostgresTools(Toolkit):
     def __init__(
         self,
-        connection: Optional[PgConnection] = None,
+        connection: Optional[PgConnection[DictRow]] = None,
         db_name: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
@@ -29,7 +29,7 @@ class PostgresTools(Toolkit):
         table_schema: str = "public",
         **kwargs,
     ):
-        self._connection: Optional[PgConnection] = connection
+        self._connection: Optional[PgConnection[DictRow]] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
         self.password: Optional[str] = password
@@ -53,7 +53,7 @@ class PostgresTools(Toolkit):
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
     @property
-    def connection(self) -> PgConnection:
+    def connection(self) -> PgConnection[DictRow]:
         """
         Returns the Postgres psycopg connection.
         :return psycopg.connection.Connection: psycopg connection
