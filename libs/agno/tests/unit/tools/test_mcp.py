@@ -31,7 +31,7 @@ async def test_streamable_http_transport_without_url_nor_server_params():
 
 def test_empty_command_string():
     """Test that ValueError is raised when command string is empty."""
-    with pytest.raises(ValueError, match="Empty command string"):
+    with pytest.raises(ValueError, match="MCP command can't be empty"):
         # Mock shlex.split to return an empty list
         with patch("shlex.split", return_value=[]):
             MCPTools(command="")
@@ -47,7 +47,7 @@ async def test_multimcp_without_endpoints():
 
 def test_multimcp_empty_command_string():
     """Test that ValueError is raised when a command string is empty."""
-    with pytest.raises(ValueError, match="Empty command string"):
+    with pytest.raises(ValueError, match="MCP command can't be empty"):
         # Mock shlex.split to return an empty list
         with patch("shlex.split", return_value=[]):
             MultiMCPTools(commands=[""])
@@ -57,8 +57,8 @@ def test_multimcp_empty_command_string():
 @pytest.mark.parametrize(
     "mcp_tools,kwargs",
     (
-        (MCPTools, {"command": "echo foo", "include_tools": ["foo"]}),
-        (MCPTools, {"command": "echo foo", "exclude_tools": ["foo"]}),
+        (MCPTools, {"command": "npx foo", "include_tools": ["foo"]}),
+        (MCPTools, {"command": "npx foo", "exclude_tools": ["foo"]}),
     ),
 )
 async def test_mcp_include_exclude_tools_bad_values(mcp_tools, kwargs):
