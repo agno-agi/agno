@@ -2,7 +2,7 @@
 This agent answers questions using knowledge from a PDF stored in a Google Cloud Storage (GCS) bucket.
 
 Setup Steps:
-1. Install required libraries: agno, google-cloud-storage, psycopg2-binary (for PostgreSQL vector DB).
+1. Install required libraries: agno, google-cloud-storage, psycopg-binary (for PostgreSQL vector DB).
 2. Set up your GCS bucket and upload your PDF file.
 3. For public GCS buckets: No authentication needed, just set the bucket and PDF path.
 4. For private GCS buckets:

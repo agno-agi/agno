@@ -2,14 +2,12 @@ import csv
 from typing import Any, Dict, List, Optional
 
 try:
-    import psycopg2
-    from psycopg2 import sql
-    from psycopg2.extensions import connection as PgConnection
-    from psycopg2.extras import DictCursor
+    import psycopg
+    from psycopg import sql
+    from psycopg.connection import Connection as PgConnection
+    from psycopg.rows import DictRow, dict_row
 except ImportError:
-    raise ImportError(
-        "`psycopg2` not installed. Please install using `pip install psycopg2`. If you face issues, try `pip install psycopg2-binary`."
-    )
+    raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -18,7 +16,7 @@ from agno.utils.log import log_debug, log_error
 class PostgresTools(Toolkit):
     def __init__(
         self,
-        connection: Optional[PgConnection] = None,
+        connection: Optional[PgConnection[DictRow]] = None,
         db_name: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
@@ -31,7 +29,7 @@ class PostgresTools(Toolkit):
         table_schema: str = "public",
         **kwargs,
     ):
-        self._connection: Optional[PgConnection] = connection
+        self._connection: Optional[PgConnection[DictRow]] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
         self.password: Optional[str] = password
@@ -55,16 +53,16 @@ class PostgresTools(Toolkit):
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
     @property
-    def connection(self) -> PgConnection:
+    def connection(self) -> PgConnection[DictRow]:
         """
-        Returns the Postgres psycopg2 connection.
-        :return psycopg2.extensions.connection: psycopg2 connection
+        Returns the Postgres psycopg connection.
+        :return psycopg.connection.Connection: psycopg connection
         """
         if self._connection is None or self._connection.closed:
             log_debug("Establishing new PostgreSQL connection.")
-            connection_kwargs: Dict[str, Any] = {"cursor_factory": DictCursor}
+            connection_kwargs: Dict[str, Any] = {"row_factory": dict_row}
             if self.db_name:
-                connection_kwargs["database"] = self.db_name
+                connection_kwargs["dbname"] = self.db_name
             if self.user:
                 connection_kwargs["user"] = self.user
             if self.password:
@@ -76,8 +74,8 @@ class PostgresTools(Toolkit):
 
             connection_kwargs["options"] = f"-c search_path={self.table_schema}"
 
-            self._connection = psycopg2.connect(**connection_kwargs)
-            self._connection.set_session(readonly=True)
+            self._connection = psycopg.connect(**connection_kwargs)
+            self._connection.read_only = True
 
         return self._connection
 
@@ -110,10 +108,10 @@ class PostgresTools(Toolkit):
                     return f"Query returned no results.\nColumns: {', '.join(columns)}"
 
                 header = ",".join(columns)
-                data_rows = [",".join(map(str, row)) for row in rows]
+                data_rows = [",".join(map(str, row.values())) for row in rows]
                 return f"{header}\n" + "\n".join(data_rows)
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             log_error(f"Database error: {e}")
             if self.connection and not self.connection.closed:
                 self.connection.rollback()
@@ -203,15 +201,18 @@ class PostgresTools(Toolkit):
                         cursor.execute(query)
                         stats = cursor.fetchone()
                         summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
-                        for key, value in stats.items():
-                            val_str = (
-                                f"{value:.2f}" if isinstance(value, (float, int)) and value is not None else str(value)
-                            )
-                            summary_parts.append(f"  {key}: {val_str}")
+                        if stats is not None:
+                            for key, value in stats.items():
+                                val_str = (
+                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                )
+                                summary_parts.append(f"  {key}: {val_str}")
+                        else:
+                            summary_parts.append("  No statistics available")
 
                 return "\n".join(summary_parts)
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             return f"Error summarizing table: {e}"
 
     def inspect_query(self, query: str) -> str:
@@ -239,15 +240,19 @@ class PostgresTools(Toolkit):
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(stmt)
+
+                if cursor.description is None:
+                    return f"Error: Query returned no description for table '{table}'."
+
                 columns = [desc[0] for desc in cursor.description]
 
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(columns)
-                    writer.writerows(cursor)
+                    writer.writerows(row.values() for row in cursor)
 
             return f"Successfully exported table '{table}' to '{path}'."
-        except (psycopg2.Error, IOError) as e:
+        except (psycopg.Error, IOError) as e:
             return f"Error exporting table: {e}"
 
     def run_query(self, query: str) -> str:
