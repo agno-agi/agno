@@ -1,5 +1,5 @@
 import asyncio
-from typing import List
+from typing import List, Optional
 
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
@@ -11,8 +11,14 @@ except ImportError:
 
 
 class ArxivReader(Reader):
-    max_results: int = 5  # Top articles
     sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance
+
+    def __init__(self, sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance, **kwargs) -> None:
+        # Initialize base Reader class (handles max_results and other common parameters)
+        super().__init__(**kwargs)
+
+        # ArxivReader-specific attributes
+        self.sort_by = sort_by
 
     def read(self, query: str) -> List[Document]:
         """

@@ -156,7 +156,7 @@ class CSVUrlReader(Reader):
         super().__init__(**kwargs)
         self.proxy = proxy
 
-    def read(self, url: str) -> List[Document]:
+    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
 
@@ -169,13 +169,13 @@ class CSVUrlReader(Reader):
 
         file_obj = io.BytesIO(response.content)
         file_obj.name = filename
-        documents = CSVReader().read(file=file_obj)
+        documents = CSVReader().read(file=file_obj, name=name)
 
         file_obj.close()
 
         return documents
 
-    async def async_read(self, url: str) -> List[Document]:
+    async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No URL provided")
 
@@ -194,7 +194,7 @@ class CSVUrlReader(Reader):
             file_obj.name = filename
 
             # Use the async version of CSVReader
-            documents = await CSVReader().async_read(file=file_obj)
+            documents = await CSVReader().async_read(file=file_obj, name=name)
 
             file_obj.close()
 

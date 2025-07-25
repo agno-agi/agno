@@ -20,7 +20,7 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it with `pip install sqlalchemy`")
 
-from agno.db.schemas import MemoryRow
+from agno.db.schemas import UserMemory
 from agno.memory.db.base import MemoryDb
 from agno.utils.log import log_debug, log_info, logger
 
@@ -106,7 +106,7 @@ class SqliteMemoryDb(MemoryDb):
                 logger.error(f"Error creating table '{self.table_name}': {e}")
                 raise
 
-    def memory_exists(self, memory: MemoryRow) -> bool:
+    def memory_exists(self, memory: UserMemory) -> bool:
         with self.Session() as session:
             stmt = select(self.table.c.id).where(self.table.c.id == memory.id)
             result = session.execute(stmt).first()
@@ -114,8 +114,8 @@ class SqliteMemoryDb(MemoryDb):
 
     def read_memories(
         self, user_id: Optional[str] = None, limit: Optional[int] = None, sort: Optional[str] = None
-    ) -> List[MemoryRow]:
-        memories: List[MemoryRow] = []
+    ) -> List[UserMemory]:
+        memories: List[UserMemory] = []
         try:
             with self.Session() as session:
                 stmt = select(self.table)
@@ -133,8 +133,8 @@ class SqliteMemoryDb(MemoryDb):
                 result = session.execute(stmt)
                 for row in result:
                     memories.append(
-                        MemoryRow(
-                            id=row.id,
+                        UserMemory(
+                            memory_id=row.id,
                             user_id=row.user_id,
                             memory=eval(row.memory),
                             last_updated=row.updated_at or row.created_at,
@@ -147,7 +147,7 @@ class SqliteMemoryDb(MemoryDb):
             self.create()
         return memories
 
-    def upsert_memory(self, memory: MemoryRow, create_and_retry: bool = True) -> None:
+    def upsert_memory(self, memory: UserMemory, create_and_retry: bool = True) -> None:
         try:
             with self.Session() as session:
                 # Check if the memory already exists

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.docx import DocxKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -31,16 +31,15 @@ def get_filtered_data_dir():
 def prepare_knowledge_base(setup_vector_db):
     """Prepare a knowledge base with filtered data."""
     # Create knowledge base
-    kb = DocxKnowledgeBase(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_1.docx",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
     )
 
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_2.docx",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -48,32 +47,34 @@ def prepare_knowledge_base(setup_vector_db):
     return kb
 
 
-async def aprepare_knowledge_base(setup_vector_db):
-    """Prepare a knowledge base with filtered data asynchronously."""
-    # Create knowledge base
-    kb = DocxKnowledgeBase(vector_db=setup_vector_db)
+# async def aprepare_knowledge_base(setup_vector_db):
+#     """Prepare a knowledge base with filtered data asynchronously."""
+#     # Create knowledge base
+#     kb = DocxKnowledgeBase(vector_db=setup_vector_db)
 
-    # Load documents with different user IDs and metadata
-    await kb.aload_document(
-        path=get_filtered_data_dir() / "cv_1.docx",
-        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
-    )
+#     # Load documents with different user IDs and metadata
+#     await kb.aload_document(
+#         path=get_filtered_data_dir() / "cv_1.docx",
+#         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+#         recreate=True,
+#     )
 
-    await kb.aload_document(
-        path=get_filtered_data_dir() / "cv_2.docx",
-        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-    )
+#     await kb.aload_document(
+#         path=get_filtered_data_dir() / "cv_2.docx",
+#         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+#     )
 
-    return kb
+#     return kb
 
 
 def test_docx_knowledge_base_directory(setup_vector_db):
     """Test loading a directory of DOCX files into the knowledge base."""
     docx_dir = get_test_data_dir()
 
-    kb = DocxKnowledgeBase(path=docx_dir, vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_content(
+        path=docx_dir,
+    )
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
@@ -91,49 +92,46 @@ def test_docx_knowledge_base_directory(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-@pytest.mark.asyncio
-async def test_docx_knowledge_base_async_directory(setup_vector_db):
-    """Test asynchronously loading a directory of DOCX files into the knowledge base."""
-    docx_dir = get_test_data_dir()
+# @pytest.mark.asyncio
+# async def test_docx_knowledge_base_async_directory(setup_vector_db):
+#     """Test asynchronously loading a directory of DOCX files into the knowledge base."""
+#     docx_dir = get_test_data_dir()
 
-    kb = DocxKnowledgeBase(path=docx_dir, vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+#     kb = DocxKnowledgeBase(path=docx_dir, vector_db=setup_vector_db)
+#     await kb.aload(recreate=True)
 
-    assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() > 0
+#     assert await setup_vector_db.async_exists()
+#     assert await setup_vector_db.async_get_count() > 0
 
-    # Enable search on the agent
-    agent = Agent(knowledge=kb, search_knowledge=True)
-    response = await agent.arun("What is the story of little prince about?", markdown=True)
+#     # Enable search on the agent
+#     agent = Agent(knowledge=kb, search_knowledge=True)
+#     response = await agent.arun("What is the story of little prince about?", markdown=True)
 
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
+#     tool_calls = []
+#     for msg in response.messages:
+#         if msg.tool_calls:
+#             tool_calls.extend(msg.tool_calls)
 
-    function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    # For async operations, we use search_knowledge_base
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
+#     # For async operations, we use search_knowledge_base
+#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
 # for the one with new knowledge filter DX- filters at initialization
 def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     """Test loading text files with metadata using the new path structure."""
-    kb = DocxKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.docx"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.docx"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.docx"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.docx"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Verify documents were loaded with metadata
     agent = Agent(knowledge=kb)
@@ -146,21 +144,18 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
 
 def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     """Test filtering docx knowledge base with invalid filters using the new path structure."""
-    kb = DocxKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.docx"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.docx"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.docx"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.docx"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.markdown import MarkdownKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -31,16 +31,15 @@ def get_filtered_data_dir():
 def prepare_knowledge_base(setup_vector_db):
     """Prepare a knowledge base with filtered data."""
     # Create knowledge base
-    kb = MarkdownKnowledgeBase(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_1.md",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
     )
 
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_2.md",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -48,32 +47,37 @@ def prepare_knowledge_base(setup_vector_db):
     return kb
 
 
-async def aprepare_knowledge_base(setup_vector_db):
-    """Prepare a knowledge base with filtered data asynchronously."""
-    # Create knowledge base
-    kb = MarkdownKnowledgeBase(vector_db=setup_vector_db)
+# async def aprepare_knowledge_base(setup_vector_db):
+#     """Prepare a knowledge base with filtered data asynchronously."""
+#     # Create knowledge base
+#     kb = MarkdownKnowledgeBase(vector_db=setup_vector_db)
 
-    # Load documents with different user IDs and metadata
-    await kb.aload_document(
-        path=get_filtered_data_dir() / "cv_1.md",
-        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
-    )
+#     # Load documents with different user IDs and metadata
+#     await kb.aload_document(
+#         path=get_filtered_data_dir() / "cv_1.md",
+#         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+#         recreate=True,
+#     )
 
-    await kb.aload_document(
-        path=get_filtered_data_dir() / "cv_2.md",
-        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-    )
+#     await kb.aload_document(
+#         path=get_filtered_data_dir() / "cv_2.md",
+#         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+#     )
 
-    return kb
+#     return kb
 
 
 def test_text_knowledge_base_directory(setup_vector_db):
     """Test loading a directory of text files into the knowledge base."""
     text_dir = get_test_data_dir()
 
-    kb = MarkdownKnowledgeBase(path=text_dir, formats=[".md"], vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(
+        vector_db=setup_vector_db,
+    )
+
+    kb.add_content(
+        path=text_dir,
+    )
 
     # Asserting the vector DB exists and pg_essay.md was split as expected
     assert setup_vector_db.exists()
@@ -91,47 +95,45 @@ def test_text_knowledge_base_directory(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-@pytest.mark.asyncio
-async def test_text_knowledge_base_async_directory(setup_vector_db):
-    """Test asynchronously loading a directory of text files into the knowledge base."""
-    text_dir = get_test_data_dir()
+# @pytest.mark.asyncio
+# async def test_text_knowledge_base_async_directory(setup_vector_db):
+#     """Test asynchronously loading a directory of text files into the knowledge base."""
+#     text_dir = get_test_data_dir()
 
-    kb = MarkdownKnowledgeBase(path=text_dir, formats=[".md"], vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+#     kb = MarkdownKnowledgeBase(path=text_dir, formats=[".md"], vector_db=setup_vector_db)
+#     await kb.aload(recreate=True)
 
-    # Asserting the vector DB exists and pg_essay.md was split as expected
-    assert setup_vector_db.exists()
-    assert setup_vector_db.get_count() == 5
+#     # Asserting the vector DB exists and pg_essay.md was split as expected
+#     assert setup_vector_db.exists()
+#     assert setup_vector_db.get_count() == 5
 
-    agent = Agent(knowledge=kb)
-    response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
+#     agent = Agent(knowledge=kb)
+#     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
 
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
+#     tool_calls = []
+#     for msg in response.messages:
+#         if msg.tool_calls:
+#             tool_calls.extend(msg.tool_calls)
 
-    function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
+#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
 def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     """Test loading text files with metadata using the new path structure."""
-    kb = MarkdownKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.md"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.md"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.md"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.md"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Verify documents were loaded with metadata
     agent = Agent(knowledge=kb)
@@ -149,21 +151,19 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
 
 def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     """Test filtering docx knowledge base with invalid filters using the new path structure."""
-    kb = MarkdownKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.md"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.md"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.md"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.md"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})

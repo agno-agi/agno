@@ -30,7 +30,6 @@ except ImportError:
 class WebSearchReader(Reader):
     """Reader that uses web search to find content for a given query"""
 
-    max_results: int = 5
     search_timeout: int = 10
     request_timeout: int = 30
     delay_between_requests: float = 2.0  # Increased default delay

@@ -17,6 +17,7 @@ class Reader:
     chunking_strategy: Optional[ChunkingStrategy] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    max_results: int = 5  # Maximum number of results to return (useful for search-based readers)
 
     def __init__(
         self,
@@ -26,6 +27,8 @@ class Reader:
         chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        max_results: int = 5,
+        **kwargs,
     ) -> None:
         self.chunk = chunk
         self.chunk_size = chunk_size
@@ -35,6 +38,7 @@ class Reader:
         self.chunking_strategy = chunking_strategy
         self.name = name
         self.description = description
+        self.max_results = max_results
 
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
