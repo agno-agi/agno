@@ -20,13 +20,13 @@ knowledge = Knowledge(
 # Add topics from Wikipedia
 knowledge.add_content(
     metadata={"user_tag": "Wikipedia content"},
-    topics=["Tesla"],
+    topics=["Tesla", "AI"],
     reader=WikipediaReader(),
 )
 
-# Add topics from Arxiv
-knowledge.add_content(
-    metadata={"user_tag": "Arxiv content"},
-    topics=["Carbon Dioxide"],
-    reader=ArxivReader(),
-)
+# # Add topics from Arxiv
+# knowledge.add_content(
+#     metadata={"user_tag": "Arxiv content"},
+#     topics=["Carbon Dioxide"],
+#     reader=ArxivReader(),
+# )

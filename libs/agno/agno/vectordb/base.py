@@ -31,22 +31,29 @@ class VectorDb(ABC):
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError
 
+    @abstractmethod
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         raise NotImplementedError
 
     def upsert_available(self) -> bool:
         return False
 
     @abstractmethod
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -105,8 +112,4 @@ class VectorDb(ABC):
 
     @abstractmethod
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    def delete_by_content_id(self, content_id: str) -> bool:
         raise NotImplementedError

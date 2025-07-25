@@ -29,3 +29,4 @@ class Content:
     status_message: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+    content_hash: Optional[str] = None
