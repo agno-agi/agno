@@ -232,7 +232,7 @@ class MCPTools(Toolkit):
             return
 
         if not hasattr(self, "_active_contexts"):
-            self._active_contexts = []
+            self._active_contexts: list[Any] = []
 
         # Create a new studio session
         if self.transport == "sse":
@@ -457,7 +457,7 @@ class MultiMCPTools(Toolkit):
         self._async_exit_stack = AsyncExitStack()
         self._initialized = False
         self._connection_task = None
-        self._active_contexts = []
+        self._active_contexts: list[Any] = []
         self._used_as_context_manager = False
 
         self._client = client
