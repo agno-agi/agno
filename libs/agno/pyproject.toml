@@ -106,7 +106,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
-psycopg2 = ["psycopg2-binary"]
+psycopg = ["psycopg-binary"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -118,7 +118,7 @@ oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary", "psycopg"]
+postgres = ["psycopg-binary"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -218,7 +218,7 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
-  "agno[psycopg2]",
+  "agno[psycopg]",
 ]
 
 # All storage
@@ -403,7 +403,6 @@ module = [
   "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
-  "psycopg2.*",
   "pyarrow.*",
   "pycountry.*",
   "pymongo.*",

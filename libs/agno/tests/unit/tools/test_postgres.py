@@ -1,25 +1,32 @@
 from unittest.mock import Mock, mock_open, patch
 
-import psycopg2
+import psycopg
 import pytest
 
 from agno.tools.postgres import PostgresTools
 
 # --- Mock Data for Tests ---
-MOCK_TABLES_RESULT = [("employees",), ("departments",), ("projects",)]
+MOCK_TABLES_RESULT = [{"table_name": "employees"}, {"table_name": "departments"}, {"table_name": "projects"}]
 
 MOCK_DESCRIBE_RESULT = [
-    ("id", "integer", "NO"),
-    ("name", "character varying", "YES"),
-    ("salary", "numeric", "YES"),
-    ("department_id", "integer", "YES"),
+    {"column_name": "id", "data_type": "integer", "is_nullable": "NO"},
+    {"column_name": "name", "data_type": "character varying", "is_nullable": "YES"},
+    {"column_name": "salary", "data_type": "numeric", "is_nullable": "YES"},
+    {"column_name": "department_id", "data_type": "integer", "is_nullable": "YES"},
 ]
 
-MOCK_COUNT_RESULT = [(3,)]
+MOCK_COUNT_RESULT = [{"count": 3}]
 
-MOCK_EXPORT_DATA = [(1, "Alice", 75000, 1), (2, "Bob", 80000, 2), (3, "Charlie", 65000, 1)]
+MOCK_EXPORT_DATA = [
+    {"id": 1, "name": "Alice", "salary": 75000, "department_id": 1},
+    {"id": 2, "name": "Bob", "salary": 80000, "department_id": 2},
+    {"id": 3, "name": "Charlie", "salary": 65000, "department_id": 1},
+]
 
-MOCK_EXPLAIN_RESULT = [("Seq Scan on employees  (cost=0.00..35.50 rows=10 width=32)",), ("  Filter: (salary > 10000)",)]
+MOCK_EXPLAIN_RESULT = [
+    {"QUERY PLAN": "Seq Scan on employees  (cost=0.00..35.50 rows=10 width=32)"},
+    {"QUERY PLAN": "  Filter: (salary > 10000)"},
+]
 
 
 class TestPostgresTools:
@@ -27,14 +34,15 @@ class TestPostgresTools:
 
     @pytest.fixture
     def mock_connection(self):
-        """Create a mock connection that behaves like psycopg2 connection."""
+        """Create a mock connection that behaves like psycopg connection."""
         conn = Mock()
-        conn.closed = 0  # 0 means open connection
+        conn.closed = False
+        conn.read_only = False
         return conn
 
     @pytest.fixture
     def mock_cursor(self):
-        """Create a mock cursor that behaves like psycopg2 cursor."""
+        """Create a mock cursor that behaves like psycopg cursor."""
         cursor = Mock()
         cursor.description = None
         cursor.fetchall.return_value = []
@@ -51,7 +59,7 @@ class TestPostgresTools:
         # Setup the connection to return our mock cursor
         mock_connection.cursor.return_value = mock_cursor
 
-        with patch("psycopg2.connect", return_value=mock_connection):
+        with patch("psycopg.connect", return_value=mock_connection):
             tools = PostgresTools(
                 host="localhost",
                 port=5433,
@@ -166,8 +174,8 @@ class TestPostgresTools:
 
     def test_database_error_handling(self, postgres_tools, mock_connection, mock_cursor):
         """Test proper error handling for database errors."""
-        # Setup mock to raise psycopg2 error
-        mock_cursor.execute.side_effect = psycopg2.DatabaseError("Table does not exist")
+        # Setup mock to raise psycopg error
+        mock_cursor.execute.side_effect = psycopg.DatabaseError("Table does not exist")
         mock_connection.rollback = Mock()
 
         result = postgres_tools.show_tables()
@@ -191,7 +199,7 @@ class TestPostgresTools:
 
     def test_context_manager_support(self, mock_connection):
         """Test that PostgresTools works as a context manager."""
-        with patch("psycopg2.connect", return_value=mock_connection):
+        with patch("psycopg.connect", return_value=mock_connection):
             with PostgresTools(host="localhost", db_name="testdb") as tools:
                 assert tools is not None
                 assert hasattr(tools, "close")
@@ -202,9 +210,9 @@ class TestPostgresTools:
     def test_connection_recovery(self, mock_connection):
         """Test that connection is re-established if closed."""
         # Simulate closed connection
-        mock_connection.closed = 1  # 1 means closed
+        mock_connection.closed = True
 
-        with patch("psycopg2.connect", return_value=mock_connection) as mock_connect:
+        with patch("psycopg.connect", return_value=mock_connection) as mock_connect:
             tools = PostgresTools(host="localhost", db_name="testdb")
             # Access connection property to trigger reconnection
             _ = tools.connection
@@ -229,9 +237,9 @@ class TestPostgresTools:
 
     def test_readonly_session_configuration(self, mock_connection):
         """Test that connection is configured as read-only."""
-        with patch("psycopg2.connect", return_value=mock_connection):
+        with patch("psycopg.connect", return_value=mock_connection):
             tools = PostgresTools(host="localhost", db_name="testdb")
             _ = tools.connection  # Trigger connection establishment
 
             # Verify readonly session was set
-            mock_connection.set_session.assert_called_with(readonly=True)
+            assert mock_connection.read_only is True
