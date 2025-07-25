@@ -132,6 +132,7 @@ class PostgresStorage(Storage):
             specific_columns = [
                 Column("workflow_id", String, index=True),
                 Column("workflow_data", postgresql.JSONB),
+                Column("runs", postgresql.JSONB),
             ]
 
         # Create table with all columns
