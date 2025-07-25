@@ -570,8 +570,16 @@ class Claude(Model):
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
+            # Handle completed thinking content
+            if response.content_block.type == "thinking":  # type: ignore
+                model_response.thinking = response.content_block.thinking  # type: ignore
+                # Store signature if available
+                if hasattr(response.content_block, "signature"):  # type: ignore
+                    model_response.provider_data = {
+                        "signature": response.content_block.signature,  # type: ignore
+                    }
             # Handle tool calls
-            if response.content_block.type == "tool_use":  # type: ignore
+            elif response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
