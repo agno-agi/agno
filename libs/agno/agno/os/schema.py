@@ -368,24 +368,24 @@ class RunSchema(BaseModel):
 
     @classmethod
     def from_run_response(cls, run_response: RunResponse) -> "RunSchema":
-        run_input = get_run_input(run_response.to_dict())
-        run_response_format = "text" if run_response.content_type == "str" else "json"
+        run_input = get_run_input(run_response)
+        run_response_format = "text" if run_response.get("content_type") == "str" else "json"
         return cls(
-            run_id=run_response.run_id or "",
+            run_id=run_response.get("run_id") or "",
             agent_session_id=None,
             workspace_id=None,
             user_id=None,
             run_review=None,
-            content=run_response.content,
-            reasoning_content=run_response.reasoning_content,
+            content=run_response.get("content"),
+            reasoning_content=run_response.get("reasoning_content"),
             run_input=run_input,
             run_response_format=run_response_format,
-            metrics=run_response.metrics,
-            messages=[message.to_dict() for message in run_response.messages] if run_response.messages else None,
-            tools=[tool.to_dict() for tool in run_response.tools] if run_response.tools else None,
-            events=[event.to_dict() for event in run_response.events] if run_response.events else None,
-            created_at=datetime.fromtimestamp(run_response.created_at, tz=timezone.utc)
-            if run_response.created_at is not None
+            metrics=run_response.get("metrics"),
+            messages=[message for message in run_response.get("messages", [])] if run_response.get("messages") else None,
+            tools=[tool for tool in run_response.get("tools", [])] if run_response.get("tools") else None,
+            events=[event for event in run_response.get("events", [])] if run_response.get("events") else None,
+            created_at=datetime.fromtimestamp(run_response.get("created_at", 0), tz=timezone.utc)
+            if run_response.get("created_at") is not None
             else None,
             member_responses=[],  # TODO: remove, only for teams
         )
