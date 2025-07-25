@@ -107,6 +107,7 @@ mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg2 = ["psycopg2-binary"]
+tensorlake = ["tensorlake"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -219,6 +220,7 @@ tools = [
   "agno[mem0]",
   "agno[google_bigquery]",
   "agno[psycopg2]",
+  "agno[tensorlake]",
 ]
 
 # All storage
@@ -426,6 +428,7 @@ module = [
   "streamlit.*",
   "tantivy.*",
   "tavily.*",
+  "tensorlake.*",
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
