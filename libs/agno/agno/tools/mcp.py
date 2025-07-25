@@ -220,7 +220,7 @@ class MCPTools(Toolkit):
     def _start_connection(self):
         """Ensure there are no active connections and setup a new one"""
         if self._connection_task is None or self._connection_task.done():
-            self._connection_task = asyncio.create_task(self._connect())
+            self._connection_task = asyncio.create_task(self._connect())  # type: ignore
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -507,7 +507,7 @@ class MultiMCPTools(Toolkit):
     def _start_connection(self):
         """Ensure there are no active connections and setup a new one"""
         if self._connection_task is None or self._connection_task.done():
-            self._connection_task = asyncio.create_task(self._connect())
+            self._connection_task = asyncio.create_task(self._connect())  # type: ignore
 
     async def _connect(self) -> None:
         """Connects to the MCP servers and initializes the tools"""
