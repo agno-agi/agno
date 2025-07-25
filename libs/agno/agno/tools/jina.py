@@ -1,3 +1,4 @@
+import json
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -14,6 +15,7 @@ class JinaReaderToolsConfig(BaseModel):
     search_url: HttpUrl = Field("https://s.jina.ai/", description="Search URL for Jina Reader API")  # type: ignore
     max_content_length: int = Field(10000, description="Maximum content length in characters")
     timeout: Optional[int] = Field(None, description="Timeout for Jina Reader API requests")
+    search_query_content: Optional[bool] = Field(False, description="Toggle full URL content in query search result")
 
 
 class JinaReaderTools(Toolkit):
@@ -26,14 +28,17 @@ class JinaReaderTools(Toolkit):
         timeout: Optional[int] = None,
         read_url: bool = True,
         search_query: bool = False,
+        search_query_content: bool = False,
         **kwargs,
     ):
+        self.api_key = api_key or getenv("JINA_API_KEY")
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
-            api_key=api_key,
+            api_key=self.api_key,
             base_url=base_url,
             search_url=search_url,
             max_content_length=max_content_length,
             timeout=timeout,
+            search_query_content=search_query_content,
         )
 
         tools: List[Any] = []
@@ -60,10 +65,15 @@ class JinaReaderTools(Toolkit):
 
     def search_query(self, query: str) -> str:
         """Performs a web search using Jina Reader API and returns the truncated results."""
-        full_url = f"{self.config.search_url}{query}"
-        log_info(f"Performing search: {full_url}")
+        full_url = f"{self.config.search_url}"
+        headers = self._get_headers()
+        if not self.config.search_query_content:
+            headers["X-Respond-With"] = "no-content"  # to avoid returning full content in search results
+
+        body = {"q": query}
+        log_info(f"Performing search: {full_url} {json.dumps(body)}")
         try:
-            response = httpx.get(full_url, headers=self._get_headers())
+            response = httpx.post(full_url, headers=headers, json=body)
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))
