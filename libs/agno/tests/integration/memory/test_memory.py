@@ -46,7 +46,9 @@ def memory_with_db(model, memory_db):
 def test_add_user_memory_with_db(memory_with_db: MemoryManager):
     """Test adding a user memory with database persistence."""
     # Create a user memory
-    user_memory = UserMemory(user_id="test_user", memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        user_id="test_user", memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now()
+    )
 
     # Add the memory
     memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
@@ -54,7 +56,9 @@ def test_add_user_memory_with_db(memory_with_db: MemoryManager):
     # Verify the memory was added to the in-memory store
     assert memory_id is not None
     assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
-    assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
+    assert (
+        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
+    )
 
     # Create a new Memory instance with the same database
     new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)

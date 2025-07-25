@@ -3710,7 +3710,7 @@ class Agent:
             return self.agent_session
 
         # Try to load from database
-        if self.db is not None:
+        if self.db is not None and self.team_id is None:
             log_debug(f"Reading AgentSession: {session_id}")
             self.agent_session = cast(
                 AgentSession, self.read_session(session_id=session_id, session_type=SessionType.AGENT)
@@ -3767,7 +3767,7 @@ class Agent:
                 return self.agent_session.session_id
 
         # Load an existing session or create a new session
-        if self.db is not None:
+        if self.db is not None and self.team_id is None:
             # Load existing session if session_id is provided
             log_debug(f"Reading AgentSession: {self.session_id}")
             self.get_agent_session(session_id=self.session_id)  # type: ignore
@@ -7096,75 +7096,6 @@ class Agent:
             self.print_response(
                 message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
-
-    def get_agent_config_dict(self) -> Dict[str, Any]:
-        tools: List[Dict[str, Any]] = []
-        if self.tools is not None:
-            if not hasattr(self, "_tools_for_model") or self._tools_for_model is None:
-                team_model = self.model
-                session_id = self.session_id
-                if team_model and session_id is not None:
-                    self.determine_tools_for_model(model=team_model, session_id=session_id)
-
-            if self._tools_for_model is not None:
-                for tool in self._tools_for_model:
-                    if isinstance(tool, dict) and tool.get("type") == "function":
-                        tools.append(tool["function"])
-        model = None
-        if self.model is not None:
-            model = {
-                "name": str(self.model.__class__.__name__),
-                "model": str(self.model.id),
-                "provider": str(self.model.provider),
-            }
-
-        payload = {
-            "instructions": self.instructions if self.instructions is not None else [],
-            "tools": tools,
-            # "memory": (
-            #     {
-            #         "name": self.memory.__class__.__name__,
-            #         "model": (
-            #             {
-            #                 "name": self.memory.model.__class__.__name__,
-            #                 "model": self.memory.model.id,
-            #                 "provider": self.memory.model.provider,
-            #             }
-            #             if hasattr(self.memory, "model") and self.memory.model is not None
-            #             else (
-            #                 {
-            #                     "name": self.model.__class__.__name__,
-            #                     "model": self.model.id,
-            #                     "provider": self.model.provider,
-            #                 }
-            #                 if self.model is not None
-            #                 else None
-            #             )
-            #         ),
-            #         "db": (
-            #             {
-            #                 "name": self.memory.db.__class__.__name__,
-            #                 "table_name": self.memory.db.table_name if hasattr(self.memory.db, "table_name") else None,
-            #                 "db_url": self.memory.db.db_url if hasattr(self.memory.db, "db_url") else None,
-            #             }
-            #             if hasattr(self.memory, "db") and self.memory.db is not None
-            #             else None
-            #         ),
-            #     }
-            #     if self.memory is not None and hasattr(self.memory, "db") and self.memory.db is not None
-            #     else None
-            # ),
-            "knowledge": {
-                "name": self.knowledge.__class__.__name__,
-            }
-            if self.knowledge is not None
-            else None,
-            "model": model,
-            "name": self.name,
-            "description": self.description,
-        }
-        payload = {k: v for k, v in payload.items() if v is not None}
-        return payload
 
     async def acli_app(
         self,

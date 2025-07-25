@@ -4054,17 +4054,6 @@ class Team:
         current_session_metrics = replace(current_session_metrics)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
-        # Get metrics of the team-agent's messages
-        for member in self.members:
-            # Only members with agent_session
-            if member.agent_session is not None:  # type: ignore
-                if member.agent_session.runs is not None:  # type: ignore
-                    for run in member.agent_session.runs:  # type: ignore
-                        if run is not None and run.messages is not None:
-                            for m in run.messages:
-                                if m.role == assistant_message_role and m.metrics is not None:
-                                    current_session_metrics += m.metrics
-
         for run in self.team_session.runs:  # type: ignore
             if run.messages is not None:
                 for m in run.messages:
@@ -5767,7 +5756,7 @@ class Team:
 
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
-                        member_agent_task if history is None else None,
+                        message=member_agent_task if history is None else None,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session_id,
@@ -5784,7 +5773,7 @@ class Team:
                         yield member_agent_run_response_chunk
                 else:
                     member_agent_run_response = member_agent.run(
-                        member_agent_task if history is None else None,
+                        message=member_agent_task if history is None else None,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session_id,
@@ -5890,7 +5879,7 @@ class Team:
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
-                        member_agent_task if history is None else None,
+                        message=member_agent_task if history is None else None,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session_id,
@@ -6057,7 +6046,7 @@ class Team:
 
             if stream:
                 member_agent_run_response_stream = member_agent.run(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6079,7 +6068,7 @@ class Team:
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = member_agent.run(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6200,7 +6189,7 @@ class Team:
 
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6220,7 +6209,7 @@ class Team:
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6439,7 +6428,7 @@ class Team:
             # 2. Get the response from the member agent
             if stream:
                 member_agent_run_response_stream = member_agent.run(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6459,7 +6448,7 @@ class Team:
                     yield member_agent_run_response_chunk
             else:
                 member_agent_run_response = member_agent.run(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6578,7 +6567,7 @@ class Team:
             # 2. Get the response from the member agent
             if stream:
                 member_agent_run_response_stream = await member_agent.arun(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6598,7 +6587,7 @@ class Team:
                     yield member_agent_run_response_event
             else:
                 member_agent_run_response = await member_agent.arun(
-                    member_agent_task if history is None else None,
+                    message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
