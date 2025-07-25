@@ -13,14 +13,17 @@ from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    # Initialize the MCP server
-    mcp_tools = await MultiMCPTools.connect(
+    # Initialize the MCP tools
+    mcp_tools = MultiMCPTools(
         [
             "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
             "npx -y @timlukahorstmann/mcp-weather",
         ],
         timeout_seconds=30,
     )
+
+    # Connect to the MCP servers
+    await mcp_tools.connect()
 
     # Use the MCP tools with an Agent
     agent = Agent(

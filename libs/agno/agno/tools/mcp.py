@@ -181,41 +181,12 @@ class MCPTools(Toolkit):
         # Setup cleanup logic before the instance is garbage collected
         self._cleanup_finalizer = weakref.finalize(self, cleanup)
 
-    @classmethod
-    async def connect(
-        cls,
-        command: Optional[str] = None,
-        *,
-        url: Optional[str] = None,
-        env: Optional[dict[str, str]] = None,
-        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
-        server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
-        session: Optional[ClientSession] = None,
-        timeout_seconds: int = 5,
-        client=None,
-        include_tools: Optional[list[str]] = None,
-        exclude_tools: Optional[list[str]] = None,
-        **kwargs,
-    ) -> "MCPTools":
+    async def connect(self):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
-        instance = cls(
-            command=command,
-            url=url,
-            env=env,
-            transport=transport,
-            server_params=server_params,
-            session=session,
-            timeout_seconds=timeout_seconds,
-            client=client,
-            include_tools=include_tools,
-            exclude_tools=exclude_tools,
-            **kwargs,
-        )
+        if self._initialized:
+            return
 
-        if not session:
-            await instance._connect()
-
-        return instance
+        await self._connect()
 
     def _start_connection(self):
         """Ensure there are no active connections and setup a new one"""

@@ -13,8 +13,11 @@ from agno.tools.mcp import MCPTools
 
 
 async def run_mcp_agent(message: str):
-    # Setup the MCP connection
-    mcp_tools = await MCPTools.connect("npx -y @timlukahorstmann/mcp-weather")
+    # Initialize the MCP tools
+    mcp_tools = MCPTools("npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt")
+
+    # Connect to the MCP server
+    await mcp_tools.connect()
 
     # Use the MCP tools with an Agent
     agent = Agent(
@@ -22,7 +25,6 @@ async def run_mcp_agent(message: str):
         tools=[mcp_tools],
         markdown=True,
     )
-
     await agent.aprint_response(message)
 
     # Close the MCP connection
@@ -30,4 +32,4 @@ async def run_mcp_agent(message: str):
 
 
 if __name__ == "__main__":
-    asyncio.run(run_mcp_agent("Is it sunny in Barcelona?"))
+    asyncio.run(run_mcp_agent("Show me listings in Barcelona, for 2 people."))
