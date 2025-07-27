@@ -28,7 +28,7 @@ class MorphTools(Toolkit):
             base_url: The base URL for the Morph API.
             model: The Morph model to use. Options:
                   - "morph-v3-fast" (4500+ tok/sec, 96% accuracy)
-                  - "morph-v3-large" (2500+ tok/sec, 98% accuracy)  
+                  - "morph-v3-large" (2500+ tok/sec, 98% accuracy)
                   - "auto" (automatic selection)
             **kwargs: Additional arguments to pass to Toolkit.
         """
@@ -63,7 +63,7 @@ class MorphTools(Toolkit):
 
         This will be read by Morph's specialized model, which will quickly apply the edit with 98% accuracy.
         You should make it clear what the edit is, while also minimizing the unchanged code you write.
-        When writing the edit, you should specify each edit in sequence, with the special comment 
+        When writing the edit, you should specify each edit in sequence, with the special comment
         // ... existing code ... to represent unchanged code in between edited lines.
 
         For example:
@@ -82,10 +82,10 @@ class MorphTools(Toolkit):
 
         Args:
             target_file: The target file to modify
-            instructions: A single sentence instruction describing what you are going to do for the sketched edit. 
-                         Use the first person to describe what you are going to do. 
+            instructions: A single sentence instruction describing what you are going to do for the sketched edit.
+                         Use the first person to describe what you are going to do.
                          Example: "I am adding error handling to the user authentication function"
-            code_edit: Specify ONLY the precise lines of code that you wish to edit. 
+            code_edit: Specify ONLY the precise lines of code that you wish to edit.
                       Use // ... existing code ... to represent unchanged code.
             original_code: The complete original code. If not provided, will read from target_file.
 
@@ -93,19 +93,22 @@ class MorphTools(Toolkit):
             A message indicating success and the final merged code.
         """
         try:
-            # Read original code if not provided
-            if not original_code:
-                if not os.path.exists(target_file):
-                    return f"Error: File {target_file} does not exist."
-                
+            # Always read the actual file content for backup purposes
+            actual_file_content = None
+            if os.path.exists(target_file):
                 try:
-                    with open(target_file, 'r', encoding='utf-8') as f:
-                        original_code = f.read()
+                    with open(target_file, "r", encoding="utf-8") as f:
+                        actual_file_content = f.read()
                 except Exception as e:
-                    return f"Error reading {target_file}: {e}"
+                    return f"Error reading {target_file} for backup: {e}"
+            else:
+                return f"Error: File {target_file} does not exist."
+
+            # Use provided original_code or fall back to file content
+            code_to_process = original_code if original_code is not None else actual_file_content
 
             # Format the message for Morph's Fast Apply API
-            content = f"<instruction>{instructions}</instruction>\n<code>{original_code}</code>\n<update>{code_edit}</update>"
+            content = f"<instruction>{instructions}</instruction>\n<code>{code_to_process}</code>\n<update>{code_edit}</update>"
 
             client = self._get_client()
 
@@ -121,21 +124,20 @@ class MorphTools(Toolkit):
 
             if response.choices and response.choices[0].message.content:
                 final_code = response.choices[0].message.content
-                
+
                 try:
-                    # Create backup first
                     backup_file = f"{target_file}.backup"
-                    with open(backup_file, 'w', encoding='utf-8') as f:
-                        f.write(original_code)
-                        
+                    with open(backup_file, "w", encoding="utf-8") as f:
+                        f.write(actual_file_content)
+
                     # Write the new code
-                    with open(target_file, 'w', encoding='utf-8') as f:
+                    with open(target_file, "w", encoding="utf-8") as f:
                         f.write(final_code)
-                    return f"Successfully applied edit to {target_file} using Morph Fast Apply and wrote back to file:\n\n```{final_code}\n```\n\n✅ File updated! Backup saved as {backup_file}"
-                    
+                    return f"Successfully applied edit to {target_file} using Morph Fast Apply and wrote back to file:\n\n```{final_code}\n```\n\n✅ File updated! Original content backed up as {backup_file}"
+
                 except Exception as e:
                     return f"Successfully applied edit but failed to write back to {target_file}: {e}\n\nFinal code:\n```\n{final_code}\n```"
-                
+
             else:
                 return f"Failed to apply edit to {target_file}: No response from Morph API"
 
