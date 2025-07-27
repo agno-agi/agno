@@ -1,10 +1,3 @@
-import datetime
-import os
-
-from agno.agent import Agent
-from agno.models.mistral import MistralChat
-from agno.tools.googlecalendar import GoogleCalendarTools
-
 """
 Steps to get the Google OAuth Credentials (Reference : https://developers.google.com/calendar/api/quickstart/python)
 
@@ -45,34 +38,66 @@ Steps to get the Google OAuth Credentials (Reference : https://developers.google
 
 8. Using Google Calender Tool
     - Pass the Path of downloaded credentials as credentials_path to Google Calender tool
-    - token_path is an Optional parameter where you have to provide the path to create token.json file.
-    - The token.json file is used to store the user's access and refresh tokens and is automatically created during the authorization flow if it doesn't already exist.
-    - If token_path is not explicitly provided, the file will be created in the default location which is your current working directory
-    - If you choose to specify token_path, please ensure that the directory you provide has write access, as the application needs to create or update this file during the authentication process.
 """
 
-
-try:
-    from tzlocal import get_localzone_name
-except (ModuleNotFoundError, ImportError):
-    raise ImportError("`tzlocal not found` install using `pip install tzlocal`")
+from agno.agent import Agent
+from agno.tools.googlecalendar import GoogleCalendarTools
 
 agent = Agent(
-    tools=[GoogleCalendarTools(credentials_path="<PATH_TO_YOUR_CREDENTIALS_FILE>")],
-    show_tool_calls=True,
+    tools=[
+        GoogleCalendarTools(
+            credentials_path="./credentials.json",  # Path to your downloaded OAuth credentials
+        )
+    ],
+    # show_tool_calls=True,
+    debug_mode=True,
     instructions=[
-        f"""
-You are scheduling assistant . Today is {datetime.datetime.now()} and the users timezone is {get_localzone_name()}.
-You should help users to perform these actions in their Google calendar :
+        """
+You are a scheduling assistant.
+You should help users to perform these actions in their Google calendar:
     - get their scheduled events from a certain date and time
     - create events based on provided details
+    - update existing events
+    - delete events
+    - find available time slots for scheduling
 """
     ],
-    model=MistralChat(api_key=os.getenv("MISTRAL_API_KEY")),
     add_datetime_to_instructions=True,
 )
 
-agent.print_response("Give me the list of todays events", markdown=True)
+# Basic examples
+print("Getting today's events...")
+agent.print_response("Give me the list of today's events", markdown=True)
 
+print("\nCreating a test event...")
+agent.print_response(
+    "create an event tomorrow from 9am to 10am, make the title as 'Team Meeting' and description as 'Weekly team sync'",
+    markdown=True,
+)
+
+print("\nFinding available time slots for tomorrow...")
+agent.print_response(
+    "Find available 1-hour time slots for tomorrow between 9 AM and 5 PM",
+    markdown=True,
+)
+
+# Advanced examples (uncomment to test)
+
+# print("\nUpdating the event...")
 # agent.print_response(
-#     "create an event today from 5pm to 6pm, make the title as test event v1 and description as this is a test event", markdown=True)
+#     "update the 'Team Meeting' event today to run from 5pm to 7pm and change description to 'Extended team sync'",
+#     markdown=True
+# )
+
+# print("\nGetting all events for the week...")
+# agent.print_response("Show me all events for this week", markdown=True)
+
+# print("\nDeleting the test event...")
+# agent.print_response("delete the 'Team Meeting' event", markdown=True)
+
+# Example using token-based authentication (for apps that already have tokens)
+# from agno.tools.googlecalendar import GoogleCalendarTokenTools
+# agent_with_token = Agent(
+#     tools=[GoogleCalendarTokenTools(access_token="your_access_token_here")],
+#     show_tool_calls=True,
+# )
