@@ -1,6 +1,3 @@
-# test
-
-import os
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
