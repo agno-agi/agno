@@ -3,7 +3,7 @@ from os import getenv
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 try:
     from openai import OpenAI
@@ -58,40 +58,6 @@ class MorphTools(Toolkit):
         code_edit: str,
         original_code: Optional[str] = None,
     ) -> str:
-        """
-        Use this tool to make an edit to an existing file using Morph's Fast Apply API.
-
-        This will be read by Morph's specialized model, which will quickly apply the edit with 98% accuracy.
-        You should make it clear what the edit is, while also minimizing the unchanged code you write.
-        When writing the edit, you should specify each edit in sequence, with the special comment
-        // ... existing code ... to represent unchanged code in between edited lines.
-
-        For example:
-
-        // ... existing code ...
-        FIRST_EDIT
-        // ... existing code ...
-        SECOND_EDIT
-        // ... existing code ...
-        THIRD_EDIT
-        // ... existing code ...
-
-        You should still bias towards repeating as few lines of the original file as possible to convey the change.
-        But, each edit should contain sufficient context of unchanged lines around the code you're editing to resolve ambiguity.
-        DO NOT omit spans of pre-existing code (or comments) without using the // ... existing code ... comment to indicate its absence.
-
-        Args:
-            target_file: The target file to modify
-            instructions: A single sentence instruction describing what you are going to do for the sketched edit.
-                         Use the first person to describe what you are going to do.
-                         Example: "I am adding error handling to the user authentication function"
-            code_edit: Specify ONLY the precise lines of code that you wish to edit.
-                      Use // ... existing code ... to represent unchanged code.
-            original_code: The complete original code. If not provided, will read from target_file.
-
-        Returns:
-            A message indicating success and the final merged code.
-        """
         try:
             # Always read the actual file content for backup purposes
             actual_file_content = None
@@ -109,6 +75,8 @@ class MorphTools(Toolkit):
 
             # Format the message for Morph's Fast Apply API
             content = f"<instruction>{instructions}</instruction>\n<code>{code_to_process}</code>\n<update>{code_edit}</update>"
+
+            log_debug(f"Input to Morph: {content}")
 
             client = self._get_client()
 
