@@ -102,8 +102,8 @@ class LiteLLM(Model):
 
                 msg["content"] = content_list
 
-            if m.videos is not None and len(m.videos) > 0:
-                log_warning("Video input is currently unsupported by LLM providers.")
+                if m.videos is not None and len(m.videos) > 0:
+                    log_warning("Video input is currently unsupported by LLM providers.")
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
