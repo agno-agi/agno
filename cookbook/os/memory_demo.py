@@ -1,26 +1,18 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Setup the database
-db = PostgresDb(
-    db_url=db_url,
-    session_table="sessions",
-    user_memory_table="user_memory",
-)
-
-# Setup the memory
-memory = Memory(db=db)
+db = PostgresDb(db_url=db_url)
 
 # Setup the agent
 agent = Agent(
     name="Memory Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     markdown=True,
 )

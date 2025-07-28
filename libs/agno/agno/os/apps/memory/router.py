@@ -5,8 +5,8 @@ from uuid import uuid4
 from fastapi import HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
+from agno.db.base import BaseDb
 from agno.db.schemas import UserMemory
-from agno.memory import Memory
 from agno.os.apps.memory.schemas import (
     DeleteMemoriesRequest,
     UserMemoryCreateSchema,
@@ -16,13 +16,10 @@ from agno.os.apps.memory.schemas import (
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 
 
-def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
+def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     @router.post("/memories", response_model=UserMemorySchema, status_code=200)
     async def create_memory(payload: UserMemoryCreateSchema) -> UserMemorySchema:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        user_memory = memory.db.upsert_user_memory(
+        user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=str(uuid4()),
                 memory=payload.memory,
@@ -38,10 +35,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
 
     @router.delete("/memories", status_code=204)
     async def delete_memories(request: DeleteMemoriesRequest) -> None:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        memory.db.delete_user_memories(memory_ids=request.memory_ids)
+        db.delete_user_memories(memory_ids=request.memory_ids)
 
     @router.get("/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200)
     async def get_memories(
@@ -56,10 +50,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         sort_by: Optional[str] = Query(default="last_updated", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[UserMemorySchema]:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        user_memories, total_count = memory.db.get_user_memories(
+        user_memories, total_count = db.get_user_memories(
             limit=limit,
             page=page,
             user_id=user_id,
@@ -84,10 +75,7 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
 
     @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
     async def get_memory(memory_id: str = Path()) -> UserMemorySchema:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        user_memory = memory.db.get_user_memory(memory_id=memory_id, deserialize=False)
+        user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -95,17 +83,11 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
 
     @router.get("/topics", response_model=List[str], status_code=200)
     async def get_topics() -> List[str]:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        return memory.db.get_all_memory_topics()
+        return db.get_all_memory_topics()
 
     @router.patch("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
     async def update_memory(payload: UserMemoryCreateSchema, memory_id: str = Path()) -> UserMemorySchema:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
-        user_memory = memory.db.upsert_user_memory(
+        user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=memory_id,
                 memory=payload.memory,
@@ -124,11 +106,8 @@ def attach_routes(router: APIRouter, memory: Memory) -> APIRouter:
         limit: Optional[int] = Query(default=20, description="Number of items to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
     ) -> PaginatedResponse[UserStatsSchema]:
-        if memory.db is None:
-            raise HTTPException(status_code=500, detail="Database not initialized")
-
         try:
-            user_stats, total_count = memory.db.get_user_memory_stats(
+            user_stats, total_count = db.get_user_memory_stats(
                 limit=limit,
                 page=page,
             )

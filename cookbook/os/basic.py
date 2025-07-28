@@ -1,32 +1,19 @@
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.memory import Memory
-from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces.slack import Slack
-from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
 from agno.workflow import Workflow
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Setup the database
-db = PostgresDb(
-    db_url=db_url,
-    session_table="sessions",
-    user_memory_table="user_memory",
-)
-
-# Setup the memory
-memory = Memory(db=db)
+db = PostgresDb(db_url=db_url)
 
 
 basic_agent = Agent(
-    agent_id="basic-agent",
     name="Basic Agent",
-    description="Just a simple agent",
-    model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    agent_id="basic-agent",
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_messages=True,
@@ -37,6 +24,7 @@ basic_agent = Agent(
 basic_team = Team(
     team_id="basic-team",
     name="Basic Team",
+    db=db,
     description="Just a simple team",
     members=[basic_agent],
 )
@@ -52,7 +40,6 @@ agent_os = AgentOS(
     agents=[basic_agent],
     teams=[basic_team],
     workflows=[basic_workflow],
-    interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
 )
 app = agent_os.get_app()
 

@@ -1,10 +1,9 @@
 import logging
 from typing import Optional
-from uuid import uuid4
 
 from fastapi.routing import APIRouter
 
-from agno.memory import Memory
+from agno.db.base import BaseDb
 from agno.os.apps.base import BaseApp
 from agno.os.apps.memory.router import attach_routes
 
@@ -16,9 +15,9 @@ class MemoryApp(BaseApp):
 
     router: APIRouter
 
-    def __init__(self, memory: Memory, name: Optional[str] = None):
+    def __init__(self, db: BaseDb, name: Optional[str] = None):
         self.name = name
-        self.memory = memory
+        self.db = db
 
     def get_router(self, index: int) -> APIRouter:
         if not self.name:
@@ -29,6 +28,6 @@ class MemoryApp(BaseApp):
         # Cannot be overridden
         self.router = APIRouter(prefix=self.router_prefix, tags=["Memory"])
 
-        self.router = attach_routes(router=self.router, memory=self.memory)
+        self.router = attach_routes(router=self.router, db=self.db)
 
         return self.router

@@ -1,0 +1,34 @@
+from agno.agent import Agent
+from agno.team import Team
+from agno.models.openai import OpenAIChat
+from rich.pretty import pprint
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+)
+
+team = Team(
+    model=OpenAIChat(id="gpt-4o"),
+    members=[agent],
+)
+
+
+# -*- Create a run
+team.print_response("Share a 2 sentence horror story", stream=True)
+# -*- Print the messages in the memory
+pprint(
+    [
+        m.model_dump(include={"role", "content"})
+        for m in agent.get_messages_for_session()
+    ]
+)
+
+# -*- Ask a follow up question that continues the conversation
+team.print_response("What was my first message?", stream=True)
+# -*- Print the messages in the memory
+pprint(
+    [
+        m.model_dump(include={"role", "content"})
+        for m in agent.get_messages_for_session()
+    ]
+)

@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from textwrap import dedent
-from typing import Any, Dict, List, Mapping, Optional, Type, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
-from pydantic import BaseModel
-
-from agno.models.base import Model
 from agno.models.message import Message
-from agno.run.response import RunStatus
+from agno.run.response import RunResponse, RunStatus
 from agno.run.team import TeamRunResponse
-from agno.session.summary import SessionSummary, SessionSummaryResponse
+from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
 
@@ -36,10 +32,8 @@ class TeamSession:
     session_data: Optional[Dict[str, Any]] = None
     # Extra Data stored with this agent
     extra_data: Optional[Dict[str, Any]] = None
-    # List of all messages in the session
-    chat_history: Optional[list[Message]] = None
     # List of all runs in the session
-    runs: Optional[list[TeamRunResponse]] = None
+    runs: Optional[list[Union[TeamRunResponse, RunResponse]]] = None
     # Summary of the session
     summary: Optional[Dict[str, Any]] = None
 
@@ -51,7 +45,6 @@ class TeamSession:
     def to_dict(self) -> Dict[str, Any]:
         session_dict = asdict(self)
 
-        session_dict["chat_history"] = [msg.to_dict() for msg in self.chat_history] if self.chat_history else None
         session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
         session_dict["summary"] = self.summary.to_dict() if isinstance(self.summary, SessionSummary) else self.summary
 
@@ -70,14 +63,16 @@ class TeamSession:
             log_warning("TeamSession is missing session_id")
             return None
 
-        # TODO: Account for runs inside a team that can be RunResponse
-        runs = data.get("runs")
-        if runs is not None and isinstance(runs[0], dict):
-            runs = [TeamRunResponse.from_dict(run) for run in runs]
+        if data.get("summary") is not None:
+            data["summary"] = SessionSummary.from_dict(data["summary"])
 
-        chat_history = data.get("chat_history")
-        if chat_history is not None and isinstance(chat_history[0], dict):
-            chat_history = [Message.from_dict(msg) for msg in chat_history]
+        runs = data.get("runs")
+        serialized_runs = []
+        for run in runs:
+            if "agent_id" in run:
+                serialized_runs.append(RunResponse.from_dict(run))
+            elif "team_id" in run:
+                serialized_runs.append(TeamRunResponse.from_dict(run))
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
@@ -90,12 +85,11 @@ class TeamSession:
             extra_data=data.get("extra_data"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            chat_history=chat_history,
-            runs=runs,
+            runs=serialized_runs,
             summary=data.get("summary"),
         )
 
-    def add_run(self, run: TeamRunResponse):
+    def add_run(self, run: Union[TeamRunResponse, RunResponse]):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages
@@ -108,7 +102,7 @@ class TeamSession:
 
         self.runs.append(run)
 
-        log_debug("Added RunResponse to Agent Session")
+        log_debug("Added RunResponse to Team Session")
 
     def get_messages_from_last_n_runs(
         self,
@@ -119,6 +113,7 @@ class TeamSession:
         skip_role: Optional[str] = None,
         skip_status: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        member_runs: bool = False,
     ) -> List[Message]:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
@@ -144,6 +139,10 @@ class TeamSession:
             session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+
+        if not member_runs:
+            # Filter for the main team runs
+            session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
@@ -229,149 +228,6 @@ class TeamSession:
                     final_messages.append(assistant_message_from_run)
         return final_messages
 
-    # Session Summary functions
-    def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
-        if model.supports_native_structured_outputs:
-            return SessionSummaryResponse
-
-        elif model.supports_json_schema_outputs:
-            return {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": SessionSummaryResponse.__name__,
-                    "schema": SessionSummaryResponse.model_json_schema(),
-                },
-            }
-        else:
-            return {"type": "json_object"}
-
-    def get_system_message(
-        self,
-        conversation: List[Message],
-        response_format: Union[Dict[str, Any], Type[BaseModel]],
-        session_summary_prompt: Optional[str] = None,
-    ) -> Message:
-        if session_summary_prompt is not None:
-            return Message(role="system", content=session_summary_prompt)
-
-        # -*- Return the default system message for session summary
-        system_prompt = dedent("""\
-        Analyze the following conversation between a user and an assistant, and extract the following details:
-          - Summary (str): Provide a concise summary of the session, focusing on important information that would be helpful for future interactions.
-          - Topics (Optional[List[str]]): List the topics discussed in the session.
-        Keep the summary concise and to the point. Only include relevant information.
-
-        <conversation>
-        """)
-        conversation_messages = []
-        for message in conversation:
-            if message.role == "user":
-                conversation_messages.append(f"User: {message.content}")
-            elif message.role in ["assistant", "model"]:
-                conversation_messages.append(f"Assistant: {message.content}\n")
-        system_prompt += "\n".join(conversation_messages)
-        system_prompt += "</conversation>"
-
-        if response_format == {"type": "json_object"}:
-            from agno.utils.prompts import get_json_output_prompt
-
-            system_prompt += "\n" + get_json_output_prompt(SessionSummaryResponse)  # type: ignore
-
-        return Message(role="system", content=system_prompt)
-
-    def _prepare_summary_messages(
-        self,
-        session_summary_model: "Model",  # type: ignore
-        session_summary_prompt: Optional[str] = None,
-    ) -> List[Message]:
-        """Prepare messages for session summary generation"""
-        response_format = self.get_response_format(session_summary_model)
-
-        return [
-            self.get_system_message(
-                self.get_messages_for_session(),
-                response_format=response_format,
-                session_summary_prompt=session_summary_prompt,
-            ),
-            Message(role="user", content="Provide the summary of the conversation."),
-        ]
-
-    def _process_summary_response(self, summary_response, session_summary_model: "Model") -> Optional[SessionSummary]:  # type: ignore
-        """Process the model response into a SessionSummary"""
-        from datetime import datetime
-
-        if summary_response is None:
-            return None
-
-        # Handle native structured outputs
-        if (
-            session_summary_model.supports_native_structured_outputs
-            and summary_response.parsed is not None
-            and isinstance(summary_response.parsed, SessionSummaryResponse)
-        ):
-            session_summary = SessionSummary(
-                summary=summary_response.parsed.summary,
-                topics=summary_response.parsed.topics,
-                last_updated=datetime.now(),
-            )
-            self.summary = session_summary
-            log_debug("Session summary created", center=True)
-            return session_summary
-
-        # Handle string responses
-        if isinstance(summary_response.content, str):
-            try:
-                from agno.utils.string import parse_response_model_str
-
-                parsed_summary = parse_response_model_str(summary_response.content, SessionSummaryResponse)
-
-                if parsed_summary is not None:
-                    session_summary = SessionSummary(
-                        summary=parsed_summary.summary, topics=parsed_summary.topics, last_updated=datetime.now()
-                    )
-                    self.summary = session_summary
-                    log_debug("Session summary created", center=True)
-                    return session_summary
-                else:
-                    log_warning("Failed to parse session summary response")
-
-            except Exception as e:
-                log_warning(f"Failed to parse session summary response: {e}")
-
-        return None
-
-    def create_session_summary(
-        self,
-        session_summary_model: Optional["Model"] = None,  # type: ignore
-        session_summary_prompt: Optional[str] = None,
-    ) -> Optional[SessionSummary]:
-        """Creates a summary of the session"""
-        log_debug("Creating session summary", center=True)
-        if session_summary_model is None:
-            return None
-
-        messages = self._prepare_summary_messages(session_summary_model, session_summary_prompt)
-        response_format = self.get_response_format(session_summary_model)
-
-        summary_response = session_summary_model.response(messages=messages, response_format=response_format)
-        return self._process_summary_response(summary_response, session_summary_model)
-
-    async def acreate_session_summary(
-        self,
-        session_summary_model: Optional["Model"] = None,  # type: ignore
-        session_summary_prompt: Optional[str] = None,
-    ) -> Optional[SessionSummary]:
-        """Creates a summary of the session"""
-        log_debug("Creating session summary", center=True)
-        if session_summary_model is None:
-            return None
-
-        messages = self._prepare_summary_messages(session_summary_model, session_summary_prompt)
-        response_format = self.get_response_format(session_summary_model)
-
-        summary_response = await session_summary_model.aresponse(messages=messages, response_format=response_format)
-        return self._process_summary_response(summary_response, session_summary_model)
-
     def get_session_summary(self) -> Optional[SessionSummary]:
         """Get the session summary for the session"""
 
@@ -386,5 +242,4 @@ class TeamSession:
         messages = []
         for run in self.runs:
             messages.extend([msg for msg in run.messages if not msg.from_history])
-        self.chat_history = messages
         return messages

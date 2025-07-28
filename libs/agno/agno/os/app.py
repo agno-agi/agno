@@ -123,28 +123,27 @@ class AgentOS:
         # Process agents
         if self.agents:
             for agent in self.agents:
-                if hasattr(agent, "memory") and agent.memory and hasattr(agent.memory, "db") and agent.memory.db:
-                    memory_id = id(agent.memory)
-                    db_id = id(agent.memory.db)
+                if hasattr(agent, "db") and agent.db:
+                    db_id = id(agent.db)
 
                     # Memory app
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_apps.append(MemoryApp(memory=agent.memory))
+                    if add_unique_component("memory", str(db_id)):
+                        discovered_apps.append(MemoryApp(db=agent.db))
 
                     # Session app
-                    if agent.memory.db.session_table_name:
+                    if agent.db.session_table_name:
                         if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=agent.memory.db))
+                            discovered_apps.append(SessionApp(db=agent.db))
 
                     # Metrics app
-                    if agent.memory.db.metrics_table_name:
+                    if agent.db.metrics_table_name:
                         if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=agent.memory.db))
+                            discovered_apps.append(MetricsApp(db=agent.db))
 
                     # Eval app
-                    if agent.memory.db.eval_table_name:
+                    if agent.db.eval_table_name:
                         if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=agent.memory.db))
+                            discovered_apps.append(EvalApp(db=agent.db))
 
                 # Knowledge app
                 if hasattr(agent, "knowledge") and agent.knowledge:
@@ -155,28 +154,27 @@ class AgentOS:
         # Process teams
         if self.teams:
             for team in self.teams:
-                if hasattr(team, "memory") and team.memory and hasattr(team.memory, "db") and team.memory.db:
-                    memory_id = id(team.memory)
-                    db_id = id(team.memory.db)
+                if hasattr(team, "db") and team.db:
+                    db_id = id(team.db)
 
                     # Memory app
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_apps.append(MemoryApp(memory=team.memory))
+                    if add_unique_component("memory", str(db_id)):
+                        discovered_apps.append(MemoryApp(db=team.db))
 
                     # Session app
-                    if team.memory.db.session_table_name:
+                    if team.db.session_table_name:
                         if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=team.memory.db))
+                            discovered_apps.append(SessionApp(db=team.db))
 
                     # Metrics app
-                    if team.memory.db.metrics_table_name:
+                    if team.db.metrics_table_name:
                         if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=team.memory.db))
+                            discovered_apps.append(MetricsApp(db=team.db))
 
                     # Eval app
-                    if team.memory.db.eval_table_name:
+                    if team.db.eval_table_name:
                         if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=team.memory.db))
+                            discovered_apps.append(EvalApp(db=team.db))
 
                 # Knowledge app
                 if hasattr(team, "knowledge") and team.knowledge:

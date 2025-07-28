@@ -3,24 +3,23 @@
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.tools.calculator import CalculatorTools
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(
-    db_url=db_url,
-    eval_table="eval_runs",
-)
+db = PostgresDb(db_url=db_url)
 
 # Setup the agent
 basic_agent = Agent(
     agent_id="basic-agent",
-    name="Basic Agent",
+    name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=Memory(db=db),
+    db=db,
     markdown=True,
+    instructions="You are an assistant that can answer arithmetic questions. Always use the Calculator tools you have.",
+    tools=[CalculatorTools()],
 )
 
 # Setting up and running an eval for our agent

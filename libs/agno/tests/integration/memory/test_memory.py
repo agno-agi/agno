@@ -4,8 +4,8 @@ from datetime import datetime
 
 import pytest
 
-from agno.memory.db import SqliteMemoryDb
-from agno.memory.memory import Memory, UserMemory
+from agno.db.sqlite import SqliteDb
+from agno.memory import MemoryManager, UserMemory
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.run.response import RunResponse
@@ -27,8 +27,7 @@ def temp_db_file():
 @pytest.fixture
 def memory_db(temp_db_file):
     """Create a SQLite memory database for testing."""
-    db = SqliteMemoryDb(db_file=temp_db_file)
-    db.create()
+    db = SqliteDb(db_file=temp_db_file)
     return db
 
 
@@ -41,23 +40,28 @@ def model():
 @pytest.fixture
 def memory_with_db(model, memory_db):
     """Create a Memory instance with database connections."""
-    return Memory(model=model, db=memory_db)
+    return MemoryManager(model=model, db=memory_db)
 
 
-def test_add_user_memory_with_db(memory_with_db):
+def test_add_user_memory_with_db(memory_with_db: MemoryManager):
     """Test adding a user memory with database persistence."""
     # Create a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    user_memory = UserMemory(
+        user_id="test_user", memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now()
+    )
 
     # Add the memory
     memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
 
     # Verify the memory was added to the in-memory store
     assert memory_id is not None
-    assert memory_with_db.memories["test_user"][memory_id] == user_memory
+    assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
+    assert (
+        memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id).memory == "The user's name is John Doe"
+    )
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory was loaded from the database
     assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
@@ -105,7 +109,7 @@ def test_create_user_memories_with_db(memory_with_db):
     assert len(memories) > 0
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memories were loaded from the database
     new_memories = new_memory.get_user_memories(user_id="test_user")
@@ -131,7 +135,7 @@ async def test_acreate_user_memory_with_db(memory_with_db):
     assert len(memories) > 0
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memory was loaded from the database
     new_memories = new_memory.get_user_memories(user_id="test_user")
@@ -161,7 +165,7 @@ async def test_acreate_user_memories_with_db(memory_with_db):
     assert len(memories) > 0
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify memories were loaded from the database
     new_memories = new_memory.get_user_memories(user_id="test_user")
@@ -248,7 +252,7 @@ async def test_acreate_session_summary_with_db(memory_with_db):
 def test_memory_persistence_across_instances(model, memory_db):
     """Test that memories persist across different Memory instances."""
     # Create the first Memory instance
-    memory1 = Memory(model=model, db=memory_db)
+    memory1 = MemoryManager(model=model, db=memory_db)
 
     # Add a user memory
     user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
@@ -256,7 +260,7 @@ def test_memory_persistence_across_instances(model, memory_db):
     memory_id = memory1.add_user_memory(memory=user_memory, user_id="test_user")
 
     # Create a second Memory instance with the same database
-    memory2 = Memory(model=model, db=memory_db)
+    memory2 = MemoryManager(model=model, db=memory_db)
 
     # Verify the memory is accessible from the second instance
     assert memory2.get_user_memory(user_id="test_user", memory_id=memory_id) is not None
@@ -289,7 +293,7 @@ def test_memory_operations_with_db(memory_with_db):
     assert memory_id not in memory_with_db.memories["test_user"]
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory is still deleted in the new instance
     assert "test_user" not in new_memory.memories or memory_id not in new_memory.memories["test_user"]
@@ -324,7 +328,7 @@ def test_summary_operations_with_db(memory_with_db):
     assert session_id not in memory_with_db.summaries[user_id]
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the summary is still deleted in the new instance
     assert "test_user" not in new_memory.summaries or session_id not in new_memory.summaries["test_user"]
@@ -362,7 +366,7 @@ def test_clear_memory_with_db(memory_with_db):
     assert memory_with_db.summaries == {}
 
     # Create a new Memory instance with the same database
-    new_memory = Memory(model=memory_with_db.model, db=memory_with_db.db)
+    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory is still cleared in the new instance
     assert new_memory.memories == {}

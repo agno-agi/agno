@@ -33,14 +33,13 @@ basic_agent = Agent(
     knowledge=knowledge,
     add_datetime_to_instructions=True,
     markdown=True,
+    db=contents_db,
 )
 
 agent_os = AgentOS(
     description="Example app for basic agent with knowledge capabilities",
     os_id="knowledge-demo",
-    agents=[
-        basic_agent,
-    ],
+    agents=[basic_agent],
 )
 app = agent_os.get_app()
 

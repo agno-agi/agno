@@ -2,27 +2,18 @@
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
-from agno.memory import Memory
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(
-    db_url=db_url,
-    session_table="sessions",
-    metrics_table="metrics",
-)
-
-# Setup the memory
-memory = Memory(db=db)
+db = PostgresDb(db_url=db_url)
 
 # Setup the agent
 basic_agent = Agent(
     name="Basic Agent",
     model=Claude(id="claude-3-5-sonnet-20240620"),
-    session_id="123",
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     markdown=True,
 )
