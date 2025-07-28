@@ -1362,41 +1362,36 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get metrics: {e}")
             return [], 0
 
-    # --- Knowledge ---
+    # --- Knowledge methods ---
 
-    def get_source_status(self, id: str) -> Optional[str]:
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         if not self.knowledge_table_name:
-            return None
+            return
 
         try:
-            response = self.client.get_item(
-                TableName=self.knowledge_table_name,
-                Key={"id": {"S": id}},
-                ProjectionExpression="status",
-            )
-
-            item = response.get("Item")
-            if item and "status" in item:
-                return item["status"]["S"]
-            return None
+            self.client.delete_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
+            log_debug(f"Deleted knowledge content {id}")
 
         except Exception as e:
-            log_error(f"Failed to get source status {id}: {e}")
-            return None
+            log_error(f"Failed to delete knowledge content {id}: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        pass
+        """Get a knowledge row from the database.
 
-    def get_knowledge_contents(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ):
-        pass
+        Args:
+            id (str): The ID of the knowledge row to get.
 
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
         if not self.knowledge_table_name:
             return None
 
@@ -1409,16 +1404,30 @@ class DynamoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Failed to get knowledge source {id}: {e}")
+            log_error(f"Failed to get knowledge content {id}: {e}")
             return None
 
-    def get_knowledge_sources(
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         if not self.knowledge_table_name:
             return [], 0
 
@@ -1466,39 +1475,32 @@ class DynamoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Failed to get knowledge sources: {e}")
+            log_error(f"Failed to get knowledge contents: {e}")
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        pass
+        """Upsert knowledge content in the database.
 
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         if not self.knowledge_table_name:
-            return
+            return None
 
         try:
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=self.knowledge_table_name, Item=item)
 
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
+            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
+            return knowledge_row
 
         except Exception as e:
-            log_error(f"Failed to upsert knowledge source {knowledge_row.id}: {e}")
-
-    def delete_knowledge_content(self, id: str):
-        pass
-
-    def delete_knowledge_source(self, id: str):
-        if not self.knowledge_table_name:
-            return
-
-        try:
-            self.client.delete_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
-            log_debug(f"Deleted knowledge source {id}")
-
-        except Exception as e:
-            log_error(f"Failed to delete knowledge source {id}: {e}")
+            log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
+            return None
 
     # --- Eval ---
 
