@@ -49,18 +49,22 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
+content_creation_workflow = Workflow(
+    name="Content Creation Workflow",
+    description="Automated content creation from blog posts to social media",
+    storage=SqliteStorage(
+        table_name="workflow_v2",
+        db_file="tmp/workflow_v2.db",
+        mode="workflow_v2",
+    ),
+    # Define the sequence of steps
+    # First run the research team, then the content planner Agent
+    # You can mix and match agents, teams, and even regular python functions as steps
+    steps=[research_step, content_planning_step],
+)
+
 # Create and use workflow
 if __name__ == "__main__":
-    content_creation_workflow = Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation from blog posts to social media",
-        storage=SqliteStorage(
-            table_name="workflow_v2",
-            db_file="tmp/workflow_v2.db",
-            mode="workflow_v2",
-        ),
-        steps=[research_step, content_planning_step],
-    )
     content_creation_workflow.print_response(
         message="AI trends in 2024",
         markdown=True,

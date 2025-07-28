@@ -11,6 +11,7 @@ from typing import Any, List
 import requests
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -180,13 +181,13 @@ def recruitment_execution(
         screening_prompt = f"""
         {message}
         Please screen this candidate for the job position.
-        
+
         RESUME:
         {resume_text}
-        
+
         JOB DESCRIPTION:
         {jd}
-        
+
         Evaluate how well this candidate matches the job requirements and provide a score from 0-10.
         """
 
@@ -222,7 +223,6 @@ def recruitment_execution(
             - Candidate: {candidate.name}
             - Email: {candidate.email}
             - Interviewer: Dirk Brand (dirk@phidata.com)
-            
             Use the simulate_zoom_scheduling tool to create the meeting.
             """
 
@@ -253,7 +253,6 @@ def recruitment_execution(
             - To: {candidate.email}
             - Subject: {email_content.subject}
             - Body: {email_content.body}
-            
             Use the simulate_email_sending tool.
             """
 
@@ -263,13 +262,11 @@ def recruitment_execution(
     # Final summary
     summary = f"""
     🎉 RECRUITMENT WORKFLOW COMPLETED!
-    
     📊 Summary:
     • Processed: {len(resumes)} candidate resumes
     • Selected: {len(selected_candidates)} candidates for interviews
     • Interviews scheduled: {len(selected_candidates)}
     • Emails sent: {len(selected_candidates)}
-    
     ✅ Selected candidates:
     """
 
@@ -285,6 +282,11 @@ def recruitment_execution(
 recruitment_workflow = Workflow(
     name="Employee Recruitment Workflow (Simulated)",
     description="Automated candidate screening with simulated scheduling and email",
+    storage=SqliteStorage(
+        table_name="recruiter_workflow_sessions",
+        db_file="tmp/workflows.db",
+        mode="workflow_v2",
+    ),
     steps=recruitment_execution,
     workflow_session_state={},  # Initialize empty workflow session state
 )

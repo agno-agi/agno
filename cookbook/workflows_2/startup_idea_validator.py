@@ -50,6 +50,7 @@ from typing import Any
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
@@ -189,16 +190,15 @@ async def startup_validation_execution(
 
     clarification_prompt = f"""
     {message}
-    
+
     Please analyze and refine the following startup idea:
-    
+
     STARTUP IDEA: {idea}
-    
+
     Evaluate:
     1. The originality of this idea compared to existing solutions
     2. Define a clear mission statement for this startup
     3. Outline specific, measurable objectives
-    
     Provide insights on how to strengthen and focus the core concept.
     """
 
@@ -220,18 +220,15 @@ async def startup_validation_execution(
 
     market_research_prompt = f"""
     Based on the refined startup idea and clarification below, conduct comprehensive market research:
-    
     STARTUP IDEA: {idea}
     ORIGINALITY: {idea_clarification.originality}
     MISSION: {idea_clarification.mission}
     OBJECTIVES: {idea_clarification.objectives}
-    
     Please research and provide:
     1. Total Addressable Market (TAM) - overall market size
     2. Serviceable Available Market (SAM) - portion you could serve
     3. Serviceable Obtainable Market (SOM) - realistic market share
     4. Target customer segments with detailed characteristics
-    
     Use web search to find current market data and trends.
     """
 
@@ -253,19 +250,16 @@ async def startup_validation_execution(
 
     competitor_prompt = f"""
     Based on the startup idea and market research below, analyze the competitive landscape:
-    
     STARTUP IDEA: {idea}
     TAM: {market_research.total_addressable_market}
     SAM: {market_research.serviceable_available_market}
     SOM: {market_research.serviceable_obtainable_market}
     TARGET SEGMENTS: {market_research.target_customer_segments}
-    
     Please research and provide:
     1. Identify direct and indirect competitors
     2. SWOT analysis for each major competitor
     3. Assessment of startup's potential competitive positioning
     4. Market gaps and opportunities
-    
     Use web search to find current competitor information.
     """
 
@@ -287,25 +281,22 @@ async def startup_validation_execution(
 
     report_prompt = f"""
     Synthesize all the research and analysis into a comprehensive startup validation report:
-    
+
     STARTUP IDEA: {idea}
-    
+
     IDEA CLARIFICATION:
     - Originality: {idea_clarification.originality}
     - Mission: {idea_clarification.mission}
     - Objectives: {idea_clarification.objectives}
-    
     MARKET RESEARCH:
     - TAM: {market_research.total_addressable_market}
     - SAM: {market_research.serviceable_available_market}
     - SOM: {market_research.serviceable_obtainable_market}
     - Target Segments: {market_research.target_customer_segments}
-    
     COMPETITOR ANALYSIS:
     - Competitors: {competitor_analysis.competitors}
     - SWOT: {competitor_analysis.swot_analysis}
     - Positioning: {competitor_analysis.positioning}
-    
     Create a professional validation report with:
     1. Executive summary
     2. Idea assessment (strengths/weaknesses)
@@ -329,41 +320,40 @@ async def startup_validation_execution(
     # Final summary
     summary = f"""
     🎉 STARTUP IDEA VALIDATION COMPLETED!
-    
     📊 Validation Summary:
     • Startup Idea: {idea}
     • Idea Clarification: ✅ Completed
     • Market Research: ✅ Completed
     • Competitor Analysis: ✅ Completed
     • Final Report: ✅ Generated
-    
+
     📈 Key Market Insights:
     • TAM: {market_research.total_addressable_market[:150]}...
     • Target Segments: {market_research.target_customer_segments[:150]}...
-    
+
     🏆 Competitive Positioning:
     {competitor_analysis.positioning[:200]}...
-    
+
     📋 COMPREHENSIVE VALIDATION REPORT:
-    
+
     ## Executive Summary
     {validation_report.executive_summary}
-    
+
     ## Idea Assessment
     {validation_report.idea_assessment}
-    
+
     ## Market Opportunity
     {validation_report.market_opportunity}
-    
+
     ## Competitive Landscape
     {validation_report.competitive_landscape}
-    
+
     ## Strategic Recommendations
     {validation_report.recommendations}
-    
+
     ## Next Steps
     {validation_report.next_steps}
-    
+
     ⚠️ Disclaimer: This validation is for informational purposes only. Conduct additional due diligence before making investment decisions.
     """
 
@@ -374,6 +364,11 @@ async def startup_validation_execution(
 startup_validation_workflow = Workflow(
     name="Startup Idea Validator",
     description="Comprehensive startup idea validation with market research and competitive analysis",
+    storage=SqliteStorage(
+        table_name="startup_ideas_workflow_sessions",
+        db_file="tmp/workflows.db",
+        mode="workflow_v2",
+    ),
     steps=startup_validation_execution,
     workflow_session_state={},  # Initialize empty workflow session state
 )

@@ -133,7 +133,6 @@ class SqliteStorage(Storage):
                 Column("workflow_id", String, index=True),
                 Column("workflow_name", String, index=True),
                 Column("workflow_data", sqlite.JSON),
-                # Store WorkflowRunResponse objects
                 Column("runs", sqlite.JSON),
             ]
 
@@ -247,8 +246,9 @@ class SqliteStorage(Storage):
                     # type: ignore
                     return TeamSession.from_dict(result._mapping) if result is not None else None
                 elif self.mode == "workflow":
-                    # type: ignore
-                    return WorkflowSession.from_dict(result._mapping) if result is not None else None
+                    return WorkflowSession.from_dict(result._mapping) if result is not None else None  # type: ignore
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(result._mapping) if result is not None else None  # type: ignore
         except Exception as e:
             if "no such table" in str(e):
                 log_debug(f"Table does not exist: {self.table.name}")
@@ -280,6 +280,8 @@ class SqliteStorage(Storage):
                     elif self.mode == "team":
                         stmt = stmt.where(self.table.c.team_id == entity_id)
                     elif self.mode == "workflow":
+                        stmt = stmt.where(self.table.c.workflow_id == entity_id)
+                    elif self.mode == "workflow_v2":
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
@@ -320,7 +322,7 @@ class SqliteStorage(Storage):
                         stmt = stmt.where(self.table.c.workflow_id == entity_id)
                 # order by created_at desc
                 stmt = stmt.order_by(self.table.c.created_at.desc())
-                # execute query
+
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
                     if self.mode == "agent":
@@ -330,8 +332,9 @@ class SqliteStorage(Storage):
                         # type: ignore
                         return [TeamSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "workflow":
-                        # type: ignore
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                    elif self.mode == "workflow_v2":
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]  # type: ignore
                 else:
                     return []
         except Exception as e:
@@ -381,15 +384,15 @@ class SqliteStorage(Storage):
                 # Execute query
                 rows = sess.execute(stmt).fetchall()
                 if rows is not None:
-                    if self.mode == "agent":
-                        # type: ignore
-                        return [AgentSession.from_dict(row._mapping) for row in rows]
+                    if self.mode == "agent":  # type: ignore
+                        return [AgentSession.from_dict(row._mapping) for row in rows]  # type: ignore
                     elif self.mode == "team":
                         # type: ignore
                         return [TeamSession.from_dict(row._mapping) for row in rows]
                     elif self.mode == "workflow":
-                        # type: ignore
-                        return [WorkflowSession.from_dict(row._mapping) for row in rows]
+                        return [WorkflowSession.from_dict(row._mapping) for row in rows]  # type: ignore
+                    elif self.mode == "workflow_v2":
+                        return [WorkflowSessionV2.from_dict(row._mapping) for row in rows]  # type: ignore
                 return []
         except Exception as e:
             if "no such table" in str(e):
@@ -451,7 +454,7 @@ class SqliteStorage(Storage):
                         agent_id=session.agent_id,  # type: ignore
                         team_session_id=session.team_session_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         agent_data=session.agent_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -464,7 +467,7 @@ class SqliteStorage(Storage):
                             agent_id=session.agent_id,  # type: ignore
                             team_session_id=session.team_session_id,  # type: ignore
                             user_id=session.user_id,
-                            memory=session.memory,
+                            memory=getattr(session, "memory", None),
                             agent_data=session.agent_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
@@ -478,7 +481,7 @@ class SqliteStorage(Storage):
                         team_id=session.team_id,  # type: ignore
                         user_id=session.user_id,
                         team_session_id=session.team_session_id,  # type: ignore
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         team_data=session.team_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -492,7 +495,7 @@ class SqliteStorage(Storage):
                             team_id=session.team_id,  # type: ignore
                             user_id=session.user_id,
                             team_session_id=session.team_session_id,  # type: ignore
-                            memory=session.memory,
+                            memory=getattr(session, "memory", None),
                             team_data=session.team_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
@@ -505,7 +508,7 @@ class SqliteStorage(Storage):
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
-                        memory=session.memory,
+                        memory=getattr(session, "memory", None),
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -518,7 +521,37 @@ class SqliteStorage(Storage):
                         set_=dict(
                             workflow_id=session.workflow_id,  # type: ignore
                             user_id=session.user_id,
-                            memory=session.memory,
+                            memory=getattr(session, "memory", None),
+                            workflow_data=session.workflow_data,  # type: ignore
+                            session_data=session.session_data,
+                            extra_data=session.extra_data,
+                            updated_at=int(time.time()),
+                        ),
+                    )
+                elif self.mode == "workflow_v2":
+                    # Convert session to dict to ensure proper serialization
+                    session_dict = session.to_dict()
+
+                    # Create an insert statement for WorkflowSessionV2
+                    stmt = sqlite.insert(self.table).values(
+                        session_id=session.session_id,
+                        workflow_id=session.workflow_id,  # type: ignore
+                        workflow_name=session.workflow_name,  # type: ignore
+                        user_id=session.user_id,
+                        runs=session_dict.get("runs"),
+                        workflow_data=session.workflow_data,  # type: ignore
+                        session_data=session.session_data,
+                        extra_data=session.extra_data,
+                    )
+
+                    # Define the upsert if the session_id already exists
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=dict(
+                            workflow_id=session.workflow_id,  # type: ignore
+                            workflow_name=session.workflow_name,  # type: ignore
+                            user_id=session.user_id,
+                            runs=session_dict.get("runs"),
                             workflow_data=session.workflow_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,

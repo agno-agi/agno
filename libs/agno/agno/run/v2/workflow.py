@@ -6,12 +6,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
-from agno.models.message import Message
 from agno.run.base import RunStatus
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
-    from agno.workflow.v2.types import WorkflowMetrics
+    from agno.workflow.v2.types import StepOutput, WorkflowMetrics
 
 
 class WorkflowRunEvent(str, Enum):
@@ -43,12 +42,13 @@ class WorkflowRunEvent(str, Enum):
     steps_execution_started = "StepsExecutionStarted"
     steps_execution_completed = "StepsExecutionCompleted"
 
+    step_output = "StepOutput"
+
 
 @dataclass
 class BaseWorkflowRunResponseEvent:
     """Base class for all workflow run response events"""
 
-    run_id: str
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
 
@@ -56,6 +56,7 @@ class BaseWorkflowRunResponseEvent:
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
+    run_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
@@ -157,7 +158,7 @@ class StepStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
 
 @dataclass
@@ -166,7 +167,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
     content: Optional[Any] = None
     content_type: str = "str"
@@ -187,7 +188,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_error.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     error: Optional[str] = None
 
 
@@ -197,7 +198,7 @@ class LoopExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     max_iterations: Optional[int] = None
 
 
@@ -207,7 +208,7 @@ class LoopIterationStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_iteration_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     iteration: int = 0
     max_iterations: Optional[int] = None
 
@@ -218,7 +219,7 @@ class LoopIterationCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_iteration_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     iteration: int = 0
     max_iterations: Optional[int] = None
     iteration_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
@@ -231,7 +232,7 @@ class LoopExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.loop_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     total_iterations: int = 0
     max_iterations: Optional[int] = None
     all_results: List[List["StepOutput"]] = field(default_factory=list)  # noqa: F821
@@ -243,7 +244,7 @@ class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.parallel_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     parallel_step_count: Optional[int] = None
 
 
@@ -253,7 +254,7 @@ class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.parallel_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     parallel_step_count: Optional[int] = None
 
     # Results from all parallel steps
@@ -266,7 +267,7 @@ class ConditionExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.condition_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     condition_result: Optional[bool] = None
 
 
@@ -276,7 +277,7 @@ class ConditionExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.condition_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     condition_result: Optional[bool] = None
     executed_steps: Optional[int] = None
 
@@ -290,7 +291,7 @@ class RouterExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.router_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     # Names of steps selected by router
     selected_steps: List[str] = field(default_factory=list)
 
@@ -301,7 +302,7 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.router_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     # Names of steps that were selected
     selected_steps: List[str] = field(default_factory=list)
     executed_steps: Optional[int] = None
@@ -316,7 +317,7 @@ class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.steps_execution_started.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     steps_count: Optional[int] = None
 
 
@@ -326,7 +327,7 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.steps_execution_completed.value
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
     steps_count: Optional[int] = None
     executed_steps: Optional[int] = None
 
@@ -340,14 +341,14 @@ class StepOutputEvent(BaseWorkflowRunResponseEvent):
 
     event: str = "StepOutput"
     step_name: Optional[str] = None
-    step_index: Optional[int] = None
+    step_index: Optional[Union[int, tuple]] = None
 
     # Store actual step execution result as StepOutput object
     step_output: Optional["StepOutput"] = None  # noqa: F821
 
     # Properties for backward compatibility
     @property
-    def content(self) -> Optional[str]:
+    def content(self) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]]:
         return self.step_output.content if self.step_output else None
 
     @property
@@ -403,9 +404,8 @@ WorkflowRunResponseEvent = Union[
 class WorkflowRunResponse:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
-    content: Optional[Any] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
-    messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
 
     # Workflow-specific fields
@@ -446,7 +446,6 @@ class WorkflowRunResponse:
             if v is not None
             and k
             not in [
-                "messages",
                 "extra_data",
                 "images",
                 "videos",
@@ -460,9 +459,6 @@ class WorkflowRunResponse:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
-
-        if self.messages is not None:
-            _dict["messages"] = [m.to_dict() for m in self.messages]
 
         if self.extra_data is not None:
             _dict["extra_data"] = self.extra_data
@@ -512,11 +508,15 @@ class WorkflowRunResponse:
         # Import here to avoid circular import
         from agno.workflow.v2.step import StepOutput
 
-        messages = data.pop("messages", [])
-        messages = [Message.model_validate(message) for message in messages] if messages else None
+        workflow_metrics_dict = data.pop("workflow_metrics", {})
+        workflow_metrics = None
+        if workflow_metrics_dict:
+            from agno.workflow.v2.workflow import WorkflowMetrics
+
+            workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
         step_responses = data.pop("step_responses", [])
-        parsed_step_responses: List["StepOutput"] = []
+        parsed_step_responses: List[Union["StepOutput", List["StepOutput"]]] = []
         if step_responses:
             for step_output_dict in step_responses:
                 # Reconstruct StepOutput from dict
@@ -539,7 +539,6 @@ class WorkflowRunResponse:
         events = data.pop("events", [])
 
         return cls(
-            messages=messages,
             step_responses=parsed_step_responses,
             extra_data=extra_data,
             images=images,
@@ -547,6 +546,7 @@ class WorkflowRunResponse:
             audio=audio,
             response_audio=response_audio,
             events=events,
+            workflow_metrics=workflow_metrics,
             **data,
         )
 
@@ -561,3 +561,7 @@ class WorkflowRunResponse:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
+
+    def has_completed(self) -> bool:
+        """Check if the workflow run is completed (either successfully or with error)"""
+        return self.status in [RunStatus.completed, RunStatus.error]

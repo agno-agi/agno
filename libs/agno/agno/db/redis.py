@@ -29,7 +29,7 @@ class RedisStorage(Storage):
         port: int = 6379,
         db: int = 0,
         password: Optional[str] = None,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
         ssl: Optional[bool] = False,
         expire: Optional[int] = None,
     ):
@@ -42,7 +42,7 @@ class RedisStorage(Storage):
             port (int): Redis port number
             db (int): Redis database number
             password (Optional[str]): Redis password if authentication is required
-            mode (Optional[Literal["agent", "team", "workflow"]]): Storage mode
+            mode (Optional[Literal["agent", "team", "workflow", "workflow_v2"]]): Storage mode
             ssl (Optional[bool]): Whether to use SSL for Redis connection
             expire (Optional[int]): TTL (time to live) in seconds for Redis keys. None means no expiration.
         """
@@ -101,6 +101,8 @@ class RedisStorage(Storage):
                 return TeamSession.from_dict(session_data)
             elif self.mode == "workflow":
                 return WorkflowSession.from_dict(session_data)
+            elif self.mode == "workflow_v2":
+                return WorkflowSessionV2.from_dict(session_data)
 
         except Exception as e:
             logger.error(f"Error reading session: {e}")
@@ -125,6 +127,8 @@ class RedisStorage(Storage):
                             self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
                         ):
                             session_ids.append(data["session_id"])
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
+                            session_ids.append(data["session_id"])
                     elif user_id and data["user_id"] == user_id:
                         session_ids.append(data["session_id"])
                     elif entity_id:
@@ -133,6 +137,8 @@ class RedisStorage(Storage):
                         elif self.mode == "team" and data["team_id"] == entity_id:
                             session_ids.append(data["session_id"])
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
+                            session_ids.append(data["session_id"])
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
                             session_ids.append(data["session_id"])
                 else:
                     # No filters applied, add all session_ids
@@ -163,6 +169,8 @@ class RedisStorage(Storage):
                             self.mode == "workflow" and data["workflow_id"] == entity_id and data["user_id"] == user_id
                         ):
                             _session = WorkflowSession.from_dict(data)
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
+                            _session = WorkflowSessionV2.from_dict(data)
                     elif user_id and data["user_id"] == user_id:
                         if self.mode == "agent":
                             _session = AgentSession.from_dict(data)
@@ -170,6 +178,8 @@ class RedisStorage(Storage):
                             _session = TeamSession.from_dict(data)
                         elif self.mode == "workflow":
                             _session = WorkflowSession.from_dict(data)
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
+                            _session = WorkflowSessionV2.from_dict(data)
                     elif entity_id:
                         if self.mode == "agent" and data["agent_id"] == entity_id:
                             _session = AgentSession.from_dict(data)
@@ -177,6 +187,8 @@ class RedisStorage(Storage):
                             _session = TeamSession.from_dict(data)
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             _session = WorkflowSession.from_dict(data)
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
+                            _session = WorkflowSessionV2.from_dict(data)
 
                     if _session:
                         sessions.append(_session)
@@ -189,6 +201,8 @@ class RedisStorage(Storage):
                         _session = TeamSession.from_dict(data)
                     elif self.mode == "workflow":
                         _session = WorkflowSession.from_dict(data)
+                    elif self.mode == "workflow_v2":
+                        _session = WorkflowSessionV2.from_dict(data)
                     if _session:
                         sessions.append(_session)
 
@@ -234,7 +248,8 @@ class RedisStorage(Storage):
                             continue
                         elif self.mode == "workflow" and data["workflow_id"] != entity_id:
                             continue
-
+                        elif self.mode == "workflow_v2" and data["workflow_id"] != entity_id:
+                            continue
                     # Store with created_at for sorting
                     created_at = data.get("created_at", 0)
                     session_data.append((created_at, data))
@@ -257,7 +272,8 @@ class RedisStorage(Storage):
                     session = TeamSession.from_dict(data)
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(data)
-
+                elif self.mode == "workflow_v2":
+                    session = WorkflowSessionV2.from_dict(data)
                 if session is not None:
                     sessions.append(session)
 
@@ -269,7 +285,10 @@ class RedisStorage(Storage):
     def upsert(self, session: Session) -> Optional[Session]:
         """Insert or update a Session in Redis."""
         try:
-            data = asdict(session)
+            if self.mode == "workflow_v2":
+                data = session.to_dict()
+            else:
+                data = asdict(session)
             data["updated_at"] = int(time.time())
             if "created_at" not in data:
                 data["created_at"] = data["updated_at"]

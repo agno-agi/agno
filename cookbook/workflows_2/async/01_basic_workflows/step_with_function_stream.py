@@ -6,7 +6,7 @@ from agno.models.openai import OpenAIChat
 from agno.run.v2.workflow import WorkflowRunResponseEvent
 from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step, StepInput, StepOutput
 from agno.workflow.v2.workflow import Workflow
@@ -22,7 +22,7 @@ hackernews_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[GoogleSearchTools()],
     instructions="Search the web for the latest news and trends",
 )
 
@@ -75,7 +75,7 @@ async def custom_content_planning_function(
         response_iterator = await content_planner.arun(
             planning_prompt, stream=True, stream_intermediate_steps=True
         )
-        for event in response_iterator:
+        async for event in response_iterator:
             yield event
 
         response = content_planner.run_response

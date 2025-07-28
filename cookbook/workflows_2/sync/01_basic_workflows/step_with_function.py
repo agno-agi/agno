@@ -116,6 +116,9 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
+        # Define the sequence of steps
+        # First run the research_step, then the content_planning_step
+        # You can mix and match agents, teams, and even regular python functions directly as steps
         steps=[research_step, content_planning_step],
     )
     content_creation_workflow.print_response(

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
@@ -18,11 +18,11 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",  # noqa: F821
-        "Loop",  # noqa: F821
-        "Parallel",  # noqa: F821
-        "Condition",  # noqa: F821
-        "Router",  # noqa: F821
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
     ]
 ]
 
@@ -38,7 +38,9 @@ class Steps:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    def __init__(self, name: Optional[str] = None, description: Optional[str] = None, steps: Optional[List] = None):
+    def __init__(
+        self, name: Optional[str] = None, description: Optional[str] = None, steps: Optional[List[Any]] = None
+    ):  # Change to List[Any]
         self.name = name
         self.description = description
         self.steps = steps if steps else []
@@ -53,9 +55,9 @@ class Steps:
         from agno.workflow.v2.router import Router
         from agno.workflow.v2.step import Step
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.steps:
-            if isinstance(step, Callable):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
@@ -102,7 +104,7 @@ class Steps:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
-            workflow_message=step_input.workflow_message,
+            additional_data=step_input.additional_data,
             images=current_images + step_images,
             videos=current_videos + step_videos,
             audio=current_audio + step_audio,
@@ -112,7 +114,7 @@ class Steps:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute all steps in sequence and return the final result"""
-        logger.info(f"Executing {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -120,17 +122,17 @@ class Steps:
             return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         steps_step_outputs = {}
 
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Executing sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -148,14 +150,14 @@ class Steps:
                     if step_output.stop:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
-
-                logger.info(f"Sequential step {step_name} completed")
+                log_debug(f"Steps {self.name}: Step {step_name} completed successfully")
 
                 # Update input for next step with proper chaining
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, steps_step_outputs
                 )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             return all_results
 
         except Exception as e:
@@ -176,10 +178,10 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
-        logger.info(f"Streaming {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -207,17 +209,25 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Streaming sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
+
+                if step_index is None or isinstance(step_index, int):
+                    # Steps is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)  # Use i, not i+1
+                else:
+                    # Steps is already a child step - child steps get parent.1, parent.2, parent.3
+                    child_step_index = step_index + (i,)  # Extend the tuple
+
                 # Stream step execution
-                for event in step.execute_stream(
+                for event in step.execute_stream(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=i,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -225,8 +235,6 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
-
-                logger.info(f"Sequential step {step_name} streaming completed")
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -251,6 +259,8 @@ class Steps:
                         current_step_input = self._update_step_input_from_outputs(
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
+
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
             if stream_intermediate_steps:
                 # Yield steps execution completed event
@@ -283,7 +293,7 @@ class Steps:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute all steps in sequence asynchronously and return the final result"""
-        logger.info(f"Async executing {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -291,17 +301,17 @@ class Steps:
             return [StepOutput(step_name=self.name or "Steps", content="No steps to execute")]
 
         # Track outputs and pass data between steps - following Condition/Router pattern
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         steps_step_outputs = {}
 
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Async executing sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)
+                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -320,13 +330,12 @@ class Steps:
                         logger.info(f"Early termination requested by step {step_name}")
                         break
 
-                logger.info(f"Async sequential step {step_name} completed")
-
                 # Update input for next step with proper chaining
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, steps_step_outputs
                 )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             return all_results
 
         except Exception as e:
@@ -347,10 +356,10 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
-        logger.info(f"Async streaming {len(self.steps)} steps in sequence: {self.name}")
+        log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
 
         self._prepare_steps()
 
@@ -377,17 +386,25 @@ class Steps:
         try:
             for i, step in enumerate(self.steps):
                 step_name = getattr(step, "name", f"step_{i + 1}")
-                logger.info(f"Async streaming sequential step {i + 1}/{len(self.steps)}: {step_name}")
+                log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 step_outputs_for_step = []
+
+                if step_index is None or isinstance(step_index, int):
+                    # Steps is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)  # Use i, not i+1
+                else:
+                    # Steps is already a child step - child steps get parent.1, parent.2, parent.3
+                    child_step_index = step_index + (i,)  # Extend the tuple
+
                 # Stream step execution
-                async for event in step.aexecute_stream(
+                async for event in step.aexecute_stream(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
-                    step_index=i,
+                    step_index=child_step_index,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -395,8 +412,6 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
-
-                logger.info(f"Async sequential step {step_name} streaming completed")
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -422,6 +437,7 @@ class Steps:
                             current_step_input, step_outputs_for_step, steps_step_outputs
                         )
 
+            log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
             # Yield steps execution completed event
             yield StepsExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

@@ -25,6 +25,7 @@ web_agent = Agent(
 research_team = Team(
     name="Research Team",
     mode="coordinate",
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
@@ -59,6 +60,9 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",
         ),
+        # Define the sequence of steps
+        # First run the research team, then the content planner Agent
+        # You can mix and match agents, teams, and even regular python functions as steps
         steps=[research_step, content_planning_step],
     )
     content_creation_workflow.print_response(
