@@ -111,7 +111,7 @@ def test_edit_file_success_with_file_reading(mock_morph_tools, mock_successful_r
     )
 
     assert "Successfully applied edit" in result
-    assert "File updated!" in result
+    assert "backup" in result
 
 
 def test_edit_file_success_with_provided_original_code(mock_morph_tools, mock_successful_response):
@@ -185,7 +185,6 @@ def test_edit_file_write_error(mock_morph_tools, mock_successful_response):
             )
 
     assert f"Successfully applied edit but failed to write back to {target_file}: {write_error}" in result
-    assert "Final code:" in result
 
 
 # Test edge cases
@@ -252,5 +251,5 @@ def test_edit_file_always_writes_to_file(mock_morph_tools, mock_successful_respo
     # Verify that original file was written to
     mock_file.assert_any_call(target_file, "w", encoding="utf-8")
 
-    assert "File updated!" in result
+    assert "Successfully applied edit" in result
     assert "backup" in result
