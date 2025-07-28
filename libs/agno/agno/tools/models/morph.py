@@ -76,7 +76,7 @@ class MorphTools(Toolkit):
         """
         Apply code edits to a target file using Morph's Fast Apply API.
     
-        This method reads the specified file, sends its content along with
+        This function reads the specified file, sends its content along with
         editing instructions and code edits to Morph's API, and writes the
         resulting code back to the file. A backup of the original file is 
         created before writing changes.
