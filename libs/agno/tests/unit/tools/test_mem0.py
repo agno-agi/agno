@@ -109,6 +109,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "Test message"}],
             user_id="test_user_add",
             infer=True,
+            output_format="v1.1",
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -121,6 +122,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": json.dumps(dict_content)}],
             user_id="user1",
             infer=True,
+            output_format="v1.1",
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -132,6 +134,7 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "123"}],
             user_id="user1",
             infer=True,
+            output_format="v1.1",
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
@@ -144,14 +147,18 @@ class TestMem0Toolkit:
     def test_search_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_agent):
         toolkit_config.user_id = "test_user_search"
         result_str = toolkit_config.search_memory(dummy_agent, query="find stuff")
-        mock_memory_instance.search.assert_called_once_with(query="find stuff", user_id="test_user_search")
+        mock_memory_instance.search.assert_called_once_with(
+            query="find stuff", user_id="test_user_search", output_format="v1.1"
+        )
         expected_result = [{"id": "mem-search-456", "memory": "found memory", "score": 0.9}]
         assert json.loads(result_str) == expected_result
 
     def test_search_memory_success_default_call(self, toolkit_config, mock_memory_instance, dummy_agent):
         toolkit_config.user_id = "user_default"
         toolkit_config.search_memory(dummy_agent, query="default search")
-        mock_memory_instance.search.assert_called_once_with(query="default search", user_id="user_default")
+        mock_memory_instance.search.assert_called_once_with(
+            query="default search", user_id="user_default", output_format="v1.1"
+        )
 
     def test_search_memory_no_user_id(self, toolkit_config, dummy_agent):
         result = toolkit_config.search_memory(dummy_agent, query="No user ID search")
@@ -161,21 +168,23 @@ class TestMem0Toolkit:
     def test_search_memory_api_key_list_return(self, toolkit_api_key, mock_memory_client_instance, dummy_agent):
         toolkit_api_key.user_id = "default_user_api"
         result_str = toolkit_api_key.search_memory(dummy_agent, query="client search")
-        mock_memory_client_instance.search.assert_called_once_with(query="client search", user_id="default_user_api")
+        mock_memory_client_instance.search.assert_called_once_with(
+            query="client search", user_id="default_user_api", output_format="v1.1"
+        )
         expected_result = [{"id": "mem-client-search-456", "memory": "found client memory", "score": 0.8}]
         assert json.loads(result_str) == expected_result
 
     def test_get_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_agent):
         toolkit_api_key.user_id = "user-all-1"
         result_str = toolkit_api_key.get_all_memories(dummy_agent)
-        mock_memory_client_instance.get_all.assert_called_once_with(user_id="user-all-1")
+        mock_memory_client_instance.get_all.assert_called_once_with(user_id="user-all-1", output_format="v1.1")
         expected = [{"id": "mem-client-all-1", "memory": "all client mem 1"}]
         assert json.loads(result_str) == expected
 
     def test_get_all_memories_success_dict_return(self, toolkit_config, mock_memory_instance, dummy_agent):
         toolkit_config.user_id = "user-all-dict"
         result_str = toolkit_config.get_all_memories(dummy_agent)
-        mock_memory_instance.get_all.assert_called_once_with(user_id="user-all-dict")
+        mock_memory_instance.get_all.assert_called_once_with(user_id="user-all-dict", output_format="v1.1")
         expected = [{"id": "mem-all-1", "memory": "all mem 1"}]
         assert json.loads(result_str) == expected
 
@@ -225,6 +234,42 @@ class TestMem0Toolkit:
             [{"role": "user", "content": "Test message"}],
             user_id="test_user",
             infer=False,
+            output_format="v1.1",
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
+
+    def test_init_with_org_id_and_project_id(self, mock_memory_client_instance):
+        """Test initialization with org_id and project_id parameters"""
+        MockMemoryClient.reset_mock()
+        toolkit = Mem0Tools(api_key="fake-api-key", org_id="test_org_123", project_id="test_project_456")
+
+        assert toolkit.org_id == "test_org_123"
+        assert toolkit.project_id == "test_project_456"
+        MockMemoryClient.assert_called_once_with(
+            api_key="fake-api-key", org_id="test_org_123", project_id="test_project_456"
+        )
+
+    def test_init_with_env_org_id(self, monkeypatch, mock_memory_client_instance):
+        """Test initialization with org_id and project_id from environment variables"""
+        MockMemoryClient.reset_mock()
+        monkeypatch.setenv("MEM0_ORG_ID", "env_org_789")
+        monkeypatch.setenv("MEM0_PROJECT_ID", "env_project_012")
+
+        toolkit = Mem0Tools(api_key="fake-api-key")
+
+        assert toolkit.org_id == "env_org_789"
+        assert toolkit.project_id == "env_project_012"
+        MockMemoryClient.assert_called_once_with(
+            api_key="fake-api-key", org_id="env_org_789", project_id="env_project_012"
+        )
+
+    def test_init_with_partial_org_id(self, mock_memory_client_instance):
+        """Test initialization with only org_id (no project_id)"""
+        MockMemoryClient.reset_mock()
+        toolkit = Mem0Tools(api_key="fake-api-key", org_id="test_org_only")
+
+        assert toolkit.org_id == "test_org_only"
+        assert toolkit.project_id is None
+        # Should only pass org_id, not project_id
+        MockMemoryClient.assert_called_once_with(api_key="fake-api-key", org_id="test_org_only")
