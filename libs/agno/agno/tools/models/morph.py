@@ -1,5 +1,6 @@
 import os
 from os import getenv
+from textwrap import dedent
 from typing import Optional
 
 from agno.tools import Toolkit
@@ -18,6 +19,8 @@ class MorphTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         base_url: str = "https://api.morphllm.com/v1",
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
         model: str = "morph-v3-large",
         **kwargs,
     ):
@@ -32,7 +35,19 @@ class MorphTools(Toolkit):
                   - "auto" (automatic selection)
             **kwargs: Additional arguments to pass to Toolkit.
         """
-        super().__init__(name="morph_tools", tools=[self.edit_file], **kwargs)
+        # Set up instructions
+        if instructions is None:
+            self.instructions = self.DEFAULT_INSTRUCTIONS
+        else:
+            self.instructions = instructions
+
+        super().__init__(
+            name="morph_tools",
+            tools=[self.edit_file],
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            **kwargs,
+        )
 
         self.api_key = api_key or getenv("MORPH_API_KEY")
         if not self.api_key:
@@ -131,3 +146,41 @@ class MorphTools(Toolkit):
         except Exception as e:
             log_error(f"Failed to apply edit using Morph Fast Apply: {e}")
             return f"Failed to apply edit to {target_file}: {e}"
+
+    DEFAULT_INSTRUCTIONS = dedent("""\
+            You have access to Morph Fast Apply for ultra-fast code editing with 98% accuracy at 2500+ tokens/second.
+
+            ## How to use the edit_file tool:
+
+            **Critical Requirements:**
+            1. **Instructions Parameter**: Generate clear first-person instructions describing what you're doing
+            - Example: "I am adding type hints to all functions and methods"
+            - Example: "I am refactoring the error handling to use try-catch blocks"
+
+            2. **Code Edit Parameter**: Specify ONLY the lines you want to change
+            - Use `# ... existing code ...` (or `// ... existing code ...` for JS/Java) to represent unchanged sections
+            - NEVER write out unchanged code in the code_edit parameter
+            - Include sufficient context around changes to resolve ambiguity
+
+            3. **Single Edit Call**: Make ALL edits to a file in a single edit_file call. The apply model can handle many distinct edits at once.
+
+            **Example Format:**
+            ```
+            # ... existing code ...
+            def add(a: int, b: int) -> int:
+                \"\"\"Add two numbers together.\"\"\"
+                return a + b
+            # ... existing code ...
+            def multiply(x: int, y: int) -> int:
+                \"\"\"Multiply two numbers.\"\"\"
+                return x * y
+            # ... existing code ...
+            ```
+
+            **Important Guidelines:**
+            - Bias towards repeating as few lines as possible while conveying the change clearly
+            - Each edit should contain sufficient context of unchanged lines around the code you're editing
+            - DO NOT omit spans of pre-existing code without using the `# ... existing code ...` comment
+            - If deleting a section, provide context before and after to clearly indicate the deletion
+            - The tool automatically creates backup files before applying changes\
+        """)
