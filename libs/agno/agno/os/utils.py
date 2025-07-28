@@ -13,7 +13,6 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 
-
 def get_run_input(run_dict: Dict[str, Any]) -> str:
     """Get the run input from the given run dictionary"""
     if run_dict.get("messages") is not None:
