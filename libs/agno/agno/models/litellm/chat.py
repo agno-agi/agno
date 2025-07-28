@@ -74,36 +74,24 @@ class LiteLLM(Model):
         for m in messages:
             msg = {"role": m.role, "content": m.content if m.content is not None else ""}
 
-            # Handle media and files in user messages
-            if m.role == "user":
-                content = msg.get("content")
-                if isinstance(content, str):
-                    text = content
-                    content_list = [{"type": "text", "text": text}] if text else []
-                elif content is None:
-                    content_list = []
-                else:
-                    content_list = content
+            # Handle media
+            if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
+                if isinstance(m.content, str):
+                    msg["content"] = [{"type": "text", "text": m.content}]
+                    if m.images is not None:
+                        msg["content"].extend(images_to_message(images=m.images))
+                    if m.audio is not None:
+                        msg["content"].extend(audio_to_message(audio=m.audio))
 
-                # Add images to content
-                if m.images is not None and len(m.images) > 0:
-                    content_list.extend(images_to_message(images=m.images))
+            if m.videos is not None and len(m.videos) > 0:
+                log_warning("Video input is currently unsupported by LLM providers.")
 
-                # Add audio to content
-                if m.audio is not None and len(m.audio) > 0:
-                    content_list.extend(audio_to_message(audio=m.audio))
-
-                # Add files to content
-                if m.files is not None and len(m.files) > 0:
-                    for file in m.files:
-                        file_part = _format_file_for_message(file)
-                        if file_part:
-                            content_list.append(file_part)
-
-                msg["content"] = content_list
-
-                if m.videos is not None and len(m.videos) > 0:
-                    log_warning("Video input is currently unsupported by LLM providers.")
+            # Handle files
+            if m.files is not None:
+                for file in m.files:
+                    file_part = _format_file_for_message(file)
+                    if file_part:
+                        msg["content"].append(file_part)
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
