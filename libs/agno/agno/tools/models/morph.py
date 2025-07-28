@@ -58,6 +58,25 @@ class MorphTools(Toolkit):
         code_edit: str,
         original_code: Optional[str] = None,
     ) -> str:
+        """
+        Apply code edits to a target file using Morph's Fast Apply API.
+    
+        This method reads the specified file, sends its content along with
+        editing instructions and code edits to Morph's API, and writes the
+        resulting code back to the file. A backup of the original file is 
+        created before writing changes.
+    
+        Args:
+            target_file (str): Path to the file to be edited.
+            instructions (str): High-level instructions describing the intended change.
+            code_edit (str): Specific code edit or change to apply.
+            original_code (Optional[str], optional): Original content of the file. 
+                If not provided, the function reads from target_file.
+    
+        Returns:
+            str: Result message indicating success or failure, and details about 
+                the backup and any errors encountered.
+        """
         try:
             # Always read the actual file content for backup purposes
             actual_file_content = None
