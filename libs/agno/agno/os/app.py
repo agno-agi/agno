@@ -2,7 +2,7 @@ from os import getenv
 from typing import Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from rich import box
 from rich.panel import Panel
@@ -241,8 +241,9 @@ class AgentOS:
 
         # Attach base router
         from agno.os.auth import get_authentication_dependency
+
         auth_dependency = get_authentication_dependency(self.settings)
-        
+
         self.fastapi_app.include_router(get_base_router(self, auth_dependency))
 
         for interface in self.interfaces:
@@ -277,7 +278,7 @@ class AgentOS:
             for route in app_router.routes:
                 if not route.dependencies:
                     route.dependencies = []
-                route.dependencies.append(Depends(auth_dependency))
+                route.dependencies.append(Depends(auth_dependency))  # type: ignore
 
             self.fastapi_app.include_router(app_router)
             self.apps_loaded.append((app.type, app.router_prefix))

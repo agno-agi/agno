@@ -1,10 +1,9 @@
 import asyncio
-import json
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import Dict, List, Literal, Optional, Set
+from urllib.parse import urlparse
 
 import httpx
 
