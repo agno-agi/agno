@@ -135,10 +135,10 @@ class MorphTools(Toolkit):
                     # Write the new code
                     with open(target_file, "w", encoding="utf-8") as f:
                         f.write(final_code)
-                    return f"Successfully applied edit to {target_file} using Morph Fast Apply and wrote back to file:\n\n```{final_code}\n```\n\n✅ File updated! Original content backed up as {backup_file}"
+                    return f"Successfully applied edit to {target_file} using Morph Fast Apply! Original content backed up as {backup_file}"
 
                 except Exception as e:
-                    return f"Successfully applied edit but failed to write back to {target_file}: {e}\n\nFinal code:\n```\n{final_code}\n```"
+                    return f"Successfully applied edit but failed to write back to {target_file}: {e}"
 
             else:
                 return f"Failed to apply edit to {target_file}: No response from Morph API"
