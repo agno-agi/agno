@@ -16,7 +16,7 @@ except ImportError:
 @dataclass
 class OpenAIEmbedder(Embedder):
     id: str = "text-embedding-3-small"
-    dimensions: int = 1536
+    dimensions: Optional[int] = None
     encoding_format: Literal["float", "base64"] = "float"
     user: Optional[str] = None
     api_key: Optional[str] = None
@@ -25,6 +25,12 @@ class OpenAIEmbedder(Embedder):
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None
+
+    @property
+    def _dimensions(self) -> int:
+        if self.dimensions is not None:
+            return self.dimensions
+        return 3072 if self.id == "text-embedding-3-large" else 1536
 
     @property
     def client(self) -> OpenAIClient:
@@ -51,7 +57,7 @@ class OpenAIEmbedder(Embedder):
         if self.user is not None:
             _request_params["user"] = self.user
         if self.id.startswith("text-embedding-3"):
-            _request_params["dimensions"] = self.dimensions
+            _request_params["dimensions"] = self._dimensions
         if self.request_params:
             _request_params.update(self.request_params)
         return self.client.embeddings.create(**_request_params)
