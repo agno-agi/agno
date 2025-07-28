@@ -8,6 +8,7 @@ from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
+from agno.run.v2.workflow import WorkflowRunResponse
 from agno.session.summary import SessionSummary
 
 
@@ -80,7 +81,9 @@ def deserialize_session_json_fields(session: dict) -> dict:
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT.value:
             session["runs"] = [RunResponse.from_dict(run) for run in json.loads(session["runs"])]
-        elif session["session_type"] == SessionType.TEAM.value:
+        if session["session_type"] == SessionType.TEAM.value:
             session["runs"] = [TeamRunResponse.from_dict(run) for run in json.loads(session["runs"])]
+        if session["session_type"] == SessionType.WORKFLOW.value:
+            session["runs"] = [WorkflowRunResponse.from_dict(run) for run in json.loads(session["runs"])]
 
     return session

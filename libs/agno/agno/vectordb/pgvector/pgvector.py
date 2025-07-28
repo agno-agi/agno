@@ -1,7 +1,7 @@
 import asyncio
+from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
-from hashlib import md5
 
 try:
     from sqlalchemy.dialects import postgresql

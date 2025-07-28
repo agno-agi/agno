@@ -416,6 +416,7 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
+        role: Optional[str] = None,
         events_to_skip: Optional[List[RunEvent]] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
@@ -518,6 +519,7 @@ class Agent:
         self.stream_intermediate_steps = stream_intermediate_steps
 
         self.store_events = store_events
+        self.role = role
         # By default, we skip the run response content event
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:
@@ -964,9 +966,6 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
-
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Knowledge Filters
@@ -1322,9 +1321,6 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent()
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         effective_filters = knowledge_filters
         # When filters are passed manually

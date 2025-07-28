@@ -932,9 +932,6 @@ class Team:
         # Initialize Team
         self.initialize_team(session_id=session_id)
 
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
-
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
 
@@ -1328,9 +1325,6 @@ class Team:
 
         # Initialize Team
         self.initialize_team(session_id=session_id)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         effective_filters = knowledge_filters
 
@@ -1972,6 +1966,91 @@ class Team:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
+
+    def _update_memory(
+        self, run_messages: RunMessages, user_id: Optional[str] = None
+    ) -> Iterator[TeamRunResponseEvent]:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        self.run_response = cast(TeamRunResponse, self.run_response)
+
+        # Create a thread pool with a reasonable number of workers
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            user_message_str = (
+                run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+            )
+            # Create user memories
+            if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+                futures.append(
+                    executor.submit(
+                        self.memory_manager.create_user_memories,
+                        message=user_message_str,
+                        user_id=user_id,
+                        team_id=self.team_id,
+                    )
+                )
+
+            # Create session summary
+            if self.session_summary_manager is not None:
+                log_debug("Creating session summary.")
+                futures.append(
+                    executor.submit(
+                        self.session_summary_manager.create_session_summary,
+                        session=self.team_session,
+                    )
+                )
+
+            if futures:
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_memory_update_started_event(from_run_response=self.run_response), self.run_response
+                    )
+
+                # Wait for all operations to complete and handle any errors
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        log_warning(f"Error in memory/summary operation: {str(e)}")
+
+                if self.stream_intermediate_steps:
+                    yield self._handle_event(
+                        create_team_memory_update_completed_event(from_run_response=self.run_response),
+                        self.run_response,
+                    )
+
+    async def _aupdate_memory(
+        self, run_messages: RunMessages, user_id: Optional[str] = None
+    ) -> AsyncIterator[TeamRunResponseEvent]:
+        self.run_response = cast(TeamRunResponse, self.run_response)
+        tasks = []
+
+        user_message_str = (
+            run_messages.user_message.get_content_string() if run_messages.user_message is not None else None
+        )
+        if user_message_str is not None and self.memory_manager is not None and not self.enable_agentic_memory:
+            tasks.append(self.memory_manager.acreate_user_memories(message=user_message_str, user_id=user_id))
+
+        if self.session_summary_manager is not None:
+            tasks.append(self.session_summary_manager.acreate_session_summary(session=self.team_session))
+
+        if tasks:
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_team_memory_update_started_event(from_run_response=self.run_response), self.run_response
+                )
+
+            # Execute all tasks concurrently and handle any errors
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as e:
+                log_warning(f"Error in memory/summary operation: {str(e)}")
+
+            if self.stream_intermediate_steps:
+                yield self._handle_event(
+                    create_team_memory_update_completed_event(from_run_response=self.run_response), self.run_response
+                )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
         model = cast(Model, model or self.model)

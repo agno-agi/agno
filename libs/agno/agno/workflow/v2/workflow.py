@@ -20,6 +20,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
+from agno.db.base import BaseDb, SessionType
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
@@ -44,8 +45,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponseEvent,
     WorkflowStartedEvent,
 )
-from agno.storage.base import Storage
-from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
+from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
@@ -102,7 +102,7 @@ class Workflow:
     # Workflow configuration
     steps: Optional[WorkflowSteps] = None
 
-    storage: Optional[Storage] = None
+    storage: Optional[BaseDb] = None
 
     # Session management
     session_id: Optional[str] = None
@@ -116,7 +116,7 @@ class Workflow:
     run_response: Optional[WorkflowRunResponse] = None
 
     # Workflow session for storage
-    workflow_session: Optional[WorkflowSessionV2] = None
+    workflow_session: Optional[WorkflowSession] = None
     debug_mode: Optional[bool] = False
 
     # --- Workflow Streaming ---
@@ -133,7 +133,7 @@ class Workflow:
         workflow_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        storage: Optional[Storage] = None,
+        storage: Optional[BaseDb] = None,
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -1206,8 +1206,8 @@ class Workflow:
     def get_run(self, run_id: str) -> Optional[WorkflowRunResponse]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
         if self.storage is not None and self.session_id is not None:
-            session = self.storage.read(session_id=self.session_id)
-            if session and isinstance(session, WorkflowSessionV2) and session.runs:
+            session = self.storage.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+            if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:
                     if run.run_id == run_id:
@@ -1485,8 +1485,8 @@ class Workflow:
             self.steps = prepared_steps  # type: ignore
             log_debug("Step preparation completed")
 
-    def get_workflow_session(self) -> WorkflowSessionV2:
-        """Get a WorkflowSessionV2 object for storage"""
+    def get_workflow_session(self) -> WorkflowSession:
+        """Get a WorkflowSession object for storage"""
         workflow_data = {}
         if self.steps and not callable(self.steps):
             workflow_data["steps"] = [
@@ -1507,7 +1507,7 @@ class Workflow:
         if self.session_id is None:
             raise ValueError("Session ID is required")
 
-        return WorkflowSessionV2(
+        return WorkflowSession(
             session_id=self.session_id,
             user_id=self.user_id,
             workflow_id=self.workflow_id,
@@ -1517,7 +1517,7 @@ class Workflow:
             session_data={},
         )
 
-    def load_workflow_session(self, session: WorkflowSessionV2):
+    def load_workflow_session(self, session: WorkflowSession):
         """Load workflow session from storage"""
         if self.workflow_id is None and session.workflow_id is not None:
             self.workflow_id = session.workflow_id
@@ -1529,23 +1529,23 @@ class Workflow:
             self.name = session.workflow_name
 
         self.workflow_session = session
-        log_debug(f"Loaded WorkflowSessionV2: {session.session_id}")
+        log_debug(f"Loaded WorkflowSession: {session.session_id}")
 
-    def read_from_storage(self) -> Optional[WorkflowSessionV2]:
-        """Load the WorkflowSessionV2 from storage"""
+    def read_from_storage(self) -> Optional[WorkflowSession]:
+        """Load the WorkflowSession from storage"""
         if self.storage is not None and self.session_id is not None:
-            session = self.storage.read(session_id=self.session_id)
-            if session and isinstance(session, WorkflowSessionV2):
+            session = self.storage.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+            if session and isinstance(session, WorkflowSession):
                 self.load_workflow_session(session)
                 return session
         return None
 
-    def write_to_storage(self) -> Optional[WorkflowSessionV2]:
-        """Save the WorkflowSessionV2 to storage"""
+    def write_to_storage(self) -> Optional[WorkflowSession]:
+        """Save the WorkflowSession to storage"""
         if self.storage is not None:
             session_to_save = self.get_workflow_session()
-            saved_session = self.storage.upsert(session=session_to_save)
-            if saved_session and isinstance(saved_session, WorkflowSessionV2):
+            saved_session = self.storage.upsert_session(session=session_to_save)
+            if saved_session and isinstance(saved_session, WorkflowSession):
                 self.workflow_session = saved_session
                 return saved_session
         return None
@@ -1563,13 +1563,13 @@ class Workflow:
 
             # Create new session if it doesn't exist
             if existing_session is None:
-                log_debug("Creating new WorkflowSessionV2")
+                log_debug("Creating new WorkflowSession")
 
                 # Ensure we have a session_id
                 if self.session_id is None:
                     self.session_id = str(uuid4())
 
-                self.workflow_session = WorkflowSessionV2(
+                self.workflow_session = WorkflowSession(
                     session_id=self.session_id,
                     user_id=self.user_id,
                     workflow_id=self.workflow_id,
@@ -1577,8 +1577,8 @@ class Workflow:
                 )
                 saved_session = self.write_to_storage()
                 if saved_session is None:
-                    raise Exception("Failed to create new WorkflowSessionV2 in storage")
-                log_debug(f"Created WorkflowSessionV2: {saved_session.session_id}")
+                    raise Exception("Failed to create new WorkflowSession in storage")
+                log_debug(f"Created WorkflowSession: {saved_session.session_id}")
 
         return self.session_id
 
