@@ -358,18 +358,6 @@ class Workflow:
             else:
                 return len(self.steps)
 
-    def _convert_dict_to_step_metrics(self, step_name: str, metrics_dict: Dict[str, Any]) -> StepMetrics:
-        """Convert dictionary metrics to StepMetrics object"""
-        return StepMetrics.from_dict(
-            {
-                "step_name": step_name,
-                "executor_type": metrics_dict.get("executor_type", "unknown"),
-                "executor_name": metrics_dict.get("executor_name", "unknown"),
-                "metrics": metrics_dict.get("metrics"),
-                "parallel_steps": metrics_dict.get("parallel_steps"),
-            }
-        )
-
     def _aggregate_workflow_metrics(self, step_responses: List[Union[StepOutput, List[StepOutput]]]) -> WorkflowMetrics:
         """Aggregate metrics from all step responses into structured workflow metrics"""
         steps_dict = {}
@@ -382,7 +370,37 @@ class Workflow:
 
             # Add step-specific metrics
             if step_output.step_name and step_output.metrics:
-                step_metrics = self._convert_dict_to_step_metrics(step_output.step_name, step_output.metrics)
+                if step_output.parallel_step_outputs:
+                    # This is a parallel step - create nested step metrics for each sub-step
+                    parallel_step_metrics = {}
+                    for sub_step_name, sub_step_output in step_output.parallel_step_outputs.items():
+                        if sub_step_output.metrics:
+                            parallel_step_metrics[sub_step_name] = StepMetrics(
+                                step_name=sub_step_name,
+                                executor_type=sub_step_output.executor_type or "unknown",
+                                executor_name=sub_step_output.executor_name or "unknown",
+                                metrics=sub_step_output.metrics,
+                                parallel_steps=None,
+                            )
+
+                    # Create a StepMetrics for the parallel container
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type="parallel",
+                        executor_name=step_output.step_name or "Parallel",
+                        metrics=step_output.metrics,
+                        parallel_steps=parallel_step_metrics if parallel_step_metrics else None,
+                    )
+                else:
+                    # Regular step
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type=step_output.executor_type or "unknown",
+                        executor_name=step_output.executor_name or "unknown",
+                        metrics=step_output.metrics,
+                        parallel_steps=None,
+                    )
+
                 steps_dict[step_output.step_name] = step_metrics
 
         # Process all step responses

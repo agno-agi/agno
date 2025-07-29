@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 
+from agno.models.metrics import Metrics
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import (
@@ -93,6 +94,8 @@ class Parallel:
             return StepOutput(
                 step_name=self.name or "Parallel",
                 content=single_result.content,
+                executor_type="parallel",
+                executor_name=self.name or "Parallel",
                 parallel_step_outputs=parallel_step_outputs,
                 response=single_result.response,
                 images=single_result.images,
@@ -127,6 +130,8 @@ class Parallel:
 
         return StepOutput(
             step_name=self.name or "Parallel",
+            executor_type="parallel",
+            executor_name=self.name or "Parallel",
             content=aggregated_content,
             parallel_step_outputs=parallel_step_outputs,
             images=all_images if all_images else None,
@@ -137,53 +142,28 @@ class Parallel:
             metrics=aggregated_metrics,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Dict[str, Any]]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
-        parallel_step_metrics = {}
+        # Aggregate metrics from all parallel step outputs
+        total_metrics = Metrics()
 
         for result in step_outputs:
-            step_name = result.step_name or "unknown"
-
-            # Create clean step metrics for parallel steps
             if result.metrics:
-                # If the step already has structured metrics, extract the actual metrics
-                if isinstance(result.metrics, dict) and "metrics" in result.metrics:
-                    actual_metrics = result.metrics.get("metrics")
-                    executor_type = result.metrics.get("executor_type", "unknown")
-                    executor_name = result.metrics.get("executor_name", "unknown")
-                else:
-                    actual_metrics = result.metrics
-                    executor_type = getattr(result, "executor_type", "unknown")
-                    executor_name = getattr(result, "executor_name", "unknown")
+                total_metrics = total_metrics + result.metrics
 
-                parallel_step_metrics[step_name] = {
-                    "step_name": step_name,
-                    "executor_type": executor_type,
-                    "executor_name": executor_name,
-                    "metrics": actual_metrics,
-                }
-            else:
-                # Even if no metrics, record the step execution
-                parallel_step_metrics[step_name] = {
-                    "step_name": step_name,
-                    "executor_type": getattr(result, "executor_type", "unknown"),
-                    "executor_name": getattr(result, "executor_name", "unknown"),
-                    "metrics": None,
-                }
+        # If no metrics were found, return None
+        if (
+            total_metrics.input_tokens == 0
+            and total_metrics.output_tokens == 0
+            and total_metrics.total_tokens == 0
+            and total_metrics.time is None
+        ):
+            return None
 
-        # Create aggregated metrics structure for parallel execution
-        if parallel_step_metrics:
-            return {
-                "step_name": self.name or "Parallel",
-                "executor_type": "parallel",
-                "executor_name": self.name or "Parallel",
-                "parallel_steps": parallel_step_metrics,
-            }
-
-        return None
+        return total_metrics
 
     def _build_aggregated_content(self, step_outputs: List[StepOutput]) -> str:
         """Build aggregated content from multiple step outputs"""
